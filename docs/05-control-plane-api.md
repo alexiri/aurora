@@ -655,6 +655,10 @@ subscription counts by state and host; never key material).
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox |
+| GET `/v1/agents/{agent}/terminal` | S | (phase 4, P4-TERM, D-161, C-616) WebSocket upgrade to the sandbox's shell (wterm + Ghostty core in the dashboard); session cookie only, `can_use`, hosted only (BYO 422 `terminal_not_supported`), 404 `terminal_disabled` while off, 423 frozen; mints the single-use `auy_` grant and proxies to the runner; best-effort audit `agent.terminal.open`; bytes never logged |
+| POST `/v1/agents/{agent}/sandbox/retry` | S/K | (phase 4, FIX-029, D-160, C-610) retry a failed start from `failed` only (409 `sandbox_not_failed`, 423 `frozen`): clears the failure, resets `start_failures`, notifies due work for an ordinary start; audited `agent.sandbox_retry` |
+| GET `/v1/agents/{agent}/start-failures` | S/K | (phase 4, FIX-029, C-613) the agent's recent start failures (≤ 20, newest first, C-586 shape) |
+| GET `/v1/admin/agents/{agent}/start-failures` | IA | (phase 4, FIX-029, C-614) the same list with `runner_id` |
 | POST `/v1/agents/{agent}/freeze` `{ reason }`; POST `/v1/agents/{agent}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; 200 with `frozen: {at, by_label, reason, authority, level}`; 403 `freeze_authority_insufficient` when lifting a higher authority's freeze; audited atomically |
 | GET `/v1/agents/{agent}/sandbox` | S/K | state, keep-awake reasons, processes, ports |
 | GET `/v1/agents/{agent}/models` | S/K | models available from granted LLM keys |

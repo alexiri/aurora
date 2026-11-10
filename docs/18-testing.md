@@ -573,6 +573,35 @@ done when its tests exist, pass in CI, and the security invariants it touches
   with listening-port chips and error mapping; copy/open (rel attributes); frozen read-only; org
   settings page and confirmation; no horizontal scroll at 390 px, both themes.
 
+### Web terminal (phase 4, P4-TERM, D-161, SEC-87)
+- **API** (`api/it/terminal.rs`): the WebSocket upgrade auth matrix (valid session of a
+  `can_use` caller upgrades; API key, agent token, anonymous, cross-origin `Origin` → refused;
+  BYO 422 `terminal_not_supported`; disabled 404 `terminal_disabled`; frozen 423; parked →
+  wake + upgrade or `{waking: true}`); grant mint (single row, hashed, 30 s TTL, audit row
+  `agent.terminal.open` with no content), single-use redemption (second redeem 403), stale
+  boot and unknown agent refused; caps `TERMINALS_PER_AGENT`/`_PER_USER` → 4409; the API
+  proxies bytes opaquely and **never** logs them (secret-grep over a run with secrets typed
+  into the terminal: no API log, no request-log row, no transcript event).
+- **Runner** (`run` terminal tests): `kind: "terminal"` redemption on the stream listener
+  (single-use, boot-bound; a port grant never opens a terminal and vice versa); unknown kind
+  refused by an older runner (API answers 4502); `pty.open` only on the channel of the bound
+  boot; close codes 4403/4404/4409/4502/4503/4504; W6 reconnect closes every PTY with 4503;
+  keep-awake stamping (`terminal_active_until`) and the cap.
+- **Supervisor** (`sup` terminal tests): PTY spawn as the agent user, cwd `/workspace`,
+  `TIOCSWINSZ` on open and resize, echo round trip through the credit machinery (window
+  bounds hold under a hostile fast writer, tag `0x02` framing beside a concurrent W18
+  `0x01` stream), `pty.refused` reasons (`limit`, `disabled`), environment probe — no
+  `AURORA_*` variable, no boot-document trace in the PTY's `/proc/self/environ` (SEC-34
+  probe), idle/lifetime closes, `shutdown` closes everything, an older supervisor ignores
+  `pty.*` frames harmlessly.
+- **Dashboard** (`web/tests`): tab gating (off/BYO/no-`can_use` hidden; frozen banner),
+  "Waking…" → attach, resize round trip sends `pty.resize`, reconnect notice, session-end
+  notices, both themes, the CSP render test asserts `'wasm-unsafe-eval'` present and nothing
+  else new, vendored WASM served same-origin (`no third-party font/CDN` rule holds).
+- **kind e2e**: terminal round trip on a running sandbox (`echo aurora-terminal` output
+  asserted), freeze closes the session, a parked sandbox wakes on open; `kind.sh` env
+  overrides (own cluster; ask the coordinator first).
+
 ### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
 - **Fake git host** in the test kit (`tests/kit`): serves a GitHub-shaped and a GitLab-shaped API (ref
   resolution, recursive and paginated trees, blobs, raw files, rate-limit responses, truncated trees, a

@@ -26,6 +26,7 @@ implementation repo and checked in (CI fails on drift).
 | W16 | Web Push (phase 4, RFE-011b) | API → browser push service (FCM, Mozilla, Apple, WNS) | VAPID (RFC 8292) JWT signed by the instance key | this doc, `07 §Web Push` |
 | W17 | Relay plane (phase 4, P4-PRV-2) | relay → API `/v1/relay`; runner → API `/v1/runner/preview-streams/*` | `aul_` + replica; `aur_` + replica | this doc, `04 §Preview access` |
 | W18 | Preview byte streams (phase 4, P4-PRV-2) | relay → runner :4108 (WebSocket per stream); runner ↔ supervisor (stream frames on W6) | stream grant `aux_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
+| W19 | Terminal streams (phase 4, P4-TERM) | browser → API `/v1/agents/{agent}/terminal` (WebSocket); API → runner :4108 (grant redemption); runner ↔ supervisor (`pty.*` frames on W6) | terminal grant `auy_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
 
 ## Cross-cutting conventions
 
@@ -377,7 +378,7 @@ is 401 with the same body for every cause.
 
 | Call | Request → Response |
 |------|--------------------|
-| `POST /preview-streams/open` | `{ grant: "aux_…" }` → `{ sandbox_id, boot_id, port, share_id, window, idle_secs, max_lifetime_secs }`; the grant is **consumed** (single use, ≤ 30 s, hashed in `preview_stream_grants`); 403 `grant_invalid`; 409 `not_current` (boot is no longer current, share paused, agent frozen, previews off); the runner uses **only** the values of this answer, never anything the relay sent |
+| `POST /preview-streams/open` | `{ grant: "aux_…" }` → `{ sandbox_id, boot_id, port, share_id, window, idle_secs, max_lifetime_secs }`; the grant is **consumed** (single use, ≤ 30 s, hashed in `preview_stream_grants`); 403 `grant_invalid`; 409 `not_current` (boot is no longer current, share paused, agent frozen, previews off); the runner uses **only** the values of this answer, never anything the relay sent. (phase 4, P4-TERM, C-617) the body gains an optional `kind: "port" | "terminal"` (absent = `"port"`); a terminal request carries a `auy_` grant hashed in `terminal_stream_grants` and the answer omits `port`/`share_id`; a runner that does not know `kind` (older version) refuses unknown kinds — the API closes the browser WebSocket 4502; a runner that knows it answers either kind on the same listener |
 | `POST /preview-streams/closed` | `{ share_id, bytes_to_app, bytes_from_app, reason }` (advisory; accounting) |
 
 ## W18 — Preview byte streams (phase 4, P4-PRV-2, D-147, SEC-82)
@@ -446,3 +447,44 @@ lifetime 4 h; connect 10 s; response header timeout 60 s; request body 100 MiB; 
 (`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day). WebSockets
 are carried as ordinary upgraded streams: the relay forwards the `Upgrade` handshake over the stream
 after checking `Origin` (`04 §Preview access`) and then relays bytes; it does not inspect frames.
+
+## W19 — Terminal streams (phase 4, P4-TERM, D-161, SEC-87)
+
+A web terminal (wterm + Ghostty core in the dashboard, `14 §Terminal tab`)
+into the sandbox's shell, over the W18 machinery with a **PTY target**: the
+leg-1 listener, the grant pattern, the credit windows, the chunking and the
+close-code table are `16 §W18`'s, unchanged; this section owns only the
+differences. Off unless `terminal.enabled` (operator opt-in); no relay, no
+previews domain — the browser talks to the **API** (`GET
+/v1/agents/{agent}/terminal` WebSocket upgrade, session cookie, `Origin`
+checked, C-616), and the **API** is the one redeeming grants at the runner
+(`kind: "terminal"`, C-617). The grant `auy_` (hashed in
+`terminal_stream_grants`, single use, ≤ 30 s) is bound to `(agent, sandbox,
+boot)` and never reaches the browser; a stolen grant opens only its bound
+sandbox's terminal.
+
+**Leg 2, runner → supervisor — `pty.*` frames on the W6 channel**, beside the
+`stream.*` frames (same conventions: outside seq/ack, control as JSON text
+`{ seq: 0, ack: 0 }`, data as binary, one pty per `pty_id` allocated by the
+runner increasing per channel connection, interleaved round-robin):
+
+| Direction | Frame | Body |
+|---|---|---|
+| runner → supervisor | `pty.open` | `{ pty_id: u32, window: bytes, cols: u16, rows: u16 }` |
+| supervisor → runner | `pty.opened` / `pty.refused` | `{ pty_id, window }` / `{ pty_id, reason: "disabled"\|"limit"\|"error" }` |
+| runner → supervisor | `pty.resize` | `{ pty_id, cols, rows }` |
+| both | `pty.close` | `{ pty_id, reason: "eof"\|"hangup"\|"idle"\|"lifetime"\|"channel_lost"\|"error", bytes_in?, bytes_out? }` |
+| both | binary data | `[0x02][pty_id: u32 BE][payload ≤ 16 KiB]` — the tag `0x02` distinguishes terminal data from W18 port-stream data (`0x01`) on the same channel; both may coexist |
+
+Credit-based flow control exactly as W18 (`TERMINAL_STREAM_WINDOW` 128 KiB per
+direction per PTY, credit returned after the bytes were written onward, at
+least every `window/4`, control frames never blocked, round-robin one chunk at
+a time; a violation closes that PTY with `pty.close { reason: "error" }`).
+A W6 reconnect ends every PTY (leg 1 closes 4503, nothing is resumed); a
+supervisor that does not know the kinds ignores them (the runner's `pty.open`
+times out 5 s → 4502): harmless. Limits: `TERMINALS_PER_SANDBOX` 2,
+`TERMINALS_PER_AGENT` 4, `TERMINALS_PER_USER` 2 (per API replica), idle 600 s
+(pings count), lifetime 4 h per session. Terminal bytes are never logged or
+stored; the supervisor's PTY posture (environment minus every `AURORA_*`
+variable and the boot document, agent uid, `/workspace`, `TIOCSWINSZ` resize)
+is `12 §Terminal`, the wake/keep-awake semantics `11 §Web terminal`.

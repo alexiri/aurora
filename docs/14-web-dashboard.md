@@ -20,10 +20,12 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   forms, permission pickers, connector setup forms and setup guides are
   rendered from API data (form-field schema of `09 §3.4`).
 - Security headers (set by Next middleware): strict CSP (`default-src 'self';
-  img-src 'self' data:; script-src 'self' 'nonce-…'; connect-src 'self';
-  frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`,
+  img-src 'self' data:; script-src 'self' 'nonce-…' 'wasm-unsafe-eval';
+  connect-src 'self'; frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: same-origin`, host pin (only the configured external host
-  serves the UI).
+  serves the UI). (`'wasm-unsafe-eval'` exists for the Terminal tab's WASM
+  instantiation — wterm's Ghostty core, phase 4, P4-TERM, D-161; it enables
+  nothing else.)
 - Untrusted text (model output, plugin text, platform names, labels) is
   rendered with the markdown renderer in safe mode (no raw HTML, links show
   their target, `rel="noopener noreferrer nofollow"`); never
@@ -234,7 +236,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   starting it says "Sandbox starting" (with the live phase on the Computer
   tab); on a failed start it reads "Sandbox failed" with the sanitised reason
   (message and code) as the pill's tooltip, and the Computer tab holds the
-  full start attempt.
+  full start attempt plus **Retry now** (FIX-029, D-160, C-615).
 - **Agent chat** (D-102, task P2-UI-5; mock-ups `Agent.html`, `AgentDark.html`,
   `AgentPhone.html`). The chat is a messaging layout. It is not a stack of
   cards, banners and button rows.
@@ -356,7 +358,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     (phase 4, FIX-021, D-136) `no_default_model`: "This agent has an LLM key
     but no model is chosen." with "Choose a model" → the agent's Instructions
     tab; the `no_model_key` message names the failing reasons from the turn
-    error).
+    error). (FIX-029, D-160, C-615) Every start-failure error block (the
+    C-585 codes) also carries **Retry now** → `POST
+    /v1/agents/{agent}/sandbox/retry`, then re-posts the failed turn's text as
+    a new message (the failed turn stays failed); the button disables with
+    "Start in flight…" until the sandbox leaves `failed` and is hidden when
+    the agent is frozen.
   - **Queued follow-ups.** Each queued follow-up shows above the composer as
     a dashed row: a `QUEUED` badge, the text on one line (ellipsis), and
     "Send now".
@@ -626,8 +633,14 @@ again" and "Show the getting-started guide again".
     reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`,
     `creating`, `booting`…), the elapsed time to the runner's last progress
     report and the pod's Warning events (bounded, newest first) — so a start
-    that failed or hung is explained without kubectl. The failed state's
-    notice shows the human reason (`failure_message`) beside the code.
+    that failed or hung is explained without kubectl; (FIX-029, D-160, C-612)
+    a **Start log** list under it — the boot's ring of phase reports, the
+    failure verdict and any retry note, newest first, live while starting and
+    frozen at the failure — with a link to the agent's start-failure history
+    (C-613). The failed state's notice shows the human reason
+    (`failure_message`) beside the code and a **Retry now** button (FIX-029,
+    D-160, C-610/C-615): disabled with "Start in flight…" once the retry is
+    accepted, hidden on frozen agents.
     BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect
     tab shows the effective BYO posture (phase 3, RFE-013: the token's **expiry** and **last used** time, a "Stale" / "Expiring" badge, and a Regenerate call to action; agent lists carry the same badges for owners) and, when set, its source ('Disabled by
@@ -640,6 +653,22 @@ again" and "Show the getting-started guide again".
     that every credentialed request will be attributed to a labelled run and that
     `aurora run` mints one). The agent create dialog offers BYO only as the
     posture allows and says "owners only" otherwise.
+  - **Terminal** (phase 4, P4-TERM, D-161, C-622) — hosted agents only, only when the
+    instance's `terminal.enabled` is on and the caller has `can_use`; a BYO agent or a
+    non-`can_use` caller never sees the tab, a frozen agent shows the freeze banner and no
+    terminal. A parked sandbox shows "Waking…" (the open is the wake demand) and the terminal
+    attaches on ready. The pane is **wterm** with the **Ghostty core** (`@wterm/ghostty`,
+    vendored, the ~400 KB WASM served same-origin as a hashed static asset with
+    `Content-Type: application/wasm`): DOM rendering (native text selection, browser find,
+    screen-reader access — the reason for this core), IME composition, OSC 8 links, 24-bit
+    color, alternate screen, dirty-row rendering; themes are CSS custom properties mapped to
+    the dashboard tokens (both themes). Resize uses the pane's measured cell geometry and
+    sends `pty.resize`; a dropped WebSocket reconnects with backoff and a visible state
+    ("Reconnecting…"); session end states (frozen, parked, stopped, runner without terminal
+    support) render as notices, never silent closes. wterm never touches the clipboard
+    automatically: selection copy is the browser's own; an application's OSC 52 write shows a
+    "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). An open session keeps the
+    sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
   history; batch actions. (phase 2, RFE-012) The page, the sidebar counter and the
@@ -720,7 +749,10 @@ below), **Runners**
 code (`10 §Failure semantics`), sanitised human reason, the start attempt's last
 phase, the elapsed seconds and the pod's Warning events — so a production
 "Sandbox starting forever" incident is diagnosed from the dashboard, with the
-kubectl commands as the fallback in `15`/operator docs), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+kubectl commands as the fallback in `15`/operator docs; FIX-029, D-160, C-614:
+each row names the agent and clicking it opens a **Start diagnostics** drawer
+with that agent's failure history (the C-614 route), so an admin can tell
+"this agent keeps failing" from "the runner is failing everyone"), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
 (phase 4, P4-PRV-2) a **Previews** line when `previews.enabled`: relay replicas
 (`GET /v1/admin/relays`), the domain, share count and a "no relay seen" warning.
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up

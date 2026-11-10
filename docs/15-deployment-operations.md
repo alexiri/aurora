@@ -97,6 +97,9 @@ one new entry without activating it.
 | `relay.listen` / `relay.ops_port` | `0.0.0.0:4112` / `4193` | relay | (phase 4, P4-PRV-2) edge-facing HTTP / health and metrics |
 | `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two |
 | `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`; the relay then verifies against `relay.runner_ca_file`) |
+| `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled |
+| `terminal.awake_cap_secs` | 14400 | api | (phase 4, P4-TERM) `TERMINAL_AWAKE_CAP`, at most `hosted.background_cap_secs` |
+| `terminal.wake_window_secs` / `terminal.wake_wait_secs` | 60 / 45 | api | (phase 4, P4-TERM) the wake-demand window on open / how long the WebSocket upgrade may wait for a waking sandbox |
 | `previews.shares_per_agent`, `previews.shares_per_org` | 10, 200 | api | (phase 4, P4-PRV-1) lower only (`02 §Limits`) |
 | `previews.awake_cap_secs` | 14400 | api | (phase 4, P4-PRV-1) `PREVIEW_AWAKE_CAP`, at most `hosted.background_cap_secs` |
 | `database.max_connections` | 20 (api), 10 (gateway) | api, gateway | pool size |
@@ -306,7 +309,10 @@ override changes nothing else (same package list, same labels, same tag scheme
   also routes **`/scim/v2/*`** → API :4101 (Helm: the Ingress and HTTPRoute templates add the
   path only when `scim.enabled` is true, so a default deployment exposes nothing new, and the
   edge-routes guard checks both renderings); SCIM requests are small and need no body or
-  buffering exception.
+  buffering exception. (phase 4, P4-TERM, D-161) The terminal needs **no** edge change: its
+  WebSocket is `/v1/agents/{agent}/terminal` on the ordinary origin (the proxy must allow
+  WebSocket upgrades for `/v1/*`, which it already does for SSE keepalives; no timeout change
+  beyond `TERMINAL_IDLE_TIMEOUT`'s client-side pings).
 - (phase 4, P4-PRV-2) With `previews.enabled` the edge also serves the **wildcard host**
   `*.<previews.domain>` → relay :4112 (a second host, never a path of `server.external_url`;
   `§Port previews`). Without it nothing about the edge changes.

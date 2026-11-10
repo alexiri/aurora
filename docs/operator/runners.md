@@ -210,6 +210,16 @@ Automatic retries stop after 3 consecutive failures; a new message retries once 
 backoff has passed. `hosted.sandbox_ready_timeout_secs` also bounds a slow image pull —
 raise it (max 1800) if pulls legitimately take minutes.
 
+**Retry without deleting the agent** (FIX-029, D-160, C-610): the dashboard's
+**Retry now** (chat error block or Computer tab) calls
+`POST /v1/agents/{agent}/sandbox/retry`, which resets the failure bound and
+starts through the ordinary start arm — the operator fix (NetworkPolicy patch,
+quota raise, image push) followed by one click, no delete-and-recreate. The
+Computer tab's **Start log** (C-612) shows the boot's phases, the failure
+verdict and any retry note; the agent's start-failure history (C-613, admin:
+C-614) lists past failures with the runner named, from the same
+`sandbox_start_failures` rows the command below reads.
+
 ## Sizing
 
 From docs/15: runner hosts need `max_sandboxes × sandbox memory + 1 GiB`. A held-awake

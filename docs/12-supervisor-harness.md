@@ -480,6 +480,27 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   is marked `parked` with the boot, and keeps the sandbox awake only through the ordinary
   background rule; the `preview` keep-awake reason comes from stream activity alone.
 
+### Terminal (phase 4, P4-TERM, D-161; wire in `16 §W19`)
+
+- On `pty.open { pty_id, window, cols, rows }` from its channel — which only the runner sends,
+  and only for an API-redeemed terminal grant of the current boot — the supervisor spawns the
+  image's shell (`/bin/sh`, or `$SHELL` if set) under a pseudo-terminal as the agent user
+  (uid/gid as the process manager uses), cwd `/workspace`, own process group, and answers
+  `pty.opened`. The environment is the container environment **minus every `AURORA_*`
+  variable** and minus the boot document: no platform credential, no token, no supervisor
+  handle ever appears in a terminal's environment (SEC-01/SEC-34 posture) — the shell has
+  exactly the privilege a `process_start` command already has, in a PTY.
+- `pty.resize { cols, rows }` applies `TIOCSWINSZ`; bytes are relayed with the W18 credit
+  machinery (`16 §W19`, tag `0x02`), never logged, never counted beyond byte totals, never
+  visible to the harness, the gateway or the loopback proxies. A terminal session is **not**
+  a process row (it is not background work), never a turn, never a transcript event and never
+  stamps `last_engaged_at`; the keep-awake reason `terminal` comes from session byte activity
+  alone (`11 §Web terminal`).
+- Limits: at most `TERMINALS_PER_SANDBOX` (2) concurrently, more → `pty.refused { limit }`;
+  idle and lifetime enforcement as the runner instructs (`pty.close` reasons `idle`,
+  `lifetime`). Everything closes on `shutdown`, channel loss, a stop, a restart or a freeze
+  (the runner closes leg 1 with 4503/4403); nothing is resumed.
+
 ## Outbound files
 
 `send_file` (supervisor-local tool, S-11): the supervisor resolves the path

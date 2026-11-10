@@ -1133,5 +1133,11 @@ success`. Attempts refused by authorization (`outcome = denied`) are written
 best-effort (there is no transaction to join). Rows for the gateway's own writes
 (`approval.expire`, `approval.abandon`) stay best-effort system rows. Everything
 not listed — draft policy edits, agent and brief edits, memory and skill writes,
-schedules, webhooks, conversation reads, `conversation.owner_view` — is
+schedules, webhooks, conversation reads, `conversation.owner_view`,
+`agent.sandbox_retry` (FIX-029: retrying a failed sandbox start, metadata: the
+previous `failure_code`; the start failure itself is not an audited action, the
+`sandbox_start_failures` row is its record), `agent.terminal.open` (P4-TERM:
+opening a web-terminal session, metadata: agent and workspace; the terminal's
+bytes are never recorded anywhere, the `terminal_stream_grants` row is its
+record) — is
 best-effort.

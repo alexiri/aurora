@@ -270,8 +270,28 @@ failure ends the queued turns with a human, sanitised reason, shows on the
 Computer tab (`C-584`) and is recorded for Admin › Runners (C-586). Every
 attempt stamps `start_attempt_at` / `start_phase` / `start_detail` /
 `start_progress_at` as the runner reports progress; a new boot resets them.
+Each attempt also appends to the **start log** (`start_log`, C-612): a bounded
+ring of the boot's phase reports, its failure verdict and any retry note —
+the live trail of a starting sandbox and the frozen record of a failed one,
+rendered on the Computer tab.
 Automatic retries stop after 3 failures (`start_failures`); a message sent
 after the last failure retries once the backoff has passed.
+
+**Retry after a failure** (FIX-029, D-160, C-610): `POST
+/v1/agents/{agent}/sandbox/retry` (same authority as restart, `can_use`), only
+from `failed` (409 `sandbox_not_failed` otherwise or while a lifecycle lease is
+live; 423 `frozen`). It clears the failure fields, **resets `start_failures`
+to 0** — the bound stops failure storms, not recovery after an operator fix —
+claims the ordinary lifecycle lease, notes the retry in the start log (audited
+`agent.sandbox_retry`) and notifies due work: the next start is the ordinary
+due-work start arm with a fresh `boot_id`, bounded by the same readiness
+deadline; a failed retry is a start failure like any other (new failure row,
+C-587). The dashboard offers **Retry now** in the chat error block and on the
+Computer tab (`C-615`); after a retry in chat the failed message's text is
+re-posted as a new message. An agent's past start failures are visible to its
+users (`GET /v1/agents/{agent}/start-failures`, C-613) and to admins with the
+runner named (`GET /v1/admin/agents/{agent}/start-failures`, C-614) — both read
+`sandbox_start_failures`, no new table.
 
 ### Keep-awake (single definition)
 
@@ -282,7 +302,10 @@ A running sandbox is **kept awake** if any of:
 watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
 - (phase 4) a lease-current SSH session;
 - (phase 4, P4-PRV-1, D-145) a **preview in use**: `preview_active_until > now()` and fewer than
-  `PREVIEW_AWAKE_CAP` (4 h) since the first preview heartbeat of this boot (`§Port previews`).
+  `PREVIEW_AWAKE_CAP` (4 h) since the first preview heartbeat of this boot (`§Port previews`);
+- (phase 4, P4-TERM, D-161) a **terminal session in use**: `terminal_active_until > now()` and
+  fewer than `TERMINAL_AWAKE_CAP` (4 h) since the first session byte of this boot
+  (`§Web terminal`).
 
 (phase 4, RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
 the agent was refused, its turn ends, and the pending decision lives in Postgres. The
@@ -468,6 +491,44 @@ capability `previews`; the API places no preview on it (`unavailable`).
 `org.previews.update`. Not audited per request (volume): access is visible as metrics and
 `preview_shares.last_accessed_at`; a person's first access per preview session writes the
 best-effort row `preview.session.create` (`04 §Preview access`).
+
+## Web terminal (phase 4, P4-TERM, D-161, SEC-87)
+
+An interactive shell into the sandbox from the dashboard (**Terminal** tab, `14`), rendered
+with wterm and its Ghostty core and transported over the preview-stream machinery with a
+**PTY target** instead of a TCP port (`16 §W19` on `16 §W18`'s listener, grant pattern and
+credit flow control). Off unless the operator sets `terminal.enabled` (like previews, an
+interactive path into sandboxes is a deliberate deployment choice); every surface answers
+404 `terminal_disabled` while off. No relay and no previews domain: the browser upgrades a
+same-origin WebSocket on the API (`GET /v1/agents/{agent}/terminal`, session cookie only,
+`can_use` of the agent's workspace — the same authority as operating the agent; BYO agents
+422 `terminal_not_supported`), and the API mints and redeems the single-use `auy_` grant at
+the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox itself gains
+**no** new network path.
+
+- **Wake and keep-awake.** Opening a terminal on a parked sandbox is a wake demand (the
+  preview start-arm path, `TERMINAL_WAKE_WINDOW` 60 s, `TERMINAL_WAKES_PER_AGENT_HOUR` 12,
+  never for a frozen agent). While a session carries bytes (grace `TERMINAL_AWAKE_GRACE`
+  120 s after the last byte) the sandbox is kept awake with the reason **`terminal`**, capped
+  at `TERMINAL_AWAKE_CAP` (4 h per boot, refreshed from the first session byte); past the cap
+  it parks like any idle sandbox and the next open wakes it. A terminal is never a turn, a
+  conversation event or a `last_engaged_at` stamp.
+- **Supervisor side** (`12 §Terminal`): the runner's `pty.open` (only for an API-redeemed
+  grant of the current boot) makes the supervisor spawn the image shell in a PTY as the agent
+  user, cwd `/workspace`, container environment minus every `AURORA_*` variable and the boot
+  document — the shell has exactly the privilege a `process_start` command already has, in a
+  terminal. `pty.resize` applies `TIOCSWINSZ`; a W6 reconnect or a stop closes every PTY.
+- **Lifecycle**: frozen agent → sessions closed within `TERMINAL_AUTH_CACHE` 15 s and no new
+  open (423); restart/park → sessions closed (4503/`channel_lost`), the tab shows "Waking…"
+  and reopens on ready; harness change or runner move → sessions closed; agent deleted →
+  destroyed with the sandbox. Bytes are never logged, stored or request-log-rowed (byte
+  totals in metrics only); the best-effort audit row `agent.terminal.open` records the open
+  (agent, workspace), never content (`04 §Audit`).
+- **Listener and capabilities**: the runner opens :4108 when previews **or** the terminal is
+  enabled and registers the matching capabilities (`previews`, `terminal`); the NetworkPolicy
+  admits :4108 from the relay pods **and** the api pods (only those), `15 §Port previews`.
+  An older runner without the `kind` extension refuses terminal grants (the API answers 4502
+  — the tab shows "the runner does not support terminals").
 
 ## Reconcile and orphan reaping
 

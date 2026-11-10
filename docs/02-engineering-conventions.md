@@ -203,6 +203,7 @@ overridden by the named configuration key (`15`).
 | `BYO_REFUSAL_LOG_INTERVAL` | (phase 2, RFE-025) one log line and one request-log row per credential per minute for gateway BYO refusals | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
 | `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
+| `SANDBOX_START_LOG_MAX` | (phase 4, FIX-029, C-612) 30 entries and 8 KiB per boot's start log ring (`sandboxes.start_log`; oldest dropped, detail ≤ 300 chars) | — | 11 |
 | `BATCH_HEADER_MAX` | 128 chars | — | 06 |
 | `CONNECTION_CHOICE_MAX` | 20 entries | — | 06 |
 | `REFRESH_MARGIN` | 60 s | — | 08 |
@@ -315,6 +316,11 @@ overridden by the named configuration key (`15`).
 | `PREVIEW_STREAMS_PER_SHARE` / `_PER_SANDBOX` / `_PER_USER` | (phase 4, P4-PRV-2) 32 / 64 / 64 concurrent streams (the per-user value is per relay replica) | `relay.max_streams_per_user` (lower only) | 16 |
 | `PREVIEW_STREAM_WINDOW` / `PREVIEW_CHUNK` | (phase 4, P4-PRV-2) 128 KiB credit window per direction per stream / 16 KiB data chunk | — | 16 |
 | `PREVIEW_IDLE_TIMEOUT` / `PREVIEW_WS_IDLE_TIMEOUT` / `PREVIEW_STREAM_LIFETIME` | (phase 4, P4-PRV-2) 120 s plain HTTP stream / 600 s upgraded stream / 4 h | — | 16 |
+| `TERMINAL_GRANT_TTL` / `TERMINAL_CHUNK` / `TERMINAL_STREAM_WINDOW` | (phase 4, P4-TERM) 30 s single-use `auy_` grant / 16 KiB PTY data chunk / 128 KiB credit window per direction per PTY | — | 16 |
+| `TERMINALS_PER_SANDBOX` / `_PER_AGENT` / `_PER_USER` | (phase 4, P4-TERM) 2 / 4 / 2 concurrent terminal sessions (per user per API replica) | — | 16 |
+| `TERMINAL_IDLE_TIMEOUT` / `TERMINAL_MAX_LIFETIME` | (phase 4, P4-TERM) 600 s idle (WebSocket pings count) / 4 h per session | — | 16 |
+| `TERMINAL_AWAKE_GRACE` / `TERMINAL_AWAKE_CAP` | (phase 4, P4-TERM) 120 s after the last session byte / 4 h per boot of terminal-held wakefulness | `terminal.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
+| `TERMINAL_AUTH_CACHE` / `TERMINAL_WAKE_WINDOW` / `TERMINAL_WAKES_PER_AGENT_HOUR` | (phase 4, P4-TERM) 15 s revocation cache (freeze/disable closes sessions) / 60 s wake demand window / 12 wakes per agent per hour | — | 11 |
 | `PREVIEW_CONNECT_TIMEOUT` / `PREVIEW_HEADER_TIMEOUT` | (phase 4, P4-PRV-2) 10 s to open a stream (supervisor connect 5 s) / 60 s for upstream response headers | — | 16 |
 | `PREVIEW_REQUEST_BODY_MAX` | (phase 4, P4-PRV-2) 100 MiB | `relay.request_body_max_bytes` (lower only) | 15, 16 |
 | `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day (429 `preview_quota`) | `previews.bytes_per_share_day` | 16 |

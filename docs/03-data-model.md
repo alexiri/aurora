@@ -1026,6 +1026,28 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | failure_code | text null; failure_message text null | |
 | resource_profile | jsonb null | effective profile of current boot |
 | start_failures | int not null default 0 | consecutive failed starts (backoff); reset on running; spec fix S-10 |
+| start_attempt_at | timestamptz null | when the current (or last) start attempt was claimed; the attempt's clock origin; reset by every new boot (phase 4, FIX-025) |
+| start_phase | text null | the last phase the runner reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`, `creating`, `booting`, `ready`) (phase 4, FIX-025) |
+| start_detail | text null | the phase's detail as the runner reported it (sanitised) (phase 4, FIX-025) |
+| start_events | jsonb not null default `'[]'` | the pod's Warning events (bounded, newest first) (phase 4, FIX-025) |
+| start_progress_at | timestamptz null | when the runner last reported progress (phase 4, FIX-025) |
+| running_at | timestamptz null | when the runner reported `running` for the current boot (phase 4, FIX-025) |
+
+### `sandbox_start_failures` (per-runner start failures for Admin › Runners; phase 4, FIX-025, D-158, C-587)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| runner_id | uuid null FK→runners (cascade) | null only for a legacy row (the runner is recorded on every write) |
+| sandbox_id | uuid not null FK→sandboxes (cascade) | |
+| agent_id | uuid not null | denormalized for the admin list |
+| boot_id | uuid null | the attempt's boot |
+| code | text not null | machine reason (C-581) |
+| message | text not null | sanitised human reason |
+| phase | text null | the phase the attempt failed in |
+| events | jsonb not null default `'[]'` | the pod's Warning events |
+| elapsed_secs | int null | seconds the attempt ran before it failed |
+| created_at | timestamptz not null default now() | rows older than 30 days are pruned on insert |
+| index | (runner_id, created_at desc); (created_at) | the admin list (`C-586`); pruning |
 
 ### `runtime_intervals` — *no FKs*
 | Column | Type | Notes |
@@ -1564,8 +1586,23 @@ the agent's own generation; a share change bumps `agents.home_sync_generation`.
 | start_events | jsonb not null default `'[]'` | the pod's Warning events (bounded, newest first) | 4 (FIX-025) |
 | start_progress_at | timestamptz null | when the runner last reported progress | 4 (FIX-025) |
 | running_at | timestamptz null | when the runner reported `running` for the current boot | 4 (FIX-025) |
+| start_log | jsonb not null default `'[]'` | (phase 4, FIX-029, D-160, C-612) the boot's start log: a ring of ≤ 30 entries `{ts, kind: "phase"\|"note", phase?, detail?}` (≤ 300 chars per detail, sanitised, 8 KiB total, oldest dropped), reset by every new boot | 4 (FIX-029) |
 
-Reset by every new boot. A start failure also writes a `sandbox_start_failures` row (below).
+Reset by every new boot. A start failure also writes a `sandbox_start_failures` row (below). A retry of a failed start (C-610) clears the failure fields and resets `start_failures`; it never bypasses the ordinary start arm.
+
+#### `terminal_stream_grants` (new table; single-use web-terminal grants, phase 4, P4-TERM, D-161, C-618)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-TERM) |
+| agent_id | uuid not null | the terminal's agent | 4 (P4-TERM) |
+| sandbox_id | uuid not null | the bound sandbox | 4 (P4-TERM) |
+| boot_id | uuid not null | the bound boot (stale boot → redemption refused) | 4 (P4-TERM) |
+| granted_by | uuid not null | the user whose session opened the tab | 4 (P4-TERM) |
+| grant_hash | text not null unique | SHA-256 of the `auy_` grant (the value is never stored) | 4 (P4-TERM) |
+| expires_at | timestamptz not null | `now() + TERMINAL_GRANT_TTL` (30 s) | 4 (P4-TERM) |
+| consumed_at | timestamptz null | set by the single-use compare-and-set at redemption | 4 (P4-TERM) |
+| created_at | timestamptz not null default now() | rows older than 24 h pruned on insert | 4 (P4-TERM) |
+| indexes | `(grant_hash)`, `(expires_at)` | redemption, pruning | 4 (P4-TERM) |
 
 #### `sandbox_start_failures` (new table; per-runner start failures for Admin › Runners; phase 4, FIX-025, D-158, C-587)
 | Planned column | Type | Notes | Phase |
