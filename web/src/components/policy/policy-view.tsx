@@ -225,7 +225,13 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
         }
       >
         {rules.length === 0 ? (
-          <EmptyState title="No rules yet">Requests fall through to the default rule.</EmptyState>
+          <EmptyState
+            title="No rules yet"
+            when="Add one when a request keeps being blocked, or when you want a say before something risky. Until then requests follow the default rule."
+            ask={canEdit ? undefined : "Ask a workspace owner to add one."}
+          >
+            A rule says what agents may do on the internet: allow it, block it or ask you first.
+          </EmptyState>
         ) : (
           <ol className="space-y-3">
             {rules.map((r, i) => (

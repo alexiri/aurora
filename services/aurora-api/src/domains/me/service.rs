@@ -27,6 +27,7 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
                     slug: w.slug.clone(),
                     name: w.name.clone(),
                     my_role: parse_ws_role(&w.role),
+                    personal: w.personal,
                 })
                 .collect();
             MeMembership {

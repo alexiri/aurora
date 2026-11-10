@@ -53,6 +53,7 @@ mod message_idempotency;
 mod model_readiness;
 mod oidc;
 mod oidc_roles;
+mod onboarding;
 mod peer_tasks;
 mod peers_rig;
 mod permission_matrix;

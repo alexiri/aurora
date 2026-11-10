@@ -175,7 +175,16 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
   useConnectedListener(refresh);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
-  if (list.data.items.length === 0) return <EmptyState title="No connections yet">Connect an app from the Apps tab.</EmptyState>;
+  if (list.data.items.length === 0)
+    return (
+      <EmptyState
+        title="No connections yet"
+        when="You need one when an agent should use that app. Connect it from the Apps tab."
+        ask={canOwn ? undefined : "Ask a workspace owner to connect it."}
+      >
+        A connection links your account in an app, such as GitHub, so an agent can act there.
+      </EmptyState>
+    );
   return (
     <ul className="space-y-2" aria-label="Connections">
       {list.data.items.map((c) => (

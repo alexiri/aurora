@@ -163,6 +163,12 @@ a {
   color: inherit;
 }
 
+/* The navigation link a tour stop points at (P4-ONB-2). */
+[data-tour-active="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

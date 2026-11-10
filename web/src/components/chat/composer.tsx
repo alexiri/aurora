@@ -45,7 +45,8 @@ export function Composer({
   autoFocus?: boolean;
 }) {
   const qc = useQueryClient();
-  const [text, setText] = useState("");
+  // `?draft=` fills the box (the getting-started guide suggests a first message); it is never sent for the person.
+  const [text, setText] = useState(() => (autoFocus && typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("draft") ?? "").slice(0, 500) : ""));
   const [followups, setFollowups] = useState<Followup[]>([]);
   const [sendErr, setSendErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);

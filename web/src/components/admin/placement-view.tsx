@@ -42,12 +42,12 @@ const MODE_HELP: Record<PlacementMode, string> = {
 };
 
 /** Admin › Sign-up & placement (P4-ONB-1, D-140): where new users land. */
-export function PlacementView() {
+export function PlacementView({ embedded = false, onSaved }: { embedded?: boolean; onSaved?: () => void } = {}) {
   const q = usePlacement();
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   // Re-key on the saved revision so the form always starts from what the server holds.
-  return <PlacementForm key={q.data.updated_at ?? "unsaved"} saved={q.data} />;
+  return <PlacementForm key={q.data.updated_at ?? "unsaved"} saved={q.data} embedded={embedded} onSaved={onSaved} />;
 }
 
 function useDebounced<T>(value: T, ms = 250): T {
@@ -59,7 +59,7 @@ function useDebounced<T>(value: T, ms = 250): T {
   return v;
 }
 
-function PlacementForm({ saved }: { saved: Placement }) {
+function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedded: boolean; onSaved?: () => void }) {
   const save = useSavePlacement();
   const orgs = useAdminOrgs(false);
 
@@ -119,7 +119,12 @@ function PlacementForm({ saved }: { saved: Placement }) {
           })
         : [];
     }
-    save.mutate(body, { onSuccess: () => setDone(true) });
+    save.mutate(body, {
+      onSuccess: () => {
+        setDone(true);
+        onSaved?.();
+      },
+    });
   }
 
   const shownSecrets = choices.data?.secrets ?? [];
@@ -129,11 +134,13 @@ function PlacementForm({ saved }: { saved: Placement }) {
 
   return (
     <div className="max-w-[1160px] space-y-6">
-      <PageHeader
-        title="Sign-up & placement"
-        description="Where people land the first time they sign in, and what they get on day one."
-        className="mb-6"
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Sign-up & placement"
+          description="Where people land the first time they sign in, and what they get on day one."
+          className="mb-6"
+        />
+      )}
       {saved.warnings.includes("placement_unsaved") ? (
         <Notice tone="pending" role="status">
           Nothing is saved yet, so every new user still gets their own organization and owns it. Choose where people should

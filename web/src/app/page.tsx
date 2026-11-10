@@ -5,9 +5,11 @@ import { useEffect } from "react";
 
 import { CreateOrgForm } from "@/components/create-org-form";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
-import { useCreateOrg, useOrgs, useWorkspaces } from "@/lib/api/queries";
+import { useMeOnboarding } from "@/lib/api/onboarding";
+import { usePlacement } from "@/lib/api/placement";
+import { useCreateOrg, useOrgs, useSession, useWorkspaces } from "@/lib/api/queries";
 import { useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
-import { landingPath } from "@/lib/nav/landing";
+import { homeTarget, landingPath } from "@/lib/nav/landing";
 
 export default function Home() {
   useUnauthorizedRedirect();
@@ -17,14 +19,33 @@ export default function Home() {
   const workspaces = useWorkspaces(firstOrg?.id);
   const create = useCreateOrg();
 
-  const target = orgs.data
+  const session = useSession();
+  const isAdmin = session.data?.user.is_instance_admin === true;
+  const placement = usePlacement(isAdmin);
+  const onboarding = useMeOnboarding(session.isSuccess);
+
+  const landing = orgs.data
     ? workspaces.isPending && firstOrg
       ? null
       : landingPath(orgs.data.items, workspaces.data?.items)
     : null;
+  // Wait for what decides the destination (an admin's placement, the Welcome state) before moving.
+  const decided = !session.isPending && (!isAdmin || !placement.isPending) && (!session.isSuccess || !onboarding.isPending);
+  const target = decided
+    ? homeTarget({
+        landing,
+        me: session.data,
+        isInstanceAdmin: isAdmin,
+        placementSaved: placement.data?.saved,
+        welcomeSeen: onboarding.data?.welcome_seen,
+      })
+    : null;
 
   useEffect(() => {
-    if (target) router.replace(target);
+    if (!target) return;
+    // `?tour=1` (the account menu from a page without the navigation) rides along to the landing page.
+    const tour = new URLSearchParams(window.location.search).get("tour") === "1";
+    router.replace(tour && !target.includes("?") ? `${target}?tour=1` : target);
   }, [target, router]);
 
   let body;

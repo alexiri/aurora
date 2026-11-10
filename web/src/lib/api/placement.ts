@@ -13,10 +13,11 @@ export type PlacementChoices = components["schemas"]["PlacementChoices"];
 export type PlacementPreview = components["schemas"]["PlacementPreview"];
 
 /** The saved new-user placement (D-140; instance admins). */
-export function usePlacement() {
+export function usePlacement(enabled = true) {
   return useQuery({
     queryKey: ["admin", "placement"] as const,
     queryFn: () => unwrap(api.GET("/v1/admin/placement")),
+    enabled,
     retry: false,
   });
 }

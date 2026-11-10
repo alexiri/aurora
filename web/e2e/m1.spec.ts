@@ -47,10 +47,11 @@ test("sign-in (dev IdP) -> workspace -> invite -> accept", async ({ page, browse
   // default workspace).
   await signInAs(page, emailA);
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible({ timeout: 30_000 });
-  await expect(page).toHaveURL(/\/o\/[^/]+\/w\/[^/]+$/);
+  // (P4-ONB-2) A first sign-in lands on the workspace's Welcome page.
+  await expect(page).toHaveURL(/\/o\/[^/]+\/w\/[^/]+(\/welcome)?$/);
 
   // Create workspace "Research" from the org page.
-  const orgUrl = page.url().replace(/\/w\/[^/]+$/, "");
+  const orgUrl = page.url().replace(/\/w\/[^/]+(\/welcome)?$/, "");
   await page.goto(orgUrl);
   await openDialog(page, "New workspace");
   const wsDialog = page.getByRole("dialog");

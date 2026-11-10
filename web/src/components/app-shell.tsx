@@ -2,8 +2,8 @@
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
-import { useState, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
+import { useCallback, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
+import { Tour } from "./onboarding/tour";
+import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
 import { Avatar } from "./agent-avatar";
 import { AuroraLogo } from "./ui/aurora-logo";
@@ -61,6 +63,7 @@ function NavItem({
       <Link
         href={href}
         aria-current={active ? "page" : undefined}
+        data-tour={label.toLowerCase().replace(/\s+/g, "-")}
         className={cn(
           "flex min-h-9 items-center gap-2.5 rounded-control px-2.5 py-1.5 text-sm",
           active ? "bg-subtle font-semibold text-ink" : "text-ink-2 hover:bg-subtle hover:text-ink",
@@ -136,7 +139,14 @@ function ContextSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: strin
 
 function UserMenu() {
   const me = useMe();
+  const router = useRouter();
   const name = me.data?.user.display_name;
+  // The tour points at the workspace navigation: from a page without it (Account, Admin) go to the landing page first.
+  function onTour() {
+    const here = [...document.querySelectorAll("[data-tour='agents']")].some((el) => el.getClientRects().length > 0 || window.matchMedia("(max-width: 767px)").matches);
+    if (here) startTour();
+    else router.push("/?tour=1");
+  }
   async function onLogout() {
     try {
       await logout();
@@ -170,6 +180,7 @@ function UserMenu() {
             <Link href="/admin/users">Admin</Link>
           </MenuItem>
         ) : null}
+        <MenuItem onSelect={onTour}>Show me around</MenuItem>
         <MenuItem onSelect={() => void onLogout()}>Sign out</MenuItem>
       </MenuContent>
     </Menu>
@@ -282,6 +293,7 @@ function AccountNavList({ pathname }: { pathname: string }) {
 }
 
 const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
+  { href: "/admin/setup", label: "Setup", icon: CheckCircleIcon },
   { href: "/admin/users", label: "Users", icon: UsersIcon },
   { href: "/admin/orgs", label: "Organizations", icon: BuildingIcon },
   { href: "/admin/identity", label: "Identity", icon: ShieldIcon },
@@ -355,6 +367,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const params = useParams<{ org?: string; ws?: string }>();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
+  // The tour opens the drawer itself; then the drawer must not trap focus or close on outside clicks (the tour card is outside it).
+  const [tourNav, setTourNav] = useState(false);
+  const tourNavOpen = useCallback((open: boolean) => {
+    setNavOpen(open);
+    setTourNav(open);
+  }, []);
   const orgSlug = params.org;
   const wsSlug = params.ws;
   const wsId = useResolve(orgSlug, wsSlug).data?.workspace?.id;
@@ -374,7 +392,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link href="/" aria-label="Aurora home" className="rounded-md">
             <AuroraLogo className="h-8 w-auto" />
           </Link>
-          <DialogPrimitive.Root open={navOpen} onOpenChange={setNavOpen}>
+          <DialogPrimitive.Root open={navOpen} onOpenChange={setNavOpen} modal={!tourNav}>
             <DialogPrimitive.Trigger asChild>
               <button
                 type="button"
@@ -388,6 +406,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
               <DialogPrimitive.Content
                 className="fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-3rem))] border-r border-line bg-surface text-ink shadow-pop"
+                onInteractOutside={(e) => {
+                  if (tourNav) e.preventDefault();
+                }}
                 // Close the drawer after following a link.
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("a[href]")) setNavOpen(false);
@@ -414,6 +435,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <FrozenEntityBanner />
           {children}
         </main>
+        <Tour setNavOpen={tourNavOpen} />
       </div>
     </div>
   );

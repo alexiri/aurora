@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { ApprovalNotifications } from "@/components/account/approval-notifications";
@@ -13,6 +14,7 @@ import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { useUpdateMe } from "@/lib/api/account";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { usePatchOnboarding } from "@/lib/api/onboarding";
 import { useSession, type Me } from "@/lib/api/queries";
 
 function ProfileForm({ me }: { me: Me }) {
@@ -119,9 +121,53 @@ export function ProfileView() {
       >
         <ApprovalNotifications me={me.data} />
       </Section>
+      <Section id="getting-started" title="Getting started" description="Replay the introduction to Aurora." card>
+        <GettingStartedControls />
+      </Section>
       <Section id="appearance" title="Appearance" description="Stored in this browser only." card>
         <ThemeSwitch />
       </Section>
+    </div>
+  );
+}
+
+/** "Show the tour again" and "Show the getting-started guide again" (`14 §Account`, D-141). */
+function GettingStartedControls() {
+  const router = useRouter();
+  const patch = usePatchOnboarding();
+  const [note, setNote] = useState("");
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          disabled={patch.isPending}
+          onClick={() => {
+            patch.mutate({ tour_completed: false });
+            // The tour points at the workspace navigation: the landing page starts it.
+            router.push("/?tour=1");
+          }}
+        >
+          Show the tour again
+        </Button>
+        <Button
+          variant="outline"
+          disabled={patch.isPending}
+          onClick={() => patch.mutate({ guide_dismissed: [] }, { onSuccess: () => setNote("The getting-started guide is back on your Overview.") })}
+        >
+          Show the getting-started guide again
+        </Button>
+      </div>
+      {note ? (
+        <Notice tone="accent" role="status">
+          {note}
+        </Notice>
+      ) : null}
+      {patch.error ? (
+        <Notice tone="danger" role="alert">
+          {errorMessage(patch.error)}
+        </Notice>
+      ) : null}
     </div>
   );
 }

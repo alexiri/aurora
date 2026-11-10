@@ -40,6 +40,7 @@ pub mod members;
 pub mod memory;
 pub mod mention_anchors;
 pub mod oauth_clients;
+pub mod onboarding;
 pub mod orgs;
 pub mod peer_tasks;
 pub mod placement;

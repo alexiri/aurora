@@ -36,36 +36,32 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   await signInAs(page, email);
   const nav = page.getByRole("navigation", { name: "Workspace" });
   await expect(nav).toBeVisible({ timeout: 30_000 });
-  await expect(page).toHaveURL(/\/o\/[^/]+\/w\/[^/]+$/);
-  const base = new URL(page.url()).pathname;
+  // (P4-ONB-2, D-141) A first sign-in lands on the workspace's Welcome page with the getting-started guide.
+  await expect(page).toHaveURL(/\/o\/[^/]+\/w\/[^/]+\/welcome$/);
+  const base = new URL(page.url()).pathname.replace(/\/welcome$/, "");
 
-  // The checklist starts with the agent (created at first sign-in) done and the rest open.
-  const checklist = page.getByRole("region", { name: "Getting started" });
-  await expect(checklist.getByText("1 of 3 done")).toBeVisible();
+  // The guide ticks from real state: the agent (created at first sign-in) has no key yet, so nothing is done.
+  const guide = page.getByRole("region", { name: "Get Daneel talking" });
+  await expect(guide.getByText("0 of 3 done")).toBeVisible();
 
-  // 2. Credentials -> LLM keys -> add the key for the LiteLLM endpoint.
-  await nav.getByRole("link", { name: "Credentials" }).click();
-  await page.getByRole("tab", { name: "LLM keys" }).click();
-  const form = page.getByRole("form", { name: "New LLM key" });
+  // 2. Step 1 opens the LLM key form in place: add the key for the LiteLLM endpoint.
+  const form = guide.getByRole("form", { name: "New LLM key" });
   await form.getByLabel("Name").fill("Mock LLM");
   await form.getByLabel("Provider endpoint").selectOption({ label: "LiteLLM (VidaiMock, dev only) (litellm)" });
   await form.getByLabel("API key").fill(MOCK_KEY);
   await form.getByRole("button", { name: "Add LLM key" }).click();
-  await expect(page.getByText("Saved Mock LLM")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByRole("list", { name: "LLM keys" }).getByText("Mock LLM")).toBeVisible();
+  await expect(guide.getByText("Saved Mock LLM")).toBeVisible({ timeout: 60_000 });
 
-  // 3. Grant it to the default agent (Access tab).
-  await page.goto(`${base}/agents`);
-  await page.getByRole("link", { name: /Daneel/ }).first().click();
-  await page.getByRole("tab", { name: "Access" }).click();
-  // The checkbox is controlled by the grants query: it flips when the server has the grant, so click and assert.
-  await page.getByRole("checkbox", { name: "Grant Mock LLM" }).click();
-  await expect(page.getByRole("checkbox", { name: "Grant Mock LLM" })).toBeChecked();
-  await expect(page.getByRole("list", { name: "Effective credentials" }).getByText("Mock LLM")).toBeVisible();
+  // 3. Step 2 gives Daneel access, preselected: one click.
+  await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
+  await guide.getByRole("button", { name: "Give access" }).click();
+  await expect(guide.getByText(/Access given to 1 agent/)).toBeVisible();
+  // Key and access are done from the server's state (the mock endpoint has a default model: no model step).
+  await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
 
-  // 4. Chat: say hello, the reply is the mock's scripted answer.
-  await page.getByRole("tab", { name: "Chat" }).click();
-  await page.getByLabel("Message", { exact: true }).fill("hello");
+  // 4. Step "Say hello" opens Chat with a suggested message; send it, the reply is the mock's scripted answer.
+  await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(/Hello/);
   await page.getByRole("button", { name: "Send" }).click();
   // (A cold start boots a sandbox Pod and the claude-code CLI: allow minutes. A failed turn shows an alert,
   // which fails the test at once with the platform's message instead of waiting out the timeout.)
@@ -93,5 +89,6 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   }).toPass({ timeout: 60_000, intervals: [1_000] });
   await expect(row.getByText("allow", { exact: true })).toBeVisible();
   await nav.getByRole("link", { name: "Overview" }).click();
-  await expect(page.getByRole("region", { name: "Getting started" }).getByText("3 of 3 done")).toBeVisible();
+  // The guide on Overview is one line once the agent has answered.
+  await expect(page.getByText(/Getting started — 3\/3/)).toBeVisible({ timeout: 30_000 });
 });

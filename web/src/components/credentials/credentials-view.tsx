@@ -51,7 +51,23 @@ export function CredentialsView({
     if (secrets.isError) return <ErrorState error={secrets.error} onRetry={() => secrets.refetch()} />;
     const rows = items.filter((s) => s.kind === kind && s.status === "active");
     if (rows.length === 0)
-      return <EmptyState title={kind === "llm" ? "No LLM keys yet" : "No secrets yet"} />;
+      return kind === "llm" ? (
+        <EmptyState
+          title="No LLM keys yet"
+          when="You need one before an agent can answer. Add it with the form above, then give your agent access to it."
+          ask="Ask a workspace owner to add one."
+        >
+          An LLM key is the password to the AI service that does your agents&apos; thinking.
+        </EmptyState>
+      ) : (
+        <EmptyState
+          title="No secrets yet"
+          when="Add one when an agent should reach a service that needs a login. The agent never sees the value: the gateway adds it."
+          ask="Ask a workspace owner to add one."
+        >
+          A secret is a password or token an agent uses to call a service.
+        </EmptyState>
+      );
     return (
       <ul className="space-y-3" aria-label={kind === "llm" ? "LLM keys" : "Secrets"}>
         {rows.map((s) => (

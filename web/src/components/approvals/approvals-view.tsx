@@ -162,7 +162,11 @@ function PendingTab({ wsId }: { wsId: string }) {
           {batchError}
         </p>
       ) : null}
-      {groups.length === 0 ? <EmptyState title="No pending approvals" /> : null}
+      {groups.length === 0 ? (
+        <EmptyState title="No pending approvals" when="Look here when a number appears next to Approvals in the menu.">
+          Nothing is waiting for you. When an agent wants to do something risky, it asks here first.
+        </EmptyState>
+      ) : null}
       {groups.map((g) => (
         <section key={g.key} aria-label={g.label ?? undefined} className="space-y-2">
           {g.batchId && g.agentId ? (

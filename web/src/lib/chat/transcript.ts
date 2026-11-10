@@ -177,6 +177,8 @@ export interface ErrorCopy {
   extra?: ErrorLink;
   /** Show the server `message` (reason counts, never key names, C-501) under the copy. */
   showServerMessage?: boolean;
+  /** (P4-ONB-2) The getting-started guide step that fixes it; the block links to it on the Welcome page. */
+  guideStep?: "key" | "access" | "model";
 }
 
 const ERROR_COPY: Record<string, ErrorCopy> = {
@@ -185,11 +187,13 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
     link: { label: "Open LLM keys", path: "credentials", tab: "llm" },
     extra: { label: "Agent access", path: "access", ownerOnly: true },
     showServerMessage: true,
+    guideStep: "key",
   },
   no_default_model: {
     message: "This agent has an LLM key but no model is chosen.",
     link: { label: "Choose a model", path: "instructions" },
     showServerMessage: true,
+    guideStep: "model",
   },
   model_not_allowed: { message: "The selected model is not allowed. Choose another model." },
   hosted_disabled: { message: "Hosted agents are not enabled on this instance." },

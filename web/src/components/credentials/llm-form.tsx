@@ -20,7 +20,16 @@ import { GiveAccessStep } from "./give-access";
 import { OriginView } from "./origin-view";
 import { ValueInput } from "./value-input";
 
-export function LlmKeyForm({ scope, orgId }: { scope: SecretScope; orgId: string }) {
+export function LlmKeyForm({
+  scope,
+  orgId,
+  preselect,
+}: {
+  scope: SecretScope;
+  orgId: string;
+  /** Agents ticked in the "Give agents access" step that follows (the getting-started guide: the workspace's own agent). */
+  preselect?: string[];
+}) {
   const providers = useLlmProviders(orgId);
   const create = useCreateSecret(scope);
   const [name, setName] = useState("");
@@ -66,7 +75,7 @@ export function LlmKeyForm({ scope, orgId }: { scope: SecretScope; orgId: string
   if (saved)
     return (
       <GiveAccessStep
-        subject={{ target: { kind: "secret", id: saved.id }, scope, orgId }}
+        subject={{ target: { kind: "secret", id: saved.id }, scope, orgId, preselect }}
         savedLabel={saved.name}
         onDone={() => setSaved(null)}
       >

@@ -9,13 +9,12 @@ import { decisionTone } from "@/components/approvals/activity-view";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { GettingStarted } from "@/components/onboarding/getting-started";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
 import { countdown, useActivity, useApprovalsStream, useCanApprove, useNow, usePendingApprovals } from "@/lib/api/approvals";
-import { useAgents, useResolve } from "@/lib/api/queries";
-import { useSecrets } from "@/lib/api/secrets";
+import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
 function ago(iso: string, now: number): string {
@@ -32,50 +31,6 @@ function LiveIndicator({ wsId }: { wsId: string }) {
   return <StatusDot tone={live ? "accent" : "pending"}>{live ? "Live" : "Reconnecting…"}</StatusDot>;
 }
 
-/** Bar widths for 0..3 of 3 steps. */
-const PROGRESS_WIDTH = ["w-0", "w-1/3", "w-2/3", "w-full"];
-
-function Checklist({ steps }: { steps: { label: string; done: boolean }[] }) {
-  const done = steps.filter((s) => s.done).length;
-  return (
-    <Card>
-      <div className="mb-3 flex items-center justify-between gap-3 text-sm">
-        <span className="font-semibold text-ink">
-          {done} of {steps.length} done
-        </span>
-      </div>
-      <div
-        role="progressbar"
-        aria-label="Getting started progress"
-        aria-valuemin={0}
-        aria-valuemax={steps.length}
-        aria-valuenow={done}
-        className="mb-4 h-2 overflow-hidden rounded-full bg-subtle"
-      >
-        {/* No inline style (the CSP blocks it): widths come from a fixed class table. */}
-        <div className={cn("h-full rounded-full bg-accent", PROGRESS_WIDTH[Math.min(done, PROGRESS_WIDTH.length - 1)])} />
-      </div>
-      <ol className="space-y-3">
-        {steps.map((s, i) => (
-          <li key={s.label} className="flex items-center gap-3 text-sm">
-            <span
-              aria-hidden="true"
-              className={cn(
-                "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-                s.done ? "bg-accent text-on-accent" : "bg-subtle text-ink-2",
-              )}
-            >
-              {i + 1}
-            </span>
-            <span className={s.done ? "text-muted line-through" : "text-ink"}>{s.label}</span>
-            {s.done ? <span className="sr-only">(done)</span> : null}
-          </li>
-        ))}
-      </ol>
-    </Card>
-  );
-}
-
 export function OverviewView() {
   const { org, ws } = useParams<{ org: string; ws: string }>();
   const resolved = useResolve(org, ws);
@@ -86,15 +41,35 @@ export function OverviewView() {
   if (!workspace) {
     return <ErrorState error={{ code: "not_found" }} />;
   }
-  return <OverviewBody org={org} ws={ws} wsId={workspace.id} name={workspace.name} />;
+  return (
+    <OverviewBody
+      org={org}
+      ws={ws}
+      wsId={workspace.id}
+      orgId={resolved.data.org.id}
+      name={workspace.name}
+    />
+  );
 }
 
-function OverviewBody({ org, ws, wsId, name }: { org: string; ws: string; wsId: string; name: string }) {
+function OverviewBody({
+  org,
+  ws,
+  wsId,
+  orgId,
+  name,
+}: {
+  org: string;
+  ws: string;
+  wsId: string;
+  orgId: string;
+  name: string;
+}) {
   const agents = useAgents(wsId);
+  const workspace = useWorkspace(wsId);
   const canApprove = useCanApprove(wsId);
   const pending = usePendingApprovals(wsId, canApprove);
   const activity = useActivity(wsId, { agent: "", decision: "", host: "" });
-  const secrets = useSecrets({ kind: "workspace", id: wsId });
   const now = useNow(30_000);
   const clock = useNow(1000);
   const base = `/o/${org}/w/${ws}`;
@@ -102,11 +77,6 @@ function OverviewBody({ org, ws, wsId, name }: { org: string; ws: string; wsId: 
   const count = pending.data?.items.length ?? 0;
   const recent = (activity.data?.pages[0]?.items ?? []).slice(0, 6);
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
-  const steps = [
-    { label: "Create an agent", done: (agents.data?.items.length ?? 0) > 0 },
-    { label: "Store an LLM key", done: (secrets.data?.items.length ?? 0) > 0 },
-    { label: "Say hello in the agent's Chat", done: recent.length > 0 },
-  ];
 
   return (
     <div className="flex flex-col gap-8">
@@ -177,7 +147,11 @@ function OverviewBody({ org, ws, wsId, name }: { org: string; ws: string; wsId: 
 
       <div className="grid gap-8 lg:grid-cols-2">
         <Section id="first-run" title="Getting started">
-          <Checklist steps={steps} />
+          {workspace.data ? (
+            <GettingStarted org={org} ws={ws} wsId={wsId} orgId={orgId} isOwner={workspace.data.my_role === "owner"} variant="overview" />
+          ) : (
+            <Loading />
+          )}
         </Section>
         <Section id="activity" title="Recent activity" actions={canApprove ? <LiveIndicator wsId={wsId} /> : null}>
           {activity.isPending ? <Loading /> : null}
