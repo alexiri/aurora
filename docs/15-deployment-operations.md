@@ -35,8 +35,9 @@ single compile of the workspace (`images/services/Containerfile`, cargo-chef dep
 `aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor). (phase 4, P4-HAR) The
 sandbox image installs the pinned Claude Code and Codex runtimes by default; build with
 `SANDBOX_HARNESSES="claude-code"` for a slimmer image. The label `org.aurora.harnesses`
-tells the runner what is inside. Helm: `hosted.enabledHarnesses` (default
-`[claude-code]`) renders `hosted.enabled_harnesses`.
+tells the runner what is inside. Helm: `config.hosted.enabled_harnesses` (default
+`[claude-code]`); on Kubernetes, which cannot read the label, `config.runner.image_harnesses`
+names the runtimes of the sandbox image (D-153).
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are built for linux/amd64. arm64 images are deferred
@@ -135,7 +136,7 @@ one new entry without activating it.
 | `agents.default_brief` | (neutral text in `10`; phase 3, RFE-019: was the Daneel persona in phase 0–2) | api | brief given to the default agent of **new** workspaces; ≤20 000 chars; empty = the default; never changes existing agents |
 | `hosted.enabled` | `true` | api | hosted agents available |
 | `hosted.default_harness` | `claude-code` | api | must be in `hosted.enabled_harnesses` or startup fails |
-| `hosted.enabled_harnesses` | `["claude-code"]` | api | (phase 4, P4-HAR, D-122) harness ids agents may use (`claude-code`, `codex`; `fake` only with `hosted.allow_fake_harness`); an unknown id refuses startup. Enabling `codex` also needs a runner image that contains it (image label `org.aurora.harnesses`, `11 §Sandbox image`) and an LLM endpoint serving `openai_responses` or `openai_chat` (`08 §Phase 4 providers`) |
+| `hosted.enabled_harnesses` | `["claude-code"]` | api | (phase 4, P4-HAR, D-122) harness ids agents may use (`claude-code`, `codex`; `fake` only with `hosted.allow_fake_harness`); an unknown id refuses startup. Enabling `codex` also needs a runner image that contains it (image label `org.aurora.harnesses`, `11 §Sandbox image`) and an LLM endpoint serving `openai_responses` (the pinned Codex 0.167.0 does not speak `openai_chat`, D-153; `08 §Phase 4 providers`) |
 | `hosted.allow_fake_harness` | `false` | api | tests/dev |
 | `hosted.default_timezone` | `UTC` | api | for new workspaces |
 | `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs` | `02 §Limits` | api | |
@@ -166,6 +167,7 @@ one new entry without activating it.
 | `runner.api_url` | — | runner | e.g. `http://aurora-api:4101` |
 | `runner.backend` | — (required) | runner | `podman`, `kubernetes`, `fake` (config, never detection) |
 | `runner.image` | `aurora-sandbox:<version>` | runner | |
+| `runner.image_harnesses` | `[]` | runner | (phase 4, P4-HAR, D-153) harness runtimes the sandbox image contains, for the Kubernetes backend, which cannot read the image label `org.aurora.harnesses`; empty = `claude-code`, `fake`; podman reads the label and ignores it |
 | `runner.advertised_host` | — | runner | sandbox-facing host for the WS URL |
 | `runner.max_sandboxes`, `runner.held_awake_ceiling` | 4, derived | runner | |
 | `runner.sandbox_memory_mib`, `runner.sandbox_cpus`, `runner.sandbox_pids`, `runner.home_gib` | 2048, 1, 512, 10 | runner | defaults |

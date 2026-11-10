@@ -313,6 +313,13 @@
           "format": "uuid",
           "type": "string"
         },
+        "harness": {
+          "description": "(phase 4, P4-HAR, D-153) The harness that created the session: its adapter deletes the\nfiles. Absent = the sandbox's own harness (older API, and rows queued before a switch\nrecorded it).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "session_ref": {
           "type": "string"
         }

@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"01a1c3de-aaaa-7f41-b05b-23874ef90c18"}
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"unexpected status 403 Forbidden: {\"error\":{\"code\":\"llm_path_not_permitted\",\"message\":\"This path is not permitted for the LLM endpoint.\"}}, url: https://llm.example/v1/files"}}

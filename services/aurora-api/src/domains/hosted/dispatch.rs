@@ -59,8 +59,27 @@ pub async fn sweep_no_model_key(
             .harness
             .clone()
             .unwrap_or_else(|| s.config.hosted.default_harness.clone());
-        let sel = model::select(s, tx, agent, a.org_id, a.workspace_id, &harness).await?;
-        if let Some((code, message)) = sel.failure() {
+        // (P4-HAR, D-122) A harness no live runner replica offers fails the turn before any
+        // sandbox start. With no live replica at all the turn waits, as it always did.
+        let (any_live, offered) = aurora_db::repo::runners::harness_availability(
+            &mut *tx,
+            &harness,
+            aurora_core::limits::REPLICA_ONLINE_THRESHOLD.as_secs_f64(),
+        )
+        .await?;
+        let failure = if any_live && !offered {
+            Some((
+                "harness_unavailable",
+                format!(
+                    "No runner offers the `{harness}` harness. Enable the sandbox image or runner that contains it, or choose another harness for this agent."
+                ),
+            ))
+        } else {
+            model::select(s, tx, agent, a.org_id, a.workspace_id, &harness)
+                .await?
+                .failure()
+        };
+        if let Some((code, message)) = failure {
             convs::lock(tx, conversation).await?;
             if lifecycle::fail(tx, turn, conversation, code, &message)
                 .await?
@@ -138,6 +157,7 @@ async fn arm4b_purges(
             WorkItemBody::SessionPurge(aurora_protocol::runner::SessionPurge {
                 conversation_id,
                 session_ref: p.session_ref,
+                harness: p.harness,
             }),
         ));
     }

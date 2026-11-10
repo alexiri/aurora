@@ -71,13 +71,42 @@ FROM base AS sandbox
 # API starts boots with `browser` only when it is declared (docs/11 §The boot document). A custom
 # image without Chromium omits it.
 LABEL org.aurora.capabilities="browser"
+# (phase 4, P4-HAR, D-122) Harness runtimes in this image, a comma list of `claude-code` and
+# `codex`; `--build-arg SANDBOX_HARNESSES=claude-code` omits Codex (a slimmer image). The label
+# `org.aurora.harnesses` tells the runner what is inside (`fake` needs no runtime); an image
+# without the label is read as `claude-code,fake`.
+ARG SANDBOX_HARNESSES="claude-code,codex"
+LABEL org.aurora.harnesses="${SANDBOX_HARNESSES},fake"
 # Pinned Claude Code CLI; must match PINNED_VERSION in
 # services/aurora-supervisor/src/adapters/claude_code/mod.rs.
 ARG CLAUDE_CODE_VERSION=2.1.319
-RUN mkdir -p /opt/aurora/harness/claude-code \
- && npm install --prefix /opt/aurora/harness/claude-code --no-audit --no-fund \
-      @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
- && /opt/aurora/harness/claude-code/node_modules/.bin/claude --version
+RUN case ",${SANDBOX_HARNESSES}," in *,claude-code,*) \
+      mkdir -p /opt/aurora/harness/claude-code \
+   && npm install --prefix /opt/aurora/harness/claude-code --no-audit --no-fund \
+        @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+   && /opt/aurora/harness/claude-code/node_modules/.bin/claude --version ;; esac
+# Pinned OpenAI Codex CLI (release rust-v${CODEX_VERSION}, the static musl build); must match
+# PINNED_VERSION in services/aurora-supervisor/src/adapters/codex/mod.rs. The archive is verified
+# against the checksum below before it is unpacked; a mismatch fails the build.
+ARG CODEX_VERSION=0.167.0
+ARG CODEX_SHA256_X86_64=9d64836106d5b374e90ee4454c7ebcde7ca7106558bd7e41a34b9f26ebda251a
+ARG CODEX_SHA256_AARCH64=843489acb4d4b1079745c36b03c5963b887b83155af208fd53584e33ee8eb281
+RUN case ",${SANDBOX_HARNESSES}," in *,codex,*) \
+      arch="$(uname -m)"; \
+      case "$arch" in \
+        x86_64) sha="${CODEX_SHA256_X86_64}" ;; \
+        aarch64) sha="${CODEX_SHA256_AARCH64}" ;; \
+        *) echo "no pinned Codex build for $arch" >&2; exit 1 ;; \
+      esac; \
+      name="codex-${arch}-unknown-linux-musl"; \
+      mkdir -p /opt/aurora/harness/codex /tmp/codex-dl \
+   && curl -fsSL --retry 3 -o "/tmp/codex-dl/${name}.tar.gz" \
+        "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/${name}.tar.gz" \
+   && echo "${sha}  /tmp/codex-dl/${name}.tar.gz" | sha256sum -c - \
+   && tar -xzf "/tmp/codex-dl/${name}.tar.gz" -C /tmp/codex-dl \
+   && install -m 0755 "/tmp/codex-dl/${name}" /opt/aurora/harness/codex/codex \
+   && rm -rf /tmp/codex-dl \
+   && test "$(/opt/aurora/harness/codex/codex --version)" = "codex-cli ${CODEX_VERSION}" ;; esac
 COPY --from=supervisor-builder /out/aurora-supervisor /usr/local/bin/aurora-supervisor
 USER 1000:1000
 WORKDIR /workspace

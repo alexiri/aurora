@@ -29,6 +29,18 @@ export function usePatchAgent(wsId: string | undefined, agentId: string) {
   });
 }
 
+export type HarnessList = components["schemas"]["HarnessList"];
+
+/** (phase 4, P4-HAR, C-420) The harnesses agents may use and whether a runner offers each. */
+export function useHarnesses(enabled = true) {
+  return useQuery({
+    queryKey: ["harnesses"] as const,
+    queryFn: () => unwrap(api.GET("/v1/harnesses")),
+    enabled,
+    retry: false,
+  });
+}
+
 export type PutByoRequest = components["schemas"]["PutByoRequest"];
 
 /** (phase 2, RFE-025) The agent's own source list and require-context flag (`can_own`). */

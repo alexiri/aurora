@@ -222,6 +222,8 @@ aurora-runner = "{bridge}"
 [hosted]
 enabled = true
 allow_fake_harness = true
+# P4-HAR: Codex is opt-in; only an image whose label lists it (the full image) offers it.
+enabled_harnesses = ["claude-code", "codex"]
 idle_stop_secs = {idle}
 
 [auth]

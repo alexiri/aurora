@@ -104,17 +104,44 @@ pub struct Supervisor {
     procs: Arc<ProcessManager>,
     inbox: Inbox,
     /// (RFE-010) Session purges received in the home sync, executed before any turn is accepted.
-    pending_purges: Vec<(Uuid, String)>,
+    pending_purges: Vec<(Uuid, String, Option<String>)>,
+    /// (P4-HAR, D-153) Adapter of another harness, for the purge of a session it created.
+    purge_lookup: PurgeLookup,
     /// (P2-DBL-2) The loopback PostgreSQL relay, running while the home sync carries databases.
     db_relay: Option<ProxyHandle>,
     /// The relay's credential: boot token, turn context credential during exactly one turn.
     db_turns: Arc<crate::pgrelay::DbTurns>,
 }
 
+/// Resolves a harness id to its adapter (the compile-time registry, `crate::adapters`).
+pub type PurgeLookup = Arc<
+    dyn Fn(&str) -> Result<Arc<dyn HarnessAdapter>, crate::harness::HarnessError> + Send + Sync,
+>;
+
 /// Home projection state: staged sync, plus the memory harvest bookkeeping.
 struct HomeCtl {
     projector: HomeProjector,
     harvester: Harvester,
+}
+
+/// The frame a supervisor sends **instead of `ready`** when it cannot run the harness the boot
+/// document names (unknown id, runtime missing from the image): the runner forwards it as the
+/// sandbox's `failed` status with `reason_code` (`harness_unsupported`), and the queued turns of
+/// the agent fail with that reason (`12 §Harness selection`, SEC-66). No fallback harness exists.
+pub fn boot_refusal(reason_code: &str, message: &str) -> SupervisorToRunner {
+    SupervisorToRunner::SandboxStatus(aurora_protocol::runner::SandboxStatus {
+        state: aurora_protocol::runner::SandboxState::Failed,
+        container_ref: None,
+        reason_code: Some(code(reason_code)),
+        message: Some(
+            message
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(500)
+                .collect(),
+        ),
+        observed: None,
+    })
 }
 
 /// Maps a terminal harness error code to a turn error code (`12 §Provider refusal classification`).
@@ -185,7 +212,15 @@ impl Supervisor {
             turns: HashMap::new(),
             ready: false,
             pending_purges: Vec::new(),
+            purge_lookup: Arc::new(crate::adapters::adapter_for),
         }
+    }
+
+    /// Replaces how another harness's adapter is found for a purge (tests).
+    #[must_use]
+    pub fn purge_lookup(mut self, f: PurgeLookup) -> Self {
+        self.purge_lookup = f;
+        self
     }
 
     /// Starts the loopback database relay when the installed home carries databases and stops it
@@ -322,7 +357,8 @@ impl Supervisor {
                 }
             }
             RunnerToSupervisor::SessionPurge(p) => {
-                self.purge(p.conversation_id, p.session_ref).await;
+                self.purge(p.conversation_id, p.session_ref, p.harness)
+                    .await;
             }
             RunnerToSupervisor::HomeSync(h) => self.home_sync(h).await,
             RunnerToSupervisor::MemoryWriteResult(r) => {
@@ -369,13 +405,25 @@ impl Supervisor {
 
     /// (RFE-010) Abort and release any live session of the conversation, delete the stored
     /// session files and report `session.purged`. A failure keeps the purge pending upstream.
-    async fn purge(&mut self, conversation_id: Uuid, session_ref: String) {
-        let live: Vec<Uuid> = self
-            .turns
-            .iter()
-            .filter(|(_, t)| t.conversation_id == conversation_id)
-            .map(|(id, _)| *id)
-            .collect();
+    ///
+    /// (P4-HAR, D-153) `harness` is the harness that created the session: after a switch its
+    /// adapter (looked up in the compile-time registry) deletes the files, not this sandbox's own.
+    /// An adapter whose runtime is gone fails the purge, which stays pending.
+    async fn purge(&mut self, conversation_id: Uuid, session_ref: String, harness: Option<String>) {
+        let foreign = harness.as_deref().filter(|h| *h != self.adapter.id());
+        let adapter: Result<Arc<dyn HarnessAdapter>, crate::harness::HarnessError> = match foreign {
+            Some(h) => (self.purge_lookup)(h),
+            None => Ok(self.adapter.clone()),
+        };
+        let live: Vec<Uuid> = if foreign.is_some() {
+            Vec::new() // live sessions belong to this sandbox's own harness
+        } else {
+            self.turns
+                .iter()
+                .filter(|(_, t)| t.conversation_id == conversation_id)
+                .map(|(id, _)| *id)
+                .collect()
+        };
         for id in live {
             if let Some(t) = self.turns.get(&id) {
                 t.aborted.store(true, Ordering::SeqCst);
@@ -385,16 +433,17 @@ impl Supervisor {
             // The turn task ends on its terminal event; the session is dropped below regardless.
             self.finish_turn(id);
         }
-        if let Some(e) = self.sessions.remove(&conversation_id)
+        if foreign.is_none()
+            && let Some(e) = self.sessions.remove(&conversation_id)
             && let Ok(m) = Arc::try_unwrap(e.session)
         {
             let _ = m.into_inner().release().await;
         }
-        let ok = match self
-            .adapter
-            .purge_session(&self.cfg.working_dir, &session_ref)
-            .await
-        {
+        let done = match adapter {
+            Ok(a) => a.purge_session(&self.cfg.working_dir, &session_ref).await,
+            Err(e) => Err(e),
+        };
+        let ok = match done {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!(%conversation_id, code = %e.code, "session purge failed");
@@ -402,7 +451,7 @@ impl Supervisor {
             }
         };
         self.pending_purges
-            .retain(|(c, r)| !(*c == conversation_id && *r == session_ref && ok));
+            .retain(|(c, r, _)| !(*c == conversation_id && *r == session_ref && ok));
         self.send(SupervisorToRunner::SessionPurged(SessionPurged {
             conversation_id,
             session_ref,
@@ -412,8 +461,8 @@ impl Supervisor {
     }
 
     async fn run_pending_purges(&mut self) {
-        for (c, r) in std::mem::take(&mut self.pending_purges) {
-            self.purge(c, r).await;
+        for (c, r, h) in std::mem::take(&mut self.pending_purges) {
+            self.purge(c, r, h).await;
         }
     }
 
@@ -429,13 +478,14 @@ impl Supervisor {
                         .and_then(|v| v.as_str())
                         .and_then(|v| v.parse::<Uuid>().ok());
                     let r = p.get("session_ref").and_then(|v| v.as_str());
+                    let harness = p.get("harness").and_then(|v| v.as_str()).map(str::to_owned);
                     if let (Some(c), Some(r)) = (c, r)
                         && !self
                             .pending_purges
                             .iter()
-                            .any(|(pc, pr)| *pc == c && pr == r)
+                            .any(|(pc, pr, _)| *pc == c && pr == r)
                     {
-                        self.pending_purges.push((c, r.to_owned()));
+                        self.pending_purges.push((c, r.to_owned(), harness));
                     }
                 }
             }

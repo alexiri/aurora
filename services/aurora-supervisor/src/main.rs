@@ -6,14 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use aurora_supervisor::adapters::claude_code::ClaudeCodeAdapter;
+use aurora_supervisor::adapters;
 use aurora_supervisor::boot::{self, BootDocument};
 use aurora_supervisor::channel::{self, ChannelConfig};
-use aurora_supervisor::fake::FakeHarness;
 use aurora_supervisor::harness::HarnessAdapter;
 use aurora_supervisor::logging;
 use aurora_supervisor::proxy::{Credential, GatewayUpstream, ProxyMode, spawn_proxy};
-use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
+use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig, boot_refusal};
 use clap::{Parser, Subcommand};
 
 const MACHINE_PROXY_PORT: u16 = 3128;
@@ -78,10 +77,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!(path = %p.display(), "boot file kept (exists without sentinel)");
     }
 
-    let adapter: Arc<dyn HarnessAdapter> = match doc.harness.id.as_str() {
-        "fake" => Arc::new(FakeHarness),
-        "claude-code" => Arc::new(ClaudeCodeAdapter::default()),
-        other => return Err(format!("harness `{other}` is not available in this build").into()),
+    // (P4-HAR, D-122, SEC-66) The harness is the boot document's, from the compile-time
+    // registry. An unknown id or a runtime missing from the image refuses the boot before
+    // `ready` (reason `harness_unsupported`): there is no fallback to another harness.
+    let adapter: Arc<dyn HarnessAdapter> = match adapters::adapter_for(&doc.harness.id) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!(harness = %doc.harness.id, code = %e.code, error = %e.message, "boot refused");
+            let chan = channel::spawn(ChannelConfig::new(
+                &doc.runner_url,
+                doc.bootstrap_token.clone(),
+            ));
+            let _ = chan.sender.send(boot_refusal(&e.code, &e.message)).await;
+            // Dropping the sender lets the channel task flush and close.
+            drop(chan.sender);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), chan.task).await;
+            return Err(format!("{}: {}", e.code, e.message).into());
+        }
     };
 
     let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);

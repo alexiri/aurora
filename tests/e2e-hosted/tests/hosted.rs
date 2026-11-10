@@ -1018,6 +1018,164 @@ async fn s8d_chromium_wrapper_on_the_full_image_fetches_through_the_open_proxy()
     st.finish().await;
 }
 
+/// (P4-HAR, D-122, SEC-01, SEC-66) A Codex agent answers through the gateway LLM lane against the
+/// mock Responses upstream: a turn, a shell tool call, a resumed second turn; the seeded model key
+/// reaches only the upstream (injected by the gateway), and is found nowhere in the sandbox:
+/// environment, files, rendered `config.toml`, no `auth.json`, transcripts.
+///
+/// Needs the full image (it carries the pinned Codex CLI): run
+/// `AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh` (otherwise SKIPPED).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s12_codex_agent_answers_through_the_gateway_and_the_sandbox_holds_no_credential() {
+    if !enabled() {
+        return;
+    }
+    let Ok(image) = std::env::var("AURORA_E2EH_FULL_IMAGE_TAG") else {
+        eprintln!(
+            "SKIPPED: AURORA_E2EH_FULL_IMAGE_TAG is not set; run AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh"
+        );
+        return;
+    };
+    const SEED: &str = "sk-e2e-codex-SEEDED-7c1d9a40";
+    let up = aurora_testkit::responses::MockResponses::start().await;
+    let toml = format!(
+        r#"
+[llm]
+enabled_providers = ["litellm"]
+provider_preference = ["litellm"]
+
+[[llm.endpoints]]
+id = "codex-mock"
+provider = "litellm"
+display_name = "Mock Responses upstream"
+base_url = "{}"
+dialects = ["openai_responses"]
+default_model = "say"
+"#,
+        up.base()
+    );
+    Stack::wipe();
+    let st = Stack::start_with(
+        Opts {
+            image: Some(image),
+            ..Opts::default()
+        },
+        &toml,
+    )
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    sqlx::query(
+        "UPDATE agents SET harness = 'codex', model_provider = 'litellm', \
+         model_endpoint_id = 'codex-mock', model_id = 'say' WHERE id = $1::uuid",
+    )
+    .bind(&api.daneel)
+    .execute(st.pool())
+    .await
+    .unwrap();
+    let (s, v) = api
+        .post(
+            &format!("/v1/workspaces/{}/secrets", api.ws),
+            json!({"name": "codex-mock-key", "kind": "llm",
+                   "llm": {"endpoint_id": "codex-mock", "auth_mode": "api_key"},
+                   "value": SEED}),
+        )
+        .await;
+    assert_eq!(s, 201, "llm key: {v}\n{}", st.log_tails());
+    api.grant(&api.daneel, v["id"].as_str().unwrap()).await;
+
+    // Turn 1: a plain answer.
+    let conv = api.direct().await;
+    run_turn(&st, &api, &conv, "Reply with exactly the word: pong").await;
+    let t1 = transcript_text(&api.events(&conv).await);
+    assert!(
+        t1.contains("pong"),
+        "answer missing: {t1}\n{}",
+        st.log_tails()
+    );
+
+    // The agent's harness is what the API stamped; the sandbox booted Codex and nothing else.
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+    assert_eq!(boot_doc(c)["harness"]["id"], "codex");
+    let (_, home) = exec_in(
+        c,
+        "ls -a /workspace/.codex 2>&1; echo; cat /workspace/.codex/config.toml 2>&1",
+    );
+    assert!(home.contains("config.toml"), "{home}");
+    assert!(!home.contains("auth.json"), "no auth file: {home}");
+    assert!(home.contains("approval_policy = \"never\""), "{home}");
+    assert!(
+        home.contains("aurora-gateway") || home.contains("127.0.0.1") || home.contains("base_url"),
+        "{home}"
+    );
+
+    // Turn 2: a shell tool call; the sandbox runs `echo hi`.
+    sqlx::query("UPDATE agents SET model_id = 'tool' WHERE id = $1::uuid")
+        .bind(&api.daneel)
+        .execute(st.pool())
+        .await
+        .unwrap();
+    run_turn(
+        &st,
+        &api,
+        &conv,
+        "Run `echo hi` with your shell tool, then say done.",
+    )
+    .await;
+    let t2 = transcript_text(&api.events(&conv).await);
+    assert!(
+        t2.contains("shell") && t2.contains("done"),
+        "tool turn: {t2}\n{}",
+        st.log_tails()
+    );
+
+    // The second turn resumed the same Codex thread: the upstream saw the first answer again.
+    let seen = up.requests();
+    assert!(
+        seen.iter()
+            .skip(1)
+            .any(|r| r.body.to_string().contains("pong")),
+        "the resumed turn did not carry the earlier conversation: {} requests",
+        seen.len()
+    );
+
+    // SEC-01 / SEC-66: only the gateway held the key. The upstream received it; nothing else did.
+    assert!(!seen.is_empty());
+    for r in &seen {
+        assert_eq!(
+            r.authorization.as_deref(),
+            Some(format!("Bearer {SEED}").as_str()),
+            "the gateway did not inject the key: {r:?}"
+        );
+    }
+    let (_, env) = podman_rc(&["inspect", "--format", "{{json .Config.Env}}", c]);
+    assert!(
+        !env.contains(SEED),
+        "key leaked into the container environment"
+    );
+    let (_, found) = exec_in(
+        c,
+        &format!(
+            "grep -rIl --exclude-dir=proc --exclude-dir=sys -e '{SEED}' /workspace /run /tmp /etc 2>/dev/null; \
+                  tr '\\0' '\\n' < /proc/1/environ | grep -c '{SEED}'; \
+                  for p in /proc/[0-9]*; do tr '\\0' '\\n' < $p/environ 2>/dev/null; done | grep -c '{SEED}'"
+        ),
+    );
+    assert!(
+        found
+            .lines()
+            .all(|l| l.trim() == "0" || l.trim().is_empty()),
+        "the key is present in the sandbox: {found}"
+    );
+    assert!(!t1.contains(SEED) && !t2.contains(SEED));
+    for r in &seen {
+        // The model never sees a credential either.
+        assert!(!r.body.to_string().contains(SEED));
+    }
+    st.finish().await;
+}
+
 /// Poll until `check` holds or `secs` pass.
 async fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
     let end = std::time::Instant::now() + Duration::from_secs(secs);

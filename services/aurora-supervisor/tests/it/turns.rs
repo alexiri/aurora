@@ -125,6 +125,13 @@ impl Conn {
 }
 
 async fn start(gateway: aurora_supervisor::proxy::GatewayUpstream) -> (Runner, Conn) {
+    start_with(gateway, None).await
+}
+
+async fn start_with(
+    gateway: aurora_supervisor::proxy::GatewayUpstream,
+    lookup: Option<aurora_supervisor::supervisor::PurgeLookup>,
+) -> (Runner, Conn) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/v1/supervisor", listener.local_addr().unwrap());
     let mut cfg = ChannelConfig::new(url, SecretString::new("aup_test"));
@@ -135,7 +142,10 @@ async fn start(gateway: aurora_supervisor::proxy::GatewayUpstream) -> (Runner, C
     sc.progress_interval = Duration::from_millis(100);
     let dir = crate::common::TempDir::new().keep();
     sc.working_dir = dir.clone();
-    let sup = Supervisor::new(sc, chan.sender, Arc::new(FakeHarness));
+    let mut sup = Supervisor::new(sc, chan.sender, Arc::new(FakeHarness));
+    if let Some(l) = lookup {
+        sup = sup.purge_lookup(l);
+    }
     tokio::spawn(sup.run(chan.inbound));
     tokio::spawn(async move {
         let _ = chan.task.await;
@@ -405,6 +415,87 @@ async fn session_purge_deletes_the_stored_session_and_reports() {
     )
     .await;
     assert_eq!(c.next_of("session.purged").await["ok"], true);
+}
+
+/// (P4-HAR, D-153) After a harness switch the purge names the harness that created the session:
+/// that harness's adapter deletes the files (here a codex adapter on a temporary `CODEX_HOME`),
+/// the sandbox's own harness (fake) keeps its sessions, and a harness this build cannot run
+/// fails the purge so it stays pending.
+#[tokio::test]
+async fn purge_of_another_harness_runs_that_harness_adapter_and_never_the_current_one() {
+    use aurora_supervisor::adapters::codex::CodexAdapter;
+    let (gw, _) = stub_gateway().await;
+    let home = crate::common::TempDir::new().keep();
+    let codex_home = home.join(".codex");
+    let day = codex_home.join("sessions/2026/11/10");
+    std::fs::create_dir_all(&day).unwrap();
+    let rollout = day.join("rollout-2026-11-10T06-10-38-thread-7.jsonl");
+    std::fs::write(&rollout, b"old codex session").unwrap();
+    let lookup: aurora_supervisor::supervisor::PurgeLookup = {
+        let home = codex_home.clone();
+        Arc::new(move |id: &str| match id {
+            "codex" => Ok(Arc::new(CodexAdapter::default().codex_home(home.clone()))
+                as Arc<dyn aurora_supervisor::harness::HarnessAdapter>),
+            other => Err(aurora_supervisor::harness::HarnessError::new(
+                "harness_unsupported",
+                format!("no `{other}` here"),
+            )),
+        })
+    };
+    let (r, mut c) = start_with(gw, Some(lookup)).await;
+    c.home_sync().await;
+    // The sandbox's own (fake) session survives a purge addressed to codex.
+    let own = "fake-keep";
+    std::fs::create_dir_all(r.dir.join(".fake-sessions")).unwrap();
+    std::fs::write(marker(&r.dir, own), b"keep").unwrap();
+
+    c.send(
+        "session.purge",
+        json!({"conversation_id": CONV, "session_ref": "thread-7", "harness": "codex"}),
+    )
+    .await;
+    let done = c.next_of("session.purged").await;
+    assert_eq!(done["ok"], true, "{done}");
+    assert!(!rollout.exists(), "the codex adapter deleted the rollout");
+    assert!(marker(&r.dir, own).exists());
+
+    // A harness the build cannot run: the purge fails (and stays pending upstream).
+    c.send(
+        "session.purge",
+        json!({"conversation_id": CONV, "session_ref": own, "harness": "gemini"}),
+    )
+    .await;
+    assert_eq!(c.next_of("session.purged").await["ok"], false);
+    assert!(
+        marker(&r.dir, own).exists(),
+        "never fell back to another adapter"
+    );
+
+    // No harness named, or the sandbox's own: the current adapter deletes it.
+    c.send(
+        "session.purge",
+        json!({"conversation_id": CONV, "session_ref": own, "harness": "fake"}),
+    )
+    .await;
+    assert_eq!(c.next_of("session.purged").await["ok"], true);
+    assert!(!marker(&r.dir, own).exists());
+}
+
+/// (P4-HAR, SEC-66) A boot the supervisor cannot honour is reported as the sandbox's failure,
+/// with a bounded, single-line message; an unknown id or a missing runtime is the registry's
+/// `harness_unsupported`, never another harness.
+#[test]
+fn boot_refusal_is_a_failed_sandbox_status_with_the_reason_code() {
+    let f = aurora_supervisor::supervisor::boot_refusal("harness_unsupported", "no\ncodex");
+    let v = serde_json::to_value(&f).unwrap();
+    assert_eq!(v["kind"], "sandbox.status");
+    assert_eq!(v["body"]["state"], "failed");
+    assert_eq!(v["body"]["reason_code"], "harness_unsupported");
+    assert_eq!(v["body"]["message"], "nocodex");
+    for id in ["gemini", "", "claude_code"] {
+        let e = aurora_supervisor::adapters::adapter_for(id).err().unwrap();
+        assert_eq!(e.code, "harness_unsupported", "{id}");
+    }
 }
 
 #[tokio::test]

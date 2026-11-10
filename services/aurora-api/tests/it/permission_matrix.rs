@@ -295,6 +295,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/resolve", G::Auth, false),
     r("GET", "/v1/secret-stores", G::Auth, false),
     r("GET", "/v1/llm/providers", G::Auth, false),
+    r("GET", "/v1/harnesses", G::Auth, false),
     r("GET", "/v1/apps", G::Auth, false),
     r("GET", "/v1/apps/{app}", G::Auth, false),
     r("GET", "/v1/apps/{app}/guide", G::Auth, false),

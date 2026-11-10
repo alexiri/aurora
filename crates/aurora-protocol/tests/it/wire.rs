@@ -286,6 +286,10 @@ fn supervisor_handshake_and_frames() -> R {
         ),
         ("turn.result", json!({"turn_id": U1, "status": "done"})),
         ("ports.state", json!({"ports": [80]})),
+        (
+            "sandbox.status",
+            json!({"state": "failed", "reason_code": "harness_unsupported", "message": "no codex"}),
+        ),
     ];
     for (i, (kind, body)) in s2r.into_iter().enumerate() {
         let f: Frame<SupervisorToRunner> =

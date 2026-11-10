@@ -37,6 +37,7 @@ mod freeze;
 mod governance;
 mod grants_bulk;
 mod grants_connections;
+mod harness_selection;
 mod home_checksum;
 mod home_render_inputs;
 mod hosted;

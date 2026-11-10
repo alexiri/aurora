@@ -172,6 +172,25 @@
       ],
       "type": "object"
     },
+    "Observed": {
+      "properties": {
+        "cpu_millis": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_mib": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_millis",
+        "memory_mib"
+      ],
+      "type": "object"
+    },
     "PortsState": {
       "properties": {
         "ports": {
@@ -248,6 +267,53 @@
     "ProcessStatus": {
       "maxLength": 64,
       "type": "string"
+    },
+    "SandboxState": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SandboxStatus": {
+      "properties": {
+        "container_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Observed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundedString64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/SandboxState"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
     },
     "SendNowOutcome": {
       "maxLength": 64,
@@ -602,6 +668,20 @@
         },
         "kind": {
           "const": "session.purged"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/SandboxStatus"
+        },
+        "kind": {
+          "const": "sandbox.status"
         }
       },
       "required": [

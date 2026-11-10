@@ -71,7 +71,8 @@ open_vocab! {
     pub enum HomeDurability { Resident = "resident", Snapshot = "snapshot" }
 }
 open_vocab! {
-    pub enum HarnessId { ClaudeCode = "claude-code", Fake = "fake" }
+    // (phase 4, P4-HAR, D-122) `codex` is the pinned OpenAI Codex CLI.
+    pub enum HarnessId { ClaudeCode = "claude-code", Codex = "codex", Fake = "fake" }
 }
 open_vocab! {
     pub enum DesiredState { Running = "running", Stopped = "stopped", Deleted = "deleted" }
@@ -374,6 +375,11 @@ pub struct SessionRelease {
 pub struct SessionPurge {
     pub conversation_id: Uuid,
     pub session_ref: String,
+    /// (phase 4, P4-HAR, D-153) The harness that created the session: its adapter deletes the
+    /// files. Absent = the sandbox's own harness (older API, and rows queued before a switch
+    /// recorded it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
 }
 
 /// (phase 2, RFE-010) Outcome of a [`SessionPurge`]; `ok = false` keeps the purge pending.

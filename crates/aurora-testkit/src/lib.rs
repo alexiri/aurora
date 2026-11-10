@@ -18,6 +18,7 @@ use tokio::sync::OnceCell;
 
 pub mod oauth;
 pub mod oidc;
+pub mod responses;
 
 pub use wiremock;
 

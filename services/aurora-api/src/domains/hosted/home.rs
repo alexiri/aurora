@@ -15,8 +15,14 @@ use sqlx::PgConnection;
 const PACK_MAX: usize = limits::HOME_SYNC_PART_MAX - 2048;
 
 /// Home-relative skills dir declared by the harness adapters (`12 §Harness interface`).
-pub fn skills_dir(_harness_id: Option<&str>) -> &'static str {
-    ".claude/skills"
+pub fn skills_dir(harness_id: Option<&str>) -> &'static str {
+    match harness_id {
+        // (P4-HAR) Codex reads skills from `$CODEX_HOME/skills/**` (`CODEX_HOME` = `~/.codex`);
+        // a subdirectory of its own keeps the read-only projection away from the `.system`
+        // skills Codex seeds next to it.
+        Some("codex") => ".codex/skills/aurora",
+        _ => ".claude/skills",
+    }
 }
 
 fn clamp(s: &str, max: usize) -> String {
@@ -218,8 +224,13 @@ async fn render_inputs(
         .await?
         .into_iter()
         .filter_map(|p| {
-            p.conversation_id
-                .map(|c| json!({"conversation_id": c, "session_ref": p.session_ref}))
+            p.conversation_id.map(|c| {
+                let mut v = json!({"conversation_id": c, "session_ref": p.session_ref});
+                if let (Some(h), Some(o)) = (&p.harness, v.as_object_mut()) {
+                    o.insert("harness".into(), json!(h));
+                }
+                v
+            })
         })
         .collect();
     Ok(json!({

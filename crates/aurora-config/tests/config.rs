@@ -52,6 +52,71 @@ fn toml_only_and_api_validates() {
     assert_eq!(api.keyring.active, "main");
 }
 
+// P4-HAR (D-122): `hosted.enabled_harnesses` defaults to `["claude-code"]` (nothing changes until an
+// operator opts in); an unknown id, an empty list, a default that is not enabled and an ungated
+// `fake` refuse startup.
+#[test]
+fn hosted_enabled_harnesses_defaults_and_validation() {
+    let ok = |extra: &str| {
+        load_with(&format!("{BASE}{extra}"), &[])
+            .unwrap()
+            .api_config()
+    };
+    let api = ok("").unwrap();
+    assert_eq!(api.hosted.enabled_harnesses, ["claude-code"]);
+    assert_eq!(api.hosted.default_harness, "claude-code");
+    let api = ok(
+        "[hosted]\nenabled_harnesses = [\"claude-code\", \"codex\"]\ndefault_harness = \"codex\"\n",
+    )
+    .unwrap();
+    assert_eq!(api.hosted.enabled_harnesses, ["claude-code", "codex"]);
+    for (bad, why) in [
+        ("[hosted]\nenabled_harnesses = [\"gemini\"]\n", "unknown id"),
+        ("[hosted]\nenabled_harnesses = []\n", "empty"),
+        (
+            "[hosted]\nenabled_harnesses = [\"fake\"]\n",
+            "fake without allow_fake_harness",
+        ),
+        (
+            "[hosted]\ndefault_harness = \"codex\"\n",
+            "default not enabled",
+        ),
+    ] {
+        let e = ok(bad).unwrap_err();
+        assert!(
+            e.has_key("hosted.enabled_harnesses") || e.has_key("hosted.default_harness"),
+            "{why}: {e:?}"
+        );
+    }
+    // `fake` is fine when explicitly allowed.
+    assert!(
+        ok(
+            "[hosted]\nallow_fake_harness = true\nenabled_harnesses = [\"claude-code\", \"fake\"]\n"
+        )
+        .is_ok()
+    );
+    // The Kubernetes runner names the runtimes of its image (it cannot read the label).
+    let raw = load_with(
+        &format!("{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\nimage_harnesses = [\"claude-code\", \"codex\"]\n"),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        raw.runner_config().unwrap().runner.image_harnesses,
+        ["claude-code", "codex"]
+    );
+    let raw = load_with(
+        &format!("{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\nimage_harnesses = [\"gemini\"]\n"),
+        &[],
+    )
+    .unwrap();
+    assert!(
+        raw.runner_config()
+            .unwrap_err()
+            .has_key("runner.image_harnesses")
+    );
+}
+
 // P2-CAT-0 (C-210): the built-in catalogue directory defaults to the image path, can be moved
 // and may not be empty.
 #[test]

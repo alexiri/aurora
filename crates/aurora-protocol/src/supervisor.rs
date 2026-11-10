@@ -15,9 +15,10 @@ use crate::common::{
     Empty, SecretString, Validate, ValidationError, check_chars, check_max, json_len,
 };
 use crate::runner::{
-    Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, ProcessStates, SendNowResult,
-    SessionPurge, SessionPurged, SessionRelease, SessionReport, SteerResult, SupervisorReady,
-    TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult, WatchFired,
+    Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, ProcessStates, SandboxStatus,
+    SendNowResult, SessionPurge, SessionPurged, SessionRelease, SessionReport, SteerResult,
+    SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult,
+    WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
@@ -199,6 +200,9 @@ tagged_open! {
         SendNowResult(SendNowResult) = "send_now.result",
         Session(SessionReport) = "session",
         SessionPurged(SessionPurged) = "session.purged",
+        // (phase 4, P4-HAR, D-153) boot refusal before `ready`: `{ state: "failed", reason_code:
+        // "harness_unsupported", message }`; the runner forwards it as the sandbox's status.
+        SandboxStatus(SandboxStatus) = "sandbox.status",
         ProcessState(ProcessStates) = "process.state",
         WatchFired(WatchFired) = "watch.fired",
         GateResult(GateResult) = "gate.result",
@@ -319,6 +323,9 @@ impl Validate for SupervisorToRunner {
     fn validate(&self) -> Result<(), ValidationError> {
         match self {
             Self::ProcessState(v) => v.validate(),
+            Self::SandboxStatus(v) => v.message.as_deref().map_or(Ok(()), |m| {
+                check_chars("message", m, crate::runner::MAX_MESSAGE_CHARS)
+            }),
             Self::ToolCall(v) => v.validate(),
             Self::MemoryWrite(v) => v.validate(),
             Self::FilePart(v) => v.validate(),

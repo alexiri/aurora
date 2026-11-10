@@ -3,6 +3,25 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+/// (phase 4, P4-HAR, C-420) One harness an agent may use.
+#[derive(Serialize, ToSchema)]
+pub struct HarnessView {
+    /// `claude-code` | `codex` (| `fake` when enabled).
+    pub id: String,
+    pub display_name: String,
+    /// Declared dialects, in preference order.
+    pub dialects: Vec<String>,
+    /// At least one live runner replica lists the harness (its image contains the runtime).
+    pub available: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct HarnessList {
+    pub items: Vec<HarnessView>,
+    /// The harness a new hosted agent gets (`hosted.default_harness`).
+    pub default: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct SandboxProcess {
     pub id: String,

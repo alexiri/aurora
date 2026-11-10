@@ -3,11 +3,12 @@
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions, FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
-import { usePatchAgent } from "@/lib/api/agents";
+import { useHarnesses, usePatchAgent } from "@/lib/api/agents";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
 import type { Agent } from "@/lib/api/queries";
@@ -28,17 +29,24 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   const [saved, setSaved] = useState(false);
   const fe = patch.error ? fieldErrors(patch.error) : {};
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setSaved(false);
-    const n = name.trim();
-    if (!n || n.length > 80) return setClientErr("Name must be 1 to 80 characters.");
-    setClientErr("");
+  // (phase 4, P4-HAR) The picker exists only for hosted agents and only when more than one
+  // harness is enabled; the server stays authoritative (422 not enabled, 409 turn running).
+  const harnesses = useHarnesses(agent.kind === "hosted");
+  const options = harnesses.data?.items ?? [];
+  const showPicker = agent.kind === "hosted" && options.length > 1;
+  const currentHarness = agent.harness ?? harnesses.data?.default ?? "";
+  const [harness, setHarness] = useState(agent.harness ?? "");
+  const chosenHarness = harness || currentHarness;
+  const harnessChanged = showPicker && chosenHarness !== currentHarness;
+  const [confirmSwitch, setConfirmSwitch] = useState(false);
+
+  async function save(n: string) {
     try {
       await patch.mutateAsync({
         name: n,
         brief,
         proactive_messaging: proactive,
+        ...(harnessChanged ? { harness: chosenHarness } : {}),
         ...(effort ? { effort } : {}),
         ...(model ? { model_endpoint_id: model.split("\u0000")[0], model_id: model.split("\u0000")[1] } : {}),
       });
@@ -46,6 +54,16 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
     } catch {
       // surfaced via patch.error
     }
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setSaved(false);
+    const n = name.trim();
+    if (!n || n.length > 80) return setClientErr("Name must be 1 to 80 characters.");
+    setClientErr("");
+    if (harnessChanged) return setConfirmSwitch(true);
+    await save(n);
   }
 
   return (
@@ -64,8 +82,24 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
       <Field id="a-brief" label="Brief" error={fe.brief}>
         <textarea id="a-brief" className={inputClass} rows={5} value={brief} onChange={(e) => setBrief(e.target.value)} />
       </Field>
-      <Field id="a-harness" label="Harness">
-        <input id="a-harness" className={inputClass} value={agent.harness ?? ""} readOnly disabled />
+      <Field
+        id="a-harness"
+        label="Harness"
+        error={fe.harness}
+        hint={showPicker ? "Changing it starts fresh sessions for every conversation of this agent." : undefined}
+      >
+        {showPicker ? (
+          <select id="a-harness" className={inputClass} value={chosenHarness} onChange={(e) => setHarness(e.target.value)}>
+            {options.map((h) => (
+              <option key={h.id} value={h.id} disabled={!h.available && h.id !== currentHarness}>
+                {h.display_name}
+                {h.available ? "" : " (no runner offers this)"}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input id="a-harness" className={inputClass} value={agent.harness ?? ""} readOnly disabled />
+        )}
       </Field>
       <Field id="a-model" label="Model" hint={modelHint(agent.kind, models.data?.items.length, models.isError)}>
         <select
@@ -120,6 +154,18 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         ) : null}
       </FormActions>
       </Form>
+      <ConfirmDialog
+        open={confirmSwitch}
+        onOpenChange={setConfirmSwitch}
+        title="Change the harness?"
+        description="Starts fresh sessions for every conversation of this agent; the transcript is kept."
+        confirmLabel="Change harness"
+        busy={patch.isPending}
+        onConfirm={() => {
+          setConfirmSwitch(false);
+          void save(name.trim());
+        }}
+      />
     </div>
   );
 }

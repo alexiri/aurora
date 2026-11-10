@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a1c3de-9f13-7f41-b05b-23874ef90c18"}
+{"type":"turn.started"}
+{"type":"error","message":"Reconnecting... 1/5 (We’re currently experiencing high demand, which may cause temporary errors.)"}
+{"type":"error","message":"We’re currently experiencing high demand, which may cause temporary errors."}
+{"type":"turn.failed","error":{"message":"We’re currently experiencing high demand, which may cause temporary errors."}}

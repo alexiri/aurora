@@ -200,7 +200,7 @@ does not enable a second harness.
   | Harness | Declared dialects | Notes |
   |---------|-------------------|-------|
   | `claude-code` | `anthropic_messages`, `anthropic_bedrock`, `anthropic_vertex` | `08 §Phase 4 providers` |
-  | `codex` | `openai_responses`, `openai_chat` | `openai_chat` only while the pinned version supports the chat wire API; a version that drops it removes it here |
+  | `codex` | `openai_responses` | `openai_chat` only while the pinned version supports the chat wire API; a version that drops it removes it here. The pinned 0.167.0 refuses `wire_api = "chat"`, so it is not declared (D-153) |
   | `fake` | none (needs no model key) | tests |
 
 - **Dialect choice.** For an agent, a usable key's endpoint serves the harness when the

@@ -75,6 +75,52 @@ fn apply_all(p: &mut HomeProjector, parts: &[HomeSync]) -> PartOutcome {
     last
 }
 
+/// (P4-HAR) The projection follows the adapter's declared `instruction_files` and `skills_dir`:
+/// a Codex sandbox gets `AGENTS.md` and skills under `.codex/skills/aurora`, no `CLAUDE.md`, and
+/// only that subdirectory is made read-only (Codex seeds its own `.system` skills next to it).
+#[test]
+fn codex_projection_renders_agents_md_and_its_own_skills_dir_only() {
+    use aurora_supervisor::adapters::codex::CodexAdapter;
+    use aurora_supervisor::harness::HarnessAdapter;
+    let caps = CodexAdapter::default().capabilities();
+    let d = TempDir::new();
+    let mut p = HomeProjector::new(HomeConfig {
+        root: d.path().to_path_buf(),
+        skills_dir: caps.skills_dir.clone(),
+        instruction_files: caps.instruction_files.clone(),
+        pg: None,
+    });
+    let skill = ".codex/skills/aurora/a/SKILL.md";
+    let system = d.path().join(".codex/skills/.system/seeded/SKILL.md");
+    fs::create_dir_all(system.parent().unwrap()).unwrap();
+    fs::write(&system, "codex's own").unwrap();
+    let parts = generation(1, &[(skill, "skill a")], &[]);
+    assert!(matches!(
+        apply_all(&mut p, &parts),
+        PartOutcome::ReadyToCommit(1)
+    ));
+    p.commit(1).unwrap();
+    assert_eq!(fs::read_to_string(d.path().join(skill)).unwrap(), "skill a");
+    assert!(d.path().join("AGENTS.md").exists());
+    assert!(!d.path().join("CLAUDE.md").exists());
+    assert!(!d.path().join(".claude").exists());
+    // Codex's own skills are neither removed nor locked.
+    assert_eq!(fs::read_to_string(&system).unwrap(), "codex's own");
+    assert!(
+        !fs::metadata(system.parent().unwrap().parent().unwrap())
+            .unwrap()
+            .permissions()
+            .readonly()
+    );
+    // The projected skill is read-only.
+    assert!(
+        fs::metadata(d.path().join(skill))
+            .unwrap()
+            .permissions()
+            .readonly()
+    );
+}
+
 #[test]
 fn multi_part_generation_is_applied_only_at_commit() {
     let d = TempDir::new();

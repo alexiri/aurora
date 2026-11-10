@@ -412,6 +412,9 @@ impl Default for AgentsSection {
 pub struct HostedSection {
     pub enabled: bool,
     pub default_harness: String,
+    /// (phase 4, P4-HAR, D-122) Harness ids agents may use; `fake` only with
+    /// `allow_fake_harness`. Default `["claude-code"]`: Codex is opt-in.
+    pub enabled_harnesses: Vec<String>,
     pub allow_fake_harness: bool,
     pub default_timezone: String,
     pub idle_stop_secs: u64,
@@ -424,6 +427,7 @@ impl Default for HostedSection {
         Self {
             enabled: true,
             default_harness: "claude-code".into(),
+            enabled_harnesses: vec!["claude-code".into()],
             allow_fake_harness: false,
             default_timezone: "UTC".into(),
             idle_stop_secs: 30 * 60,
@@ -636,6 +640,10 @@ pub struct RunnerSection {
     /// `podman`, `kubernetes` or `fake`; required for the runner.
     pub backend: Option<String>,
     pub image: String,
+    /// (phase 4, P4-HAR, D-153) Harness runtimes the sandbox image contains, for backends that
+    /// cannot read the image label `org.aurora.harnesses` (Kubernetes). Empty = the backend
+    /// default (`claude-code`, `fake`). Podman reads the label and ignores this.
+    pub image_harnesses: Vec<String>,
     pub advertised_host: Option<String>,
     pub max_sandboxes: u32,
     /// Default: `max(1, max_sandboxes - 1)`.
@@ -667,6 +675,7 @@ impl Default for RunnerSection {
             ops_bind: None,
             backend: None,
             image: concat!("aurora-sandbox:", env!("CARGO_PKG_VERSION")).into(),
+            image_harnesses: Vec::new(),
             advertised_host: None,
             max_sandboxes: 4,
             held_awake_ceiling: None,
