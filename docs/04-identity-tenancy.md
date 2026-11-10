@@ -517,6 +517,9 @@ the frozen payload.
 | Bind / unbind / change the role of a **group** on a workspace, read the workspace's group bindings and the group-derived members (phase 4, P4-GRP-1) | `can_own` of the workspace (the same authority as user bindings, including granting `owner`); the group must belong to the workspace's org |
 | Register a Web Push subscription for the caller's browser, list, pause, remove one's own, send oneself a test (phase 4, RFE-011b) | any signed-in user, own subscriptions only; session only (an API key cannot register a browser); a push is delivered only to the live session that registered it |
 | Enable SCIM and set its e-mail domains / `exclusive`; create, list, revoke SCIM tokens; read Directory sync status (phase 4, P4-GRP-2) | org `owner` only; session only; enabling and token creation need a recent re-authentication (412 `reauth_required`) |
+| Switch **Port previews** on or off for the org (`settings.previews_enabled`, default off) (phase 4, P4-PRV-1) | org `owner`/`admin` (`org.previews.update`, security-critical) |
+| Create, pause/resume, change the start command of, delete a preview share; list the agent's shares; start the app now (phase 4, P4-PRV-1) | `can_use` of the agent's workspace, session or API key; **never an agent tool**; BYO agents have none; frozen agent: 423 |
+| Open a preview in the browser (phase 4, P4-PRV-2) | a **live dashboard session** of a user for whom `can_use(workspace)` holds, re-checked at least every `PREVIEW_AUTH_CACHE` (15 s); never an API key, never an agent credential, no other visibility (`04 §Preview access`) |
 | Plugins, trusted keys, host claims, connectors, runners | instance admin |
 
 Org admins/owners can therefore always repair a workspace; members of a shared

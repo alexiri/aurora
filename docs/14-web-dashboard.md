@@ -466,6 +466,15 @@ again" and "Show the getting-started guide again".
   lists the BYO agents the person created ("regenerate their tokens"). Built from the shared patterns only.
 - **Policy**: org rules editor (draft/publish). (phase 3, RFE-023) The **Default Rule** control carries the note "Does not affect LLM endpoints — see Governance" with a link to the governance page, and a tooltip explaining that explicit block rules naming an LLM host still apply.
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
+- **Port previews** (`/o/<org>/settings/previews`, phase 4, P4-PRV-1, D-144; org owners/admins;
+  the page and its nav entry exist **only when `GET /v1/instance` reports `previews.enabled`**):
+  a single card built from the shared settings patterns with a switch "Allow port previews in
+  this organization" (off by default), the text "Lets people who can use a workspace open web
+  apps that its agents run, at `https://<random>.<previews.domain>`. Only signed-in people who
+  can use that workspace can open them, and agents cannot create them", the preview domain
+  (read-only), and a table of the org's shares (agent, workspace, port, state, last accessed)
+  with a link to each agent. Turning it off asks for confirmation ("Existing links stop working
+  until you turn it back on") and is audited.
 - **Apps**: app availability posture and allow-list.
 - **Instances** (`/o/<org>/instances`, phase 2, D-74): the org's registered self-hosted app instances plus the read-only instance-wide ones; owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first), and OAuth clients can be bound to an instance.
 - **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
@@ -563,6 +572,26 @@ again" and "Show the getting-started guide again".
     (reason required, confirm dialog listing the effects); a frozen agent shows a
     banner "Frozen by <name> on <date>: <reason>" with Unfreeze (disabled with the
     explanation when a higher authority froze it).
+  - **Previews** (phase 4, P4-PRV-1, D-144; the tab exists only for hosted agents when
+    `previews.enabled` and the org has switched Port previews on; otherwise the Computer
+    tab's port list simply shows no "Share" action) — a table of the agent's shares from
+    `GET /v1/agents/{a}/previews` (shared `DataTable`, status chips from the token set):
+    the URL (monospace, **Copy** and **Open** buttons; Open uses `rel="noopener noreferrer"` in a
+    new tab), port, status (Listening / Not listening / Waking / Paused / Frozen, each with a
+    word, never colour alone), start command (truncated, full in the row dialog), last started
+    (exit code and the output tail in a dialog for people who can use the workspace), last
+    accessed, and row actions **Start now**, **Pause/Resume**, **Edit**, **Delete** (confirm).
+    **Add share** (dialog): a port field with the currently listening ports offered as chips
+    (from `/sandbox`, with "Nothing listening yet — you can still add a start command"), an
+    optional start command and working folder with the note "Runs inside the agent's computer
+    when someone opens the link and nothing is listening. It can do whatever the agent can do."
+    and the visibility line "Private: signed-in people who can use this workspace". Errors map
+    to field messages (port forbidden, limit, exists). A frozen agent shows its freeze banner and
+    read-only rows; a banner "Previews need a wildcard domain" is **never** shown to members
+    (instance admins see the status on Admin → Overview). The Computer tab's port list gains a
+    **Share…** action per listening port that opens the same dialog prefilled, and "awake
+    because…" shows "Preview in use". No horizontal scroll at 390 px (rows collapse to cards, the
+    URL wraps), both themes, tokens and primitives only.
   - **Computer** — sandbox state, "awake because…" reasons, processes,
     restart; BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect

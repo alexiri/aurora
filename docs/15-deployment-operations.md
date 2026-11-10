@@ -86,6 +86,10 @@ one new entry without activating it.
 | `connector_host.api_url` | `http://127.0.0.1:4101` | connector-host | (phase 4, P4-MCON) the API the host registers with; the token comes from `AURORA_CONNECTOR_HOST_TOKEN` (`auh_`) |
 | `connector_host.listen` / `connector_host.ops_port` | `0.0.0.0:4110` / `4192` | connector-host | (phase 4, P4-MCON) platform callbacks (`/connectors/<id>/…`) / health and metrics |
 | `connector_host.test_types` | `false` | connector-host | (phase 4, P4-MCON) also announce the `fake` type (development and e2e only; startup warns) |
+| `previews.enabled` | `false` | api, relay | (phase 4, P4-PRV-1) master switch for port previews; **off unless configured**; when `true` the API refuses to start without a valid `previews.domain` (`§Port previews`) |
+| `previews.domain` | — | api, relay | (phase 4, P4-PRV-1) the DNS suffix of preview hostnames, e.g. `preview.example.org`; needs a wildcard DNS record and a wildcard TLS certificate; must not be, contain or sit under the dashboard host (startup validation, `§Port previews`) |
+| `previews.shares_per_agent`, `previews.shares_per_org` | 10, 200 | api | (phase 4, P4-PRV-1) lower only (`02 §Limits`) |
+| `previews.awake_cap_secs` | 14400 | api | (phase 4, P4-PRV-1) `PREVIEW_AWAKE_CAP`, at most `hosted.background_cap_secs` |
 | `database.max_connections` | 20 (api), 10 (gateway) | api, gateway | pool size |
 | `database.gateway_role` | — | api (migrations) | login role the **operator creates** (`CREATE ROLE <r> LOGIN PASSWORD '…'`); `migrate` only grants it the gateway privileges (`03`) and fails if it does not exist. The gateway must then connect as it (its own `AURORA_DATABASE_URL`; Helm `database.gatewayExistingSecret`) |
 | `auth.signup_mode` | `invite_only` | api | `open`, `invite_only`, `sso_jit` |
@@ -777,3 +781,57 @@ in `push.allowed_endpoint_hosts`). Helm values: `approvals.park.*`, `push.enable
 `push.allowedEndpointHosts`, `push.networkPolicy.egressTo`. A subscription (and so the notification)
 belongs to the browser profile and the Aurora session that created it: shared-computer users should
 sign out, which ends delivery.
+
+## Port previews (phase 4, P4-PRV-1, P4-PRV-2, D-144..D-147, SEC-80..SEC-82, SEC-85)
+
+**Optional and off by default.** Port previews (`11 §Port previews`) need infrastructure no other
+feature needs, so a deployment that does not set `previews.enabled` has no relay, no wildcard DNS or
+certificate, no extra Service, no extra Ingress rule and no extra NetworkPolicy; every other
+behaviour is unchanged and an upgrade changes nothing. The feature is also off per organization
+until an org owner or admin switches **Port previews** on.
+
+**Requirements** (all three, before `previews.enabled: true` is accepted):
+
+1. **A preview domain** `previews.domain`, a DNS suffix **you control**, e.g. `preview.example.org`.
+   Browsers treat every host under it as a separate origin, so it is the isolation boundary between
+   previews and the dashboard (`04 §Preview access`). Startup validation (API and relay) refuses
+   the configuration (exit with the reason) when the domain: is not a valid lower-case DNS name of at
+   most 120 characters; **is, contains or sits under** the host of `server.external_url`, of any
+   `auth.trusted_origins` entry or of the gateway's advertised proxy host (so a preview hostname can
+   never be, or be a parent of, a host that carries a session or a credential); is a single label;
+   or is a bare public suffix. Prefer a **separate registrable domain** (`aurora-previews.example.org`
+   next to `aurora.example.org` is acceptable, `example.org` is not); the Aurora session cookie is
+   host-only and previews never see it either way, but a separate registrable domain also protects
+   *other* applications on your domain from cookies a preview app could set.
+2. **Wildcard DNS**: `*.<previews.domain>` → the edge (an `A`/`AAAA`/`CNAME` record). Nothing else
+   resolves under it; Aurora never creates DNS records.
+3. **A wildcard TLS certificate** for `*.<previews.domain>` served by the edge (HTTP-01 cannot issue
+   wildcards; use DNS-01 through cert-manager, e.g. `previews.tls.certManager.issuerRef`, or provide
+   an existing Secret `previews.tls.secretName`). The relay serves plain HTTP behind the edge (it
+   never holds the certificate key) and trusts the edge's overwritten `X-Forwarded-Proto`/`-For`
+   exactly like the API (`server.trusted_proxies`). Browsers must reach the preview host on 443;
+   previews are **https only** (the edge redirects `http` and the relay refuses to mint a grant for
+   a non-https redirect target).
+
+**Turn it on**: install the relay (`relay.enabled`, chart default `true` when `previews.enabled` is
+`true`, otherwise nothing is rendered), set `previews.enabled: true` and `previews.domain`, wait for
+`aurora_relay_up` and the Admin → Overview "Previews" line (relay replicas seen by the API), then an
+org owner or admin enables **Port previews** in the org settings. **Turn it off**: unset
+`previews.enabled` (shares are kept but inert; the supervisor allow-list is emptied at the next
+sync) or switch the org setting off.
+
+**Wildcard edge rule**: Ingress and HTTPRoute templates add one host rule `*.<previews.domain>`
+→ `aurora-relay:4112` only when `previews.enabled` is true (no change to the rules of
+`server.external_url`, `/internal` and `/metrics` stay unrouted). The edge must not buffer
+responses, must allow WebSocket upgrades, read timeouts ≥ 600 s and request bodies up to
+`PREVIEW_REQUEST_BODY_MAX`. The edge-routes guard is extended to render the chart with previews
+enabled and check that the wildcard host routes **only** to the relay and that the dashboard
+host is untouched (an implementation task of P4-PRV-2).
+
+**Runners.** The relay reaches each runner replica on its **stream listener** `runner.stream_bind`
+(default `server.bind`, port **4108**, `16 §W17`), at the replica's `advertised_host`. A runner
+inside the cluster needs only the NetworkPolicy of *Port previews relay* below; a runner **outside**
+the cluster must make 4108 reachable from the relay (overlay network or private link). Without
+that, previews for sandboxes of that runner answer 502 `preview_unreachable` and the dashboard
+says so; nothing else is affected. The sandboxes namespace never reaches 4108 (SEC-09 style
+guard, `18`).

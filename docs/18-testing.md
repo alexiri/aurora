@@ -501,6 +501,40 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Dashboard and service worker** (`web/tests`): the Notifications card states (unsupported, insecure origin, permission denied, iOS Home Screen note, registered, paused, not receiving, key rotated → silent re-subscribe), the gesture requirement, sign-out removes the device; the service worker (unit tests in a service-worker test environment) shows the generic notification for a malformed or unknown-version payload, builds text only from the fixed fields, `notificationclick` navigates only to a same-origin path starting with `/o/` and falls back to `/` for `//evil`, `https://…`, `javascript:`, backslashes, and has no `fetch` handler; parked chips and sentences on the Approvals page, chat and overview; both themes, 390 px.
 - **e2e** (extension of `scripts/e2e/`, owned by its lane; the browser-push leg uses the mock push service and headless Chrome's push emulation): a rule with a 2-hour timeout and parking on → the agent is refused `approval_parked`, ends its turn, the sandbox parks, the approver approves from a card, the system follow-up wakes the agent and the identical request succeeds exactly once.
 
+### Port previews (phase 4, P4-PRV-1, P4-PRV-2, D-144..D-147, SEC-80..SEC-82, SEC-85)
+- **Shares, API** (`api/it/previews.rs`, real Postgres, `fake` runner): off by default (no
+  `previews.enabled` → every route 404 `previews_disabled` and `GET /v1/instance` says so; org
+  switch off → 409 `previews_not_enabled_for_org`); create/list/patch/delete matrix (`can_use`
+  member yes, non-member 404, **agent tool call and agent credential refused** (SEC-80), API key
+  allowed for management only); BYO agent 422; port bounds and the supervisor-reserved ports 422;
+  duplicate port 409; per-agent and per-org limits; label shape (`p` + 24 base32), uniqueness
+  under 1 000 creations, **never reused** after delete and re-create; visibility accepts only
+  `private` (a `public`/`org` value is 422, the CHECK constraint rejects it in SQL); start
+  command validation (length, newline, cwd traversal) and the audit rows (`preview.share.*`,
+  `org.previews.update`, security-critical, same transaction; the command text is **not** in any
+  audit row, only its hash prefix).
+- **Lifecycle** (`api` + `fake` runner): park/wake keeps the share and the hostname; a wake demand
+  starts a stopped sandbox once and honours the start backoff and `PREVIEW_WAKES_PER_SHARE_HOUR`;
+  `preview.start` is emitted only after the `previews` part is applied, only for a share with a start
+  command whose port is not listening, at most `PREVIEW_START_ATTEMPTS` per window; effectively
+  frozen (agent, workspace, org): no wake, no `preview.start`, allow-list empty, 423, share kept, and
+  unfreeze restores it with nothing replayed; paused share; org switch off/on; agent/workspace/org
+  delete cascades (sessions too); a preview never creates a turn or stamps `last_engaged_at`; the
+  `preview` keep-awake reason lasts `PREVIEW_AWAKE_GRACE` after the last heartbeat and ends at
+  `PREVIEW_AWAKE_CAP` (a held WebSocket cannot keep the sandbox awake forever); `ports` list
+  carries `shared`.
+- **Supervisor** (`sup`): the share list lives in memory only (a file planted in the home changes
+  nothing); `preview.start` for an unknown port, a share without command, an already listening port or
+  an empty list is a no-op; a started command runs as the agent user with the container environment (no
+  `AURORA_*` variable, no platform credential) as process `preview:<port>`; the frame carries no
+  command text.
+- **Config** (`config` crate): `previews.enabled` without a valid domain refuses to start; domain
+  equal to, containing or under the dashboard host, a trusted origin or the gateway host; one label;
+  public suffix; upper case; too long.
+- **Dashboard** (`web/tests`): tab absent when previews are off/the org has them off/BYO; add dialog
+  with listening-port chips and error mapping; copy/open (rel attributes); frozen read-only; org
+  settings page and confirmation; no horizontal scroll at 390 px, both themes.
+
 ### API rate limiting (phase 2, RFE-017)
 - Bucket semantics per class (burst then steady refill), a request must pass
   general + class + org buckets and a refused request consumes none of the others;

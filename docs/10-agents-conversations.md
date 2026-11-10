@@ -73,9 +73,19 @@ is also `agents.default_name` (`13`).
 no turns, no gateway access, sandbox parked, schedules/webhooks/presences paused,
 state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
 
+### Port previews of an agent (phase 4, P4-PRV-1, D-144)
+
+A hosted agent may have **preview shares** (`11 §Port previews`): a port of its sandbox opened
+to the workspace's people in their browser. They are created and deleted by people only (never
+by agent tools; the agent can name a port in chat and a person decides), follow the agent through
+park, wake, restart and freeze (inert while frozen), and are deleted with the agent. The
+supervisor receives the active shares as the `previews` home-sync part and refuses every stream
+for any other port. A preview request never creates a turn and never counts as the person
+engaging the agent.
+
 ### Deleting an agent
 
-Cascades in the database to everything it owns (conversations included; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
+Cascades in the database to everything it owns (conversations included, (phase 4, P4-PRV-1) preview shares and their sessions; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
 API enqueues connector `presence.deprovision` operations for dedicated
 presences and revokes all gateway credentials. (phase 3, RFE-024) The operations
 are **self-contained** (they snapshot the bot reference and a sealed, op-bound copy

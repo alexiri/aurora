@@ -1392,6 +1392,42 @@ Absent when the operator supplies the key through `push.vapid.private_key_env` (
 
 The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades).
 
+#### `preview_shares` (new table; port previews, phase 4, P4-PRV-1, D-144, D-145)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-PRV-1) |
+| org_id | uuid FK→organizations (restrict) | denormalized for the per-org limit and the gateway-free authorization checks | 4 (P4-PRV-1) |
+| workspace_id | uuid FK→workspaces (cascade) | | 4 (P4-PRV-1) |
+| agent_id | uuid FK→agents (cascade) | hosted agents only (service-enforced); the share dies with the agent | 4 (P4-PRV-1) |
+| port | int not null CHECK (port BETWEEN 1024 AND 65535) | unique `(agent_id, port)`; supervisor-reserved ports refused by the service | 4 (P4-PRV-1) |
+| label | text not null | the hostname label, `p` + 24 base32 chars, **unique index**, immutable, never reused (`11 §Port previews`) | 4 (P4-PRV-1) |
+| visibility | text not null default `private` CHECK in (`private`) | the only value in phase 4 | 4 (P4-PRV-1) |
+| state | text not null default `active` CHECK in (`active`,`paused`) | | 4 (P4-PRV-1) |
+| start_command | text null CHECK (length ≤ 1024 and no newline) | run on demand by the supervisor; never audited or sent to the relay | 4 (P4-PRV-1) |
+| cwd | text null | relative to `/workspace`, no `..`, ≤ 200 | 4 (P4-PRV-1) |
+| last_start_at, last_start_exit_code, last_start_tail | timestamptz null, int null, text null (≤ 4 KiB, sanitized, secrets redacted like transcripts) | for the dashboard (churn columns) | 4 (P4-PRV-1) |
+| start_attempts | jsonb not null default `[]` | timestamps of the attempts inside `PREVIEW_START_WINDOW` (≤ 3) | 4 (P4-PRV-1) |
+| wake_attempts | jsonb not null default `[]` | timestamps of the wakes inside the hour (≤ `PREVIEW_WAKES_PER_SHARE_HOUR`) | 4 (P4-PRV-1) |
+| created_by_user_id | uuid null FK→users (set null) | label denormalized (`created_by_label`) | 4 (P4-PRV-1) |
+| created_at, updated_at, last_accessed_at | timestamptz | `last_accessed_at` is written at most once a minute per share (relay heartbeat) | 4 (P4-PRV-1) |
+| indexes | unique `(label)`; unique `(agent_id, port)`; `(org_id)`; `(workspace_id)` | | 4 (P4-PRV-1) |
+
+The gateway database role gets nothing on this table (the gateway has no part in previews).
+Deleting the agent, workspace or org deletes the shares (the org delete service removes them in
+dependency order). The `previews` home-sync part is computed from this table (`16 §W5`).
+
+#### `sandboxes` (preview columns; phase 4, P4-PRV-1)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| preview_wake_at | timestamptz null | a preview request found the sandbox stopped; the start arm treats it as due work for `PREVIEW_WAKE_WINDOW` (churn column) | 4 (P4-PRV-1) |
+| preview_start_requested_at | timestamptz null | a request is waiting for the share's port; drives `preview.start` (churn column) | 4 (P4-PRV-1) |
+| preview_active_until | timestamptz null | `now() + PREVIEW_AWAKE_GRACE` at each relay heartbeat that reports an open or recent stream; keep-awake reason `preview` | 4 (P4-PRV-1) |
+| preview_awake_since | timestamptz null | first heartbeat of the current boot; the `PREVIEW_AWAKE_CAP` clock; reset at every start claim | 4 (P4-PRV-1) |
+
+`organizations.settings.previews_enabled` (jsonb key, no column): bool, default absent = off
+(`11 §Port previews`). The home-sync desired generation (`12 §Sync protocol`) already moves with
+the agent's own generation; a share change bumps `agents.home_sync_generation`.
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

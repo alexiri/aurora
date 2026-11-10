@@ -119,6 +119,20 @@ port-stream API multiplexed over the supervisor channel with credit-based flow
 control; allow-list enforced at runner and supervisor; preview-caused wakes
 relaunch the share's start command.
 
+- **Shares — specified (phase 4, P4-PRV-1, D-144, D-145, SEC-80).** Off unless the instance
+  sets `previews.enabled` with a validated `previews.domain` (wildcard DNS and TLS certificate
+  required) **and** the org owner/admin switches Port previews on; table `preview_shares`
+  (one per hosted agent port, random never-reused `p…` label, visibility `private` only, optional
+  start command run on demand by the supervisor); created, paused and deleted by people with
+  `can_use` (never by agent tools, never by API-key browsing); wake demand starts the sandbox, then
+  `preview.start`; keep-awake reason `preview` (4 h cap); shares stay inert while frozen (RFE-006)
+  and die with the agent; the supervisor's allow-list is the `previews` home-sync part. Owning
+  sections: `11 §Port previews`, `03 §Planned changes`, `04` (matrix), `05 §Port previews`, `10`,
+  `12 §Previews`, `14` (agent Previews tab, org Port previews page), `15 §Port previews`,
+  `02 §Limits`, `16 §W5`, `17` SEC-80, `18 §Port previews`. Not in phase 4: public, org-wide or
+  link visibility, agent-created shares, non-HTTP protocols as a product (raw TCP bytes are carried,
+  but the relay speaks HTTP and WebSocket only), per-person sharing.
+
 ## Phase 4 — Evals
 
 Per-agent questions with expected answers (numeric, text, judged), runs as real

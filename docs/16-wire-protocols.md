@@ -85,6 +85,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `turn.notice` | `{ turn_id, text }` (platform notice steered into the live run, e.g. ceiling warning) |
 | `session.release` | `{ conversation_id }` (surface changed; release idle session) |
 | `session.purge` | (phase 2, RFE-010) `{ conversation_id, session_ref }` — delete the stored harness session files (`12 §Session purge`) |
+| `preview.start` | (phase 4, P4-PRV-1, D-145) `{ share_id }` — ask the supervisor to start the share's command on demand (`11 §Port previews`); the runner forwards `preview.start { port }` on the supervisor channel and the supervisor resolves the command from its own share list |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
 client_env: [[k,v]] }`. (phase 4, P4-LLM) `provider` and `dialect` are open
@@ -95,7 +96,7 @@ a dialect refuses the turn with `harness_failed` and a clear message, never gues
 `client_env` never carries an AWS key, a service-account key or a token (placeholders
 or "skip auth" switches only). `TurnInput`: `{ text, speaker_label, door, recall: {
 index, snippets: [] }, notices: [] }`. `HomeSyncPart`: `{ kind: "skills" |
-"memory" | "render_inputs" | "tools" | "manifest" | "final", entries: [...] }`
+"memory" | "render_inputs" | "tools" | "previews" | "manifest" | "final", entries: [...] }` ((phase 4, P4-PRV-1) a `previews` part has the single entry `{ shares: [{ share_id, port, start_command?, cwd? }] }`; an older supervisor that does not know the kind skips it, which only means no preview works)
 (`12 §Sync protocol`). (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
 
 ### Reports

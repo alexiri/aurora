@@ -356,6 +356,7 @@ claim-based and safe to run everywhere.
 | SCIM token expiry (phase 4, P4-GRP-2): a notice to the org owners and an audit row 14 days and 1 day before a token expires; expired tokens are simply dead (read-time check) | daily | singleton |
 | Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
 | Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
+| Preview housekeeping (phase 4, P4-PRV-1/2): delete expired `preview_sessions`, `preview_grant_uses` and `preview_stream_grants`; clear stale `sandboxes.preview_wake_at`/`preview_start_requested_at`; count shares per org for `aurora_preview_shares` | every 60 s | idempotent (`SKIP LOCKED` batches) |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
 | Runtime daily rollup | hourly | singleton |
@@ -405,6 +406,15 @@ Arms, evaluated in this order per poll (detail of each in `10`/`11`):
 (watches) **skip effectively frozen agents** (agent, workspace or org flag,
 `04 §Freeze`); arm 2 (stop) parks a running frozen sandbox with
 `stop_reason = frozen` and ignores its keep-awake reasons.
+
+(phase 4, P4-PRV-1, D-145) Arm 3 (start) also starts a stopped sandbox that has a **preview wake
+demand** (`sandboxes.preview_wake_at` younger than `PREVIEW_WAKE_WINDOW`, `11 §Port previews`),
+only for a hosted agent that is not effectively frozen, whose org has Port previews on, and
+that has an active share; arm 2 (stop) counts `preview` among the keep-awake reasons; arm 5
+(home sync) carries the `previews` part; after the sync is applied, arm 5 also emits
+`preview.start { share_id }` for a share with a start command whose port is not listening and
+for which a request is waiting (`preview_start_requested_at` younger than `PREVIEW_WAKE_WAIT`),
+at most `PREVIEW_START_ATTEMPTS` per `PREVIEW_START_WINDOW`.
 
 Work items and reports are defined in `16 §W5`.
 
@@ -646,6 +656,27 @@ subscription counts by state and host; never key material).
 | POST `/v1/agents/{agent}/freeze` `{ reason }`; POST `/v1/agents/{agent}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; 200 with `frozen: {at, by_label, reason, authority, level}`; 403 `freeze_authority_insufficient` when lifting a higher authority's freeze; audited atomically |
 | GET `/v1/agents/{agent}/sandbox` | S/K | state, keep-awake reasons, processes, ports |
 | GET `/v1/agents/{agent}/models` | S/K | models available from granted LLM keys |
+
+### Port previews (phase 4, P4-PRV-1, D-144, D-145; C-540..C-549)
+
+Present on every instance but inert: while `previews.enabled` is false every route below answers
+404 `previews_disabled` (except `GET /v1/instance`, which reports `previews: { enabled: false }`),
+and while the **org** has not enabled Port previews, creating a share answers 409
+`previews_not_enabled_for_org`. Share routes are management routes (session or API key, `can_use`
+of the agent's workspace); the browser-side authorization is P4-PRV-2 (`04 §Preview access`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/agents/{agent}/previews` | S/K | `{ shares: [PreviewShare] }`, `can_use`; each `{ id, agent_id, port, hostname, url, visibility: "private", state: "active"\|"paused", status: "listening"\|"not_listening"\|"waking"\|"paused"\|"frozen", start_command, cwd, last_start: { at, exit_code, tail }\|null, last_accessed_at, created_by: { id, label }, created_at }`; `url` is `https://<label>.<previews.domain>/` |
+| POST `/v1/agents/{agent}/previews` | S/K | `{ port, start_command?, cwd? }` → 201 `PreviewShare`; `can_use`; errors 422 `preview_not_supported` (BYO), 422 `preview_port_forbidden`, 422 `invalid_request` (command longer than 1 024, multi-line, `cwd` absolute or with `..`), 409 `preview_exists`, 409 `preview_limit`, 409 `previews_not_enabled_for_org`, 423 `frozen`; audit `preview.share.create` |
+| GET/PATCH/DELETE `/v1/previews/{id}` | S/K | `can_use` of the share's workspace (404 otherwise); PATCH `{ state?, start_command?, cwd? }` (the port and the label are immutable); DELETE removes the share and its preview sessions; audit `preview.share.update` / `preview.share.delete`; every change bumps the agent's home-sync generation |
+| POST `/v1/previews/{id}/start` | S/K | start the app now (enqueue `preview.start`; the sandbox is woken if parked, subject to `PREVIEW_WAKES_PER_SHARE_HOUR`); 202 `{ status }`; 409 `preview_no_start_command`; 423 `frozen` |
+| PATCH `/v1/orgs/{org}` (`settings.previews_enabled`) | S | org `owner`/`admin`; audit `org.previews.update` (security-critical); switching off keeps shares, ends access (`11 §Port previews`) |
+| GET `/v1/instance` | none | (existing public route) gains `features.previews` and `previews: { enabled: bool, domain: string\|null }` (no secret; the domain is already public in DNS), so the dashboard shows the Previews tab only when it can work |
+
+`GET /v1/agents/{agent}/sandbox` already lists `ports`; (phase 4, P4-PRV-1) it gains `preview_in_use: bool`
+(keep-awake reason `preview`) and each `ports` entry gains `shared: <share id>|null`. Audit and
+the share lifecycle: `11 §Port previews`.
 | GET `/v1/gateway/ca.pem` | S/K | gateway CA certificate |
 
 ### Conversations and turns

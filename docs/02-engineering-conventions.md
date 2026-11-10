@@ -303,6 +303,12 @@ overridden by the named configuration key (`15`).
 | `SCIM_PAGE_MAX` / `SCIM_PAGE_DEFAULT` | (phase 4, P4-GRP-2) 100 / 50 resources per page | — | 16 |
 | `SCIM_TOKENS_PER_ORG` / `SCIM_TOKEN_DEFAULT_DAYS` / `SCIM_TOKEN_MAX_DAYS` | (phase 4, P4-GRP-2) 5 active / 365 days / 730 days (no non-expiring token) | `scim.token_max_days` | 04, 15 |
 | `SCIM_ERROR_LOG` | (phase 4, P4-GRP-2) last 20 sanitized errors kept per org for the Directory sync page | — | 14 |
+| `PREVIEW_SHARES_PER_AGENT` / `PREVIEW_SHARES_PER_ORG` | (phase 4, P4-PRV-1) 10 / 200 shares | `previews.shares_per_agent`, `previews.shares_per_org` (lower only) | 11, 05 |
+| `PREVIEW_START_COMMAND_MAX` | (phase 4, P4-PRV-1) 1 024 chars, one line | — | 11 |
+| `PREVIEW_WAKE_WINDOW` / `PREVIEW_WAKE_WAIT` / `PREVIEW_LISTEN_WAIT` | (phase 4, P4-PRV-1) 60 s a wake demand stays due / 45 s a browser request waits for a woken port / 5 s for a port of a running sandbox | — | 11, 05 |
+| `PREVIEW_WAKES_PER_SHARE_HOUR` | (phase 4, P4-PRV-1) 12 wakes per share per hour (429 `preview_wake_limited`) | — | 11 |
+| `PREVIEW_START_ATTEMPTS` / `PREVIEW_START_WINDOW` | (phase 4, P4-PRV-1) 3 start-command launches per share per 10 min | — | 11 |
+| `PREVIEW_AWAKE_GRACE` / `PREVIEW_AWAKE_CAP` | (phase 4, P4-PRV-1) 120 s after the last stream activity / 4 h per boot of preview-held wakefulness | `previews.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

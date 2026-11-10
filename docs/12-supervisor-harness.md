@@ -381,7 +381,7 @@ The home (`/workspace`) holds:
 - Part kinds: `skills` (full files), `memory` (rendered files), `render_inputs`
   (preamble data, brief, capability fragment inputs: apps with snippets and
   docs links, presences, peers, memory language, schedules summary, timezone),
-  `tools` (catalogue), `manifest` (the complete list of managed paths), `final`.
+  `tools` (catalogue), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
 - The supervisor applies each part idempotently without buffering; only the
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves
@@ -449,6 +449,26 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
 - Harness-run background tasks (if the adapter exposes them) are mirrored
   through the same `process.state` path so the platform knows about all
   background work.
+
+### Previews (phase 4, P4-PRV-1, D-144, D-145; streams in P4-PRV-2)
+
+- The supervisor keeps the **share list** in memory only: the `previews` part of the home sync
+  (`{ shares: [{ share_id, port, start_command?, cwd? }] }`, replaced as a whole by each full
+  sync, empty when previews are off, the org has them off, the share is paused or the agent is
+  frozen). Nothing is read back from the home (the agent can write it) and nothing is persisted.
+- `ports.state` discovery is unchanged (informational). The allow-list for streams is the share
+  list, **never** the discovery result (`12 §Streams`).
+- **On-demand start**: the frame `preview.start { port }` (from the work item `preview.start`)
+  looks the port up in the share list; with a `start_command` and the port not listening, the
+  supervisor starts it as a background process `preview:<port>` (kind `preview` in
+  `process.state`, `/workspace` or the share's `cwd`, container environment, own process group,
+  counted in the ordinary process limits, output in the ring buffer like any process). An
+  unknown port, a share without a command or a port that is already listening is a no-op.
+  A start never carries command text on the wire and never runs while the agent is frozen
+  (the share list is empty).
+- A preview-started process is an ordinary process: it is *busy* by the usual rule, parks and
+  is marked `parked` with the boot, and keeps the sandbox awake only through the ordinary
+  background rule; the `preview` keep-awake reason comes from stream activity alone.
 
 ## Outbound files
 
