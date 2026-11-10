@@ -72,7 +72,7 @@ External identities linked to a user (OIDC).
 | slug | text unique not null | |
 | name | text not null | ≤80 |
 | app_posture | text CHECK in (`open`,`restricted`) default `open` | see `07 §App availability` |
-| governance | jsonb not null default `{}` | org LLM and egress governance document (`08 §11.2`); `{}` = defaults derived from the instance; (phase 1, RFE-003) `egress.open_lane` = `enabled` \| `allowlist_only` \| `disabled` (default `enabled`), the org open-lane posture, not below the instance minimum (`08 §11.2`); (phase 2, RFE-025) `byo` = `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }`, the org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`) |
+| governance | jsonb not null default `{}` | org LLM and egress governance document (`08 §11.2`); `{}` = defaults derived from the instance; (phase 1, RFE-003) `egress.open_lane` = `enabled` \| `allowlist_only` \| `disabled` (default `enabled`), the org open-lane posture, not below the instance minimum (`08 §11.2`); (phase 2, RFE-025) `byo` = `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }`, the org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`); (phase 3, RFE-013) `agent_tokens.max_age_days` = int 1…3650 \| absent, the org maximum age of BYO agent tokens; absent = none; never above the instance value (`08 §7`); no column, `governance` is `jsonb` |
 | governance_revision | bigint not null default 0 | optimistic concurrency for governance edits |
 | external_id | text unique not null | 32 random hex chars at creation; immutable; exposed to plugins as context variable `org_external_id` (e.g. AWS external id) |
 | settings | jsonb not null default `{}` | `{ "max_agents"?: int, "max_members"?: int, "sandbox_overrides"?: ResourceProfile, "retention"?: { "conversations_days"?: int\|null, "attachments_days"?: int\|null, "attachment_quota_mib"?: int\|null } }`; `retention` (phase 2, RFE-010/015): per-org retention and attachment limits, null/absent = keep forever / unlimited |
@@ -294,7 +294,7 @@ The project's built-in publisher key (`aurora`) is compiled in and never stored.
 | permissions | jsonb not null | normalized permissions block |
 | source | text CHECK in (`builtin`,`directory`,`upload`) | |
 | status | text CHECK in (`pending_approval`,`active`,`superseded`,`rejected`,`disabled`,`invalid`) | |
-| status_reason | text null | |
+| status_reason | text null | open vocabulary; (phase 3, RFE-022) gains the value `breaks_connections`: a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`); no schema change |
 | violations | jsonb not null default '[]' | validation violations for status invalid; spec fix S-05 |
 | approved_by | uuid null FK→users (set null) | |
 | approved_at | timestamptz null | |
@@ -626,7 +626,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | speaker_user_id | uuid null FK→users (set null) | |
 | speaker_label | text not null | sanitized, denormalized |
 | text | text not null | ≤ `TURN_TEXT_MAX` |
-| source_event_id | text null | partial unique (conversation_id, source_event_id) |
+| source_event_id | text null | partial unique (conversation_id, source_event_id); (phase 3, RFE-018) value convention, no schema change: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`); promoted turns keep null (`10 §Turns`) |
 | abort_requested_at | timestamptz null | |
 | send_now_requested_at | timestamptz null | |
 | error_code | text null | open vocabulary |
@@ -1212,21 +1212,6 @@ phase-0 schema: the tables above are machine-checked against the migrations
 headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
-
-#### `organizations` (jsonb key in `governance`, agent token age)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| `governance.agent_tokens.max_age_days` | int 1…3650 \| absent | org maximum age of BYO agent tokens; absent = none; never above the instance value (`08 §7`). No column: `governance` is `jsonb`. | 3 (RFE-013) |
-
-#### `turns` (idempotency)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| source_event_id | (existing column and partial unique index `(conversation_id, source_event_id)`) | no schema change. Phase 3 adds a **value convention**: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`). Promoted turns keep null (`10 §Turns`) | 3 (RFE-018) |
-
-#### `plugin_packages` (activation hold)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |
 
 #### `rate_limit_windows` (shared fixed-window counters; the name reserved in §9)
 `UNLOGGED` table (counters are not a system of record: a Postgres crash or a failover to a standby that lacks unlogged data resets windows, which at worst grants one extra window of quota and is listed in `17` residual risks). Used only when `ratelimit.counters.backend = postgres` (`15 §Shared rate-limit counters`).

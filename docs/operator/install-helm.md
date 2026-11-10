@@ -62,6 +62,20 @@ podman build -f images/services/web.Containerfile -t "$REG/aurora-web:$TAG" .
 podman build -f images/sandbox/Containerfile --target sandbox -t "$REG/aurora-sandbox:$TAG" .
 ```
 
+**The development IdP image.** `devIdp.enabled: true` (an evaluation or kind install, the only OIDC provider those have) runs the `aurora-dev-idp` image, which the loop above does **not** build. Build it as `scripts/e2e/kind.sh` does, **before** `helm install`; without it the pod stays in `ErrImageNeverPull` (or `ImagePullBackOff`) and `helm install --wait` fails after its full timeout:
+
+```bash
+podman build -f deploy/dev/dev-idp.Containerfile -t "$REG/aurora-dev-idp:$TAG" .
+```
+
+**Connector images, only if you enable them.** `connector-host` is in the loop above (the managed connector host, `connectorHost.enabled`). A self-hosted Mattermost connector uses the `connector-mattermost` target, and the test double used by the e2e suites uses `connector-fake`:
+
+```bash
+for t in connector-mattermost connector-fake; do
+  podman build -f images/services/Containerfile --target "$t" -t "$REG/aurora-$t:$TAG" .
+done
+```
+
 The sandbox base defaults to the public official AlmaLinux 10 image pinned by digest. A private or mirrored base is a build-time override: add `--build-arg SANDBOX_BASE_IMAGE=<registry>/<image>:<tag>` (or set `SANDBOX_BASE_IMAGE` for `scripts/images/build-sandbox-min.sh`; `images/sandbox/Containerfile`).
 The builds need several GB of free disk and a long first compile. An API image built this way carries **no signed built-in packages**: without the project signing key the API refuses them
 ([apps-and-catalogue.md](apps-and-catalogue.md#the-built-in-catalogue)); upload the packages you need as ordinary plugins.
@@ -88,7 +102,7 @@ runner:
 
 ```bash
 export KIND_EXPERIMENTAL_PROVIDER=podman        # kind with the rootless podman provider
-for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox; do
+for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-dev-idp; do   # drop aurora-dev-idp if devIdp.enabled is false; add aurora-connector-mattermost / aurora-connector-fake if you built them
   podman save -o "/tmp/$i.tar" "$REG/$i:$TAG" && kind load image-archive "/tmp/$i.tar" --name <cluster> && rm -f "/tmp/$i.tar"
 done
 ```
@@ -100,7 +114,7 @@ config: {runner: {image: localhost/aurora/aurora-sandbox:local}}
 
 `image.registry: ""` means bare image names (`aurora-api:<tag>`), which is only right when the nodes already hold images under exactly those names.
 For a ready-made path use the scripts instead of typing this: `bash scripts/e2e/kind.sh --release-images` builds the release images, loads them and runs the tests ([below](#test-on-a-local-kind-cluster)),
-and [install-kind-dev.md](install-kind-dev.md) keeps a persistent cluster with fast rebuilds. The commands above are modelled on those scripts and were not run as part of writing this page.
+and [install-kind-dev.md](install-kind-dev.md) keeps a persistent cluster with fast rebuilds. The commands above are modelled on those scripts. AUDIT-003 ran the builds of `api`, `gateway`, `hookhost`, `runner`, `web`, the sandbox and the development IdP exactly as written here on a kind cluster (every build exit 0, then `helm install --wait`, upgrade and uninstall; `docs/audit/phase3-exit.md` Step 10). The `connector-*` targets and the `podman push` loop were not run from this page.
 
 ## Namespaces
 

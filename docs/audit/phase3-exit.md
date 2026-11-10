@@ -285,6 +285,22 @@ Each is a candidate fix task. Only F-1 and F-2 touch an exit criterion as writte
 | F-8 | low (test hygiene) | `web/playwright.config.ts` hard-codes port 4100 with `reuseExistingServer: true`; when another checkout's dev server is on 4100 (it was, from `/home/alex/agent-platform/aurora/web`) Playwright silently tests that code. I worked around it with `AURORA_E2E_BASE_URL` and my own server | `ss -ltnp` output in my session; `web/playwright.config.ts` | Make the port configurable (`AURORA_E2E_WEB_PORT`) or add a fail-fast check that the server on the port belongs to this checkout |
 | F-9 | low (missing test named in `18`) | `docs/18 §Deployment-neutral defaults` asks for an image-build smoke test ("with and without a `SANDBOX_BASE_IMAGE` override yields the same package list and `org.aurora.capabilities` label"); I found only the guard `no-deployment-defaults.sh` and the build scripts' `SANDBOX_BASE_IMAGE` pass-through. The neutral public base was exercised by the from-scratch `hosted.sh` build; the override path was not | `grep -rln SANDBOX_BASE_IMAGE scripts tests .github images` | Add the smoke script (or amend `18` to say the guard plus one real build covers it) |
 
+## Follow-ups
+
+Added by AUDIT-003-FU (the findings above are left as written):
+
+| Finding | Status | Closed by |
+|---------|--------|-----------|
+| F-1 | open → FIX-024 | `upgrade.sh` from a phase-2 base |
+| F-2 | closed | `docs/tests/security-coverage.md`: rows SEC-53, SEC-57, SEC-58 added (`proven`), the six stale SEC-34..SEC-39 duplicates removed, the D-118 tests added to SEC-42, header range now SEC-01..SEC-79 |
+| F-3 | closed | `docs/03-data-model.md`: the three phase-3 "no schema change" rows moved into the notes of `organizations.governance`, `turns.source_event_id` and `plugin_packages.status_reason`; the planned sections removed |
+| F-4 | closed | `docs/FEATURES.md`: the 11 phase-3 rows marked `done` with their test evidence (Steps 3 and 8) and the header sentence fixed |
+| F-5 | closed | new `docs/operator/outage-and-alerts.md`, indexed in `docs/operator/README.md` |
+| F-6 | closed | `docs/operator/install-helm.md` §Images: dev-IdP build, connector image targets, "were not run" sentence updated |
+| F-7 | resolved | GitHub CI runs again since 2026-11-09 (billing restored); later master runs complete |
+| F-8 | open → FIX-024 | Playwright port |
+| F-9 | open → FIX-024 | base-image smoke test |
+
 ## Real-cluster install and signing
 
 - Real-cluster Helm install checklist (end of `install-helm.md`, FU-P1-005a / FIX-017): **owner, in progress**. Exit criterion 9 is evidenced for kind only.
