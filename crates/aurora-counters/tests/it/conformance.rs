@@ -461,7 +461,10 @@ async fn memory_rollover_uses_the_injected_clock() {
             .expect("2")
             .is_allowed()
     );
-    let v = store.fixed_window_consume(std::slice::from_ref(&u)).await.expect("3");
+    let v = store
+        .fixed_window_consume(std::slice::from_ref(&u))
+        .await
+        .expect("3");
     assert!(
         matches!(v, Verdict::Refused { retry_after, .. } if retry_after == Duration::from_secs(30))
     );
