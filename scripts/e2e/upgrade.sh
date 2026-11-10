@@ -13,7 +13,13 @@
 #
 # Defects found are printed as `DEFECT` lines. They do not fail the run unless UPGRADE_STRICT=1.
 #
-# Env: UPGRADE_BASE (git ref), SKIP_BUILD=1 (reuse binaries/images from a previous run),
+# Baseline phase: UPGRADE_BASE_PHASE=0|2 (1 = 2). Unset: detected from the base commit (its
+# aurora-config knows `dev_idp` => phase 1+, else phase 0). Phase 0 signs up with a password and
+# asserts the plaintext -> TLS-only story (RFE-002); phase 1+ writes an OIDC (dev IdP) + TLS config,
+# signs in through the dev IdP and checks conversation, memory, secret, second agent, schedule and
+# the running sandbox across the upgrade (UPGRADE_BASE=cc6ccbb345cf03ad2b881d9585e8a19329ceac9a).
+#
+# Env: UPGRADE_BASE (git ref), UPGRADE_BASE_PHASE, SKIP_BUILD=1 (reuse binaries/images from a previous run),
 #      KEEP=1 (do not delete the scratch dir/worktree at the end), PG_RELAY_PORT (default 55442).
 #
 # Isolation: everything this script creates in podman is prefixed `aurora-upg-`; the scratch dir is
@@ -74,6 +80,7 @@ if [ "${1:-}" = "--inner" ]; then
 
   # cfg <name> <bind> <image-line> <proxy-scheme>: the phase-0 baseline gateway serves plaintext
   # (http), HEAD is TLS-only (RFE-002: https; an old in-sandbox supervisor must be restarted).
+  # A phase-1+ baseline is already TLS-only (https) and signs in through the dev IdP (sign_in below).
   write_cfg() {
     local f="$W/$1.toml"
     cat >"$f" <<EOF
@@ -119,7 +126,8 @@ hookhost_url = "http://127.0.0.1:9"
 EOF
     # Phase 1 (RFE-004): HEAD needs an OIDC provider to start (the baseline predates the key and
     # rejects unknown ones). Nothing signs in on HEAD here: the baseline session is the test.
-    if [ "$1" = head ]; then
+    # A phase-1+ baseline already requires it (auth.oidc_providers or auth.dev_idp.enabled).
+    if [ "$1" = head ] || [ "$PHASE" != 0 ]; then
       printf '\n[auth.dev_idp]\nenabled = true\nissuer = "http://localhost:4107"\n' >>"$f"
     fi
   }
@@ -191,7 +199,17 @@ http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_foreve
   BASE_BIN="$W/base/target/debug"; HEAD_BIN="$ROOT/target/debug"
   rm -rf "$W/ca" "$W/pids" "$W/cookies"; mkdir -p "$W/ca"
   "$BASE_BIN/aurora-gateway" generate-ca --out "$W/ca" >/dev/null || { echo "generate-ca failed"; exit 1; }
-  write_cfg base "$BRIDGE" "" http            # baseline: image is fixed by the API (aurora-sandbox:0.1.0)
+  BASE_SCHEME=http; [ "$PHASE" != 0 ] && BASE_SCHEME=https
+  if [ "$PHASE" != 0 ]; then
+    # Development IdP on the netns loopback (issuer http://localhost:4107, as in the dev config);
+    # any login_hint signs in. It stays up across the upgrade (not part of PIDS).
+    AURORA_DEV_IDP_LISTEN=127.0.0.1:4107 AURORA_DEV_IDP_USERS="$ROOT/deploy/dev/dev-idp-users.json" AURORA_DEV_IDP_ALLOW_ANY_HINT=1 \
+      "$HEAD_BIN/aurora-dev-idp" >"$W/idp.log" 2>&1 &
+    IDP_PID=$!
+    trap 'stop_svcs; [ -n "${RELAY_PID:-}" ] && kill "$RELAY_PID" 2>/dev/null; kill "$UP_PID" "$IDP_PID" 2>/dev/null' EXIT
+    wait_ok "http://127.0.0.1:4107/.well-known/openid-configuration" || { cat "$W/idp.log"; exit 1; }
+  fi
+  write_cfg base "$BRIDGE" "" "$BASE_SCHEME"   # baseline: image is fixed by the API (aurora-sandbox:0.1.0)
   for n in api gateway runner; do cp "$W/base.toml" "$W/base-$n.toml"; done
   sed -i "s/^bind = .*/bind = \"$API_IP\"/" "$W/base-api.toml"
   sed -i "s/^bind = .*/bind = \"$BRIDGE\"/" "$W/base-gateway.toml" "$W/base-runner.toml"
@@ -203,9 +221,23 @@ http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_foreve
   start_svc base "$BASE_BIN" aurora-runner "$W/base-runner.toml"
   wait_ok "http://$OPS_IP:4103/readyz" && wait_ok "http://$OPS_IP:4106/readyz" || { svc_logs; exit 1; }
 
-  r=$(api POST /v1/auth/signup '{"email":"upg@e2e.test","password":"correct horse battery staple 42","display_name":"Upg"}')
-  [ "$(echo "$r" | code)" = 201 ] && ok "signup" || { bad "signup: $r"; exit 1; }
+  if [ "$PHASE" = 0 ]; then
+    r=$(api POST /v1/auth/signup '{"email":"upg@e2e.test","password":"correct horse battery staple 42","display_name":"Upg"}')
+    [ "$(echo "$r" | code)" = 201 ] && ok "signup" || { bad "signup: $r"; exit 1; }
+  else
+    # Scripted OIDC sign-in (docs/operator/sign-in.md): start -> IdP authorize (login_hint) -> callback.
+    # The callback URL is built from external_url (no web server here): point it at the API.
+    # The flow cookie is `__Host-aurora_oidc` (Secure): curl's jar would not send it over http, so pass the pair by hand.
+    hdrs=$(curl -sS -m 20 -D - -o /dev/null "http://$API_IP:4101/v1/auth/oidc/dev/start?login_hint=upg%40e2e.test&return_to=%2F" | tr -d '\r')
+    flow=$(echo "$hdrs" | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-aurora_oidc=[^;]*\).*/\1/p' | head -1)
+    loc=$(echo "$hdrs" | sed -n 's/^[Ll]ocation: //p' | head -1)
+    loc2=$(curl -sS -m 20 -o /dev/null -w '%{redirect_url}' "$loc")
+    loc2="${loc2/$ORIGIN/http://$API_IP:4101}"
+    cb=$(curl -sS -m 20 -c "$jar" -b "$jar" -H "Cookie: $flow" -o /dev/null -w '%{http_code} %{redirect_url}' "$loc2")
+    case "$cb" in 3*" "*error=*) bad "oidc sign-in refused: $cb"; exit 1;; 3*) ok "sign-in through the dev IdP ($cb)";; *) bad "oidc sign-in: $cb (start=$loc idp=$loc2)"; exit 1;; esac
+  fi
   me=$(api GET /v1/me | body)
+  ORG=$(echo "$me" | jq -r '.memberships[0].org.id')
   WS=$(echo "$me" | jq -r '.memberships[0].workspaces[0].id')
   AGENT=$(api GET "/v1/workspaces/$WS/agents" | body | jq -r '.items[] | select(.handle=="daneel") | .id')
   [ -n "$AGENT" ] && [ "$AGENT" != null ] || { bad "daneel not found"; exit 1; }
@@ -220,8 +252,22 @@ http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_foreve
   r=$(api POST "/v1/agents/$AGENT/memories" '{"key":"upgrade-fact","title":"Upgrade","content":"survives the upgrade"}')
   case "$(echo "$r" | code)" in 200|201) ok "memory created (baseline API)";; *) bad "memory: $r";; esac
   # The baseline API has no schedules routes: seed the (existing) table directly.
-  SCHED=$(sql "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled, next_fire_at) VALUES (gen_random_uuid(), '$AGENT', 'nightly', 'say hi', '0 3 * * *', 'UTC', true, now() + interval '1 day') RETURNING id")
-  [ -n "$SCHED" ] && ok "schedule seeded via SQL (baseline has no schedules API)" || bad "schedule seed"
+  if [ "$PHASE" = 0 ]; then
+    SCHED=$(sql "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled, next_fire_at) VALUES (gen_random_uuid(), '$AGENT', 'nightly', 'say hi', '0 3 * * *', 'UTC', true, now() + interval '1 day') RETURNING id")
+    [ -n "$SCHED" ] && ok "schedule seeded via SQL (baseline has no schedules API)" || bad "schedule seed"
+  else
+    # Phase 1+: the baseline has the schedules, secrets and agents APIs; create the data through them.
+    r=$(api POST "/v1/agents/$AGENT/schedules" '{"name":"nightly","prompt":"say hi","cron":"0 3 * * *","timezone":"UTC"}')
+    SCHED=$(echo "$r" | body | jq -r '.id // empty')
+    case "$(echo "$r" | code)" in 200|201) [ -n "$SCHED" ] && ok "schedule created (baseline API)" || bad "schedule: $r";; *) bad "schedule: $r";; esac
+    r=$(api POST "/v1/orgs/$ORG/secrets" '{"name":"upg-secret","kind":"generic","host_pattern":"upg.example.test","injection":{"kind":"bearer"},"value":"upg-secret-value-1"}')
+    SECRET=$(echo "$r" | body | jq -r '.id // empty')
+    case "$(echo "$r" | code)" in 200|201) [ -n "$SECRET" ] && ok "secret created (baseline API)" || bad "secret: $r";; *) bad "secret: $r";; esac
+    SECRET_VER=$(api GET "/v1/secrets/$SECRET" | body | jq -r .value_version)
+    r=$(api POST "/v1/workspaces/$WS/agents" '{"name":"Upg Second","kind":"byo","handle":"upgsecond"}')
+    AGENT2=$(echo "$r" | body | jq -r '(.agent // .).id // empty')
+    case "$(echo "$r" | code)" in 200|201) [ -n "$AGENT2" ] && ok "second agent created (baseline API)" || bad "agent2: $r";; *) bad "agent2: $r";; esac
+  fi
   BOOT1=$(sandbox_json | jq -r .boot_id)
   CID=$(container)
   CIMG_BASE=$(podman inspect -f '{{.Image}}' "$CID")
@@ -265,19 +311,31 @@ http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_foreve
   [ "$(api GET "/v1/agents/$AGENT/memories/upgrade-fact" | body | jq -r .content)" = "survives the upgrade" ] && ok "memory readable via HEAD api" || bad "memory lost"
   sr=$(api GET "/v1/schedules/$SCHED")
   [ "$(echo "$sr" | code)" = 200 ] && [ "$(echo "$sr" | body | jq -r .cron)" = "0 3 * * *" ] && ok "schedule readable via HEAD api (cron intact)" || bad "schedule: $sr"
-  # (phase 1, RFE-002) The running phase-0 supervisor forwards plaintext to a TLS-only 4102: it must
-  # fail closed (nothing reaches the upstream, no plaintext listener exists).
-  TF=$(say "$CONV" "[[http: GET http://127.0.0.1:$UP_PORT/after-upgrade]]")
-  RF=$(wait_turn "$TF" 120)
-  echo "  old-supervisor http turn after the upgrade: $RF"
-  sleep 1
-  hit /after-upgrade && bad "FAIL-OPEN: the old sandbox's request reached the upstream after the gateway became TLS-only" || ok "old sandbox fails closed: its request never reached the upstream"
-  check "gateway log shows no plaintext proxy request served after the upgrade" [ "$(grep -c 'after-upgrade' "$W/head-aurora-gateway.log" 2>/dev/null || true)" = 0 ]
-  # restart_to_update (docs/15 §Upgrades): the boot inputs changed (gateway.tls), so it is flagged.
+  if [ "$PHASE" = 0 ]; then
+    # (phase 1, RFE-002) The running phase-0 supervisor forwards plaintext to a TLS-only 4102: it must
+    # fail closed (nothing reaches the upstream, no plaintext listener exists).
+    TF=$(say "$CONV" "[[http: GET http://127.0.0.1:$UP_PORT/after-upgrade]]")
+    RF=$(wait_turn "$TF" 120)
+    echo "  old-supervisor http turn after the upgrade: $RF"
+    sleep 1
+    hit /after-upgrade && bad "FAIL-OPEN: the old sandbox's request reached the upstream after the gateway became TLS-only" || ok "old sandbox fails closed: its request never reached the upstream"
+    check "gateway log shows no plaintext proxy request served after the upgrade" [ "$(grep -c 'after-upgrade' "$W/head-aurora-gateway.log" 2>/dev/null || true)" = 0 ]
+  else
+    # Phase 1+: the old supervisor already speaks TLS to the gateway, so its request must still reach
+    # the upstream through the NEW gateway (same CA, same TLS listener contract).
+    TF=$(say "$CONV" "[[http: GET http://127.0.0.1:$UP_PORT/after-upgrade]]")
+    wait_turn "$TF" 120 >/dev/null
+    wait_hit /after-upgrade && ok "old supervisor's request reaches the upstream through the NEW gateway over TLS" || bad "old supervisor's request did not reach the upstream after the upgrade"
+    # Data-bearing rows written through the baseline API read back through HEAD.
+    check "secret still listed by HEAD api (value_version $SECRET_VER unchanged)" [ "$(api GET "/v1/secrets/$SECRET" | body | jq -r '[.name,.status,.value_version]|join(",")')" = "upg-secret,active,$SECRET_VER" ]
+    check "second agent readable via HEAD api" [ "$(api GET "/v1/agents/$AGENT2" | body | jq -r '(.agent // .).handle')" = upgsecond ]
+  fi
+  # restart_to_update (docs/15 §Upgrades). Phase 0: the boot inputs changed (gateway.tls), so it is flagged.
+  # Phase 1+: whether HEAD's boot inputs differ is not specified; the flag must be a boolean and clear after the restart.
   SB=$(sandbox_json)
   echo "  sandbox view: $(echo "$SB" | jq -c '{state,image,restart_to_update}')"
   check "sandbox view carries restart_to_update (boolean)" [ "$(echo "$SB" | jq -r '.restart_to_update|type')" = boolean ]
-  check "restart_to_update is true for the sandbox booted before TLS-only (boot inputs changed)" [ "$(echo "$SB" | jq -r .restart_to_update)" = true ]
+  [ "$PHASE" = 0 ] && check "restart_to_update is true for the sandbox booted before TLS-only (boot inputs changed)" [ "$(echo "$SB" | jq -r .restart_to_update)" = true ]
   # Restart: the next boot is on the new image.
   rs=$(api POST "/v1/agents/$AGENT/restart" '{}')
   [ "$(echo "$rs" | code)" = 202 ] && ok "restart accepted" || bad "restart: $rs"
@@ -317,7 +375,16 @@ re='^postgres(ql)?://([^:]+):([^@]+)@([^:/]+):([0-9]+)/(.+)$'
 [[ "$DBURL" =~ $re ]] || { echo "cannot parse DATABASE_URL" >&2; exit 1; }
 export DB_USER="${BASH_REMATCH[2]}" DB_PASS="${BASH_REMATCH[3]}" DB_HOST="${BASH_REMATCH[4]}" DB_PORT="${BASH_REMATCH[5]}"
 export DB_NAME="aurora_upg_$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-export W BASE_REF SBX_NET BASE_IMG HEAD_IMG BRIDGE API_IP OPS_IP ORIGIN RELAY_PORT TOKEN FP ROOT
+# Baseline phase. Auto-detect: a base whose aurora-config knows `dev_idp` (phase 1, RFE-004: OIDC-only
+# sign-in, TLS-only proxy listener) is a phase-1+ baseline ("2"); an older one is phase 0.
+if [ -z "${UPGRADE_BASE_PHASE:-}" ]; then
+  if git -C "$ROOT" grep -q dev_idp "$BASE_REF" -- crates/aurora-config/src 2>/dev/null; then PHASE=2; else PHASE=0; fi
+else
+  PHASE="$UPGRADE_BASE_PHASE"
+fi
+case "$PHASE" in 0) ;; 1|2) PHASE=2;; *) echo "UPGRADE_BASE_PHASE must be 0, 1 or 2" >&2; exit 1;; esac
+echo "== baseline phase: $PHASE (base $BASE_REF)"
+export PHASE W BASE_REF SBX_NET BASE_IMG HEAD_IMG BRIDGE API_IP OPS_IP ORIGIN RELAY_PORT TOKEN FP ROOT
 
 admin_sql() { PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -Atq -c "$1"; }
 
@@ -351,6 +418,9 @@ if [ "${SKIP_BUILD:-}" != "1" ]; then
   git -C "$ROOT" worktree add --detach "$W/base" "$BASE_REF" >/dev/null || { echo "worktree add failed" >&2; exit 1; }
   (cd "$W/base" && timeout 3000 cargo build -p aurora-api -p aurora-gateway -p aurora-runner) || { echo "baseline cargo build failed" >&2; exit 1; }
   (cd "$ROOT" && timeout 3000 cargo build -p aurora-api -p aurora-gateway -p aurora-runner) || { echo "HEAD cargo build failed" >&2; exit 1; }
+  if [ "$PHASE" != 0 ]; then
+    (cd "$ROOT" && timeout 3000 cargo build -p aurora-testkit --bin aurora-dev-idp) || { echo "dev IdP build failed" >&2; exit 1; }
+  fi
   # The image builder keeps one cargo target in a shared cache mount: bump source mtimes so cargo
   # never reuses the other tree's artifacts (COPY preserves mtimes).
   touch_sources() { (cd "$1" && git ls-files -z '*.rs' '*.toml' Cargo.lock | xargs -0 touch); }

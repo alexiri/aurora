@@ -156,7 +156,10 @@ done when its tests exist, pass in CI, and the security invariants it touches
   `agents.default_brief`'s built-in default contains no persona names or
   backstory — and the CERN values appear only in the documented deployment example.
 - Image build: building with and without a `SANDBOX_BASE_IMAGE` override yields the
-  same package list and `org.aurora.capabilities` label (smoke test).
+  same package list and `org.aurora.capabilities` label (smoke test:
+  `scripts/images/sandbox-base-smoke.sh` builds `sandbox-min` with the default digest-pinned base and with the
+  same image by another reference and compares `rpm -qa` and the label; `SMOKE_FULL=1` also covers the full
+  `sandbox` target, which is what the nightly job `sandbox-base-smoke` runs).
 
 ### Workspace-tier skills (phase 3, RFE-020, SEC-56)
 - Effective set: all combinations of one name at agent/workspace/org tiers with

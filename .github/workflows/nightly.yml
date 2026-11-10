@@ -113,3 +113,13 @@ jobs:
           name: mattermost-conformance-failure
           path: target/mattermost-failure.log
           if-no-files-found: ignore
+
+  # FIX-024 (AUDIT-003 F-9, docs/18 §Deployment-neutral defaults): a SANDBOX_BASE_IMAGE override of the same
+  # base keeps the package list and the org.aurora.capabilities label (also for the full `sandbox` target).
+  sandbox-base-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sandbox base-image override smoke test
+        run: SMOKE_FULL=1 bash scripts/images/sandbox-base-smoke.sh
