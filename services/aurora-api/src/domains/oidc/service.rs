@@ -1,4 +1,5 @@
 //! OIDC flow: `start` builds the provider redirect, `callback` completes sign-in.
+use super::roles;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::auth::service::{self as auth, Client, normalize_email};
@@ -15,8 +16,8 @@ use chrono::Utc;
 use http::StatusCode;
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient};
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, LoginHint, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, LoginHint, Nonce, OAuth2TokenResponse,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -288,6 +289,20 @@ struct Verified {
     name: Option<String>,
     /// The IdP's `auth_time` (unix seconds), when it returned one.
     auth_time: Option<i64>,
+    /// (P4-IDP-1) Role values read from the validated token (or userinfo); empty when the provider
+    /// has no `role_claim` or the claim is absent.
+    role_values: Vec<String>,
+}
+
+/// The claims object of the **already verified** ID token (its payload segment).
+fn verified_payload(id_token: &impl Serialize) -> Option<serde_json::Value> {
+    use base64::Engine as _;
+    let jwt = serde_json::to_value(id_token).ok()?;
+    let seg = jwt.as_str()?.split('.').nth(1)?.to_owned();
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(seg.trim_end_matches('='))
+        .ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 async fn exchange(
@@ -332,8 +347,34 @@ async fn exchange(
     // D-118: a provider without the claim may be declared authoritative for some domains.
     let email_verified =
         claims.email_verified() == Some(true) || domain_in(&p.trusted_email_domains, &email);
+    let sub = claims.subject().as_str().to_owned();
+    // SEC-78: only this provider's validated token (or its userinfo, fetched with this flow's
+    // access token and bound to the same `sub`) is ever read for roles.
+    let role_values = match p.role_claim.as_deref() {
+        None => vec![],
+        Some(path) if p.role_claim_from_userinfo() => {
+            let info = state
+                .oidc
+                .userinfo(p, OAuth2TokenResponse::access_token(&tokens).secret())
+                .await
+                .map_err(|e| {
+                    tracing::warn!("oidc: userinfo failed: {e}");
+                    FAILED
+                })?;
+            if info.get("sub").and_then(|s| s.as_str()) == Some(sub.as_str()) {
+                roles::extract_values(&p.id, &info, path)
+            } else {
+                tracing::warn!("oidc: userinfo sub does not match the ID token; roles ignored");
+                vec![]
+            }
+        }
+        Some(path) => verified_payload(id_token)
+            .map(|pl| roles::extract_values(&p.id, &pl, path))
+            .unwrap_or_default(),
+    };
     Ok(Verified {
-        sub: claims.subject().as_str().to_owned(),
+        role_values,
+        sub,
         email,
         email_verified,
         name: claims
@@ -496,6 +537,11 @@ async fn sign_in(
     v: &Verified,
 ) -> Result<(String, UserRow), Fail> {
     let listed = v.email_verified && auth::is_listed_admin(state, &v.email);
+    // D-139: what this provider's mappings grant for the validated claim values.
+    let desired = roles::compute(p, &v.role_values);
+    if p.require_role && !desired.grants_anything() {
+        return Err(Fail("no_mapped_role"));
+    }
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
 
     let mut created = false;
@@ -515,7 +561,7 @@ async fn sign_in(
                 Some(_) => return Err(Fail("email_unverified")),
                 None => {
                     created = true;
-                    create_user(state, &mut tx, p, v, listed).await?
+                    create_user(state, &mut tx, p, v, listed, &desired).await?
                 }
             };
             identities::insert(&mut *tx, user.id, &p.id, &v.sub, &v.email)
@@ -531,12 +577,19 @@ async fn sign_in(
         return Err(Fail("user_disabled"));
     }
 
+    // The e-mail list is a manual source: it takes the flag over from a claim and is granted
+    // before the claim sync so that the sync never revokes it.
+    if listed {
+        if !user.is_instance_admin {
+            user = users::grant_instance_admin(&mut *tx, user.id).await?;
+        }
+        aurora_db::repo::idp_roles::clear_admin_source(&mut *tx, user.id).await?;
+    }
+    // Precedence: invitation (in `create_user`) → role claims → provider `jit` → placement.
+    roles::sync(&mut tx, state, p, &mut user, &v.role_values, &desired).await?;
     apply_jit(&mut tx, p, &mut user).await?;
 
     user = users::record_login(&mut *tx, user.id).await?;
-    if listed && !user.is_instance_admin {
-        user = users::grant_instance_admin(&mut *tx, user.id).await?;
-    }
     let token = auth::issue_session(&mut tx, state, user.id, client)
         .await
         .map_err(|e| {
@@ -561,6 +614,7 @@ async fn create_user(
     p: &OidcProvider,
     v: &Verified,
     listed: bool,
+    desired: &roles::Desired,
 ) -> Result<UserRow, Fail> {
     let jit_org = match &p.jit {
         Some(j) => orgs::get_by_slug(&mut *tx, &j.org_slug).await?,
@@ -569,14 +623,23 @@ async fn create_user(
     // docs/04 §Sign-up semantics under OIDC-only. (A pre-provisioned `bootstrap-admin` user
     // exists already and never reaches here.)
     let invited = inv_repo::has_pending_for_email(&mut *tx, &v.email).await?;
+    // D-143: the provider's own role mapping admits a new user when the validated claim maps to
+    // at least one actual grant (all other sign-in checks have already passed).
+    let claimed = desired.grants_anything();
     let allowed = match state.config.signup_mode {
         SignupMode::Open => true,
-        SignupMode::SsoJit => jit_org.is_some() || invited,
-        SignupMode::InviteOnly => listed || invited,
+        SignupMode::SsoJit => jit_org.is_some() || invited || claimed,
+        SignupMode::InviteOnly => listed || invited || claimed,
     };
     if !allowed {
         return Err(Fail("signup_closed"));
     }
+    let admitted_by_claim = claimed
+        && match state.config.signup_mode {
+            SignupMode::Open => false,
+            SignupMode::SsoJit => jit_org.is_none() && !invited,
+            SignupMode::InviteOnly => !listed && !invited,
+        };
     let name = display_name(v);
     let user = identities::insert_user(
         &mut *tx,
@@ -593,6 +656,31 @@ async fn create_user(
         tracing::warn!("oidc: user insert failed: {e}");
         Fail("oidc_failed")
     })?;
+    if admitted_by_claim {
+        // Audited in the user-creating transaction; names the provider and the matched values.
+        let matched: Vec<&str> = desired
+            .granted
+            .iter()
+            .filter_map(|g| g["value"].as_str())
+            .collect();
+        let ev = AuditEvent::new(
+            AuditActor {
+                kind: "service",
+                id: None,
+                label: format!("idp:{}", p.id),
+                source: "system",
+                ip: None,
+            },
+            "user.admit_by_claim",
+            Outcome::Success,
+        )
+        .target("user", user.id)
+        .metadata(json!({"provider": p.id, "claim_values": matched}));
+        audit::insert_tx(&mut *tx, &ev).await.map_err(|e| {
+            tracing::error!("oidc: admission audit: {e}");
+            Fail("oidc_failed")
+        })?;
+    }
     if state.config.signup_mode == SignupMode::Open {
         let short: String = name.chars().take(74).collect();
         let org = tenancy::service::create_organization(

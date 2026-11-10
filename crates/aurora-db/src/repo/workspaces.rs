@@ -164,8 +164,17 @@ pub async fn bind_user<'e, E: PgExecutor<'e>>(
     role: &str,
 ) -> Result<(), DbError> {
     sqlx::query(
+        // P4-IDP-1: on a claim-managed row a manual role goes to `base_role` and the effective
+        // role stays the stronger of the two, so a binding never undercuts the claim.
         "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,$3)
-         ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role, updated_at = now()",
+         ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+           role = CASE WHEN workspace_access.idp_role IS NULL THEN EXCLUDED.role
+             WHEN array_position(ARRAY['member','approver','owner'], EXCLUDED.role)
+                >= array_position(ARRAY['member','approver','owner'], workspace_access.idp_role)
+             THEN EXCLUDED.role ELSE workspace_access.idp_role END,
+           base_role = CASE WHEN workspace_access.idp_role IS NULL THEN workspace_access.base_role
+             ELSE EXCLUDED.role END,
+           updated_at = now()",
     )
     .bind(ws)
     .bind(user)
@@ -215,12 +224,15 @@ pub struct AccessRow {
     pub role: String,
     pub implicit: bool,
     pub created_at: DateTime<Utc>,
+    /// (P4-IDP-1) The IdP role value behind this binding; `None` for manual bindings.
+    pub idp_value: Option<String>,
 }
 
 const ACCESS_SEL: &str = "SELECT u.id AS user_id, u.email::text AS email, u.display_name,
     CASE WHEN m.role IN ('owner','admin') THEN 'owner' ELSE a.role END AS role,
     (m.role IN ('owner','admin')) AS implicit,
-    COALESCE(a.created_at, m.created_at) AS created_at
+    COALESCE(a.created_at, m.created_at) AS created_at,
+    substring(a.idp_source from '^idp:[^:]*:(.*)$') AS idp_value
   FROM workspaces w
   JOIN org_members m ON m.org_id = w.org_id AND m.status = 'active'
   JOIN users u ON u.id = m.user_id

@@ -7,6 +7,14 @@ use aurora_db::{DbError, PgPool};
 use serde_json::json;
 use uuid::Uuid;
 
+/// 409 for an edit of something the IdP's role claims own (D-139).
+pub fn managed_by_idp() -> ApiError {
+    ApiError::conflict(
+        "managed_by_idp",
+        "This role comes from the identity provider and cannot be changed here.",
+    )
+}
+
 pub async fn patch_user(
     state: &AppState,
     actor: Uuid,
@@ -24,6 +32,14 @@ pub async fn patch_user(
     // RFE-008: `admin.user_update` (instance-admin grant/revoke, disable/enable) commits with its
     // audit row.
     let mut tx = crate::audit::begin(state).await?;
+    // D-139: a claim-derived instance-admin flag belongs to the IdP.
+    if is_instance_admin.is_some()
+        && aurora_db::repo::idp_roles::admin_source(&mut *tx, id)
+            .await?
+            .is_some()
+    {
+        return Err(managed_by_idp());
+    }
     let row = account::update_admin_flags(&mut *tx, id, is_instance_admin, disabled)
         .await?
         .ok_or_else(|| ApiError::not_found("User not found."))?;

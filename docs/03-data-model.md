@@ -40,6 +40,17 @@ MUST implement it exactly; any change starts here.
 | default_org_id | uuid null FK→organizations (set null) | |
 | last_login_at | timestamptz null | churn column |
 | approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails (phase 2, RFE-011a; `PATCH /v1/me { approval_email }`) |
+| idp_admin_source | text null | (phase 4, P4-IDP-1, D-139) `idp:<provider>:<value>` when the claim sync granted `is_instance_admin`; `null` for a manual, e-mail-list or `bootstrap-admin` flag (those are never revoked by the sync) |
+
+### `user_idp_roles`
+(phase 4, P4-IDP-1, D-139) The claim debugger: the role values of a user's last sign-in and what each mapped to.
+| Column | Type | Notes |
+|---|---|---|
+| user_id | uuid pk FK→users (cascade) | |
+| provider_id | text not null | the provider whose token carried the values |
+| claim_values | text[] not null default `{}` | every value of the role claim, mapped or not |
+| granted | jsonb not null default `[]` | one entry per matched mapping: `{value, instance_admin, org {slug, role}, workspaces [{slug, role}]}` |
+| synced_at | timestamptz not null default now() | |
 
 ### `user_identities`
 External identities linked to a user (OIDC).
@@ -88,6 +99,9 @@ External identities linked to a user (OIDC).
 | user_id | uuid FK→users (cascade) | pk part |
 | role | text CHECK in (`owner`,`admin`,`member`) | |
 | status | text CHECK in (`active`,`suspended`) default `active` | suspended = non-member for every check |
+| idp_role | text null CHECK in (`owner`,`admin`,`member`) | (phase 4, P4-IDP-1, D-139) the role the IdP claims give; `null` = no claim-sourced role. `role` stays the effective role (the stronger of this and `base_role`) |
+| idp_source | text null | `idp:<provider>:<value>` of the claim value behind `idp_role`; `null` exactly when `idp_role` is `null` |
+| base_role | text null CHECK in (`owner`,`admin`,`member`) | the role the other sources gave before a claim raised it; restored when the claim goes; `null` when the claim created the row (the row goes with the claim) |
 
 Invariant: every org has ≥1 active `owner` (enforced by the service; the last
 owner cannot be demoted or removed).
@@ -130,6 +144,9 @@ owner cannot be demoted or removed).
 | workspace_id | uuid FK→workspaces (cascade) | pk part |
 | user_id | uuid FK→users (cascade) | pk part |
 | role | text CHECK in (`owner`,`approver`,`member`) | `approver` = chats and decides approvals (`04 §The access law`); the migration did **not** change existing rows (members stay members) (phase 2, RFE-012) |
+| idp_role | text null CHECK in (`owner`,`approver`,`member`) | (phase 4, P4-IDP-1, D-139) the role the IdP claims give; `null` = manual binding. `role` is the effective role |
+| idp_source | text null | `idp:<provider>:<value>`; `null` exactly when `idp_role` is `null` |
+| base_role | text null CHECK in (`owner`,`approver`,`member`) | the manual role under a claim-raised one; `null` when the claim created the row |
 
 ### `api_keys`
 | Column | Type | Notes |

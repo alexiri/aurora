@@ -22,7 +22,7 @@ fn provider(idp: &MockIdp, f: impl FnOnce(&mut OidcProvider)) -> OidcProvider {
     p
 }
 
-async fn harness(
+pub(crate) async fn harness(
     idp: &MockIdp,
     mode: SignupMode,
     tweak: impl FnOnce(&mut OidcProvider),
@@ -40,7 +40,7 @@ async fn harness(
     .await
 }
 
-fn header(h: &http::HeaderMap, name: &str) -> Vec<String> {
+pub(crate) fn header(h: &http::HeaderMap, name: &str) -> Vec<String> {
     h.get_all(name)
         .iter()
         .map(|v| v.to_str().unwrap().to_owned())
@@ -56,7 +56,7 @@ fn flow_cookie(h: &http::HeaderMap) -> String {
 }
 
 /// Run `start` and the provider's authorize step; returns `(callback path+query, cookie)`.
-async fn authorize(h: &Harness, return_to: Option<&str>) -> (String, String) {
+pub(crate) async fn authorize(h: &Harness, return_to: Option<&str>) -> (String, String) {
     let uri = match return_to {
         Some(r) => format!(
             "/v1/auth/oidc/{PID}/start?return_to={}",
@@ -86,22 +86,26 @@ async fn authorize(h: &Harness, return_to: Option<&str>) -> (String, String) {
     (path.to_owned(), cookie)
 }
 
-async fn callback(h: &Harness, path: &str, cookie: &str) -> (StatusCode, http::HeaderMap) {
+pub(crate) async fn callback(
+    h: &Harness,
+    path: &str,
+    cookie: &str,
+) -> (StatusCode, http::HeaderMap) {
     let (st, hd, _) = h.send(Method::GET, path, &[("cookie", cookie)], None).await;
     (st, hd)
 }
 
-fn location(h: &http::HeaderMap) -> String {
+pub(crate) fn location(h: &http::HeaderMap) -> String {
     header(h, "location").remove(0)
 }
 
-fn has_session(h: &http::HeaderMap) -> bool {
+pub(crate) fn has_session(h: &http::HeaderMap) -> bool {
     header(h, "set-cookie")
         .iter()
         .any(|c| c.starts_with("aurora_session=aus_"))
 }
 
-async fn count(h: &Harness, sql: &str) -> i64 {
+pub(crate) async fn count(h: &Harness, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(h.pool()).await.unwrap()
 }
 

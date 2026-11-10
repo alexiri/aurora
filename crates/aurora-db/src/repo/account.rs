@@ -152,10 +152,13 @@ pub struct AdminUserRow {
     pub disabled_at: Option<DateTime<Utc>>,
     pub last_login_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// (P4-IDP-1) The IdP role value behind the instance-admin flag; `None` when manual.
+    pub idp_admin_value: Option<String>,
 }
 
 const ADMIN_COLS: &str = "id, email::text AS email, display_name, email_verified_at, \
-    is_instance_admin, disabled_at, last_login_at, created_at";
+    is_instance_admin, disabled_at, last_login_at, created_at, \
+    substring(idp_admin_source from '^idp:[^:]*:(.*)$') AS idp_admin_value";
 
 fn like_escape(q: &str) -> String {
     let mut s = String::with_capacity(q.len() + 2);

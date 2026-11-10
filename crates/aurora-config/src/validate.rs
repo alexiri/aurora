@@ -416,6 +416,10 @@ impl RawConfig {
                 issuer: auth.dev_idp.issuer.clone().unwrap_or_default(),
                 client_id: DEV_IDP_CLIENT_ID.into(),
                 client_secret_env: "(built-in development client)".into(),
+                role_claim: auth.dev_idp.role_claim.clone(),
+                role_claim_source: auth.dev_idp.role_claim_source.clone(),
+                require_role: auth.dev_idp.require_role,
+                role_mappings: auth.dev_idp.role_mappings.clone(),
                 ..OidcProvider::default()
             });
             oidc_client_secrets.insert(
@@ -1432,6 +1436,7 @@ fn check_auth(
                 c.err(k("jit.workspace_role"), "must be member or approver");
             }
         }
+        check_role_mappings(c, &format!("auth.oidc_providers[{i}]"), p);
     }
     if a.dev_idp.enabled {
         check_dev_idp(c, &a.dev_idp, &a.oidc_providers, external_url);
@@ -1443,6 +1448,74 @@ fn check_auth(
         );
     }
     (signup, org)
+}
+
+/// (P4-IDP-1, D-139) Startup validation of `role_claim` / `role_mappings`: every error names its key.
+fn check_role_mappings(c: &mut Ctx, prefix: &str, p: &OidcProvider) {
+    let k = |f: &str| format!("{prefix}.{f}");
+    if let Some(rc) = &p.role_claim
+        && (rc.is_empty()
+            || rc.len() > 200
+            || rc.split('.').any(str::is_empty)
+            || rc.contains(char::is_whitespace))
+    {
+        c.err(
+            k("role_claim"),
+            "must be a dot path such as `roles` or `resource_access.aurora.roles`",
+        );
+    }
+    if !matches!(p.role_claim_source.as_str(), "" | "id_token" | "userinfo") {
+        c.err(k("role_claim_source"), "must be id_token or userinfo");
+    }
+    if !p.role_mappings.is_empty() && p.role_claim.is_none() {
+        c.err(k("role_claim"), "required when role_mappings is set");
+    }
+    if p.require_role && p.role_mappings.is_empty() {
+        c.err(k("require_role"), "true requires a non-empty role_mappings");
+    }
+    let mut seen = BTreeSet::new();
+    for (j, m) in p.role_mappings.iter().enumerate() {
+        let mk = |f: &str| k(&format!("role_mappings[{j}].{f}"));
+        if m.value.is_empty() || m.value.len() > 200 || m.value.chars().any(char::is_control) {
+            c.err(
+                mk("value"),
+                "required (1 to 200 characters, no control characters)",
+            );
+        } else if !seen.insert(m.value.as_str()) {
+            c.err(mk("value"), format!("duplicate value `{}`", m.value));
+        }
+        if !m.instance_admin && m.org.is_none() {
+            c.err(
+                mk("org"),
+                "a mapping must grant instance_admin or an org role",
+            );
+        }
+        if let Some(o) = &m.org {
+            if !aurora_core::ids::is_valid_slug(&o.slug) {
+                c.err(mk("org.slug"), "must match [a-z0-9][a-z0-9-]{1,47}");
+            }
+            if !matches!(o.role.as_str(), "owner" | "admin" | "member") {
+                c.err(mk("org.role"), "must be owner, admin or member");
+            }
+        } else if !m.workspaces.is_empty() {
+            c.err(
+                mk("workspaces"),
+                "requires org (workspaces belong to that org)",
+            );
+        }
+        let mut wseen = BTreeSet::new();
+        for (n, w) in m.workspaces.iter().enumerate() {
+            let wk = |f: &str| mk(&format!("workspaces[{n}].{f}"));
+            if !aurora_core::ids::is_valid_slug(&w.slug) {
+                c.err(wk("slug"), "must match [a-z0-9][a-z0-9-]{1,47}");
+            } else if !wseen.insert(w.slug.as_str()) {
+                c.err(wk("slug"), format!("duplicate workspace `{}`", w.slug));
+            }
+            if !matches!(w.role.as_str(), "owner" | "approver" | "member") {
+                c.err(wk("role"), "must be owner, approver or member");
+            }
+        }
+    }
 }
 
 /// `localhost`, `*.localhost`, `127.0.0.1` / any IPv4 loopback, `[::1]`.
@@ -1468,6 +1541,14 @@ fn check_dev_idp(c: &mut Ctx, d: &DevIdp, providers: &[OidcProvider], external_u
     if let Some(u) = d.internal_url.as_deref() {
         check_url(c, "auth.dev_idp.internal_url", Some(u));
     }
+    let as_provider = OidcProvider {
+        role_claim: d.role_claim.clone(),
+        role_claim_source: d.role_claim_source.clone(),
+        require_role: d.require_role,
+        role_mappings: d.role_mappings.clone(),
+        ..OidcProvider::default()
+    };
+    check_role_mappings(c, "auth.dev_idp", &as_provider);
     if providers.iter().any(|p| p.id == DEV_IDP_PROVIDER_ID) {
         c.err(
             "auth.oidc_providers",

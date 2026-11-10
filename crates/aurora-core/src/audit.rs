@@ -69,6 +69,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "reach_grant.decide",
     // Roles and membership
     "admin.user_update",
+    // (P4-IDP-1, D-139) instance admin granted or revoked by the IdP-claim sync
+    "instance_admin.grant",
+    "instance_admin.revoke",
     "invitation.accept",
     "invitation.cancel",
     "invitation.create",

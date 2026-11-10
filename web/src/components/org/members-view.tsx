@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
+import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
@@ -45,7 +46,9 @@ export function MemberRow({
   onStatus: (status: "active" | "suspended") => void;
   onRemove: () => void;
 }) {
-  const options = roleOptions(viewer, m.role);
+  const fromIdp = m.idp_value ?? null;
+  // A role the IdP gives is read-only here (409 managed_by_idp on the API).
+  const options = fromIdp ? [] : roleOptions(viewer, m.role);
   const manage = canManageMember(viewer, m.role);
   return (
     <tr>
@@ -69,7 +72,10 @@ export function MemberRow({
             ))}
           </select>
         ) : (
-          m.role
+          <span className="flex flex-wrap items-center gap-1.5">
+            {m.role}
+            {fromIdp ? <IdpRoleBadge value={fromIdp} /> : null}
+          </span>
         )}
       </Td>
       <Td>
@@ -88,15 +94,17 @@ export function MemberRow({
             >
               {m.status === "active" ? "Suspend" : "Reactivate"}
             </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              disabled={busy}
-              aria-label={`Remove ${m.email}`}
-              onClick={onRemove}
-            >
-              Remove
-            </Button>
+            {fromIdp ? null : (
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={busy}
+                aria-label={`Remove ${m.email}`}
+                onClick={onRemove}
+              >
+                Remove
+              </Button>
+            )}
           </div>
         ) : null}
       </Td>

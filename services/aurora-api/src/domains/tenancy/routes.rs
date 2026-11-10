@@ -224,6 +224,7 @@ fn member(m: members::MemberRow) -> Member {
         role: parse_org_role(&m.role),
         status: parse_status(&m.status),
         created_at: m.created_at,
+        idp_value: m.idp_value,
     }
 }
 
@@ -598,6 +599,9 @@ async fn put_access(
         ));
     }
     let mut tx = audit::begin(&s).await?;
+    if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
+        return Err(crate::domains::admin::service::managed_by_idp());
+    }
     workspaces::bind_user(&mut *tx, ws, user, req.role.as_str()).await?;
     let ev = event(&c, "workspace_access.set")
         .org(a.org_id)
@@ -640,6 +644,9 @@ async fn delete_access(
     }
     // RFE-021: reassignment and the unbind commit or roll back together.
     let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
+        return Err(crate::domains::admin::service::managed_by_idp());
+    }
     if let Some(to) = reassign {
         let actor = AuditActor::from_caller(&c);
         let acting = Acting {

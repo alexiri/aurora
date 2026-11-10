@@ -46,6 +46,11 @@ pub struct Claims {
     /// Seconds ago the user authenticated. `Some(n)` always emits `auth_time = now - n`; `None`
     /// emits `auth_time = now` only when the authorize request carried `max_age`.
     pub auth_time_ago: Option<i64>,
+    /// (P4-IDP-1) Extra claims placed in the ID token, e.g. `{"cern_roles": ["aurora-admins"]}`
+    /// (the configurable roles claim). A nested path is written as nested JSON.
+    pub extra: serde_json::Map<String, Value>,
+    /// (P4-IDP-1) Claims served **only** by `/userinfo` (for `role_claim_source = userinfo`).
+    pub userinfo_extra: serde_json::Map<String, Value>,
 }
 
 impl Default for Claims {
@@ -59,6 +64,8 @@ impl Default for Claims {
             exp_in: 300,
             aud: None,
             auth_time_ago: None,
+            extra: serde_json::Map::new(),
+            userinfo_extra: serde_json::Map::new(),
         }
     }
 }
@@ -81,6 +88,9 @@ pub struct DevUser {
     pub name: Option<String>,
     #[serde(default = "yes")]
     pub email_verified: bool,
+    /// (P4-IDP-1) Extra ID-token claims of this fixture user, e.g. the roles claim.
+    #[serde(default)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 fn yes() -> bool {
@@ -123,6 +133,11 @@ struct Inner {
     users: Option<Vec<DevUser>>,
     allow_any_hint: bool,
     last_authorize: Mutex<HashMap<String, String>>,
+    /// Access token → the claims `/userinfo` returns for it.
+    userinfo: Mutex<HashMap<String, Value>>,
+    /// (P4-IDP-1) Per-e-mail (lower case) extra ID-token claims set at run time through
+    /// `PUT /dev/claims/{email}` or [`MockIdp::set_user_claims`]; they override the fixture's.
+    user_claims: Mutex<HashMap<String, serde_json::Map<String, Value>>>,
 }
 
 pub struct MockIdp {
@@ -165,9 +180,13 @@ impl MockIdp {
             users: opts.users,
             allow_any_hint: opts.allow_any_hint,
             last_authorize: Mutex::new(HashMap::new()),
+            userinfo: Mutex::new(HashMap::new()),
+            user_claims: Mutex::new(HashMap::new()),
         });
         let routes = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
+            .route("/userinfo", get(userinfo))
+            .route("/dev/claims/{email}", axum::routing::put(put_user_claims))
             .route("/jwks", get(jwks))
             .route("/authorize", get(authorize))
             .route("/token", post(token))
@@ -212,6 +231,15 @@ impl MockIdp {
     }
 
     /// Convenience: `sub`, `email`, `email_verified`.
+    /// Set the extra ID-token claims of the user with this e-mail (replaces earlier ones).
+    pub fn set_user_claims(&self, email: &str, claims: serde_json::Map<String, Value>) {
+        self.inner
+            .user_claims
+            .lock()
+            .expect("user claims")
+            .insert(email.to_ascii_lowercase(), claims);
+    }
+
     pub fn identity(&self, sub: &str, email: &str, verified: bool) {
         self.set(|c| {
             c.sub = sub.into();
@@ -228,6 +256,7 @@ async fn discovery(State(s): State<Arc<Inner>>) -> Json<Value> {
         "authorization_endpoint": format!("{i}/authorize"),
         "token_endpoint": format!("{i}/token"),
         "jwks_uri": format!("{i}/jwks"),
+        "userinfo_endpoint": format!("{i}/userinfo"),
         "response_types_supported": ["code"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["ES256"],
@@ -236,6 +265,33 @@ async fn discovery(State(s): State<Arc<Inner>>) -> Json<Value> {
         "scopes_supported": ["openid", "email", "profile"],
         "claims_supported": ["sub", "email", "email_verified", "name", "nonce", "auth_time"],
     }))
+}
+
+/// `/userinfo`: the standard claims plus `userinfo_extra`, for a Bearer token this IdP issued.
+async fn userinfo(State(s): State<Arc<Inner>>, headers: axum::http::HeaderMap) -> Response {
+    let tok = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    match s.userinfo.lock().expect("userinfo").get(tok) {
+        Some(v) => Json(v.clone()).into_response(),
+        None => StatusCode::UNAUTHORIZED.into_response(),
+    }
+}
+
+/// Dev/e2e only: `PUT /dev/claims/{email}` with a JSON object sets that user's extra ID-token
+/// claims for the next sign-ins (e.g. `{"cern_roles": ["aurora-admins"]}`).
+async fn put_user_claims(
+    State(s): State<Arc<Inner>>,
+    axum::extract::Path(email): axum::extract::Path<String>,
+    Json(claims): Json<serde_json::Map<String, Value>>,
+) -> StatusCode {
+    s.user_claims
+        .lock()
+        .expect("user claims")
+        .insert(email.to_ascii_lowercase(), claims);
+    StatusCode::NO_CONTENT
 }
 
 async fn jwks(State(s): State<Arc<Inner>>) -> Json<Value> {
@@ -327,6 +383,7 @@ async fn authorize(
                 email: hint.clone(),
                 name: None,
                 email_verified: true,
+                extra: serde_json::Map::new(),
             }),
         }
     };
@@ -431,6 +488,42 @@ async fn token(
     if let Some(v) = &c.name {
         payload["name"] = json!(v);
     }
+    let mut extra = c.extra.clone();
+    if let Some(u) = &pending.user {
+        extra.extend(u.extra.clone());
+    }
+    if let Some(e) = &c.email
+        && let Some(per_user) = s
+            .user_claims
+            .lock()
+            .expect("user claims")
+            .get(&e.to_ascii_lowercase())
+    {
+        extra.extend(per_user.clone());
+    }
+    for (k, v) in &extra {
+        // Registered claims stay the IdP's own.
+        if !matches!(k.as_str(), "iss" | "aud" | "sub" | "exp" | "iat" | "nonce") {
+            payload[k] = v.clone();
+        }
+    }
+    let access_token = random_code();
+    let mut info = json!({"sub": c.sub});
+    if let Some(v) = &c.email {
+        info["email"] = json!(v);
+    }
+    if let Some(v) = c.email_verified {
+        info["email_verified"] = json!(v);
+    }
+    for (k, v) in c.userinfo_extra.iter().chain(extra.iter()) {
+        if k != "sub" {
+            info[k] = v.clone();
+        }
+    }
+    s.userinfo
+        .lock()
+        .expect("userinfo")
+        .insert(access_token.clone(), info);
     let head = json!({"alg": "ES256", "typ": "JWT", "kid": KID});
     let signing_input = format!(
         "{}.{}",
@@ -443,7 +536,7 @@ async fn token(
         .expect("sign");
     let id_token = format!("{signing_input}.{}", B64.encode(sig.as_ref()));
     Json(json!({
-        "access_token": random_code(),
+        "access_token": access_token,
         "token_type": "Bearer",
         "expires_in": 300,
         "id_token": id_token,

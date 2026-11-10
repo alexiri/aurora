@@ -197,6 +197,10 @@ pub struct Member {
     pub role: OrgRole,
     pub status: MemberStatus,
     pub created_at: DateTime<Utc>,
+    /// (phase 4, P4-IDP-1, C-514) The IdP role value that gives this role ("From IdP role …"
+    /// badge); `null` for a manual role. A role with a value cannot be edited or removed (409
+    /// `managed_by_idp`).
+    pub idp_value: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -207,6 +211,8 @@ pub struct AccessBinding {
     pub role: WorkspaceRole,
     /// True for org owners/admins (no row).
     pub implicit: bool,
+    /// (phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual.
+    pub idp_value: Option<String>,
 }
 
 impl From<AccessRow> for AccessBinding {
@@ -217,6 +223,7 @@ impl From<AccessRow> for AccessBinding {
             display_name: a.display_name,
             role: parse_ws_role(&a.role),
             implicit: a.implicit,
+            idp_value: a.idp_value,
         }
     }
 }

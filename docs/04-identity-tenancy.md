@@ -48,6 +48,15 @@ sign-in may create a user depends on `auth.signup_mode`:
   refused (`signup_closed`) and **no user row is created**.
 - `sso_jit` → only if the provider's `jit` block applies (it decides org, role and
   workspaces) or a pending invitation exists; otherwise `signup_closed`.
+- (phase 4, P4-IDP-1, D-143) In `invite_only` and `sso_jit`, a **mapped role claim also
+  admits**: the validated claim of the provider that signed the user in maps, under that
+  provider's `role_mappings`, to at least one grant (`instance_admin`, an org role or a
+  workspace role). Unmapped values, an absent claim, a mapping that grants nothing, or a
+  value mapped only under another provider never admit. Every other check above still
+  applies first and unchanged (verified e-mail incl. `trusted_email_domains`,
+  `allowed_email_domains`, disabled user). The admission is audited (`user.admit_by_claim`,
+  provider and matched values, never the token) in the user-creating transaction. `open`
+  is unchanged.
 
 An **existing** user (matched by identity or by verified e-mail) can always sign
 in, in every mode (unless disabled or suspended everywhere).

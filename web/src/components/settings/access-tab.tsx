@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
@@ -133,6 +134,11 @@ function Row({
               Implicit (org)
             </Badge>
           </span>
+        ) : b.idp_value ? (
+          <span className="flex flex-wrap items-center gap-1.5">
+            {b.role}
+            <IdpRoleBadge value={b.idp_value} />
+          </span>
         ) : canOwn ? (
           <select
             aria-label={`Role for ${b.email}`}
@@ -152,7 +158,7 @@ function Row({
         )}
       </Td>
       <Td className="text-right">
-        {canOwn && !b.implicit ? (
+        {canOwn && !b.implicit && !b.idp_value ? (
           <Button
             variant="outline"
             size="sm"

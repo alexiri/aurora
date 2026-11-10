@@ -14,10 +14,12 @@ pub struct MemberRow {
     pub role: String,
     pub status: String,
     pub created_at: DateTime<Utc>,
+    /// (P4-IDP-1) The IdP role value that gives (part of) this role; `None` for manual roles.
+    pub idp_value: Option<String>,
 }
 
-const SEL: &str =
-    "m.user_id, u.email::text AS email, u.display_name, m.role, m.status, m.created_at";
+const SEL: &str = "m.user_id, u.email::text AS email, u.display_name, m.role, m.status, m.created_at, \
+    substring(m.idp_source from '^idp:[^:]*:(.*)$') AS idp_value";
 
 pub async fn insert<'e, E: PgExecutor<'e>>(
     exec: E,

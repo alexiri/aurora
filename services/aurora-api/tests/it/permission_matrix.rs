@@ -277,6 +277,8 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
     r("GET", "/v1/admin/storage", G::Inst, false),
+    // (P4-IDP-1, C-511) read-only role mapping table
+    r("GET", "/v1/admin/identity", G::Inst, false),
     r("POST", "/v1/orgs", G::Inst, false),
     // ---- any authenticated principal ----
     // I-27: instance governance is config without secrets, readable by any signed-in user
