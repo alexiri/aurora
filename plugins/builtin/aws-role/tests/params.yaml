@@ -152,3 +152,45 @@
     body: "Action=GetCallerIdentity"
     body_truncated: true
   expect: { app: aws-role, no_tool: true }
+# Credential-minting STS actions match no tool, so `grants.block_untooled` blocks them before any
+# rule (proved end to end by gw/it/apps.rs::sts_credential_minting_actions_are_blocked_and_never_signed).
+- name: "negative sts_get_caller_identity: AssumeRoleWithWebIdentity"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=AssumeRoleWithWebIdentity&Version=2011-06-15" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: AssumeRoleWithSAML"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=AssumeRoleWithSAML&Version=2011-06-15" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: GetSessionToken"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetSessionToken&Version=2011-06-15" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: GetFederationToken"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetFederationToken&Name=x" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: GetAccessKeyInfo"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetAccessKeyInfo&AccessKeyId=AKIDEXAMPLE" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: lowercase action"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=getcalleridentity" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: odd-cased action"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetCallerIDentity" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: odd-cased parameter name"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "ACTION=GetCallerIdentity" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: Action in the query and the body with different values"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/?Action=GetCallerIdentity", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=AssumeRole" }
+  expect: { app: aws-role, no_tool: true }
+- name: "negative sts_get_caller_identity: X-Amz-Target variant"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { x-amz-target: "AWSSecurityTokenServiceV20110615.GetCallerIdentity", content-type: application/x-amz-json-1.1 }, body: "{}" }
+  expect: { app: aws-role, no_tool: true }

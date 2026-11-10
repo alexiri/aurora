@@ -1424,3 +1424,96 @@ async fn an_app_without_flags_is_unaffected_by_the_restrictions() {
     assert_eq!(r.status, 200, "{}", r.body);
     assert!(r.body.contains("authorization: Bearer T"), "{}", r.body);
 }
+
+/// SEC-01/SEC-67/SEC-68: the shape of the aws-keys / aws-role STS entry. Only a clean
+/// `Action=GetCallerIdentity` is classified (read) and injected; every credential-minting action
+/// and every doubtful request is blocked as `app_untooled_blocked` and nothing is sent upstream.
+#[tokio::test]
+async fn sts_credential_minting_actions_are_blocked_and_never_signed() {
+    let mut app = app_json(
+        "sts",
+        json!({"read": {"items": [{"id": "sts_get_caller_identity", "name": "w", "host": "127.0.0.1",
+            "path": "/", "methods": ["POST"],
+            "params": [{"source": "form", "name": "Action", "match": {"equals": "GetCallerIdentity"}}]}]}}),
+        false,
+    );
+    app["grants"] = json!({"custom_only": false, "block_untooled": true});
+    let snap = snapshot(
+        vec![app],
+        vec![host_json(
+            "sts",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    );
+    let (env, ..) = start(snap, &[("c1", r#"{"tok":"STSKEY"}"#)], |w| {
+        let c = conn(w, "sts", "c1", None);
+        let mut r = Rows::default();
+        // A full grant: the strongest one a user can hold on a block_untooled app.
+        r.ws.rules.push(allow_conn(&c, None));
+        r.conns.push(c);
+        r
+    })
+    .await;
+    const FORM: &str = "Content-Type: application/x-www-form-urlencoded\r\n";
+    let big = format!("Action=GetCallerIdentity&pad={}", "a".repeat(300 * 1024));
+    let cases: Vec<(&str, String, String, String)> = vec![
+        ("AssumeRole", "/".into(), FORM.into(), "Action=AssumeRole&RoleArn=x".into()),
+        ("AssumeRoleWithWebIdentity", "/".into(), FORM.into(), "Action=AssumeRoleWithWebIdentity".into()),
+        ("AssumeRoleWithSAML", "/".into(), FORM.into(), "Action=AssumeRoleWithSAML".into()),
+        ("GetSessionToken", "/".into(), FORM.into(), "Action=GetSessionToken".into()),
+        ("GetFederationToken", "/".into(), FORM.into(), "Action=GetFederationToken&Name=x".into()),
+        ("GetAccessKeyInfo", "/".into(), FORM.into(), "Action=GetAccessKeyInfo".into()),
+        ("repeated", "/".into(), FORM.into(), "Action=GetCallerIdentity&Action=AssumeRole".into()),
+        ("repeated, other order", "/".into(), FORM.into(), "Action=AssumeRole&Action=GetCallerIdentity".into()),
+        ("query and body differ", "/?Action=AssumeRole".into(), FORM.into(), "Action=GetCallerIdentity".into()),
+        ("query GCI, body AssumeRole", "/?Action=GetCallerIdentity".into(), FORM.into(), "Action=AssumeRole".into()),
+        ("query only", "/?Action=GetCallerIdentity".into(), FORM.into(), "Version=1".into()),
+        ("compressed", "/".into(), format!("{FORM}Content-Encoding: gzip\r\n"), "Action=GetCallerIdentity".into()),
+        ("truncated", "/".into(), FORM.into(), big),
+        ("lowercase value", "/".into(), FORM.into(), "Action=getcalleridentity".into()),
+        ("odd-cased value", "/".into(), FORM.into(), "Action=GetCallerIDentity".into()),
+        ("odd-cased name", "/".into(), FORM.into(), "ACTION=GetCallerIdentity".into()),
+        ("other content type", "/".into(), "Content-Type: text/plain\r\n".into(), "Action=GetCallerIdentity".into()),
+        (
+            "x-amz-target",
+            "/".into(),
+            "X-Amz-Target: AWSSecurityTokenServiceV20110615.GetCallerIdentity\r\nContent-Type: application/x-amz-json-1.1\r\n".into(),
+            "{}".into(),
+        ),
+    ];
+    for (name, path, extra, body) in cases {
+        let r = send(&env, "POST", &path, &extra, &body).await;
+        assert_eq!(r.status, 403, "{name}: {}", r.body);
+        let v: Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(
+            v["error"]["details"]["reason"], "app_untooled_blocked",
+            "{name}: {}",
+            r.body
+        );
+        let low = r.body.to_lowercase();
+        for h in [
+            "authorization",
+            "x-amz-security-token",
+            "x-amz-date",
+            "stskey",
+        ] {
+            assert!(!low.contains(h), "{name}: {h} leaked: {}", r.body);
+        }
+    }
+    // Only the clean request is classified as the read tool and injected.
+    let r = send(
+        &env,
+        "POST",
+        "/",
+        FORM,
+        "Action=GetCallerIdentity&Version=2011-06-15",
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer STSKEY"),
+        "{}",
+        r.body
+    );
+}
