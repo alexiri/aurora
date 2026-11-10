@@ -240,10 +240,14 @@ function LlmBody({ step, onChanged }: { step: SetupStep; onChanged: () => void }
 }
 
 function TryBody() {
+  const placement = usePlacement();
   const orgs = useOrgs();
-  const first = orgs.data?.items[0];
-  const workspaces = useWorkspaces(first?.id);
-  const href = useMemo(() => landingPath(orgs.data?.items ?? [], workspaces.data?.items) ?? "/", [orgs.data, workspaces.data]);
+  // The step promises "if Daneel answers, everything above works": that is the placement's default
+  // organization — the one the wizard set up with its key — not whichever org happens to be first
+  // in the admin's list (their own personal organization predates the placement and has no key).
+  const org = placement.data?.default_org ?? orgs.data?.items[0];
+  const workspaces = useWorkspaces(org?.id);
+  const href = useMemo(() => (org ? (landingPath([org], workspaces.data?.items) ?? "/") : "/"), [org, workspaces.data]);
   return (
     <div className="space-y-2 text-sm text-ink-2">
       <p>Open your workspace and say hello to Daneel. If Daneel answers, everything above works.</p>

@@ -7,7 +7,8 @@ import { PLACEMENT_ADMIN } from "./support/placement";
 // changes the instance's saved placement through the API (the journeys share one instance).
 //   1. a fresh instance: the admin walks the wizard to a working chat;
 //   2. a new user with a starter grant: Welcome -> first reply, with no LLM step;
-//   3. a new user without one: the guide walks key -> access -> (model) -> reply.
+//   3. a new user without one: the org key is visible but not granted, so the guide walks access -> reply
+//      (the full key -> access -> reply walk, no org key at all, is first-run.spec.ts on a personal_org stack).
 // The mock: endpoint `litellm-mock` defaults to the model alias `scn-pong`, which VidaiMock answers with "pong".
 const MOCK_KEY = "sk-aurora-mock-dev"; // dev-only dummy master key (docs/operator/llm-endpoints.md)
 const MOCK_REPLY = "pong";
@@ -65,10 +66,16 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   }
 
   // 2. Where new users land: shared organization "Users" with personal workspaces (the recommended choice).
-  // On a fresh instance no organization exists yet, so the journey creates "Users" from the wizard.
+  // On this instance the placement was once personal_org (the pre-wizard default), so pick the mode, then
+  // create the shared organization "Users" from the wizard.
   const placement = steps.getByRole("region", { name: "Where new users land" });
-  await placement.getByLabel("Organization").selectOption({ label: "Create a new organization…" });
+  // The mode radio is `sr-only` inside its label: click the visible label text (a `check()` is not actionable).
+  await placement.getByText("Shared organization", { exact: true }).click();
+  await placement.getByLabel("Organization", { exact: true }).selectOption({ label: "Create a new organization…" });
   await placement.getByLabel("New organization name").fill("Users");
+  // Personal workspaces are what makes the starter grant possible below (the LLM step's switch stays
+  // disabled until a shared organization WITH personal workspaces is saved).
+  await placement.getByRole("checkbox", { name: "Give every user a workspace of their own" }).check();
   await placement.getByRole("button", { name: "Save placement" }).click();
   // The step is saved when the wizard shows it from the server's state (the "Saved…" status is transient:
   // the form is re-keyed on the saved revision, so it remounts the moment the placement refetch lands).
@@ -85,22 +92,29 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   // switch ("Saved …" is transient — the Setup query refetch replaces the form as soon as the key exists).
   const starter = llm.getByRole("checkbox", { name: "Give it to every new user's agent" });
   await expect(starter).toBeVisible({ timeout: 60_000 });
-  await starter.check();
+  // The checkbox is controlled: it only renders checked once the PUT and the refetch have round-tripped,
+  // so click once and then wait for the server's state (a `check()` verifies the state straight away).
+  await starter.click();
   await expect(starter).toBeChecked({ timeout: 30_000 });
 
   // 4. Agents can run: the runner and the gateway report ready on the stack.
   await expect(steps.getByRole("region", { name: "Agents can run" }).getByText("Ready").first()).toBeVisible();
 
-  // 6. Try it: open the workspace and chat. (The admin lands in the shared organization's workspace.)
+  // 6. Try it: open the workspace and chat. The admin's own agent predates the placement (starter
+  // grants apply to new users), so the guide finishes the job: the key step is done — the org key from
+  // the wizard provides it — and access is one click away.
   await steps.getByRole("link", { name: "Open your workspace" }).click();
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible({ timeout: 30_000 });
   const base = new URL(page.url()).pathname.replace(/\/welcome$/, "");
-  await page.goto(`${base}/agents`);
-  await page.getByRole("link", { name: /Daneel/ }).first().click();
-  await page.getByRole("tab", { name: "Chat" }).click();
-  await page.getByLabel("Message", { exact: true }).fill("hello");
-  await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText(MOCK_REPLY, { exact: true }).first()).toBeVisible({ timeout: 4 * 60_000 });
+  await page.goto(`${base}/welcome`);
+  const guide = page.getByRole("region", { name: "Get Daneel talking" });
+  await expect(guide.getByText(/Your organization provides an LLM key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
+  // Access: Daneel is preselected, one click — done from the server's state.
+  await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
+  await guide.getByRole("button", { name: "Give access" }).click();
+  await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
+  await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
+  await chatGetsAnswer(page);
 });
 
 test("2. new user with a starter grant: Welcome, no LLM step, first reply", async ({ page }) => {
@@ -121,7 +135,7 @@ test("2. new user with a starter grant: Welcome, no LLM step, first reply", asyn
   await expect(page.getByText(/Getting started — 3\/3/)).toBeVisible({ timeout: 30_000 });
 });
 
-test("3. new user without a starter grant: the guide walks key, access and reply", async ({ page, browser, baseURL }) => {
+test("3. new user without a starter grant: the guide waits for access, then the first reply", async ({ page, browser, baseURL }) => {
   test.setTimeout(8 * 60_000);
   // The admin removes the starter grant (whole-document PUT of the saved placement).
   await asAdmin(browser, baseURL!, async (req, origin) => {
@@ -143,19 +157,13 @@ test("3. new user without a starter grant: the guide walks key, access and reply
   await signInAs(page, `plain-${Date.now().toString(36)}@example.test`);
   await expect(page).toHaveURL(/\/o\/[^/]+\/w\/[^/]+\/welcome$/, { timeout: 30_000 });
   const guide = page.getByRole("region", { name: "Get Daneel talking" });
-  await expect(guide.getByText("0 of 3 done")).toBeVisible({ timeout: 30_000 });
+  // No starter grant: the key step is not done by a grant. But this is a shared_org placement — as a
+  // member the person sees the organization's key, so the guide says who provides it and waits for
+  // access (a "0 of 3 done" + key-form walk is the personal_org world, covered by first-run.spec.ts).
+  await expect(guide.getByText(/Your organization provides an LLM key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
+  await expect(guide.getByText("1 of 3 done")).toBeVisible();
 
-  // Key: the form opens in place.
-  const form = guide.getByRole("form", { name: "New LLM key" });
-  await form.getByLabel("Name").fill("My key");
-  await form.getByLabel("Provider endpoint").selectOption({ label: ENDPOINT_LABEL });
-  await form.getByLabel("API key").fill(MOCK_KEY);
-  await form.getByRole("button", { name: "Add LLM key" }).click();
-  // The key is saved when the guide shows it from the server's state: the key step collapses ("Saved …" is
-  // transient — the form unmounts the moment the invalidated queries refetch and the step ticks done).
-  await expect(guide.getByText("1 of 3 done")).toBeVisible({ timeout: 60_000 });
-
-  // Access: Daneel is preselected.
+  // Access: Daneel is preselected, one click — done from the server's state.
   await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
   await guide.getByRole("button", { name: "Give access" }).click();
   await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
