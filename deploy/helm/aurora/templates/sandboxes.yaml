@@ -52,6 +52,10 @@ rules:
   - apiGroups: [""]
     resources: [pods, persistentvolumeclaims, secrets]
     verbs: [create, get, list, watch, delete]
+  # FIX-025 (D-158): read-only, the pods' and home claims' Warning events attached to a start failure.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

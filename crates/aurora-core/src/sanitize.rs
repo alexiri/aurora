@@ -96,6 +96,87 @@ pub fn one_line(s: &str, max: usize) -> String {
     clamp(normalize(s, false), max)
 }
 
+/// (FIX-025, D-158) A start-failure reason or substrate event shown to users and operators:
+/// [`one_line`], with credentials masked: URL userinfo (`scheme://user:pass@` → `scheme://***@`),
+/// Aurora tokens (`aub_…` → `aub_***`), `Bearer`/`Basic` credentials, and the values of
+/// `password=`, `token=`, `secret=`, `key=` style pairs. Defence in depth: the sources (Kubernetes
+/// events, scheduler and registry messages, supervisor errors) do not carry secrets by design.
+pub fn reason(s: &str, max: usize) -> String {
+    const SECRET_KEYS: [&str; 8] = [
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "apikey",
+        "api_key",
+        "key",
+        "authorization",
+    ];
+    let line = one_line(s, max.saturating_mul(2).max(64));
+    let mut out: Vec<String> = Vec::new();
+    let mut mask_next = false;
+    for word in line.split(' ') {
+        if mask_next {
+            mask_next = false;
+            out.push("***".into());
+            continue;
+        }
+        let lower = word.to_ascii_lowercase();
+        if lower == "bearer" || lower == "basic" {
+            mask_next = true;
+            out.push(word.to_owned());
+            continue;
+        }
+        let mut w = word.to_owned();
+        // URL userinfo.
+        if let Some(i) = w.find("://") {
+            let rest = &w[i + 3..];
+            let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+            if let Some(at) = rest[..end].rfind('@') {
+                w = format!("{}***{}", &w[..i + 3], &rest[at..]);
+            }
+        }
+        // Aurora tokens anywhere in the word.
+        for p in crate::token::TokenPrefix::ALL {
+            let p = p.as_str();
+            if let Some(i) = w.find(p)
+                && w[i + p.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+                && (i == 0 || !w.as_bytes()[i - 1].is_ascii_alphanumeric())
+            {
+                w = format!("{}{p}***", &w[..i]);
+            }
+        }
+        // key=value / key:value pairs.
+        for sep in ['=', ':'] {
+            if let Some(i) = w.find(sep) {
+                let k = w[..i]
+                    .trim_start_matches(['"', '\'', '{', '(', '['])
+                    .to_ascii_lowercase();
+                let k = k.trim_end_matches(['"', '\'']);
+                if !w[i + 1..].is_empty()
+                    && SECRET_KEYS.iter().any(|s| {
+                        k == *s || k.ends_with(&format!("_{s}")) || k.ends_with(&format!("-{s}"))
+                    })
+                {
+                    w = format!("{}{sep}***", &w[..i]);
+                }
+            }
+        }
+        if SECRET_KEYS
+            .iter()
+            .any(|s| lower.trim_end_matches(':') == *s)
+            && word.ends_with(':')
+        {
+            mask_next = true;
+        }
+        out.push(w);
+    }
+    clamp(out.join(" "), max)
+}
+
 /// Like [`one_line`] but keeps `\n` (runs of more than 2 collapse to 2).
 pub fn block(s: &str, max: usize) -> String {
     clamp(normalize(s, true), max)
@@ -155,6 +236,26 @@ pub fn markdown_as_data(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn reason_masks_credentials() {
+        let r = reason(
+            "pull https://bob:hunter2@reg.example/aurora:1 failed: unauthorized\nBearer abc.def token=xyz aub_0123456789abcdef password: s3cr3t",
+            500,
+        );
+        for leaked in ["hunter2", "abc.def", "xyz", "0123456789abcdef", "s3cr3t"] {
+            assert!(!r.contains(leaked), "{leaked} leaked in {r}");
+        }
+        assert!(r.contains("https://***@reg.example/aurora:1"), "{r}");
+        assert!(r.contains("aub_***"), "{r}");
+        // Ordinary scheduler text is unchanged.
+        let s = "0/3 nodes are available: 3 Insufficient memory.";
+        assert_eq!(reason(s, 300), s);
+        assert_eq!(
+            reason("image: docker.io/x/y:1", 300),
+            "image: docker.io/x/y:1"
+        );
+    }
 
     #[test]
     fn one_line_basics() {
@@ -229,6 +330,14 @@ mod tests {
             let m = markdown_as_data(&s, max);
             prop_assert!(clean(&m, true));
             prop_assert!(!m.contains("\n\n\n"));
+        }
+
+        #[test]
+        fn reason_props(s in any::<String>(), max in 0usize..300) {
+            let o = reason(&s, max);
+            prop_assert!(o.chars().count() <= max);
+            prop_assert!(!o.contains('\n'));
+            prop_assert!(clean(&o, false));
         }
 
         #[test]

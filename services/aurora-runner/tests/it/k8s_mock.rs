@@ -33,6 +33,12 @@ enum Behaviour {
     ImagePull,
     /// Admission says "exceeded quota" for the first `n` creates.
     QuotaFor(usize),
+    /// (FIX-025) Admission refuses every pod (Pod Security).
+    Refused,
+    /// (FIX-025) The pod fails right after scheduling (exit code 1).
+    Terminated,
+    /// (FIX-025) The pod waits for its unbound home PVC (no storage class).
+    PvcUnbound,
 }
 
 #[derive(Default)]
@@ -119,13 +125,42 @@ impl Fake {
         };
         if !matches!(
             *kind,
-            "pods" | "secrets" | "persistentvolumeclaims" | "services"
+            "pods" | "secrets" | "persistentvolumeclaims" | "services" | "events"
         ) {
             return status_body(404, "NotFound", "unknown kind");
         }
         let expected_ns = if *kind == "services" { CORE } else { NS };
         assert_eq!(*ns, expected_ns, "{kind} must live in {expected_ns}");
         let mut st = self.0.lock().unwrap();
+        // (FIX-025) events: list filtered by the field selector's involvedObject terms.
+        if *kind == "events" {
+            let fields = query
+                .split('&')
+                .find_map(|p| p.strip_prefix("fieldSelector="))
+                .map(|s| s.replace("%3D", "=").replace("%2C", ","))
+                .unwrap_or_default();
+            let items: Vec<Value> = st
+                .objects
+                .iter()
+                .filter(|((k, _), _)| k == "events")
+                .map(|(_, v)| v.clone())
+                .filter(|e| {
+                    fields.split(',').filter(|t| !t.is_empty()).all(|t| {
+                        let (k, v) = t.split_once('=').unwrap();
+                        match k {
+                            "involvedObject.kind" => e["involvedObject"]["kind"] == v,
+                            "involvedObject.name" => e["involvedObject"]["name"] == v,
+                            "type" => e["type"] == v,
+                            _ => true,
+                        }
+                    })
+                })
+                .collect();
+            return json_body(
+                200,
+                &json!({"apiVersion": "v1", "kind": "EventList", "metadata": {}, "items": items}),
+            );
+        }
         match (method, rest) {
             (Method::GET, []) => {
                 let sel = query
@@ -176,6 +211,18 @@ impl Fake {
                             "pods \"x\" is forbidden: exceeded quota: q, requested: pods=1",
                         );
                     }
+                    if matches!(st.behaviour, Some(Behaviour::Refused)) {
+                        return status_body(
+                            403,
+                            "Forbidden",
+                            "pods \"x\" is forbidden: violates PodSecurity \"restricted:latest\": seccompProfile",
+                        );
+                    }
+                }
+                if *kind == "persistentvolumeclaims"
+                    && matches!(st.behaviour, Some(Behaviour::PvcUnbound))
+                {
+                    o["status"] = json!({"phase": "Pending"});
                 }
                 let key = (kind.to_string(), name.clone());
                 if st.objects.contains_key(&key) {
@@ -253,6 +300,17 @@ fn pod_view(st: &mut State, kind: &str, name: &str) -> Value {
             "phase": "Pending",
             "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable",
                             "message": "0/3 nodes are available: insufficient cpu"}]
+        }),
+        Behaviour::Terminated => json!({
+            "phase": "Failed",
+            "containerStatuses": [{"name": "sandbox", "image": "i", "imageID": "", "ready": false,
+                "restartCount": 0, "state": {"terminated": {"exitCode": 1, "reason": "Error",
+                "message": "supervisor: cannot write /run/aurora"}}}]
+        }),
+        Behaviour::PvcUnbound => json!({
+            "phase": "Pending",
+            "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable",
+                "message": "0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. preemption: 0/3 nodes are available"}]
         }),
         Behaviour::ImagePull => json!({
             "phase": "Pending",
@@ -488,6 +546,125 @@ async fn unschedulable_without_wait_is_immediate_capacity_error() {
         .unwrap_err();
     assert!(matches!(err, BackendError::Capacity(_)), "{err:?}");
     assert_eq!(holds.count(), 0);
+    assert!(fake.names("pods").is_empty());
+}
+
+fn warning(kind: &str, name: &str, reason: &str, message: &str, at: &str) -> Value {
+    json!({"apiVersion": "v1", "kind": "Event",
+           "metadata": {"name": format!("{name}.{reason}.{at}"), "namespace": NS},
+           "involvedObject": {"kind": kind, "name": name, "namespace": NS},
+           "reason": reason, "message": message, "type": "Warning",
+           "lastTimestamp": at})
+}
+
+/// (FIX-025, coordinator: owner's production cluster) A pod waiting for an unbound home PVC
+/// whose claim has a `FailedBinding` warning fails fast with `home_volume_unbound` and the
+/// claim's message, without a capacity hold and without waiting the capacity wait out.
+#[tokio::test]
+async fn unbound_home_volume_fails_fast_with_its_own_reason() {
+    let fake = Fake::with(Behaviour::PvcUnbound);
+    let req = request(Uuid::now_v7(), Uuid::now_v7());
+    fake.put(
+        "events",
+        "e1",
+        warning(
+            "PersistentVolumeClaim",
+            &req.spec.home_ref,
+            "FailedBinding",
+            "no persistent volumes available for this claim and no storage class is set",
+            "2026-11-10T10:00:00Z",
+        ),
+    );
+    // A capacity wait far longer than the test: failing fast must not wait it out.
+    let b = backend(&fake, 4, Duration::from_secs(600));
+    let holds = Holds::default();
+    let started = std::time::Instant::now();
+    let err = b.start(&req, &holds).await.unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(matches!(err, BackendError::HomeVolumeUnbound(_)), "{err:?}");
+    assert_eq!(err.reason_code(), "home_volume_unbound");
+    let m = err.sanitized_message();
+    assert!(m.contains("no storage class is set"), "{m}");
+    assert!(m.contains("runner.k8s.storageClass"), "{m}");
+    assert_eq!(holds.count(), 0, "not a capacity hold");
+    assert!(fake.names("pods").is_empty(), "the pod is removed");
+    let ev = b.start_events(&req).await;
+    assert!(ev.iter().any(|e| e.starts_with("FailedBinding:")), "{ev:?}");
+}
+
+/// (FIX-025) After `runner.k8s.storageClass` is set, a never-bound home claim with another
+/// class is recreated with the configured one; a bound claim is never touched.
+#[tokio::test]
+async fn never_bound_home_claim_is_recreated_with_the_configured_class() {
+    let fake = Fake::with(Behaviour::Run);
+    let mut s = settings(4, Duration::ZERO);
+    s.pod.storage_class = Some("fast".into());
+    let b = KubernetesBackend::with_client(fake.client(), s);
+    let (sb, sb2) = (Uuid::now_v7(), Uuid::now_v7());
+    let pvc = |name: &str, status: Value, volume: Option<&str>| {
+        json!({"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+               "metadata": {"name": name, "labels": {"aurora.managed": "true"}},
+               "spec": {"accessModes": ["ReadWriteOnce"], "volumeName": volume,
+                        "resources": {"requests": {"storage": "5Gi"}}},
+               "status": status})
+    };
+    let pending = format!("home-{sb}");
+    let bound = format!("home-{sb2}");
+    fake.put(
+        "persistentvolumeclaims",
+        &pending,
+        pvc(&pending, json!({"phase": "Pending"}), None),
+    );
+    fake.put(
+        "persistentvolumeclaims",
+        &bound,
+        pvc(&bound, json!({"phase": "Bound"}), Some("pv-1")),
+    );
+    b.provision_home(sb, &pending, 5).await.unwrap();
+    b.provision_home(sb2, &bound, 5).await.unwrap();
+    let now = fake.get("persistentvolumeclaims", &pending).unwrap();
+    assert_eq!(now["spec"]["storageClassName"], "fast", "recreated");
+    let kept = fake.get("persistentvolumeclaims", &bound).unwrap();
+    assert!(
+        kept["spec"]["storageClassName"].is_null(),
+        "bound claim untouched"
+    );
+    let deletes = fake.0.lock().unwrap().deletes.clone();
+    assert!(
+        deletes
+            .iter()
+            .any(|(k, n, _)| k == "persistentvolumeclaims" && *n == pending)
+    );
+    assert!(!deletes.iter().any(|(_, n, _)| *n == bound));
+}
+
+/// (FIX-025, C-581) Admission refusal is `pod_refused` with the API server's message.
+#[tokio::test]
+async fn refused_pod_creation_is_pod_refused_with_the_server_message() {
+    let fake = Fake::with(Behaviour::Refused);
+    let b = backend(&fake, 4, Duration::from_secs(60));
+    let err = b
+        .start(&request(Uuid::now_v7(), Uuid::now_v7()), &Holds::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err.reason_code(), "pod_refused", "{err:?}");
+    assert!(err.sanitized_message().contains("violates PodSecurity"));
+    assert!(fake.names("pods").is_empty());
+    assert!(fake.names("secrets").is_empty(), "boot Secret removed");
+}
+
+/// (FIX-025, C-581) A pod that ends while starting is `pod_failed` with exit code and reason.
+#[tokio::test]
+async fn pod_ending_while_starting_is_pod_failed_with_exit_code() {
+    let fake = Fake::with(Behaviour::Terminated);
+    let b = backend(&fake, 4, Duration::ZERO);
+    let err = b
+        .start(&request(Uuid::now_v7(), Uuid::now_v7()), &Holds::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err.reason_code(), "pod_failed", "{err:?}");
+    let m = err.sanitized_message();
+    assert!(m.contains("exit code 1 (Error)"), "{m}");
     assert!(fake.names("pods").is_empty());
 }
 

@@ -45,8 +45,10 @@ pub async fn record_harness(
     harness: &serde_json::Value,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
+        // (FIX-025) `ready` ends the start attempt; only now does the failure backoff reset.
         "UPDATE sandboxes SET resource_profile = coalesce(resource_profile, '{}'::jsonb)
-                || jsonb_build_object('harness', $4::jsonb), updated_at = now()
+                || jsonb_build_object('harness', $4::jsonb),
+                start_phase = 'ready', start_failures = 0, updated_at = now()
          WHERE id=$1 AND boot_id=$2 AND channel_replica_id=$3",
     )
     .bind(sandbox)

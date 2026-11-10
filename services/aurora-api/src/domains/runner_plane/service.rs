@@ -149,6 +149,10 @@ async fn apply(
                 container_ref: st.container_ref.as_deref(),
                 reason_code: st.reason_code.as_ref().map(|c| c.as_str()),
                 message: st.message.as_deref(),
+                events: &st.events,
+                lease_secs: super::work::start_lease_secs(
+                    s.config.hosted.sandbox_ready_timeout_secs,
+                ),
             };
             let (a, revoked) =
                 sandboxes::apply_status(&mut tx, r.sandbox_id, r.boot_id, replica, &upd).await?;
@@ -313,9 +317,26 @@ async fn notify_conv_work(conn: &mut sqlx::PgConnection) -> Result<(), ApiError>
     crate::domains::conversations::service::notify_work(conn).await
 }
 
+/// Start-failure codes a runner or supervisor may report (`10 §Failure semantics`, C-581); any
+/// other code becomes `agent_start_failed`.
+pub const START_FAILURE_CODES: [&str; 10] = [
+    "image_unavailable",
+    "at_capacity",
+    "agent_start_failed",
+    // (P4-HAR) the supervisor refused the boot: unknown id or runtime not in the image
+    "harness_unsupported",
+    // (FIX-025, C-581)
+    "sandbox_start_failed",
+    "pod_refused",
+    "pod_failed",
+    "supervisor_unreachable",
+    "supervisor_boot_failed",
+    "home_volume_unbound",
+];
+
 /// Sandbox start failed: the agent's queued turns fail with the start reason (10 §Failure
 /// semantics); dispatched/running ones are recovered by the stale arm (agent_restarted).
-async fn fail_start(
+pub(crate) async fn fail_start(
     conn: &mut sqlx::PgConnection,
     sandbox: Uuid,
     reason: Option<&str>,
@@ -325,16 +346,7 @@ async fn fail_start(
         return Ok(());
     };
     let code = reason
-        .filter(|c| {
-            [
-                "image_unavailable",
-                "at_capacity",
-                "agent_start_failed",
-                // (P4-HAR) the supervisor refused the boot: unknown id or runtime not in the image
-                "harness_unsupported",
-            ]
-            .contains(c)
-        })
+        .filter(|c| START_FAILURE_CODES.contains(c))
         .unwrap_or("agent_start_failed");
     for (turn, conv) in hosted::queued_turns_of_agent(conn, f.agent_id).await? {
         aurora_db::repo::conversations::lock(&mut *conn, conv).await?;

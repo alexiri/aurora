@@ -653,6 +653,146 @@ async fn failed_start_backs_off() {
     first(&r.work(rep, 0).await, "sandbox.start");
 }
 
+/// (FIX-025, D-158) Regression for the owner's "Sandbox starting" forever: a start that takes
+/// longer than the old 300 s lease (capacity wait + pod start) was re-claimed with a new boot, and
+/// the runner's failure for the old boot was fenced and dropped. Now the lease outlives the
+/// runner's own bound, `starting`/`held` progress renews it, the start is never re-claimed while
+/// the runner reports progress, and the failure of the current attempt fails the turn with its
+/// reason.
+#[tokio::test]
+async fn slow_start_is_never_reclaimed_and_its_failure_reaches_the_turn() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent_with_turn("slow").await;
+    let w = r.work(rep, 0).await;
+    let item = first(&w, "sandbox.start");
+    let (sb, boot) = (
+        item["sandbox_id"].as_str().unwrap().to_owned(),
+        item["boot_id"].as_str().unwrap().to_owned(),
+    );
+    // The runner's bound is strictly inside the lease.
+    assert_eq!(item["start_timeout_secs"], 270);
+    let lease_left: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch from lifecycle_lease_until - now())::float8 FROM sandboxes WHERE id = $1::uuid",
+    )
+    .bind(&sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(lease_left > 270.0 + 50.0, "lease {lease_left} s");
+
+    let progress = |state: &str, phase: Option<&str>, msg: &str| {
+        let mut rep_body = json!({"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+            "sandbox_id": sb, "boot_id": boot, "state": state, "message": msg});
+        if let Some(p) = phase {
+            rep_body["reason_code"] = json!(p);
+        }
+        json!({"reports": [rep_body]})
+    };
+    // Time passes beyond the old 300 s lease while the runner waits for capacity and the pod:
+    // each time the lease is about to lapse, a progress report renews it.
+    for (state, phase, msg) in [
+        ("held", None, ""),
+        (
+            "starting",
+            Some("scheduling"),
+            "pod unschedulable: 0/3 nodes are available",
+        ),
+        ("starting", Some("creating"), "ContainerCreating"),
+    ] {
+        sqlx::query(
+            "UPDATE sandboxes SET lifecycle_lease_until = now() + interval '1 second',
+                 start_attempt_at = start_attempt_at - interval '200 seconds'
+             WHERE id = $1::uuid",
+        )
+        .bind(&sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+        let (s, v) = r
+            .call(
+                Some(rep),
+                "/v1/runner/reports",
+                Some(progress(state, phase, msg)),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["results"][0]["status"], "applied", "{v}");
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        let w = r.work(rep, 0).await;
+        assert!(
+            !w["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["kind"] == "sandbox.start"),
+            "a start the runner still works on is never re-claimed: {w}"
+        );
+        let (cur_boot, st, phase_now): (Option<Uuid>, String, Option<String>) =
+            sqlx::query_as("SELECT boot_id, state, start_phase FROM sandboxes WHERE id = $1::uuid")
+                .bind(&sb)
+                .fetch_one(r.h.pool())
+                .await
+                .unwrap();
+        assert_eq!(cur_boot.map(|b| b.to_string()), Some(boot.clone()));
+        assert_eq!(st, "starting");
+        assert_eq!(
+            phase_now.as_deref(),
+            Some(phase.unwrap_or("waiting_capacity"))
+        );
+    }
+    // The current attempt's failure is applied (not fenced) and reaches the queued turn.
+    let fail = json!({"reports": [{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+        "sandbox_id": sb, "boot_id": boot, "state": "failed",
+        "reason_code": "home_volume_unbound",
+        "message": "the sandbox home volume `home-x` cannot be bound: FailedBinding: no storage class is set",
+        "events": ["FailedBinding: no persistent volumes available for this claim and no storage class is set"]}]});
+    let (s, v) = r.call(Some(rep), "/v1/runner/reports", Some(fail)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["results"][0]["status"], "applied", "{v}");
+    let (code, msg): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT error_code, error_message FROM turns WHERE agent_id = $1 AND role = 'turn'",
+    )
+    .bind(agent)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(code.as_deref(), Some("home_volume_unbound"));
+    assert!(msg.unwrap().contains("no storage class is set"));
+    let (fcode, fphase, events): (String, Option<String>, Value) = sqlx::query_as(
+        "SELECT code, phase, events FROM sandbox_start_failures WHERE sandbox_id = $1::uuid",
+    )
+    .bind(&sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(fcode, "home_volume_unbound");
+    assert_eq!(fphase.as_deref(), Some("creating"));
+    assert_eq!(events.as_array().unwrap().len(), 1);
+}
+
+/// (FIX-025) Without progress (the runner is gone), an expired lease is still re-driven.
+#[tokio::test]
+async fn silent_start_lease_still_expires_and_is_redriven() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    r.agent_with_turn("gone").await;
+    let w = r.work(rep, 0).await;
+    let boot = first(&w, "sandbox.start")["boot_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    sqlx::query("UPDATE sandboxes SET lifecycle_lease_until = now() - interval '1 second'")
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let w = r.work(rep, 0).await;
+    assert_ne!(
+        first(&w, "sandbox.start")["boot_id"].as_str().unwrap(),
+        boot
+    );
+}
+
 #[tokio::test]
 async fn replayed_reports_through_a_second_app_state_have_no_double_effects() {
     use axum::body::Body;

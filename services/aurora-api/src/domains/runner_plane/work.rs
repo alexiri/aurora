@@ -17,8 +17,30 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Lease on a claimed start (provision + boot) before it is re-driven.
-pub const START_LEASE_SECS: f64 = 300.0;
+/// (FIX-025, D-158) The deadlines nest strictly: the runner gives up a start
+/// `RUNNER_START_MARGIN_SECS` before the turn readiness deadline (so its specific reason arrives
+/// first), and the API's start lease outlives the runner's bound by `START_LEASE_MARGIN_SECS`, so a
+/// start the runner is still working on is never re-claimed (a re-claim mints a new boot and fences
+/// the old boot's reports). `starting`/`held` progress reports renew the lease
+/// (`sandboxes::renew_start_lease`).
+pub const RUNNER_START_MARGIN_SECS: u64 = 30;
+pub const START_LEASE_MARGIN_SECS: u64 = 60;
+
+/// The runner's whole-start bound (`SandboxStart.start_timeout_secs`, C-580).
+pub fn runner_start_bound_secs(ready_timeout_secs: u64) -> u32 {
+    u32::try_from(
+        ready_timeout_secs
+            .saturating_sub(RUNNER_START_MARGIN_SECS)
+            .max(30),
+    )
+    .unwrap_or(u32::MAX)
+}
+
+/// Lease on a claimed start (provision + boot) before it is re-driven: strictly longer than the
+/// runner's own bound.
+pub fn start_lease_secs(ready_timeout_secs: u64) -> f64 {
+    f64::from(runner_start_bound_secs(ready_timeout_secs)) + START_LEASE_MARGIN_SECS as f64
+}
 /// Lease on a claimed stop before it is re-driven.
 pub const STOP_LEASE_SECS: f64 = 120.0;
 /// Grace given to the supervisor to flush before the container is stopped.
@@ -153,7 +175,7 @@ async fn compute(
             replica,
             default_harness,
             free.min(ARM_LIMIT),
-            START_LEASE_SECS,
+            start_lease_secs(hosted.sandbox_ready_timeout_secs),
         )
         .await?;
         if !claims.is_empty() {
@@ -276,7 +298,12 @@ async fn mint_start(
             item_id: Uuid::now_v7(),
             sandbox_id: c.sandbox_id,
             boot_id,
-            body: WorkItemBody::SandboxStart(SandboxStart { spec }),
+            body: WorkItemBody::SandboxStart(SandboxStart {
+                spec,
+                start_timeout_secs: Some(runner_start_bound_secs(
+                    s.config.hosted.sandbox_ready_timeout_secs,
+                )),
+            }),
         },
         revoked,
     ))
@@ -285,6 +312,21 @@ async fn mint_start(
 #[cfg(test)]
 mod tests {
     use super::held_awake_ceiling;
+
+    #[test]
+    fn start_deadlines_nest_strictly() {
+        use super::{runner_start_bound_secs, start_lease_secs};
+        for ready in [60_u64, 300, 1800] {
+            let runner = u64::from(runner_start_bound_secs(ready));
+            assert!(runner < ready, "runner bound {runner} < readiness {ready}");
+            assert!(
+                (runner as f64) < start_lease_secs(ready),
+                "lease outlives the runner's bound"
+            );
+        }
+        assert_eq!(runner_start_bound_secs(300), 270);
+        assert!((start_lease_secs(300) - 330.0).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn ceiling_is_derived_unless_configured() {

@@ -2131,6 +2131,13 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
     ] {
         check_pos(c, k, Some(v));
     }
+    // (FIX-025, D-158)
+    if !(60..=1800).contains(&h.sandbox_ready_timeout_secs) {
+        c.err(
+            "hosted.sandbox_ready_timeout_secs",
+            "must be between 60 and 1800",
+        );
+    }
     if h.default_harness.is_empty() {
         c.err("hosted.default_harness", "must not be empty");
     }

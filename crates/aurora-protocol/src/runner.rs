@@ -94,6 +94,9 @@ open_vocab! {
 open_vocab! {
     pub enum SandboxState {
         Running = "running", Stopped = "stopped", Failed = "failed", Held = "held",
+        // (FIX-025, D-158, C-580) start progress: `reason_code` is the phase, `message` the
+        // detail; renews the API's start lease while the runner is still working on the boot.
+        Starting = "starting",
     }
 }
 open_vocab! {
@@ -263,7 +266,17 @@ pub struct SandboxSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxStart {
     pub spec: SandboxSpec,
+    /// (FIX-025, D-158, C-580) Bound on the whole start (provisioning, capacity wait, image
+    /// pull, container start) the runner must respect; absent from an older API: the runner's
+    /// own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_timeout_secs: Option<u32>,
 }
+
+/// (FIX-025, C-580) At most this many pod Warning events ride on a `sandbox.status`.
+pub const MAX_STATUS_EVENTS: usize = 5;
+/// (FIX-025, C-580) Bound of one event line.
+pub const MAX_STATUS_EVENT_CHARS: usize = 300;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxStop {
@@ -504,6 +517,10 @@ pub struct SandboxStatus {
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed: Option<Observed>,
+    /// (FIX-025, C-580) The substrate's latest warning events for this boot (Kubernetes pod
+    /// Warning events), newest first, ≤ `MAX_STATUS_EVENTS` × `MAX_STATUS_EVENT_CHARS`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -671,10 +688,15 @@ impl Validate for ProcessStates {
 impl Validate for ReportBody {
     fn validate(&self) -> Result<(), ValidationError> {
         match self {
-            Self::SandboxStatus(v) => v
-                .message
-                .as_deref()
-                .map_or(Ok(()), |m| check_chars("message", m, MAX_MESSAGE_CHARS)),
+            Self::SandboxStatus(v) => {
+                check_max("events", v.events.len(), MAX_STATUS_EVENTS)?;
+                for e in &v.events {
+                    check_chars("events[]", e, MAX_STATUS_EVENT_CHARS)?;
+                }
+                v.message
+                    .as_deref()
+                    .map_or(Ok(()), |m| check_chars("message", m, MAX_MESSAGE_CHARS))
+            }
             Self::TurnResult(v) => v.error_message.as_deref().map_or(Ok(()), |m| {
                 check_chars("error_message", m, MAX_MESSAGE_CHARS)
             }),

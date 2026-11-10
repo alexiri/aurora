@@ -18,7 +18,7 @@ use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use crate::api::ApiClient;
-use crate::backend::{Backend, ContainerRef, HoldCallback, StartRequest};
+use crate::backend::{Backend, BackendError, ContainerRef, HoldCallback, StartRequest};
 use crate::hub::{ChannelHub, Frame, HubError};
 use crate::reporter::{ReportSink, report};
 
@@ -36,6 +36,11 @@ pub struct ExecutorSettings {
     /// `runner.image` (docs/11, docs/15): the sandbox image this runner starts. `None` keeps the
     /// image named in the start item (the API's `aurora-sandbox:<version>`).
     pub image: Option<String>,
+    /// (FIX-025, D-158) Bound on a whole start when the item carries no `start_timeout_secs`.
+    pub start_timeout: Duration,
+    /// (FIX-025, D-158) Longest gap between two `starting` progress reports while a start runs:
+    /// each one renews the API's start lease.
+    pub progress_every: Duration,
 }
 
 impl Default for ExecutorSettings {
@@ -44,6 +49,8 @@ impl Default for ExecutorSettings {
             max_concurrency: 4,
             shutdown_flush: Duration::from_secs(10),
             image: None,
+            start_timeout: Duration::from_secs(270),
+            progress_every: Duration::from_secs(20),
         }
     }
 }
@@ -86,21 +93,103 @@ fn lifecycle_report_id(item_id: Uuid, step: &str) -> Uuid {
     )
 }
 
+/// (FIX-025) Last reported start phase, shared by the backend callbacks and the heartbeat.
+struct ProgressState {
+    phase: String,
+    detail: String,
+    last_sent: Option<tokio::time::Instant>,
+    /// `held` already reported (once per start).
+    held: bool,
+}
+
 struct HeldReporter {
     sink: ReportSink,
     item_id: Uuid,
     sandbox_id: Uuid,
     boot_id: Uuid,
+    every: Duration,
+    state: Mutex<ProgressState>,
+}
+
+impl HeldReporter {
+    fn lock(&self) -> MutexGuard<'_, ProgressState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn send_progress(&self, phase: &str, detail: &str) {
+        let mut st = status(
+            SandboxState::Starting,
+            None,
+            Some(phase),
+            (!detail.is_empty()).then(|| aurora_core::sanitize::reason(detail, 500)),
+        );
+        st.events = Vec::new();
+        // Progress reports are not deduplicated: each renews the lease (D-158).
+        self.sink.send(report(
+            Uuid::now_v7(),
+            self.sandbox_id,
+            self.boot_id,
+            ReportBody::SandboxStatus(st),
+        ));
+    }
+
+    /// Re-sends the last phase when nothing was reported for `every` (lease heartbeat).
+    fn heartbeat(&self) {
+        let due = {
+            let mut s = self.lock();
+            let due = s.last_sent.is_none_or(|t| t.elapsed() >= self.every);
+            if due {
+                s.last_sent = Some(tokio::time::Instant::now());
+            }
+            due.then(|| (s.phase.clone(), s.detail.clone()))
+        };
+        if let Some((p, d)) = due {
+            self.send_progress(&p, &d);
+        }
+    }
+
+    fn last(&self) -> (String, String) {
+        let s = self.lock();
+        (s.phase.clone(), s.detail.clone())
+    }
 }
 
 impl HoldCallback for HeldReporter {
     fn on_hold(&self) {
+        {
+            let mut s = self.lock();
+            if s.held {
+                return;
+            }
+            s.held = true;
+            s.phase = "waiting_capacity".into();
+            s.last_sent = Some(tokio::time::Instant::now());
+        }
         self.sink.send(report(
             lifecycle_report_id(self.item_id, "held"),
             self.sandbox_id,
             self.boot_id,
             ReportBody::SandboxStatus(status(SandboxState::Held, None, None, None)),
         ));
+    }
+
+    fn progress(&self, phase: &str, detail: &str) {
+        let send = {
+            let mut s = self.lock();
+            let changed = s.phase != phase || s.detail != detail;
+            let stale = s.last_sent.is_none_or(|t| t.elapsed() >= self.every);
+            s.phase = phase.to_owned();
+            s.detail = detail.to_owned();
+            if changed || stale {
+                s.last_sent = Some(tokio::time::Instant::now());
+            }
+            changed || stale
+        };
+        if send {
+            self.send_progress(phase, detail);
+        }
     }
 }
 
@@ -116,6 +205,7 @@ fn status(
         reason_code: reason.and_then(|r| aurora_protocol::runner::Code::new(r).ok()),
         message,
         observed: None,
+        events: Vec::new(),
     }
 }
 
@@ -255,9 +345,28 @@ impl Executor {
     }
 
     async fn start(&self, item_id: Uuid, sandbox: Uuid, boot: Uuid, s: SandboxStart) {
-        let Ok(_permit) = self.0.permits.acquire().await else {
-            return;
+        // (FIX-025, D-158) One bound for the whole start, from the moment the item is handled
+        // (waiting for a start slot included); the API's lease outlives it (C-580).
+        let bound = s
+            .start_timeout_secs
+            .map_or(self.0.settings.start_timeout, |t| {
+                Duration::from_secs(u64::from(t))
+            });
+        let deadline = tokio::time::Instant::now() + bound;
+        let hold = HeldReporter {
+            sink: self.0.sink.clone(),
+            item_id,
+            sandbox_id: sandbox,
+            boot_id: boot,
+            every: self.0.settings.progress_every,
+            state: Mutex::new(ProgressState {
+                phase: "queued".into(),
+                detail: String::new(),
+                last_sent: None,
+                held: false,
+            }),
         };
+        hold.progress("queued", "waiting for a start slot on the runner");
         let b = &self.0.backend;
         let mut spec = s.spec;
         if let Some(image) = &self.0.settings.image {
@@ -268,19 +377,40 @@ impl Executor {
             boot_id: boot,
             spec,
         };
-        let hold = HeldReporter {
-            sink: self.0.sink.clone(),
-            item_id,
-            sandbox_id: sandbox,
-            boot_id: boot,
+        let work = async {
+            let Ok(permit) = self.0.permits.acquire().await else {
+                return None;
+            };
+            hold.progress("provisioning", "preparing the home volume");
+            let r = match b
+                .provision_home(sandbox, &req.spec.home_ref, req.spec.home_gib)
+                .await
+            {
+                Ok(()) => b.start(&req, &hold).await,
+                Err(e) => Err(e),
+            };
+            Some((permit, r))
         };
-        let result = match b
-            .provision_home(sandbox, &req.spec.home_ref, req.spec.home_gib)
-            .await
-        {
-            Ok(()) => b.start(&req, &hold).await,
-            Err(e) => Err(e),
+        let result = {
+            tokio::pin!(work);
+            let mut beat = tokio::time::interval(self.0.settings.progress_every);
+            beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    r = &mut work => break r.map(|(_permit, r)| r),
+                    () = tokio::time::sleep_until(deadline) => {
+                        let (phase, detail) = hold.last();
+                        let detail = if detail.is_empty() { String::new() } else { format!(": {detail}") };
+                        break Some(Err(BackendError::StartTimeout(format!(
+                            "the sandbox did not start within {} s (last phase: {phase}{detail})",
+                            bound.as_secs()
+                        ))));
+                    }
+                    _ = beat.tick() => hold.heartbeat(),
+                }
+            }
         };
+        let Some(result) = result else { return };
         match result {
             Ok(ContainerRef(reference)) => {
                 self.lock().running.insert(sandbox);
@@ -288,19 +418,34 @@ impl Executor {
                     Ok(Some(o)) => o.observed,
                     _ => None,
                 };
-                let mut st = status(SandboxState::Running, Some(reference), None, None);
+                // (FIX-025) Tell the API where the supervisor must connect (the hint of
+                // `supervisor_unreachable` when it never does).
+                let message = b.supervisor_endpoint().await.map(|ep| {
+                    format!("waiting for the supervisor to connect to the runner at {ep}")
+                });
+                let mut st = status(SandboxState::Running, Some(reference), None, message);
                 st.observed = observed;
                 self.emit(item_id, "running", sandbox, boot, st);
             }
             Err(e) => {
                 tracing::warn!(%sandbox, %boot, reason = e.reason_code(), error = %e.sanitized_message(), "sandbox start failed");
                 self.lock().running.remove(&sandbox);
-                let st = status(
+                if matches!(e, BackendError::StartTimeout(_)) {
+                    // The abandoned start may have left its container: remove this boot's.
+                    if let Ok(Some(o)) = b.inspect(sandbox).await
+                        && o.boot_id.is_none_or(|ob| ob == boot)
+                        && let Err(err) = b.stop(&o.container, Duration::ZERO).await
+                    {
+                        tracing::warn!(%sandbox, %boot, error = %err, "cleanup after start timeout failed");
+                    }
+                }
+                let mut st = status(
                     SandboxState::Failed,
                     None,
                     Some(e.reason_code()),
                     Some(e.sanitized_message()),
                 );
+                st.events = crate::backend::bound_events(b.start_events(&req).await);
                 self.emit(item_id, "failed", sandbox, boot, st);
             }
         }

@@ -141,6 +141,7 @@ pub fn boot_refusal(reason_code: &str, message: &str) -> SupervisorToRunner {
                 .collect(),
         ),
         observed: None,
+        events: Vec::new(),
     })
 }
 

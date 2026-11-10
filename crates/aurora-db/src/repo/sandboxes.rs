@@ -35,7 +35,11 @@ fn start_eligible() -> String {
          AND (s.state IN ('unprovisioned','stopped','starting')
               OR (s.state = 'failed' AND (
                     s.start_failures < 3
-                    OR coalesce(s.last_engaged_at, '-infinity'::timestamptz) > s.updated_at)))
+                    -- (FIX-025, D-158) after three failures automatic retries stop; a message
+                    -- sent after the last failure retries once the backoff has passed.
+                    OR EXISTS (SELECT 1 FROM turns t
+                        WHERE t.agent_id = s.agent_id AND t.role = 'turn' AND t.status = 'queued'
+                          AND coalesce(t.revived_at, t.created_at) > s.updated_at))))
          AND ({ACTIVE_TURN} OR {DUE_SCHEDULE})
          AND NOT {frozen}
          AND coalesce((SELECT capabilities->'harnesses' FROM runners WHERE id = $1) ? coalesce(a.harness, $3), false)",
@@ -312,6 +316,8 @@ pub async fn begin_boot(
              stop_reason = NULL, stop_requested_at = NULL, restart_requested_at = NULL,
              failure_code = NULL, failure_message = NULL, container_ref = NULL, home_ref = $4,
              resource_profile = $5::jsonb,
+             start_attempt_at = now(), start_phase = 'claimed', start_detail = NULL,
+             start_events = '[]'::jsonb, start_progress_at = NULL, running_at = NULL,
              updated_at = now()
          WHERE id = $1",
     )
@@ -365,11 +371,72 @@ pub enum Applied {
 
 #[derive(Debug, Clone)]
 pub struct StatusUpdate<'a> {
-    /// `running`, `stopped`, `failed` or `held`.
+    /// `running`, `stopped`, `failed`, `held` or (FIX-025) `starting`.
     pub state: &'a str,
     pub container_ref: Option<&'a str>,
     pub reason_code: Option<&'a str>,
     pub message: Option<&'a str>,
+    /// (FIX-025, C-580) Substrate warning events (already bounded by the protocol).
+    pub events: &'a [String],
+    /// (FIX-025, D-158) A `starting`/`held` progress report renews the start lease to at least
+    /// `now() + lease_secs`.
+    pub lease_secs: f64,
+}
+
+/// (FIX-025) Phase recorded for a `held` report (the runner waits for capacity).
+pub const PHASE_WAITING_CAPACITY: &str = "waiting_capacity";
+/// (FIX-025) Phase after the runner reported the container running: the supervisor must connect.
+pub const PHASE_WAITING_SUPERVISOR: &str = "waiting_supervisor";
+/// (FIX-025) Phase before any runner progress: the start item is claimed, not yet acknowledged.
+pub const PHASE_CLAIMED: &str = "claimed";
+
+/// Phase vocabulary accepted from a runner; anything else is stored as `starting`.
+const RUNNER_PHASES: [&str; 8] = [
+    "queued",
+    "provisioning",
+    "waiting_capacity",
+    "scheduling",
+    "pulling",
+    "creating",
+    "pending",
+    "starting",
+];
+
+fn events_json(events: &[String]) -> serde_json::Value {
+    serde_json::Value::from(events.to_vec())
+}
+
+/// Record a start failure for the admin view (FIX-025, C-586) and prune rows older than 30 days.
+#[allow(clippy::too_many_arguments)]
+pub async fn record_start_failure(
+    conn: &mut PgConnection,
+    sandbox: Uuid,
+    boot: Option<Uuid>,
+    code: &str,
+    message: &str,
+    events: &serde_json::Value,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO sandbox_start_failures
+             (id, runner_id, sandbox_id, agent_id, boot_id, code, message, phase, events, elapsed_secs)
+         SELECT $1, s.runner_id, s.id, s.agent_id, $3, $4, $5,
+                CASE WHEN s.boot_id IS NOT DISTINCT FROM $3 THEN s.start_phase END, $6,
+                CASE WHEN s.boot_id IS NOT DISTINCT FROM $3 AND s.start_attempt_at IS NOT NULL
+                     THEN extract(epoch from now() - s.start_attempt_at)::int END
+         FROM sandboxes s WHERE s.id = $2",
+    )
+    .bind(Uuid::now_v7())
+    .bind(sandbox)
+    .bind(boot)
+    .bind(code)
+    .bind(message)
+    .bind(events)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM sandbox_start_failures WHERE created_at < now() - interval '30 days'")
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// Failure backoff after the n-th consecutive start failure: 30 s, 2 min, 10 min.
@@ -412,20 +479,65 @@ pub async fn apply_status(
         return Ok((Applied::Fenced, vec![]));
     };
     if cur_boot != Some(boot) || owner != Some(replica) {
+        // (FIX-025) A start failure of a superseded boot is still kept for operators.
+        if u.state == "failed" && u.reason_code != Some("agent_stop_failed") {
+            record_start_failure(
+                conn,
+                sandbox,
+                Some(boot),
+                u.reason_code.unwrap_or("failed"),
+                u.message.unwrap_or(""),
+                &events_json(u.events),
+            )
+            .await?;
+        }
         return Ok((Applied::Fenced, vec![]));
     }
     match u.state {
+        // (FIX-025, D-158) Progress of the current start: renew the lease, record the phase.
+        "starting" | "held" => {
+            if state != "starting" {
+                return Ok((Applied::Duplicate, vec![]));
+            }
+            let phase = if u.state == "held" {
+                PHASE_WAITING_CAPACITY
+            } else {
+                u.reason_code
+                    .filter(|p| RUNNER_PHASES.contains(p))
+                    .unwrap_or("starting")
+            };
+            sqlx::query(
+                "UPDATE sandboxes SET
+                     lifecycle_lease_until = greatest(coalesce(lifecycle_lease_until, now()),
+                                                      now() + make_interval(secs => $2)),
+                     start_phase = $3, start_detail = coalesce($4, start_detail),
+                     start_events = CASE WHEN jsonb_array_length($5) > 0 THEN $5 ELSE start_events END,
+                     start_progress_at = now(), updated_at = now()
+                 WHERE id = $1",
+            )
+            .bind(sandbox)
+            .bind(u.lease_secs)
+            .bind(phase)
+            .bind(u.message)
+            .bind(events_json(u.events))
+            .execute(&mut *conn)
+            .await?;
+            Ok((Applied::Applied, vec![]))
+        }
         "running" => match state.as_str() {
             "running" => Ok((Applied::Duplicate, vec![])),
             "starting" => {
                 sqlx::query(
                     "UPDATE sandboxes SET state='running', container_ref=$2, lifecycle_lease_until=NULL,
                          last_active_at=now(),
-                         start_failures=0,
+                         running_at = now(), start_phase = $3,
+                         start_detail = coalesce($4, start_detail), start_progress_at = now(),
                          updated_at=now() WHERE id=$1",
                 )
                 .bind(sandbox)
                 .bind(u.container_ref)
+                .bind(PHASE_WAITING_SUPERVISOR)
+                .bind(u.message)
                 .execute(&mut *conn)
                 .await?;
                 sqlx::query(
@@ -488,6 +600,27 @@ pub async fn apply_status(
             .bind(backoff_secs(n))
             .execute(&mut *conn)
             .await?;
+            // (FIX-025) A start failure keeps its events on the attempt and in the history.
+            if matches!(state.as_str(), "starting" | "running")
+                && u.reason_code != Some("agent_stop_failed")
+            {
+                if !u.events.is_empty() {
+                    sqlx::query("UPDATE sandboxes SET start_events = $2 WHERE id = $1")
+                        .bind(sandbox)
+                        .bind(events_json(u.events))
+                        .execute(&mut *conn)
+                        .await?;
+                }
+                record_start_failure(
+                    conn,
+                    sandbox,
+                    Some(boot),
+                    u.reason_code.unwrap_or("failed"),
+                    u.message.unwrap_or(""),
+                    &events_json(u.events),
+                )
+                .await?;
+            }
             end_boot(conn, sandbox, boot, "failure", "lost").await?;
             let revoked = revoke_boot_credentials(conn, agent, Some(boot)).await?;
             Ok((Applied::Applied, revoked))
@@ -638,7 +771,10 @@ pub async fn hold_channel(
     replica: Uuid,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "UPDATE sandboxes SET channel_replica_id = $4, updated_at = now()
+        // (FIX-025) The supervisor connected: the attempt moves on to `booting` until `ready`.
+        "UPDATE sandboxes SET channel_replica_id = $4,
+             start_phase = CASE WHEN start_phase = 'ready' THEN start_phase ELSE 'booting' END,
+             updated_at = now()
          WHERE id=$1 AND boot_id=$2 AND runner_id=$3 AND state IN ('starting','running')",
     )
     .bind(sandbox)
