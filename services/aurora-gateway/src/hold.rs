@@ -17,6 +17,7 @@ use aurora_db::repo::gateway::{self as repo, NewApproval};
 use aurora_summary::ApprovalSummary;
 use aurora_summary::template;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
@@ -176,10 +177,28 @@ pub struct Holds {
 }
 
 /// Marks the hold `abandoned` if the request future is dropped (client gone).
+///
+/// The guard is armed *before* the row is inserted (the row is visible to others the moment it
+/// commits, before the inserting future sees the reply), and the insert runs on its own task, so
+/// a drop at any point leaves no `pending` row behind: whichever of "row committed" and "guard
+/// dropped" happens second abandons it (`abandon_approval` is idempotent).
 struct AbandonOnDrop {
     pool: PgPool,
     id: Uuid,
     armed: bool,
+    sync: Arc<AbandonSync>,
+}
+
+#[derive(Default)]
+struct AbandonSync {
+    inserted: AtomicBool,
+    dropped: AtomicBool,
+}
+
+async fn abandon_logged(pool: &PgPool, id: Uuid) {
+    if let Err(e) = repo::abandon_approval(pool, id).await {
+        tracing::warn!(error = %e, approval_id = %id, "abandoning approval failed");
+    }
 }
 
 impl Drop for AbandonOnDrop {
@@ -187,13 +206,14 @@ impl Drop for AbandonOnDrop {
         if !self.armed {
             return;
         }
+        self.sync.dropped.store(true, Ordering::SeqCst);
+        // Not committed yet: the insert task abandons the row once it has (it sees `dropped`).
+        if !self.sync.inserted.load(Ordering::SeqCst) {
+            return;
+        }
         let (pool, id) = (self.pool.clone(), self.id);
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
-            rt.spawn(async move {
-                if let Err(e) = repo::abandon_approval(&pool, id).await {
-                    tracing::warn!(error = %e, approval_id = %id, "abandoning approval failed");
-                }
-            });
+            rt.spawn(async move { abandon_logged(&pool, id).await });
         }
     }
 }
@@ -394,16 +414,45 @@ impl Holds {
             batch_total: r.batch.batch_total.and_then(|n| i32::try_from(n).ok()),
             timeout_secs: timeout.as_secs_f64(),
         };
-        if let Err(e) = repo::insert_approval(&self.pool, &row).await {
-            tracing::error!(error = %e, "approval insert failed");
-            self.report(&e);
-            return HoldOutcome::StoreUnavailable;
-        }
+        // The row is visible to everyone (the approvals UI, a freeze reacting to it) as soon as
+        // it commits, before this future has seen the reply. If the request is dropped in that
+        // window (a freeze or BYO tightening refuses it, the client goes) the row would stay
+        // `pending` with nobody to abandon it. So the guard is armed first and the insert runs
+        // to completion on its own task (see `AbandonOnDrop`).
+        let sync = Arc::new(AbandonSync::default());
         let mut guard = AbandonOnDrop {
             pool: self.pool.clone(),
             id,
             armed: true,
+            sync: sync.clone(),
         };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let pool = self.pool.clone();
+            tokio::spawn(async move {
+                let res = repo::insert_approval(&pool, &row).await;
+                if res.is_ok() {
+                    sync.inserted.store(true, Ordering::SeqCst);
+                    if sync.dropped.load(Ordering::SeqCst) {
+                        abandon_logged(&pool, id).await;
+                    }
+                }
+                let _ = tx.send(res);
+            });
+        }
+        match rx.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                guard.armed = false;
+                tracing::error!(error = %e, "approval insert failed");
+                self.report(&e);
+                return HoldOutcome::StoreUnavailable;
+            }
+            Err(_) => {
+                guard.armed = false;
+                return HoldOutcome::StoreUnavailable;
+            }
+        }
         self.emit(id, ws, "created").await;
 
         let deadline = Instant::now() + timeout;

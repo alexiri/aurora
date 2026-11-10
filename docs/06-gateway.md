@@ -724,7 +724,10 @@ detected by a heartbeat (phase 3, RFE-014, D-108): every `GATEWAY_DB_PROBE_INTER
 the gateway NOTIFYs an instance-specific heartbeat through the pool and expects it back
 on the LISTEN connection; two in a row missed make the listener down (`degraded` at
 once) and trigger the same reconnect-then-flush, so a freeze or BYO tightening can
-never stay unseen behind a dead listener.
+never stay unseen behind a dead listener. Detection of a *closed* LISTEN connection is
+cancel-safe because the hub owns reconnection (the driver's eager reconnect is off, so a
+loss is reported synchronously and a heartbeat tick can never swallow it): every loss goes
+through reconnect, resubscribe and flush.
 
 **(c) Observability.**
 - `/readyz` (internal listener, unauthenticated like the other health routes):

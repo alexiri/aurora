@@ -451,6 +451,11 @@ impl Hub {
 async fn connect_listener(pool: &PgPool, channels: &[Channel]) -> Result<PgListener, String> {
     let connect = async {
         let mut l = PgListener::connect_with(pool).await?;
+        // The hub owns reconnection (resubscribe + flush). With sqlx's eager reconnect a lost
+        // connection is re-established *inside* `try_recv`; if the heartbeat tick cancels that
+        // await, the loss is never reported (no flush, no health change, no metric). Off, a
+        // loss returns `Ok(None)` synchronously, so detection is cancel-safe.
+        l.eager_reconnect(false);
         l.listen_all(channels.iter().map(|c| c.as_str())).await?;
         Ok::<_, sqlx::Error>(l)
     };
