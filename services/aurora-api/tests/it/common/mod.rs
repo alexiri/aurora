@@ -96,13 +96,31 @@ impl Harness {
         )
         .with_mailer(mail.clone());
         let app = test_router(state.clone());
-        Harness {
+        let h = Harness {
             db,
             state,
             app,
             mail,
             idp,
+        };
+        // P4-ONB-1 (D-140): on a fresh `open` instance non-admins wait for the placement. The
+        // suites that predate it expect today's per-user organizations, so an `open` harness
+        // starts with `personal_org` saved; `placement.rs` removes it with `unsave_placement`.
+        if h.state.config.signup_mode == aurora_config::SignupMode::Open {
+            sqlx::query("INSERT INTO instance_placement (mode) VALUES ('personal_org')")
+                .execute(h.pool())
+                .await
+                .unwrap();
         }
+        h
+    }
+
+    /// Back to "nothing saved" (a fresh instance that behaves as before D-140).
+    pub async fn unsave_placement(&self) {
+        sqlx::query("DELETE FROM instance_placement")
+            .execute(self.pool())
+            .await
+            .unwrap();
     }
 
     /// Test helper `sign_in(email)` (docs/04 §Development and end-to-end sign-in): drives the

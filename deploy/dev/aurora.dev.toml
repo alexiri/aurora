@@ -32,6 +32,9 @@ api_url = "http://localhost:4101"
 # Dev convenience; production default is invite_only / instance_admins.
 signup_mode = "open"
 org_creation = "anyone"
+# P4-ONB-1: a fresh open instance admits only instance admins until a placement is saved; the e2e
+# journeys sign in as this user first and save one (web/e2e/support/placement.ts).
+instance_admins = ["placement-admin@e2e.test"]
 
 # P1-005 (RFE-004): all sign-in is OIDC. `just dev` starts `aurora-dev-idp` on :4107 (users:
 # deploy/dev/dev-idp-users.json) and the API registers it as the provider `dev`.

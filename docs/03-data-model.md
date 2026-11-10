@@ -137,6 +137,22 @@ owner cannot be demoted or removed).
 | frozen_by_user_id | uuid null FK→users (set null) | (phase 2, RFE-006) |
 | frozen_reason | text null | (phase 2, RFE-006) |
 | frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | (phase 2, RFE-006) |
+| personal_owner_user_id | uuid null FK→users (set null) | (phase 4, P4-ONB-1, D-140, SEC-79) the user this personal workspace was created for; unique per (`org_id`, user) (partial index); the only way sign-in finds a personal workspace |
+
+### `instance_placement`
+(phase 4, P4-ONB-1, D-140) The instance admin's new-user placement (`04 §New-user placement`). At most one row; no row = unsaved (behaves as `personal_org` under `open`).
+| Column | Type | Notes |
+|---|---|---|
+| singleton | boolean pk default true CHECK (singleton) | one row |
+| mode | text CHECK in (`shared_org`,`personal_org`,`none`) | |
+| default_org_id | uuid null FK→organizations (set null) | where `shared_org` users land; deleting the org leaves the mode set with no org, which behaves as `none` |
+| default_org_role | text CHECK in (`member`,`admin`) default `member` | |
+| shared_workspaces | jsonb not null default `[]` | `[{ workspace_id, role: member|approver }]`, workspaces of the default org |
+| personal_enabled | boolean not null default false | |
+| personal_role | text CHECK in (`owner`,`approver`,`member`) default `owner` | the user's role in their personal workspace |
+| name_template | text not null | `{variable}` text; `\|` separates the fallback chain (`04 §New-user placement`) |
+| starter_grants | jsonb not null default `[]` | `[{ kind: secret|connection, id }]`, org-scope credentials of the default org |
+| updated_by | uuid null FK→users (set null) | `updated_at` is implicit (`§Conventions`) |
 
 ### `workspace_access`
 | Column | Type | Notes |

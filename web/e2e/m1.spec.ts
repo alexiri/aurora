@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { ensurePlacement } from "./support/placement";
+
 function invitationLink(logPath: string, email: string): string | null {
   const lines = readFileSync(logPath, "utf8").split("\n").reverse();
   for (const line of lines) {
@@ -33,7 +35,8 @@ async function signInAs(page: Page, email: string, returnTo = "/") {
   );
 }
 
-test("sign-in (dev IdP) -> workspace -> invite -> accept", async ({ page, browser }) => {
+test("sign-in (dev IdP) -> workspace -> invite -> accept", async ({ page, browser, baseURL }) => {
+  await ensurePlacement(browser, baseURL!); // P4-ONB-1: a fresh open instance waits for a placement
   const apiLog = process.env.AURORA_E2E_API_LOG;
   expect(apiLog, "AURORA_E2E_API_LOG must be set (run via scripts/e2e/m1.sh)").toBeTruthy();
   const run = Date.now().toString(36);

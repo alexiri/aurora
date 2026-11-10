@@ -32,6 +32,7 @@ pub mod memory;
 pub mod oauth_clients;
 pub mod oidc;
 pub mod peer_tasks;
+pub mod placement;
 pub mod plugins;
 pub mod policy;
 pub mod runner_plane;

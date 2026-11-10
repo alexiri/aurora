@@ -76,6 +76,43 @@ pub async fn grant_secret_in_tx(
 ) -> Result<Written<SecretGrant>, ApiError> {
     let (agent, auth) = visible_agent(caller, state, agent_id).await?;
     crate::http::auth::require_own(&auth)?;
+    write_secret_grant(
+        tx,
+        state,
+        &agent,
+        secret_id,
+        origin,
+        AuditActor::from_caller(caller),
+        Some(caller.user_id),
+    )
+    .await
+}
+
+/// Starter grants (P4-ONB-1, D-140, SEC-79): the same write path as [`grant_secret_in_tx`]
+/// with the system as actor, for the default agent of a personal workspace the sign-in
+/// transaction has just created (no user holds `can_own` yet, and the rows are not committed,
+/// so the caller's authorization check cannot apply; every other check does).
+pub async fn grant_secret_as_system(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    agent: &AgentRow,
+    secret_id: Uuid,
+    actor: AuditActor,
+) -> Result<Written<SecretGrant>, ApiError> {
+    write_secret_grant(tx, state, agent, secret_id, Origin::Credential, actor, None).await
+}
+
+/// The secret must be active and in the agent's workspace or org (404), then the grant, its
+/// derived rule and the gateway invalidation are written in `tx`.
+async fn write_secret_grant(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    agent: &AgentRow,
+    secret_id: Uuid,
+    origin: Origin,
+    actor: AuditActor,
+    by: Option<Uuid>,
+) -> Result<Written<SecretGrant>, ApiError> {
     let secret = secrets::get(&state.pool, secret_id)
         .await?
         .filter(|s| {
@@ -85,14 +122,8 @@ pub async fn grant_secret_in_tx(
         })
         .ok_or_else(|| ApiError::not_found("Secret not found."))?;
     let (g, created) = if origin.replaces() {
-        let g = grants::upsert_secret_grant(
-            &mut **tx,
-            agent.workspace_id,
-            agent.id,
-            secret.id,
-            Some(caller.user_id),
-        )
-        .await?;
+        let g = grants::upsert_secret_grant(&mut **tx, agent.workspace_id, agent.id, secret.id, by)
+            .await?;
         (g, true)
     } else {
         match grants::insert_secret_grant_if_absent(
@@ -100,7 +131,7 @@ pub async fn grant_secret_in_tx(
             agent.workspace_id,
             agent.id,
             secret.id,
-            Some(caller.user_id),
+            by,
         )
         .await?
         {
@@ -131,10 +162,10 @@ pub async fn grant_secret_in_tx(
     )
     .await?;
     credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
-    let ev = event(
-        caller,
+    let ev = event_by(
+        actor,
         "grant.create",
-        &agent,
+        agent,
         with_via(
             origin,
             json!({"secret_id": secret.id, "agent_handle": agent.handle}),
@@ -381,7 +412,16 @@ pub async fn bulk_grant_connection(
 
 /// Security-critical audit event of a grant change (RFE-008): committed with the change.
 fn event(caller: &Caller, action: &str, agent: &AgentRow, meta: serde_json::Value) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+    event_by(AuditActor::from_caller(caller), action, agent, meta)
+}
+
+fn event_by(
+    actor: AuditActor,
+    action: &str,
+    agent: &AgentRow,
+    meta: serde_json::Value,
+) -> AuditEvent {
+    AuditEvent::new(actor, action, Outcome::Success)
         .org(agent.org_id)
         .workspace(agent.workspace_id)
         .target("agent", agent.id)
@@ -459,7 +499,57 @@ pub async fn grant_connection_in_tx(
 ) -> Result<Written<ConnectionGrant>, ApiError> {
     let (agent, auth) = visible_agent(caller, state, agent_id).await?;
     crate::http::auth::require_own(&auth)?;
-    let agent = &agent;
+    write_connection_grant(
+        tx,
+        state,
+        &agent,
+        connection_id,
+        req,
+        origin,
+        AuditActor::from_caller(caller),
+        Some(caller.user_id),
+    )
+    .await
+}
+
+/// Starter grants (P4-ONB-1): a full-access connection grant written as the system; see
+/// [`grant_secret_as_system`].
+pub async fn grant_connection_as_system(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    agent: &AgentRow,
+    connection_id: Uuid,
+    actor: AuditActor,
+) -> Result<Written<ConnectionGrant>, ApiError> {
+    write_connection_grant(
+        tx,
+        state,
+        agent,
+        connection_id,
+        PutConnectionGrant {
+            mode: GrantMode::Full,
+            allow_tools: Vec::new(),
+            ask_tools: Vec::new(),
+            ask_timeout_secs: None,
+        },
+        Origin::Credential,
+        actor,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_connection_grant(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    agent: &AgentRow,
+    connection_id: Uuid,
+    req: PutConnectionGrant,
+    origin: Origin,
+    actor: AuditActor,
+    by: Option<Uuid>,
+) -> Result<Written<ConnectionGrant>, ApiError> {
     let conn = connections::get(&state.pool, connection_id)
         .await?
         .filter(|c| {
@@ -541,7 +631,7 @@ pub async fn grant_connection_in_tx(
             &allow,
             &ask,
             ask_timeout,
-            Some(caller.user_id),
+            by,
         )
         .await?;
         (g, true)
@@ -555,7 +645,7 @@ pub async fn grant_connection_in_tx(
             &allow,
             &ask,
             ask_timeout,
-            Some(caller.user_id),
+            by,
         )
         .await?
         {
@@ -591,8 +681,8 @@ pub async fn grant_connection_in_tx(
     )
     .await?;
     credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
-    let ev = event(
-        caller,
+    let ev = event_by(
+        actor,
         "grant.create",
         agent,
         with_via(

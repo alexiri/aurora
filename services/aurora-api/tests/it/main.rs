@@ -56,6 +56,7 @@ mod oidc_roles;
 mod peer_tasks;
 mod peers_rig;
 mod permission_matrix;
+mod placement;
 mod plugins;
 mod plugins_lifecycle;
 mod plugins_upgrade;

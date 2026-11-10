@@ -44,6 +44,9 @@ config:
   auth:
     signup_mode: open
     org_creation: anyone
+    # P4-ONB-1: a fresh open instance admits only instance admins until a placement is saved;
+    # the e2e journeys sign in as this user first and save one (tests/e2e-hosted common).
+    instance_admins: ["placement-admin@e2e.test"]
   hosted:
     enabled: true
     allow_fake_harness: true

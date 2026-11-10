@@ -93,7 +93,7 @@ interface"); stored in the database, audited):
 | **Default organization** | an existing org, or "create *Users*" with a name the admin types; new users join it as `member` (or `admin`, chosen) |
 | **Shared workspaces** | zero or more workspaces of the default org that every new user joins, each with a role (`member` / `approver`) |
 | **Personal workspace** | on/off. When on, each user gets **their own workspace** in the default org, created at their first sign-in, with the default agent in it and the user as its `owner` (role selectable: `owner` / `approver` / `member`) |
-| **Workspace name template** | e.g. `{preferred_username}`, `{name}`, `{email_local}`, `{given_name} {family_name}`, `{claim:cern_upn}`; a fallback chain (`{preferred_username}` → `{email_local}`) when a claim is missing. Preview shows the result for the admin's own token |
+| **Workspace name template** | e.g. `{preferred_username}`, `{name}`, `{email_local}`, `{given_name} {family_name}`, `{claim:cern_upn}`; a fallback chain written with `\|` (`{preferred_username}\|{email_local}`) when a claim is missing (D-151). Preview shows the result for a typed sample or the admin's own profile (Aurora stores no tokens, D-151); exact syntax in `API_CONTRACTS` C-523 |
 | **Starter grants** | org-scope credentials (LLM keys, secrets, connections with full access) granted automatically to the default agent of every new personal workspace, so "bobj signs in → bobj workspace → Daneel can already answer" works with no further step. Each grant goes through the same grant path as any other (D-137, SEC-77), with the system as actor |
 
 **Behaviour.**
@@ -114,6 +114,9 @@ interface"); stored in the database, audited):
   the old `personal_org` behaviour stay; their owner can delete them (`§Deletion
   semantics`). The admin page lists them ("12 personal orgs from before") so the admin
   can tell people.
+- Under `open`, mode `none` admits only users with an invitation, a mapped role claim or a
+  `jit` org; others get `signup_closed`. Starter grants whose credential has gone away are
+  skipped and audited; they never fail a sign-in (D-151, `API_CONTRACTS` C-524..C-527).
 - A personal workspace is an ordinary workspace of the default org afterwards: org
   owners/admins have their usual implicit access, the user can invite others into it,
   and leaving the org follows `§Deletion semantics` and the offboarding views (RFE-021).

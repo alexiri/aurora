@@ -1171,6 +1171,226 @@
         ]
       }
     },
+    "/v1/admin/placement": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The new-user placement and what it would do today (instance administrators).",
+        "operationId": "adminGetPlacement",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacementView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Save the new-user placement (instance administrators; audited).",
+        "operationId": "adminPutPlacement",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutPlacement"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacementView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/placement/choices": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Workspaces and org-level credentials the placement form may offer for an organization.",
+        "operationId": "adminPlacementChoices",
+        "parameters": [
+          {
+            "name": "org_id",
+            "in": "query",
+            "description": "The candidate default organization.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacementChoices"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/placement/preview": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Render a workspace name template (instance administrators).",
+        "operationId": "adminPlacementPreview",
+        "parameters": [
+          {
+            "name": "template",
+            "in": "query",
+            "description": "The template to render (default: the saved one).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "sample",
+            "in": "query",
+            "description": "A typed sample (\"bobj\", \"Ada Lovelace\") standing for every simple variable; without it\nthe caller's own profile is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlacementPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/plugins": {
       "get": {
         "tags": [
@@ -20554,6 +20774,67 @@
           }
         }
       },
+      "ChoiceConnection": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "app_id"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "ChoiceSecret": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`llm` | `generic` …"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ChoiceWorkspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "CliWorkspace": {
         "type": "object",
         "required": [
@@ -22499,6 +22780,13 @@
             "description": "`override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`."
           }
         }
+      },
+      "DefaultOrgRole": {
+        "type": "string",
+        "enum": [
+          "member",
+          "admin"
+        ]
       },
       "DirectUser": {
         "type": "object",
@@ -25367,6 +25655,26 @@
               "type": "string"
             },
             "default": []
+          }
+        }
+      },
+      "OrgRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },
@@ -29216,6 +29524,266 @@
           "day"
         ]
       },
+      "PersonalOrgView": {
+        "type": "object",
+        "required": [
+          "org_id",
+          "slug",
+          "name",
+          "owner_email",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "owner_email": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "PersonalOrgs": {
+        "type": "object",
+        "required": [
+          "count",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "All personal orgs from before, even when `items` is capped."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonalOrgView"
+            }
+          }
+        }
+      },
+      "PersonalRole": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "approver",
+          "member"
+        ]
+      },
+      "PersonalWorkspaceInput": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name_template": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`{variable}` text with `|` between fallbacks; default `{preferred_username}|{email_local}`."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PersonalRole",
+                "description": "Default `owner`."
+              }
+            ]
+          }
+        }
+      },
+      "PersonalWorkspaceView": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "role",
+          "name_template"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name_template": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/PersonalRole"
+          }
+        }
+      },
+      "PlacementChoices": {
+        "type": "object",
+        "description": "`GET /v1/admin/placement/choices` (C-528): what the form may offer for an organization.",
+        "required": [
+          "workspaces",
+          "secrets",
+          "connections"
+        ],
+        "properties": {
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChoiceConnection"
+            },
+            "description": "Organization-level connections."
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChoiceSecret"
+            },
+            "description": "Active organization-level secrets, LLM keys included."
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChoiceWorkspace"
+            },
+            "description": "Ordinary workspaces (never personal ones)."
+          }
+        }
+      },
+      "PlacementMode": {
+        "type": "string",
+        "description": "Where new users land (`04 §New-user placement`).",
+        "enum": [
+          "shared_org",
+          "personal_org",
+          "none"
+        ]
+      },
+      "PlacementPreview": {
+        "type": "object",
+        "description": "`GET /v1/admin/placement/preview` (C-522).",
+        "required": [
+          "name",
+          "slug",
+          "unresolved"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The workspace name the first sign-in would create."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Its slug before any numbered suffix (`ada-lovelace`)."
+          },
+          "unresolved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Variables with no value here (and so skipped or empty)."
+          },
+          "used": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Index of the fallback alternative used; `null` = the `user-<short id>` last resort.",
+            "minimum": 0
+          }
+        }
+      },
+      "PlacementView": {
+        "type": "object",
+        "description": "`GET /v1/admin/placement` and the `PUT` response (C-520).",
+        "required": [
+          "saved",
+          "signup_mode",
+          "mode",
+          "default_org_role",
+          "shared_workspaces",
+          "personal_workspace",
+          "starter_grants",
+          "personal_orgs",
+          "warnings"
+        ],
+        "properties": {
+          "default_org": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrgRef"
+              }
+            ]
+          },
+          "default_org_role": {
+            "$ref": "#/components/schemas/DefaultOrgRole"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PlacementMode"
+          },
+          "personal_orgs": {
+            "$ref": "#/components/schemas/PersonalOrgs"
+          },
+          "personal_workspace": {
+            "$ref": "#/components/schemas/PersonalWorkspaceView"
+          },
+          "saved": {
+            "type": "boolean",
+            "description": "`false` until an instance admin saves: the instance then behaves as before D-140."
+          },
+          "shared_workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SharedWorkspaceView"
+            }
+          },
+          "signup_mode": {
+            "type": "string",
+            "description": "The configured `auth.signup_mode` (read-only here)."
+          },
+          "starter_grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StarterGrantView"
+            }
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`placement_unsaved` | `per_user_orgs_active` | `default_org_missing`."
+          }
+        }
+      },
       "PluginActionRequest": {
         "type": "object",
         "properties": {
@@ -30161,6 +30729,67 @@
             ]
           }
         }
+      },
+      "PutPlacement": {
+        "type": "object",
+        "description": "`PUT /v1/admin/placement` (C-521).",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "create_default_org": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`shared_org`: create an organization with this name; the caller becomes its owner."
+          },
+          "default_org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`shared_org`: an existing organization (exactly one of this and `create_default_org`)."
+          },
+          "default_org_role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DefaultOrgRole",
+                "description": "Default `member`."
+              }
+            ]
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PlacementMode"
+          },
+          "personal_workspace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PersonalWorkspaceInput"
+              }
+            ]
+          },
+          "shared_workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SharedWorkspaceInput"
+            }
+          },
+          "starter_grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StarterGrantInput"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "PutRetention": {
         "type": "object",
@@ -31733,6 +32362,53 @@
           }
         }
       },
+      "SharedWorkspaceInput": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/SharedWorkspaceRole"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SharedWorkspaceRole": {
+        "type": "string",
+        "enum": [
+          "member",
+          "approver"
+        ]
+      },
+      "SharedWorkspaceView": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "slug",
+          "name",
+          "role"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/SharedWorkspaceRole"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "ShowWhen": {
         "type": "object",
         "required": [
@@ -32251,6 +32927,55 @@
             "type": "string"
           }
         }
+      },
+      "StarterGrantInput": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StarterKind"
+          }
+        }
+      },
+      "StarterGrantView": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "`llm` | `http` for secrets; the app id for connections."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StarterKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "The credential's name (secret name or connection label)."
+          }
+        }
+      },
+      "StarterKind": {
+        "type": "string",
+        "enum": [
+          "secret",
+          "connection"
+        ]
       },
       "StoreCaps": {
         "type": "object",

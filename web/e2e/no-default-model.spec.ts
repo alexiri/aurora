@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { ensurePlacement } from "./support/placement";
+
 // FIX-019 (D-136): the owner's production endpoint shape on the kind dev stack with --llm-mock.
 // The endpoint `aigw-mock` (deploy/kind/values-llm-mock.yaml) has only `base_url` and
 // no `default_model`, `models` or `dialects` (and no key_origin rule, which behaves as `endpoint`).
@@ -10,8 +12,9 @@ import { expect, test } from "@playwright/test";
 const MOCK_KEY = "sk-aurora-mock-dev"; // dev-only dummy master key
 const ENDPOINT = "aigw-mock";
 
-test("owner's endpoint shape: no_default_model, then a reply after choosing a model", async ({ page }) => {
+test("owner's endpoint shape: no_default_model, then a reply after choosing a model", async ({ page, browser, baseURL }) => {
   test.setTimeout(8 * 60_000);
+  await ensurePlacement(browser, baseURL!); // P4-ONB-1: a fresh open instance waits for a placement
   const email = `nodefault-${Date.now().toString(36)}@example.test`;
   await page.goto("/auth/login");
   await page.goto(`/v1/auth/oidc/dev/start?login_hint=${encodeURIComponent(email)}&return_to=%2F`);

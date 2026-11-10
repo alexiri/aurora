@@ -59,7 +59,7 @@ fn slugify(s: &str, max: usize) -> String {
     out.trim_matches('-').to_owned()
 }
 
-fn derive_slug_base(name: &str, fallback: &str) -> String {
+pub fn derive_slug_base(name: &str, fallback: &str) -> String {
     let mut s = slugify(name, 40);
     if s.is_empty() {
         s = fallback.to_owned();

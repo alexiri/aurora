@@ -42,6 +42,7 @@ pub mod mention_anchors;
 pub mod oauth_clients;
 pub mod orgs;
 pub mod peer_tasks;
+pub mod placement;
 pub mod plugins;
 pub mod policy;
 pub mod reach_grants;

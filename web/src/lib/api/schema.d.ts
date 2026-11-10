@@ -275,6 +275,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/placement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The new-user placement and what it would do today (instance administrators). */
+        get: operations["adminGetPlacement"];
+        /** Save the new-user placement (instance administrators; audited). */
+        put: operations["adminPutPlacement"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/placement/choices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspaces and org-level credentials the placement form may offer for an organization. */
+        get: operations["adminPlacementChoices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/placement/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Render a workspace name template (instance administrators). */
+        get: operations["adminPlacementPreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/plugins": {
         parameters: {
             query?: never;
@@ -4239,6 +4291,25 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        ChoiceConnection: {
+            app_id: string;
+            /** Format: uuid */
+            id: string;
+            label: string;
+        };
+        ChoiceSecret: {
+            /** Format: uuid */
+            id: string;
+            /** @description `llm` | `generic` … */
+            kind: string;
+            name: string;
+        };
+        ChoiceWorkspace: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
+        };
         CliWorkspace: {
             /** Format: uuid */
             id: string;
@@ -4818,6 +4889,8 @@ export interface components {
             /** @description `override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`. */
             source: string;
         };
+        /** @enum {string} */
+        DefaultOrgRole: "member" | "admin";
         /** @description The person a `direct` conversation belongs to (phase 1, RFE-009). */
         DirectUser: {
             display_name: string;
@@ -5681,6 +5754,12 @@ export interface components {
             allowed_team_ids: string[];
             /** @default [] */
             allowed_workspace_ids: string[];
+        };
+        OrgRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
         };
         /** @enum {string} */
         OrgRole: "owner" | "admin" | "member";
@@ -6777,6 +6856,81 @@ export interface components {
         };
         /** @enum {string} */
         Per: "minute" | "hour" | "day";
+        PersonalOrgView: {
+            /** Format: date-time */
+            created_at: string;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            owner_email: string;
+            slug: string;
+        };
+        PersonalOrgs: {
+            /**
+             * Format: int64
+             * @description All personal orgs from before, even when `items` is capped.
+             */
+            count: number;
+            items: components["schemas"]["PersonalOrgView"][];
+        };
+        /** @enum {string} */
+        PersonalRole: "owner" | "approver" | "member";
+        PersonalWorkspaceInput: {
+            enabled: boolean;
+            /** @description `{variable}` text with `|` between fallbacks; default `{preferred_username}|{email_local}`. */
+            name_template?: string | null;
+            role?: null | components["schemas"]["PersonalRole"];
+        };
+        PersonalWorkspaceView: {
+            enabled: boolean;
+            name_template: string;
+            role: components["schemas"]["PersonalRole"];
+        };
+        /** @description `GET /v1/admin/placement/choices` (C-528): what the form may offer for an organization. */
+        PlacementChoices: {
+            /** @description Organization-level connections. */
+            connections: components["schemas"]["ChoiceConnection"][];
+            /** @description Active organization-level secrets, LLM keys included. */
+            secrets: components["schemas"]["ChoiceSecret"][];
+            /** @description Ordinary workspaces (never personal ones). */
+            workspaces: components["schemas"]["ChoiceWorkspace"][];
+        };
+        /**
+         * @description Where new users land (`04 §New-user placement`).
+         * @enum {string}
+         */
+        PlacementMode: "shared_org" | "personal_org" | "none";
+        /** @description `GET /v1/admin/placement/preview` (C-522). */
+        PlacementPreview: {
+            /** @description The workspace name the first sign-in would create. */
+            name: string;
+            /** @description Its slug before any numbered suffix (`ada-lovelace`). */
+            slug: string;
+            /** @description Variables with no value here (and so skipped or empty). */
+            unresolved: string[];
+            /** @description Index of the fallback alternative used; `null` = the `user-<short id>` last resort. */
+            used?: number | null;
+        };
+        /** @description `GET /v1/admin/placement` and the `PUT` response (C-520). */
+        PlacementView: {
+            default_org?: null | components["schemas"]["OrgRef"];
+            default_org_role: components["schemas"]["DefaultOrgRole"];
+            mode: components["schemas"]["PlacementMode"];
+            personal_orgs: components["schemas"]["PersonalOrgs"];
+            personal_workspace: components["schemas"]["PersonalWorkspaceView"];
+            /** @description `false` until an instance admin saves: the instance then behaves as before D-140. */
+            saved: boolean;
+            shared_workspaces: components["schemas"]["SharedWorkspaceView"][];
+            /** @description The configured `auth.signup_mode` (read-only here). */
+            signup_mode: string;
+            starter_grants: components["schemas"]["StarterGrantView"][];
+            /** Format: date-time */
+            updated_at?: string | null;
+            /** Format: uuid */
+            updated_by?: string | null;
+            /** @description `placement_unsaved` | `per_user_orgs_active` | `default_org_missing`. */
+            warnings: string[];
+        };
         PluginActionRequest: {
             /** @description Free-text reason (at most 64 characters), stored as `status_reason`. */
             reason?: string | null;
@@ -7064,6 +7218,21 @@ export interface components {
             content: string;
             description?: string | null;
             title?: string | null;
+        };
+        /** @description `PUT /v1/admin/placement` (C-521). */
+        PutPlacement: {
+            /** @description `shared_org`: create an organization with this name; the caller becomes its owner. */
+            create_default_org?: string | null;
+            /**
+             * Format: uuid
+             * @description `shared_org`: an existing organization (exactly one of this and `create_default_org`).
+             */
+            default_org_id?: string | null;
+            default_org_role?: null | components["schemas"]["DefaultOrgRole"];
+            mode: components["schemas"]["PlacementMode"];
+            personal_workspace?: null | components["schemas"]["PersonalWorkspaceInput"];
+            shared_workspaces?: components["schemas"]["SharedWorkspaceInput"][];
+            starter_grants?: components["schemas"]["StarterGrantInput"][];
         };
         PutRetention: {
             /**
@@ -7554,6 +7723,20 @@ export interface components {
             display_name: string;
             handle: string;
         };
+        SharedWorkspaceInput: {
+            role: components["schemas"]["SharedWorkspaceRole"];
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @enum {string} */
+        SharedWorkspaceRole: "member" | "approver";
+        SharedWorkspaceView: {
+            name: string;
+            role: components["schemas"]["SharedWorkspaceRole"];
+            slug: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
         ShowWhen: {
             equals: string;
             field: string;
@@ -7701,6 +7884,22 @@ export interface components {
             user_code: string;
             verification_url: string;
         };
+        StarterGrantInput: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["StarterKind"];
+        };
+        StarterGrantView: {
+            /** @description `llm` | `http` for secrets; the app id for connections. */
+            detail: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["StarterKind"];
+            /** @description The credential's name (secret name or connection label). */
+            name: string;
+        };
+        /** @enum {string} */
+        StarterKind: "secret" | "connection";
         StoreCaps: {
             managed: boolean;
             references: boolean;
@@ -8854,6 +9053,153 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminOverview"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetPlacement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementView"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPutPlacement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutPlacement"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementView"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPlacementChoices: {
+        parameters: {
+            query: {
+                /** @description The candidate default organization. */
+                org_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementChoices"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPlacementPreview: {
+        parameters: {
+            query?: {
+                /** @description The template to render (default: the saved one). */
+                template?: string | null;
+                /**
+                 * @description A typed sample ("bobj", "Ada Lovelace") standing for every simple variable; without it
+                 *     the caller's own profile is used.
+                 */
+                sample?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementPreview"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             403: {
