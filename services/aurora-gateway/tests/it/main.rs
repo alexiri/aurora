@@ -8,6 +8,7 @@ mod credentials;
 mod database;
 mod governance;
 mod governance_db;
+mod groups;
 mod held_closure;
 mod hold;
 mod library_fetch;

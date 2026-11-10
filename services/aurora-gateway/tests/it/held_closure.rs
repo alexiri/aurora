@@ -80,6 +80,7 @@ impl Cred {
             turn_id: None,
             context_label: None,
             speaker_user_id: None,
+            speaker_group_ids: Vec::new(),
             capabilities: vec![],
             byo,
         }))

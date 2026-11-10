@@ -553,25 +553,65 @@ async fn delete_workspace(
 
 /// List workspace access bindings, including implicit org owners/admins (`can_own`; I-27).
 #[utoipa::path(get, path = "/workspaces/{ws}/access", operation_id = "listAccess", tag = "workspaces",
-    params(("ws" = Uuid, Path, description = "Workspace id"), PageParams),
-    responses((status = 200, body = Page<AccessBinding>), (status = 403, body = ErrorEnvelope),
-              (status = 404, body = ErrorEnvelope)),
+    params(("ws" = Uuid, Path, description = "Workspace id"), crate::domains::groups::dto::AccessQuery),
+    responses((status = 200, body = crate::domains::groups::dto::AccessList),
+              (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_access(
     c: Caller,
     State(s): State<AppState>,
     Path(ws): Path<Uuid>,
-    Query(q): Query<PageParams>,
-) -> Result<Json<Page<AccessBinding>>, ApiError> {
-    let p = q.resolve()?;
+    Query(q): Query<crate::domains::groups::dto::AccessQuery>,
+) -> Result<Json<crate::domains::groups::dto::AccessList>, ApiError> {
+    use crate::domains::groups::dto as g;
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     require_own(&c.workspace(&s, ws).await?)?;
     let rows = workspaces::list_access(&s.pool, ws, after(&p), p.fetch()).await?;
-    Ok(Json(page_of(
-        rows,
-        &p,
-        |r| (r.created_at, r.user_id),
-        AccessBinding::from,
-    )))
+    let page = page_of(rows, &p, |r| (r.created_at, r.user_id), AccessBinding::from);
+    let (group_bindings, derived_members) = match q.expand.as_deref() {
+        None => (None, None),
+        Some("groups") => {
+            let bindings = aurora_db::repo::groups::workspace_bindings(&s.pool, ws).await?;
+            let dp = Pagination::new(q.limit, q.derived_cursor.as_deref())?;
+            let drows =
+                aurora_db::repo::groups::derived_members(&s.pool, ws, after(&dp), dp.fetch())
+                    .await?;
+            let ids: Vec<Uuid> = drows
+                .iter()
+                .flat_map(|r| r.sources.iter().filter_map(|x| x.group))
+                .collect();
+            let names: std::collections::HashMap<Uuid, String> =
+                aurora_db::repo::groups::names(&s.pool, &ids)
+                    .await?
+                    .into_iter()
+                    .map(|(id, name, _, _)| (id, name))
+                    .collect();
+            let dpage = Page::from_rows(drows, dp.limit, |r| (r.created_at, r.user_id));
+            (
+                Some(bindings.into_iter().map(Into::into).collect()),
+                Some(Page {
+                    items: dpage
+                        .items
+                        .into_iter()
+                        .map(|r| g::DerivedMemberView::from_row(r, &names))
+                        .collect(),
+                    next_cursor: dpage.next_cursor,
+                }),
+            )
+        }
+        Some(_) => {
+            return Err(ApiError::invalid_request(
+                "Invalid expand.",
+                vec![aurora_core::FieldError::new("/expand", "must be `groups`")],
+            ));
+        }
+    };
+    Ok(Json(g::AccessList {
+        items: page.items,
+        next_cursor: page.next_cursor,
+        group_bindings,
+        derived_members,
+    }))
 }
 
 /// Bind an org member to the workspace (`can_own`).

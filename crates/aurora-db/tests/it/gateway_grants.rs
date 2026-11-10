@@ -70,6 +70,9 @@ async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
         "gateway_plugin_packages",
         "host_claim_decisions",
         "org_app_availability",
+        "groups",
+        "group_members",
+        "group_workspace_access",
     ] {
         assert_eq!(
             code(&mut c, &format!("SELECT * FROM {t} WHERE false")).await,
@@ -117,6 +120,9 @@ async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
         "UPDATE secrets SET id = id WHERE false",
         "UPDATE app_connections SET id = id WHERE false",
         "INSERT INTO agents (id) SELECT gen_random_uuid() WHERE false",
+        // (P4-GRP-1) The gateway reads the group tables and never writes them.
+        "INSERT INTO group_members (group_id) SELECT gen_random_uuid() WHERE false",
+        "DELETE FROM groups WHERE false",
         "CREATE TABLE gw_scratch (a int)",
     ] {
         assert_eq!(code(&mut c, sql).await.as_deref(), Some("42501"), "{sql}");

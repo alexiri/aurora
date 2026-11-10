@@ -425,9 +425,25 @@ struct Stream_ {
     buf: VecDeque<Event>,
     tick: tokio::time::Interval,
     dirty: bool,
+    /// (P4-GRP-1) `access` pings: re-authorize when the caller's (or their org's) access changed.
+    access: broadcast::Receiver<crate::http::auth::AccessPing>,
+    /// Set once the final `access.changed` event is queued: the stream ends after it.
+    closing: bool,
 }
 
 impl Stream_ {
+    /// The viewer lost the right to see this conversation: queue the final `access.changed`
+    /// event (the client reconnects and gets 403/404) and end the stream after it.
+    fn close_access_changed(&mut self) {
+        if let Ok(e) = Event::default()
+            .event("access.changed")
+            .json_data(serde_json::json!({}))
+        {
+            self.buf.push_back(e);
+        }
+        self.closing = true;
+    }
+
     /// Read durable events after `last` from the database until caught up.
     async fn reload(&mut self) {
         self.dirty = false;
@@ -493,7 +509,10 @@ async fn stream(
     let gone = crate::http::auth::revoked(s.clone(), c.clone());
     let mut tick = tokio::time::interval(RESYNC_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let access = s.session_cache.subscribe_access();
     let st = Stream_ {
+        access,
+        closing: false,
         rx,
         s,
         conv: id,
@@ -507,6 +526,9 @@ async fn stream(
         loop {
             if let Some(ev) = st.buf.pop_front() {
                 return Some((Ok(ev), st));
+            }
+            if st.closing {
+                return None;
             }
             if st.dirty {
                 st.reload().await;
@@ -551,6 +573,23 @@ async fn stream(
                     Ok(BusMsg::Resync) | Err(RecvError::Lagged(_)) => st.dirty = true,
                     Err(RecvError::Closed) => return None,
                 },
+                ping = st.access.recv() => {
+                    // (P4-GRP-1, D-130) A group/binding/mapping change concerning this viewer:
+                    // re-authorize now. A still-authorized stream is untouched.
+                    let relevant = match ping {
+                        Ok(p) => p.concerns(st.user),
+                        Err(broadcast::error::RecvError::Lagged(_)) => true,
+                        Err(broadcast::error::RecvError::Closed) => false,
+                    };
+                    if relevant
+                        && matches!(
+                            aurora_db::authz::can_see_conversation_id(&st.s.pool, st.user, st.conv).await,
+                            Ok(false)
+                        )
+                    {
+                        st.close_access_changed();
+                    }
+                }
                 _ = st.tick.tick() => {
                     // RFE-009: a viewer who lost visibility (left the workspace, lost
                     // ownership) stops receiving the stream at the next resync.
@@ -558,7 +597,8 @@ async fn stream(
                         aurora_db::authz::can_see_conversation_id(&st.s.pool, st.user, st.conv).await,
                         Ok(false)
                     ) {
-                        return None;
+                        st.close_access_changed();
+                        continue;
                     }
                     st.dirty = true;
                 }

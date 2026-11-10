@@ -91,6 +91,10 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
         "gateway_plugin_packages",
         "host_claim_decisions",
         "org_app_availability",
+        // (P4-GRP-1, D-131) The speaker's group set is resolved at credential resolution.
+        "groups",
+        "group_members",
+        "group_workspace_access",
     ];
     for t in SELECT_TABLES {
         stmts.push(format!("GRANT SELECT ON {s}.{t} TO {r}"));

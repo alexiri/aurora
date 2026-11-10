@@ -101,7 +101,7 @@ pub async fn list_visible<'e, E: PgExecutor<'e>>(
     let (t, id) = split(after);
     Ok(sqlx::query_as(&format!(
         "SELECT {COLS} FROM workspaces w WHERE w.org_id = $1
-         AND ($2 OR EXISTS (SELECT 1 FROM workspace_access a WHERE a.workspace_id = w.id AND a.user_id = $3))
+         AND ($2 OR EXISTS (SELECT 1 FROM effective_workspace_access a WHERE a.workspace_id = w.id AND a.user_id = $3))
          AND ($4::timestamptz IS NULL OR (w.created_at, w.id) < ($4, $5))
          ORDER BY w.created_at DESC, w.id DESC LIMIT $6"
     ))

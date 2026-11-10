@@ -276,7 +276,7 @@ pub fn user_rules(rules: &[PolicyRule], name_of: &HashMap<Uuid, String>) -> Vec<
             .iter()
             .filter_map(|i| match i {
                 Identity::User { id } => Some(*id),
-                Identity::Agent { .. } => None,
+                Identity::Agent { .. } | Identity::Group { .. } => None,
             })
             .collect();
         if users.is_empty() {
@@ -324,6 +324,93 @@ pub fn user_rules(rules: &[PolicyRule], name_of: &HashMap<Uuid, String>) -> Vec<
     out
 }
 
+/// (phase 4, P4-GRP-1, D-131) Warnings of rules with `group` identities. `groups` holds the
+/// groups of the scope's org that still exist (name, member count); a named id missing from it
+/// is a removed group (or another org's): the rule matches nobody for that identity.
+pub fn group_rules(
+    rules: &[PolicyRule],
+    groups: &HashMap<Uuid, (String, i64)>,
+) -> Vec<PolicyWarning> {
+    let mut out = Vec::new();
+    for r in rules.iter().filter(|r| r.enabled) {
+        let named: Vec<Uuid> = r
+            .identities
+            .iter()
+            .filter_map(|i| match i {
+                Identity::Group { id } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        if named.is_empty() {
+            continue;
+        }
+        let mut live = Vec::new();
+        for id in &named {
+            match groups.get(id) {
+                Some((name, members)) => {
+                    live.push(name.clone());
+                    if *members == 0 {
+                        out.push(PolicyWarning {
+                            code: WarningCode::GroupRuleEmpty,
+                            rule_logical_id: r.logical_id,
+                            message: format!("\"{}\": the group {name} has no members.", r.name),
+                            severity: Some("info".into()),
+                            details: Some(serde_json::json!({ "group_id": id })),
+                        });
+                    }
+                }
+                None => out.push(PolicyWarning {
+                    code: WarningCode::RuleNamesRemovedGroup,
+                    rule_logical_id: r.logical_id,
+                    message: format!(
+                        "\"{}\" names a group that no longer exists and matches nobody.",
+                        r.name
+                    ),
+                    severity: Some("warning".into()),
+                    details: Some(serde_json::json!({ "group_id": id })),
+                }),
+            }
+        }
+        if live.is_empty() {
+            continue;
+        }
+        let who = live.join(", ");
+        out.push(PolicyWarning {
+            code: WarningCode::GroupRuleNeedsSpeaker,
+            rule_logical_id: r.logical_id,
+            message: format!(
+                "\"{}\" matches only turns spoken by a member of {who}; never schedules, webhooks, BYO or boot traffic.",
+                r.name
+            ),
+            severity: None,
+            details: None,
+        });
+        let grants_credentials = r.action == Action::Allow
+            && r.targets.iter().any(|t| {
+                matches!(
+                    t,
+                    Target::Connection { .. }
+                        | Target::AppConnections { .. }
+                        | Target::Secret { .. }
+                        | Target::Secrets { .. }
+                )
+            });
+        if grants_credentials && r.identities.len() == named.len() {
+            out.push(PolicyWarning {
+                code: WarningCode::GroupRuleNoAgentFallback,
+                rule_logical_id: r.logical_id,
+                message: format!(
+                    "\"{}\" grants credentials only while a member of {who} is speaking; schedules, webhooks, BYO and boot traffic get none from it. Add an agent-level rule if they need access.",
+                    r.name
+                ),
+                severity: Some("warning".into()),
+                details: None,
+            });
+        }
+    }
+    out
+}
+
 /// Whether the scope's effective BYO posture is `enabled` (members may create BYO agents).
 async fn byo_enabled(state: &AppState, s: Scope) -> Result<bool, ApiError> {
     use aurora_llm::governance::ByoPosture;
@@ -359,9 +446,25 @@ pub async fn compute(state: &AppState, s: Scope) -> Result<PolicyWarnings, ApiEr
         .flat_map(|r| &r.identities)
         .filter_map(|i| match i {
             Identity::User { id } => Some(*id),
-            Identity::Agent { .. } => None,
+            Identity::Agent { .. } | Identity::Group { .. } => None,
         })
         .collect();
+    let group_ids: Vec<Uuid> = rules
+        .iter()
+        .flat_map(|r| &r.identities)
+        .filter_map(|i| match i {
+            Identity::Group { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let groups: HashMap<Uuid, (String, i64)> =
+        aurora_db::repo::groups::names(&state.pool, &group_ids)
+            .await?
+            .into_iter()
+            .filter(|(_, _, org, _)| *org == s.org)
+            .map(|(id, name, _, n)| (id, (name, n)))
+            .collect();
+    items.extend(group_rules(&rules, &groups));
     let mut names = HashMap::new();
     for id in user_ids {
         if let std::collections::hash_map::Entry::Vacant(e) = names.entry(id)

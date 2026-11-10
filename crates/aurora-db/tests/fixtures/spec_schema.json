@@ -388,6 +388,33 @@
       "secret_id",
       "workspace_id"
     ],
+    "group_members": [
+      "added_by",
+      "group_id",
+      "org_id",
+      "source",
+      "synced_at",
+      "user_id"
+    ],
+    "group_workspace_access": [
+      "granted_by",
+      "group_id",
+      "org_id",
+      "role",
+      "workspace_id"
+    ],
+    "groups": [
+      "created_by",
+      "description",
+      "id",
+      "idp_provider",
+      "idp_value",
+      "name",
+      "org_id",
+      "org_role",
+      "revision",
+      "source"
+    ],
     "host_claim_decisions": [
       "claim_fingerprint",
       "claim_key",

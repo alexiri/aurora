@@ -1,0 +1,6 @@
+description: identities are OR-ed - a rule naming a group, a user and another agent matches the agent that is the user's speaker via the user identity, and via the group alone
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: or-rule, action: block, identities: [{kind: agent, id: 00000000-0000-0000-0000-0000000000ff}, {kind: user, id: 00000000-0000-0000-0000-000000000009}, {kind: group, id: 00000000-0000-0000-0000-0000000000d1}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001, speaker_user_id: 00000000-0000-0000-0000-000000000002, speaker_group_ids: [00000000-0000-0000-0000-0000000000d1]}}
+expect: {verdict: block, workspace_rule: or-rule}

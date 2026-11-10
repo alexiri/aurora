@@ -450,12 +450,14 @@ again" and "Show the getting-started guide again".
   these N schedules and webhooks" with the list, a "Reassign to…" picker (a member
   or the workspace) and a Skip option; the removal then carries `reassign_to`.
 - **Groups** (`/o/<org>/groups`, phase 4, P4-GRP-1, D-130): a list page (name, source badge
-  "Manual"/"SCIM", member count, org-role chip, workspaces bound; search; "New group")
+  "Manual"/"SCIM"/"Sign-in", member count, org-role chip, workspaces bound; search; "New group"
+  with a **Manual / Linked to sign-in provider** choice (provider and claim value, D-156))
   and a detail page with three sections built from the shared patterns (`PageHeader`,
   section cards, tables, dialogs, empty/loading/error states; no one-off styling):
   **Members** (add by name or e-mail from the org's members, remove, with the 5 000
   limit shown; read-only with the note "Managed by your identity provider" for SCIM
-  groups), **Org role** (None / Member / Admin, never Owner, with the sentence "Members of
+  groups and, for sign-in-linked groups (D-156), "Members come from your sign-in provider
+  (claim value `…`)" with each member's last sync time), **Org role** (None / Member / Admin, never Owner, with the sentence "Members of
   this group act as <role> in the whole organization, including every workspace" and a
   confirm dialog when set to Admin) and **Workspace access** (workspaces and roles bound
   to the group, the same selector as the workspace Access section). Deleting a group

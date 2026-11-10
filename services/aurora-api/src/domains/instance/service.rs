@@ -6,6 +6,10 @@ use utoipa::ToSchema;
 pub struct OidcProviderInfo {
     pub id: String,
     pub display_name: String,
+    /// (phase 4, P4-GRP-1, D-156) The provider has a `group_claim`: IdP-linked groups may name
+    /// it. Absent (false) otherwise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub groups: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -55,6 +59,7 @@ pub fn instance_info(cfg: &ApiConfig) -> InstanceInfo {
             .map(|p| OidcProviderInfo {
                 id: p.id.clone(),
                 display_name: p.display_name.clone().unwrap_or_else(|| p.id.clone()),
+                groups: p.group_claim.is_some(),
             })
             .collect(),
         features: Features {

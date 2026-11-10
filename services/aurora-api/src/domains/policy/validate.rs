@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const MAX_RULES: usize = 500;
+/// (P4-GRP-1) `RULE_GROUP_IDENTITIES_MAX`: `group` identities per rule (`02 §Limits`).
+pub const RULE_GROUP_IDENTITIES_MAX: usize = 20;
 const MAX_NAME: usize = 120;
 const MAX_DESCRIPTION: usize = 1000;
 const MAX_LIST: usize = 100;
@@ -165,6 +167,17 @@ fn check_shape(req: &mut DraftRequest, scope: Scope, e: &mut Errs) {
         if r.identities.len() > MAX_LIST {
             e.add(format!("{rp}/identities"), "too many identities");
         }
+        if r.identities
+            .iter()
+            .filter(|i| matches!(i, Identity::Group { .. }))
+            .count()
+            > RULE_GROUP_IDENTITIES_MAX
+        {
+            e.add(
+                format!("{rp}/identities"),
+                "too many group identities (at most 20)",
+            );
+        }
         if r.targets.len() > MAX_LIST {
             e.add(format!("{rp}/targets"), "too many targets");
         }
@@ -282,11 +295,13 @@ async fn check_scope(
     e: &mut Errs,
 ) -> Result<(), ApiError> {
     let (mut agents, mut users, mut secrets, mut conns) = (vec![], vec![], vec![], vec![]);
+    let mut groups: Vec<Uuid> = vec![];
     for r in &req.rules {
         for i in &r.identities {
             match i {
                 Identity::Agent { id } => agents.push(*id),
                 Identity::User { id } => users.push(*id),
+                Identity::Group { id } => groups.push(*id),
             }
         }
         for t in &r.targets {
@@ -314,6 +329,40 @@ async fn check_scope(
             .into_iter()
             .collect()
     };
+    // (P4-GRP-1, D-131) A `group` identity must name a group of the scope's org (never another
+    // org's): 422 `unknown_identity`, the same answer for "missing" and "other org".
+    let group_ok: HashSet<Uuid> = aurora_db::repo::groups::existing_in_org(db, scope.org, &groups)
+        .await?
+        .into_iter()
+        .collect();
+    let unknown: Vec<FieldError> = req
+        .rules
+        .iter()
+        .enumerate()
+        .flat_map(|(i, r)| {
+            r.identities
+                .iter()
+                .enumerate()
+                .filter_map(move |(j, idn)| match idn {
+                    Identity::Group { id } => Some((i, j, *id)),
+                    _ => None,
+                })
+        })
+        .filter(|(_, _, id)| !group_ok.contains(id))
+        .map(|(i, j, id)| {
+            FieldError::new(
+                format!("/rules/{i}/identities/{j}/id"),
+                format!("{id} is not a group of this organization"),
+            )
+        })
+        .collect();
+    if !unknown.is_empty() {
+        return Err(ApiError::unprocessable(
+            "unknown_identity",
+            "A group identity is not in this scope.",
+        )
+        .with_details(json!({ "fields": unknown })));
+    }
     let cred_ok = |rows: Vec<(Uuid, Option<Uuid>)>| -> HashMap<Uuid, Option<Uuid>> {
         rows.into_iter().collect()
     };
@@ -340,6 +389,8 @@ async fn check_scope(
             let (ok, id) = match idn {
                 Identity::Agent { id } => (agent_ok.contains(id), id),
                 Identity::User { id } => (user_ok.contains(id), id),
+                // Validated above (422 `unknown_identity`).
+                Identity::Group { id } => (group_ok.contains(id), id),
             };
             if !ok {
                 e.add(

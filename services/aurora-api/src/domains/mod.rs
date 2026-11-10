@@ -23,6 +23,7 @@ pub mod conversations;
 pub mod freeze;
 pub mod governance;
 pub mod grants;
+pub mod groups;
 pub mod hosted;
 pub mod instance;
 pub mod invitations;

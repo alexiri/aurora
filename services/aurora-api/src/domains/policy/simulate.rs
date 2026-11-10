@@ -237,6 +237,7 @@ pub async fn run(
                 identity: RequestIdentity {
                     agent_id,
                     speaker_user_id: None,
+                    speaker_group_ids: Vec::new(),
                 },
             },
         )
@@ -276,9 +277,14 @@ pub async fn run(
         });
     }
 
+    let speaker_group_ids = match speaker {
+        Some(u) => gateway::speaker_group_ids(&state.pool, org, u).await?,
+        None => Vec::new(),
+    };
     let identity = RequestIdentity {
         agent_id,
         speaker_user_id: speaker,
+        speaker_group_ids,
     };
     let creds: Vec<Credential> = cands.iter().map(Cand::credential).collect();
     let selected = selected_candidates(

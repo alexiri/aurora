@@ -9032,6 +9032,728 @@
         ]
       }
     },
+    "/v1/groups/{id}": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Get a group (names and counts: org `owner`/`admin`, or `can_own` of a workspace of the org).",
+        "operationId": "getGroup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Delete a group with its memberships and bindings (org `owner`/`admin`). Policy rules that\nname it are not rewritten: they match nobody.",
+        "operationId": "deleteGroup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Update a group's name, description or org-role mapping (org `owner`/`admin`; `If-Match`).",
+        "operationId": "patchGroup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/groups/{id}/impact": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "What deleting the group (or, with `remove_member`, removing that member) would take away.",
+        "operationId": "groupImpact",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "remove_member",
+            "in": "query",
+            "description": "Show what removing only this member would take away.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupImpact"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/groups/{id}/members": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "A group's members (org `owner`/`admin`).",
+        "operationId": "listGroupMembers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_GroupMember"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/groups/{id}/members/{user}": {
+      "put": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Add a member of the organization to a manual group (idempotent).",
+        "operationId": "putGroupMember",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembersBatchResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Remove a member from a manual group (idempotent).",
+        "operationId": "deleteGroupMember",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/groups/{id}/members:batch": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Add and remove members in one transaction (at most 100 each; one audit row per change).",
+        "operationId": "groupMembersBatch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembersBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembersBatchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/groups/{id}/workspaces": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "The workspaces a group is bound to, with roles (org `owner`/`admin`).",
+        "operationId": "listGroupWorkspaces",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_GroupBinding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/harnesses": {
       "get": {
         "tags": [
@@ -11521,6 +12243,227 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/groups": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "List an organization's groups (org `owner`/`admin`; names and counts for `can_own` of any\nworkspace of the org).",
+        "operationId": "listGroups",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive name substring.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "`manual` | `scim` | `idp`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "member",
+            "in": "query",
+            "description": "Only groups that contain this user.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Group"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Create a group (org `owner`/`admin`); `source: \"idp\"` links it to a provider's claim value.",
+        "operationId": "createGroup",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -17219,10 +18162,12 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1..=200 (default 50).",
             "required": false,
             "schema": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "format": "int32",
               "minimum": 0
             }
@@ -17230,10 +18175,36 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "Opaque cursor from a previous response's `next_cursor`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "expand",
+            "in": "query",
+            "description": "`groups` (phase 4, P4-GRP-1): add `group_bindings` and `derived_members` (`can_own`).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "derived_cursor",
+            "in": "query",
+            "description": "Cursor of the `derived_members` page.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -17243,10 +18214,163 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_AccessBinding"
+                  "$ref": "#/components/schemas/AccessList"
                 }
               }
             }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/access/groups/{group}": {
+      "put": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Bind a group to a workspace or change its role (`can_own`; the group must belong to the\nworkspace's org).",
+        "operationId": "putGroupAccess",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGroupAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupAccessBinding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Unbind a group from a workspace (`can_own`; idempotent).",
+        "operationId": "deleteGroupAccess",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "group",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
           },
           "403": {
             "description": "",
@@ -19926,6 +21050,77 @@
           },
           "label": {
             "type": "string"
+          }
+        }
+      },
+      "AccessList": {
+        "type": "object",
+        "description": "`GET /workspaces/{ws}/access`: the direct bindings (unchanged) and, with `expand=groups`,\nthe groups bound to the workspace and everyone who has access through a group or an org role.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "derived_members": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Page_DerivedMemberView"
+              }
+            ]
+          },
+          "group_bindings": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessBinding"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessBinding"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AccessSourceView": {
+        "type": "object",
+        "description": "Why a person has access: informational only (`04 §Groups`).",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "group": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GroupName",
+                "description": "The group, for `group` and `org_role_via_group`."
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`direct` | `idp_claim` | `group` | `org_role` | `org_role_via_group`."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `idp:<provider>:<value>` source, for `idp_claim`."
           }
         }
       },
@@ -23421,6 +24616,51 @@
           }
         }
       },
+      "CreateGroupRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "idp_provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(D-156) Required for `source = idp`: a configured OIDC provider id with a `group_claim`."
+          },
+          "idp_value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(D-156) Required for `source = idp`: the exact claim value (≤ 256 chars)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`admin` | `member`; `owner` is refused (422 `group_org_role_invalid`)."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`manual` (default) or `idp` (D-156); `scim` groups are created by the IdP."
+          }
+        }
+      },
       "CreateIntegrationRequest": {
         "type": "object",
         "required": [
@@ -24187,7 +25427,8 @@
         "type": "object",
         "required": [
           "credentials",
-          "tools"
+          "tools",
+          "speaker_groups"
         ],
         "properties": {
           "credentials": {
@@ -24195,6 +25436,13 @@
             "items": {
               "$ref": "#/components/schemas/EffectiveCredential"
             }
+          },
+          "speaker_groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpeakerGroup"
+            },
+            "description": "(phase 4, P4-GRP-1, D-131) The selected speaker's current groups, evaluated as\nprincipals; empty for `speaker=none`."
           },
           "tools": {
             "type": "array",
@@ -24865,6 +26113,220 @@
           }
         }
       },
+      "Group": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "source",
+          "member_count",
+          "workspace_count",
+          "revision",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idp_provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(D-156) For `source = idp`: the provider id and claim value the group mirrors."
+          },
+          "idp_value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "member_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "org_role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GroupOrgRole"
+              }
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source": {
+            "$ref": "#/components/schemas/GroupSource"
+          },
+          "workspace_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "GroupAccessBinding": {
+        "type": "object",
+        "required": [
+          "group",
+          "role"
+        ],
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/GroupSummary"
+          },
+          "role": {
+            "$ref": "#/components/schemas/WorkspaceRole"
+          }
+        }
+      },
+      "GroupBinding": {
+        "type": "object",
+        "required": [
+          "workspace",
+          "role",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "role": {
+            "$ref": "#/components/schemas/WorkspaceRole"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceRef"
+          }
+        }
+      },
+      "GroupImpact": {
+        "type": "object",
+        "required": [
+          "workspaces"
+        ],
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImpactWorkspaceView"
+            }
+          }
+        }
+      },
+      "GroupMember": {
+        "type": "object",
+        "required": [
+          "user",
+          "status",
+          "source",
+          "added_at"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "$ref": "#/components/schemas/GroupSource"
+          },
+          "status": {
+            "type": "string",
+            "description": "The user's org membership status: a `suspended` member stays listed and derives nothing."
+          },
+          "synced_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(D-156) The sign-in that last confirmed an `idp` membership."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserRef"
+          }
+        }
+      },
+      "GroupName": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "GroupOrgRole": {
+        "type": "string",
+        "description": "`admin` or `member`; `owner` is never a legal mapping (SEC-71).",
+        "enum": [
+          "admin",
+          "member"
+        ]
+      },
+      "GroupSource": {
+        "type": "string",
+        "description": "`manual` (dashboard/API), `scim` (the IdP via SCIM) or `idp` (membership synced from a\nsign-in claim, D-156).",
+        "enum": [
+          "manual",
+          "scim",
+          "idp"
+        ]
+      },
+      "GroupSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "source",
+          "member_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "member_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/GroupSource"
+          }
+        }
+      },
       "HarnessList": {
         "type": "object",
         "required": [
@@ -25136,6 +26598,26 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "(phase 4, P4-GRP-1, D-131) A directory group of the scope's org; matches only a speaker\nwho is in the group.",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "group"
+                ]
+              }
+            }
           }
         ]
       },
@@ -25309,6 +26791,65 @@
           },
           "slug": {
             "type": "string"
+          }
+        }
+      },
+      "ImpactUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ImpactWorkspaceView": {
+        "type": "object",
+        "required": [
+          "workspace",
+          "users_losing_access",
+          "total",
+          "schedules_disabled",
+          "webhooks_disabled",
+          "api_keys"
+        ],
+        "properties": {
+          "api_keys": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "schedules_disabled": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "users_losing_access": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImpactUser"
+            },
+            "description": "At most `GROUP_IMPACT_LIST_MAX` (200); `total` is always given."
+          },
+          "webhooks_disabled": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceRef"
           }
         }
       },
@@ -26451,7 +27992,8 @@
         "required": [
           "user",
           "approval_email",
-          "memberships"
+          "memberships",
+          "groups"
         ],
         "properties": {
           "approval_email": {
@@ -26471,6 +28013,13 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeGroup"
+            },
+            "description": "(phase 4, P4-GRP-1) The caller's groups (active memberships only)."
           },
           "idp_roles": {
             "oneOf": [
@@ -26494,20 +28043,71 @@
           }
         }
       },
+      "MeGroup": {
+        "type": "object",
+        "description": "A group the caller belongs to (phase 4, P4-GRP-1).",
+        "required": [
+          "id",
+          "name",
+          "org_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MeGroupRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "MeMembership": {
         "type": "object",
         "required": [
           "org",
           "role",
           "status",
+          "effective_role",
+          "sources",
           "workspaces"
         ],
         "properties": {
+          "effective_role": {
+            "$ref": "#/components/schemas/OrgRole",
+            "description": "(phase 4, P4-GRP-1) The effective org role: the strongest of `role` and the `org_role` of\nthe caller's groups, only while the membership is active (`role` stays the direct role)."
+          },
           "org": {
             "$ref": "#/components/schemas/OrgSummary"
           },
           "role": {
             "$ref": "#/components/schemas/OrgRole"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeRoleSource"
+            },
+            "description": "Where the effective role comes from: `direct`, or `group` with the group."
           },
           "status": {
             "$ref": "#/components/schemas/MemberStatus"
@@ -26518,6 +28118,28 @@
               "$ref": "#/components/schemas/MeWorkspace"
             },
             "description": "Workspaces the user can use; empty while the membership is suspended."
+          }
+        }
+      },
+      "MeRoleSource": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "group": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MeGroupRef"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`direct` | `group`."
           }
         }
       },
@@ -26591,6 +28213,50 @@
           "active",
           "suspended"
         ]
+      },
+      "MembersBatchRequest": {
+        "type": "object",
+        "properties": {
+          "add": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "MembersBatchResult": {
+        "type": "object",
+        "required": [
+          "added",
+          "removed"
+        ],
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Members actually added (already-present users are skipped)."
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Members actually removed (absent users are skipped)."
+          }
+        }
       },
       "Memory": {
         "type": "object",
@@ -27043,7 +28709,8 @@
           "workspace",
           "enabled",
           "anchor",
-          "would_disable"
+          "would_disable",
+          "via_groups"
         ],
         "properties": {
           "agent": {
@@ -27070,6 +28737,13 @@
             ],
             "format": "date-time"
           },
+          "via_groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedRef"
+            },
+            "description": "(phase 4, P4-GRP-1) The groups that currently give the person access to this item's\nworkspace (a binding on it, or an `admin` org-role mapping)."
+          },
           "workspace": {
             "$ref": "#/components/schemas/NamedRef"
           },
@@ -27088,6 +28762,10 @@
         "properties": {
           "display_name": {
             "type": "string"
+          },
+          "groups": {
+            "type": "boolean",
+            "description": "(phase 4, P4-GRP-1, D-156) The provider has a `group_claim`: IdP-linked groups may name\nit. Absent (false) otherwise."
           },
           "id": {
             "type": "string"
@@ -27595,59 +29273,6 @@
           "skill_id": {
             "type": "string",
             "format": "uuid"
-          }
-        }
-      },
-      "Page_AccessBinding": {
-        "type": "object",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "user_id",
-                "email",
-                "display_name",
-                "role",
-                "implicit"
-              ],
-              "properties": {
-                "display_name": {
-                  "type": "string"
-                },
-                "email": {
-                  "type": "string"
-                },
-                "idp_value": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "(phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual."
-                },
-                "implicit": {
-                  "type": "boolean",
-                  "description": "True for org owners/admins (no row)."
-                },
-                "role": {
-                  "$ref": "#/components/schemas/WorkspaceRole"
-                },
-                "user_id": {
-                  "type": "string",
-                  "format": "uuid"
-                }
-              }
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },
@@ -28888,6 +30513,223 @@
                     "string",
                     "null"
                   ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_DerivedMemberView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "user",
+                "role",
+                "sources"
+              ],
+              "properties": {
+                "role": {
+                  "$ref": "#/components/schemas/WorkspaceRole"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccessSourceView"
+                  }
+                },
+                "user": {
+                  "$ref": "#/components/schemas/UserRef"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Group": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "org_id",
+                "name",
+                "source",
+                "member_count",
+                "workspace_count",
+                "revision",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "idp_provider": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(D-156) For `source = idp`: the provider id and claim value the group mirrors."
+                },
+                "idp_value": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "member_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "org_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "org_role": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupOrgRole"
+                    }
+                  ]
+                },
+                "revision": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "source": {
+                  "$ref": "#/components/schemas/GroupSource"
+                },
+                "workspace_count": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_GroupBinding": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "workspace",
+                "role",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "role": {
+                  "$ref": "#/components/schemas/WorkspaceRole"
+                },
+                "workspace": {
+                  "$ref": "#/components/schemas/WorkspaceRef"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_GroupMember": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "user",
+                "status",
+                "source",
+                "added_at"
+              ],
+              "properties": {
+                "added_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "source": {
+                  "$ref": "#/components/schemas/GroupSource"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "The user's org membership status: a `suspended` member stays listed and derives nothing."
+                },
+                "synced_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "(D-156) The sign-in that last confirmed an `idp` membership."
+                },
+                "user": {
+                  "$ref": "#/components/schemas/UserRef"
                 }
               }
             }
@@ -31040,6 +32882,38 @@
           }
         }
       },
+      "PatchGroupRequest": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "org_role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`admin` | `member` | `null` (clear); `owner` is refused (422 `group_org_role_invalid`)."
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The revision the caller last saw (409 `stale_revision`); the `If-Match` header works too."
+          }
+        }
+      },
       "PatchIntegrationRequest": {
         "type": "object",
         "properties": {
@@ -32703,6 +34577,17 @@
           "revision": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "PutGroupAccessRequest": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/WorkspaceRole"
           }
         }
       },
@@ -35259,6 +37144,22 @@
           }
         }
       },
+      "SpeakerGroup": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "StartRequest": {
         "type": "object",
         "properties": {
@@ -36272,10 +38173,14 @@
         "type": "object",
         "required": [
           "id",
+          "email",
           "display_name"
         ],
         "properties": {
           "display_name": {
+            "type": "string"
+          },
+          "email": {
             "type": "string"
           },
           "id": {
@@ -36350,7 +38255,11 @@
           "overridden_by_org",
           "rule_applies_to_all_agents",
           "user_rule_needs_speaker",
-          "user_rule_no_agent_fallback"
+          "user_rule_no_agent_fallback",
+          "group_rule_needs_speaker",
+          "group_rule_no_agent_fallback",
+          "group_rule_empty",
+          "rule_names_removed_group"
         ]
       },
       "Webhook": {
@@ -36592,6 +38501,26 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "WorkspaceRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },

@@ -50,6 +50,9 @@ pub struct OffboardingItem {
     pub next_fire_at: Option<DateTime<Utc>>,
     /// Always true here: the list holds exactly what the removal would disable.
     pub would_disable: bool,
+    /// (phase 4, P4-GRP-1) The groups that currently give the person access to this item's
+    /// workspace (a binding on it, or an `admin` org-role mapping).
+    pub via_groups: Vec<NamedRef>,
 }
 
 impl From<OffboardRow> for OffboardingItem {
@@ -69,6 +72,7 @@ impl From<OffboardRow> for OffboardingItem {
             anchor: r.anchor,
             next_fire_at: r.next_fire_at,
             would_disable: true,
+            via_groups: Vec::new(),
         }
     }
 }

@@ -419,10 +419,10 @@ pub async fn users_in_scope<'e, E: PgExecutor<'e>>(
     ids: &[Uuid],
 ) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT m.user_id FROM org_members m \
-         WHERE m.org_id = $1 AND m.status = 'active' AND m.user_id = ANY($3) \
+        "SELECT m.user_id FROM effective_org_members m \
+         WHERE m.org_id = $1 AND m.user_id = ANY($3) \
            AND ($2::uuid IS NULL OR m.role IN ('owner','admin') \
-                OR EXISTS (SELECT 1 FROM workspace_access x \
+                OR EXISTS (SELECT 1 FROM effective_workspace_access x \
                            WHERE x.workspace_id = $2 AND x.user_id = m.user_id))",
     )
     .bind(org)

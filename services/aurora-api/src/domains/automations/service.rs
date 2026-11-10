@@ -255,11 +255,42 @@ pub async fn offboarding(
     workspace: Option<Uuid>,
     user: Uuid,
 ) -> Result<Offboarding, ApiError> {
-    let items = |v: Vec<repo::OffboardRow>| v.into_iter().map(OffboardingItem::from).collect();
-    Ok(Offboarding {
+    let items = |v: Vec<repo::OffboardRow>| -> Vec<OffboardingItem> {
+        v.into_iter().map(OffboardingItem::from).collect()
+    };
+    let mut out = Offboarding {
         schedules: items(repo::schedules(&mut *conn, org, workspace, user).await?),
         webhooks: items(repo::webhooks(&mut *conn, org, workspace, user).await?),
         peer_tasks: items(repo::peer_tasks(&mut *conn, org, workspace, user).await?),
         api_keys: repo::api_keys(&mut *conn, org, workspace, user).await?,
-    })
+    };
+    // (P4-GRP-1) "What would break" for people whose access comes through groups: name the
+    // groups that currently give the person access to each item's workspace.
+    let ws_ids: Vec<Uuid> = out
+        .schedules
+        .iter()
+        .chain(&out.webhooks)
+        .chain(&out.peer_tasks)
+        .map(|i| i.workspace.id)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let via = aurora_db::repo::groups::via_groups(&mut *conn, org, user, &ws_ids).await?;
+    for item in out
+        .schedules
+        .iter_mut()
+        .chain(out.webhooks.iter_mut())
+        .chain(out.peer_tasks.iter_mut())
+    {
+        let mut seen = std::collections::BTreeSet::new();
+        item.via_groups = via
+            .iter()
+            .filter(|(w, g, _)| *w == item.workspace.id && seen.insert(*g))
+            .map(|(_, g, n)| super::dto::NamedRef {
+                id: *g,
+                name: n.clone(),
+            })
+            .collect();
+    }
+    Ok(out)
 }

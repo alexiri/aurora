@@ -30,6 +30,7 @@ pub mod freeze;
 pub mod gateway;
 pub mod governance;
 pub mod grants;
+pub mod groups;
 pub mod hosted;
 pub mod identities;
 pub mod idp_roles;

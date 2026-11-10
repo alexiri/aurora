@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
@@ -25,6 +26,8 @@ export interface PickerData {
   agents: Option[];
   users: Option[];
   secrets: Option[];
+  /** (P4-GRP-1) The org's groups; `undefined` while unknown (loading, or the caller may not list them). */
+  groups?: Option[];
 }
 
 function IdentityRow({
@@ -38,7 +41,9 @@ function IdentityRow({
   onChange: (v: Identity) => void;
   onRemove: () => void;
 }) {
-  const options = value.kind === "agent" ? data.agents : data.users;
+  const options = value.kind === "agent" ? data.agents : value.kind === "group" ? (data.groups ?? []) : data.users;
+  // A group that no longer exists matches nobody (SEC-71): never a blank chip.
+  const removedGroup = value.kind === "group" && value.id !== "" && data.groups !== undefined && !data.groups.some((g) => g.id === value.id);
   return (
     <li className="flex flex-wrap gap-2">
       <select
@@ -49,6 +54,7 @@ function IdentityRow({
       >
         <option value="agent">Agent</option>
         <option value="user">When a person is speaking</option>
+        {data.groups !== undefined ? <option value="group">When a member of a group is speaking</option> : null}
       </select>
       {options.length > 0 ? (
         <select aria-label="Identity" className={inputClass} value={value.id} onChange={(e) => onChange({ ...value, id: e.target.value })}>
@@ -68,6 +74,16 @@ function IdentityRow({
       {value.kind === "user" ? (
         <p className="basis-full text-xs text-muted">
           Matches only turns this person is speaking in — never schedules, webhooks, BYO or boot traffic. For “anyone with access”, leave who empty.
+        </p>
+      ) : null}
+      {value.kind === "group" ? (
+        <p className="basis-full text-xs text-muted">
+          Matches only turns spoken by a member of the group — never schedules, webhooks, BYO or boot traffic. For “anyone with access”, leave who empty.
+        </p>
+      ) : null}
+      {removedGroup ? (
+        <p role="status" className="basis-full">
+          <Badge tone="danger">Group no longer exists — matches nobody</Badge>
         </p>
       ) : null}
     </li>

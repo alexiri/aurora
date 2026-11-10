@@ -1965,6 +1965,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/groups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a group (names and counts: org `owner`/`admin`, or `can_own` of a workspace of the org). */
+        get: operations["getGroup"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a group with its memberships and bindings (org `owner`/`admin`). Policy rules that
+         *     name it are not rewritten: they match nobody.
+         */
+        delete: operations["deleteGroup"];
+        options?: never;
+        head?: never;
+        /** Update a group's name, description or org-role mapping (org `owner`/`admin`; `If-Match`). */
+        patch: operations["patchGroup"];
+        trace?: never;
+    };
+    "/v1/groups/{id}/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What deleting the group (or, with `remove_member`, removing that member) would take away. */
+        get: operations["groupImpact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A group's members (org `owner`/`admin`). */
+        get: operations["listGroupMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{id}/members/{user}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Add a member of the organization to a manual group (idempotent). */
+        put: operations["putGroupMember"];
+        post?: never;
+        /** Remove a member from a manual group (idempotent). */
+        delete: operations["deleteGroupMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{id}/members:batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add and remove members in one transaction (at most 100 each; one audit row per change). */
+        post: operations["groupMembersBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{id}/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspaces a group is bound to, with roles (org `owner`/`admin`). */
+        get: operations["listGroupWorkspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/harnesses": {
         parameters: {
             query?: never;
@@ -2428,6 +2536,27 @@ export interface paths {
         get: operations["getOrgEffectiveGovernance"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List an organization's groups (org `owner`/`admin`; names and counts for `can_own` of any
+         *     workspace of the org).
+         */
+        get: operations["listGroups"];
+        put?: never;
+        /** Create a group (org `owner`/`admin`); `source: "idp"` links it to a provider's claim value. */
+        post: operations["createGroup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3464,6 +3593,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/access/groups/{group}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Bind a group to a workspace or change its role (`can_own`; the group must belong to the
+         *     workspace's org).
+         */
+        put: operations["putGroupAccess"];
+        post?: never;
+        /** Unbind a group from a workspace (`can_own`; idempotent). */
+        delete: operations["deleteGroupAccess"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/access/{user}": {
         parameters: {
             query?: never;
@@ -3919,6 +4069,24 @@ export interface components {
         AccessLevel: {
             id: string;
             label: string;
+        };
+        /**
+         * @description `GET /workspaces/{ws}/access`: the direct bindings (unchanged) and, with `expand=groups`,
+         *     the groups bound to the workspace and everyone who has access through a group or an org role.
+         */
+        AccessList: {
+            derived_members?: null | components["schemas"]["Page_DerivedMemberView"];
+            group_bindings?: components["schemas"]["GroupAccessBinding"][] | null;
+            items: components["schemas"]["AccessBinding"][];
+            next_cursor?: string | null;
+        };
+        /** @description Why a person has access: informational only (`04 §Groups`). */
+        AccessSourceView: {
+            group?: null | components["schemas"]["GroupName"];
+            /** @description `direct` | `idp_claim` | `group` | `org_role` | `org_role_via_group`. */
+            kind: string;
+            /** @description The `idp:<provider>:<value>` source, for `idp_claim`. */
+            value?: string | null;
         };
         /** @enum {string} */
         Action: "allow" | "block";
@@ -4986,6 +5154,18 @@ export interface components {
             /** @description Managed: non-secret `instance_setup` values. */
             settings?: Record<string, never> | null;
         };
+        CreateGroupRequest: {
+            description?: string | null;
+            /** @description (D-156) Required for `source = idp`: a configured OIDC provider id with a `group_claim`. */
+            idp_provider?: string | null;
+            /** @description (D-156) Required for `source = idp`: the exact claim value (≤ 256 chars). */
+            idp_value?: string | null;
+            name: string;
+            /** @description `admin` | `member`; `owner` is refused (422 `group_org_role_invalid`). */
+            org_role?: string | null;
+            /** @description `manual` (default) or `idp` (D-156); `scim` groups are created by the IdP. */
+            source?: string | null;
+        };
         CreateIntegrationRequest: {
             /** @description Non-secret settings from the connector's `integration_setup` form. */
             config?: Record<string, never>;
@@ -5206,6 +5386,11 @@ export interface components {
         };
         Effective: {
             credentials: components["schemas"]["EffectiveCredential"][];
+            /**
+             * @description (phase 4, P4-GRP-1, D-131) The selected speaker's current groups, evaluated as
+             *     principals; empty for `speaker=none`.
+             */
+            speaker_groups: components["schemas"]["SpeakerGroup"][];
             /** @description Per tool of every granted connection. */
             tools: components["schemas"]["EffectiveTool"][];
         };
@@ -5434,6 +5619,77 @@ export interface components {
             converted_by_app: components["schemas"]["GrantConversion"][];
             secrets: components["schemas"]["SecretGrant"][];
         };
+        Group: {
+            /** Format: date-time */
+            created_at: string;
+            description?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description (D-156) For `source = idp`: the provider id and claim value the group mirrors. */
+            idp_provider?: string | null;
+            idp_value?: string | null;
+            /** Format: int64 */
+            member_count: number;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            org_role?: null | components["schemas"]["GroupOrgRole"];
+            /** Format: int64 */
+            revision: number;
+            source: components["schemas"]["GroupSource"];
+            /** Format: int64 */
+            workspace_count: number;
+        };
+        GroupAccessBinding: {
+            group: components["schemas"]["GroupSummary"];
+            role: components["schemas"]["WorkspaceRole"];
+        };
+        GroupBinding: {
+            /** Format: date-time */
+            created_at: string;
+            role: components["schemas"]["WorkspaceRole"];
+            workspace: components["schemas"]["WorkspaceRef"];
+        };
+        GroupImpact: {
+            workspaces: components["schemas"]["ImpactWorkspaceView"][];
+        };
+        GroupMember: {
+            /** Format: date-time */
+            added_at: string;
+            source: components["schemas"]["GroupSource"];
+            /** @description The user's org membership status: a `suspended` member stays listed and derives nothing. */
+            status: string;
+            /**
+             * Format: date-time
+             * @description (D-156) The sign-in that last confirmed an `idp` membership.
+             */
+            synced_at?: string | null;
+            user: components["schemas"]["UserRef"];
+        };
+        GroupName: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /**
+         * @description `admin` or `member`; `owner` is never a legal mapping (SEC-71).
+         * @enum {string}
+         */
+        GroupOrgRole: "admin" | "member";
+        /**
+         * @description `manual` (dashboard/API), `scim` (the IdP via SCIM) or `idp` (membership synced from a
+         *     sign-in claim, D-156).
+         * @enum {string}
+         */
+        GroupSource: "manual" | "scim" | "idp";
+        GroupSummary: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            member_count: number;
+            name: string;
+            source: components["schemas"]["GroupSource"];
+        };
         HarnessList: {
             /** @description The harness a new hosted agent gets (`hosted.default_harness`). */
             default: string;
@@ -5505,6 +5761,11 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "user";
+        } | {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "group";
         };
         IdentityMapping: {
             instance_admin: boolean;
@@ -5548,6 +5809,25 @@ export interface components {
             /** @description `owner` | `approver` | `member`. */
             role: string;
             slug: string;
+        };
+        ImpactUser: {
+            display_name: string;
+            email: string;
+            /** Format: uuid */
+            id: string;
+        };
+        ImpactWorkspaceView: {
+            /** Format: int64 */
+            api_keys: number;
+            /** Format: int64 */
+            schedules_disabled: number;
+            /** Format: int64 */
+            total: number;
+            /** @description At most `GROUP_IMPACT_LIST_MAX` (200); `total` is always given. */
+            users_losing_access: components["schemas"]["ImpactUser"][];
+            /** Format: int64 */
+            webhooks_disabled: number;
+            workspace: components["schemas"]["WorkspaceRef"];
         };
         Injecting: {
             host: string;
@@ -5871,16 +6151,43 @@ export interface components {
             client_address?: string | null;
             /** Format: uuid */
             default_org_id?: string | null;
+            /** @description (phase 4, P4-GRP-1) The caller's groups (active memberships only). */
+            groups: components["schemas"]["MeGroup"][];
             idp_roles?: null | components["schemas"]["IdpRoles"];
             memberships: components["schemas"]["MeMembership"][];
             user: components["schemas"]["User"];
         };
+        /** @description A group the caller belongs to (phase 4, P4-GRP-1). */
+        MeGroup: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+        };
+        MeGroupRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         MeMembership: {
+            /**
+             * @description (phase 4, P4-GRP-1) The effective org role: the strongest of `role` and the `org_role` of
+             *     the caller's groups, only while the membership is active (`role` stays the direct role).
+             */
+            effective_role: components["schemas"]["OrgRole"];
             org: components["schemas"]["OrgSummary"];
             role: components["schemas"]["OrgRole"];
+            /** @description Where the effective role comes from: `direct`, or `group` with the group. */
+            sources: components["schemas"]["MeRoleSource"][];
             status: components["schemas"]["MemberStatus"];
             /** @description Workspaces the user can use; empty while the membership is suspended. */
             workspaces: components["schemas"]["MeWorkspace"][];
+        };
+        MeRoleSource: {
+            group?: null | components["schemas"]["MeGroupRef"];
+            /** @description `direct` | `group`. */
+            kind: string;
         };
         MeWorkspace: {
             /** Format: uuid */
@@ -5907,6 +6214,16 @@ export interface components {
         };
         /** @enum {string} */
         MemberStatus: "active" | "suspended";
+        MembersBatchRequest: {
+            add?: string[];
+            remove?: string[];
+        };
+        MembersBatchResult: {
+            /** @description Members actually added (already-present users are skipped). */
+            added: string[];
+            /** @description Members actually removed (absent users are skipped). */
+            removed: string[];
+        };
         Memory: {
             content: string;
             /** Format: date-time */
@@ -6043,12 +6360,22 @@ export interface components {
             name: string;
             /** Format: date-time */
             next_fire_at?: string | null;
+            /**
+             * @description (phase 4, P4-GRP-1) The groups that currently give the person access to this item's
+             *     workspace (a binding on it, or an `admin` org-role mapping).
+             */
+            via_groups: components["schemas"]["NamedRef"][];
             workspace: components["schemas"]["NamedRef"];
             /** @description Always true here: the list holds exactly what the removal would disable. */
             would_disable: boolean;
         };
         OidcProviderInfo: {
             display_name: string;
+            /**
+             * @description (phase 4, P4-GRP-1, D-156) The provider has a `group_claim`: IdP-linked groups may name
+             *     it. Absent (false) otherwise.
+             */
+            groups?: boolean;
             id: string;
         };
         /**
@@ -6248,20 +6575,6 @@ export interface components {
             agent: components["schemas"]["AgentRef"];
             /** Format: uuid */
             skill_id: string;
-        };
-        Page_AccessBinding: {
-            items: {
-                display_name: string;
-                email: string;
-                /** @description (phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual. */
-                idp_value?: string | null;
-                /** @description True for org owners/admins (no row). */
-                implicit: boolean;
-                role: components["schemas"]["WorkspaceRole"];
-                /** Format: uuid */
-                user_id: string;
-            }[];
-            next_cursor?: string | null;
         };
         Page_ActionApproval: {
             items: {
@@ -6606,6 +6919,63 @@ export interface components {
                 /** Format: uuid */
                 origin_conversation_id?: string | null;
                 title?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_DerivedMemberView: {
+            items: {
+                role: components["schemas"]["WorkspaceRole"];
+                sources: components["schemas"]["AccessSourceView"][];
+                user: components["schemas"]["UserRef"];
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_Group: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                description?: string | null;
+                /** Format: uuid */
+                id: string;
+                /** @description (D-156) For `source = idp`: the provider id and claim value the group mirrors. */
+                idp_provider?: string | null;
+                idp_value?: string | null;
+                /** Format: int64 */
+                member_count: number;
+                name: string;
+                /** Format: uuid */
+                org_id: string;
+                org_role?: null | components["schemas"]["GroupOrgRole"];
+                /** Format: int64 */
+                revision: number;
+                source: components["schemas"]["GroupSource"];
+                /** Format: int64 */
+                workspace_count: number;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_GroupBinding: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                role: components["schemas"]["WorkspaceRole"];
+                workspace: components["schemas"]["WorkspaceRef"];
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_GroupMember: {
+            items: {
+                /** Format: date-time */
+                added_at: string;
+                source: components["schemas"]["GroupSource"];
+                /** @description The user's org membership status: a `suspended` member stays listed and derives nothing. */
+                status: string;
+                /**
+                 * Format: date-time
+                 * @description (D-156) The sign-in that last confirmed an `idp` membership.
+                 */
+                synced_at?: string | null;
+                user: components["schemas"]["UserRef"];
             }[];
             next_cursor?: string | null;
         };
@@ -7194,6 +7564,17 @@ export interface components {
             /** @description Managed only: merged per key; `null` restores the field default. */
             settings?: Record<string, never> | null;
         };
+        PatchGroupRequest: {
+            description?: string | null;
+            name?: string | null;
+            /** @description `admin` | `member` | `null` (clear); `owner` is refused (422 `group_org_role_invalid`). */
+            org_role?: string | null;
+            /**
+             * Format: int64
+             * @description The revision the caller last saw (409 `stale_revision`); the `If-Match` header works too.
+             */
+            revision?: number | null;
+        };
         PatchIntegrationRequest: {
             /** @description Replaces the whole config (re-validated). */
             config?: Record<string, never> | null;
@@ -7693,6 +8074,9 @@ export interface components {
             document: components["schemas"]["OrgGovernance"];
             /** Format: int64 */
             revision: number;
+        };
+        PutGroupAccessRequest: {
+            role: components["schemas"]["WorkspaceRole"];
         };
         /** @description Full replacement of the mutable fields; creates the memory when the key is new. */
         PutMemoryRequest: {
@@ -8469,6 +8853,11 @@ export interface components {
         SpaceBindingList: {
             items: components["schemas"]["SpaceBinding"][];
         };
+        SpeakerGroup: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         StartRequest: {
             /** @description Client host name (sanitized; used to name the minted key). */
             hostname?: string | null;
@@ -8753,6 +9142,7 @@ export interface components {
         };
         UserRef: {
             display_name: string;
+            email: string;
             /** Format: uuid */
             id: string;
         };
@@ -8775,7 +9165,7 @@ export interface components {
             origin: components["schemas"]["StoredOrigin"];
         };
         /** @enum {string} */
-        WarningCode: "shadowed" | "inert" | "overridden_by_org" | "rule_applies_to_all_agents" | "user_rule_needs_speaker" | "user_rule_no_agent_fallback";
+        WarningCode: "shadowed" | "inert" | "overridden_by_org" | "rule_applies_to_all_agents" | "user_rule_needs_speaker" | "user_rule_no_agent_fallback" | "group_rule_needs_speaker" | "group_rule_no_agent_fallback" | "group_rule_empty" | "rule_names_removed_group";
         Webhook: {
             /** Format: uuid */
             agent_id: string;
@@ -8852,6 +9242,12 @@ export interface components {
             timezone: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        WorkspaceRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
         };
         /** @enum {string} */
         WorkspaceRole: "owner" | "approver" | "member";
@@ -14692,6 +15088,451 @@ export interface operations {
             };
         };
     };
+    getGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Group"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchGroupRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Group"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    groupImpact: {
+        parameters: {
+            query?: {
+                /** @description Show what removing only this member would take away. */
+                remove_member?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupImpact"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listGroupMembers: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_GroupMember"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putGroupMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+                /** @description User id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembersBatchResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteGroupMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+                /** @description User id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    groupMembersBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembersBatchRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembersBatchResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listGroupWorkspaces: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Group id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_GroupBinding"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listHarnesses: {
         parameters: {
             query?: never;
@@ -16314,6 +17155,119 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listGroups: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive name substring. */
+                q?: string | null;
+                /** @description `manual` | `scim` | `idp`. */
+                source?: string | null;
+                /** @description Only groups that contain this user. */
+                member?: string | null;
+                limit?: number | null;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Group"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGroupRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Group"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19903,10 +20857,12 @@ export interface operations {
     listAccess: {
         parameters: {
             query?: {
-                /** @description Page size, 1..=200 (default 50). */
-                limit?: number;
-                /** @description Opaque cursor from a previous response's `next_cursor`. */
-                cursor?: string;
+                limit?: number | null;
+                cursor?: string | null;
+                /** @description `groups` (phase 4, P4-GRP-1): add `group_bindings` and `derived_members` (`can_own`). */
+                expand?: string | null;
+                /** @description Cursor of the `derived_members` page. */
+                derived_cursor?: string | null;
             };
             header?: never;
             path: {
@@ -19922,8 +20878,99 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_AccessBinding"];
+                    "application/json": components["schemas"]["AccessList"];
                 };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putGroupAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description Group id */
+                group: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutGroupAccessRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupAccessBinding"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteGroupAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description Group id */
+                group: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             403: {
                 headers: {

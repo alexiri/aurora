@@ -125,6 +125,32 @@ config:
 
 **"It does not work."** Sign in, open **Account › Roles from your sign-in** and compare the values with the mapping table under **Admin › Identity**. A value that is not listed under *Grants* matched no mapping (values are case-sensitive); an empty list means the token carried no value at the `role_claim` path (check the client's mappers and scopes, or use `role_claim_source: userinfo`). To try it locally, run the development IdP and set a user's claims with `PUT <dev-idp>/dev/claims/<email>` and a body such as `{"cern_roles": ["aurora-admins"]}`.
 
+## Groups from the IdP (phase 4, P4-GRP-1, D-156)
+
+Aurora groups (`04 §Groups`) can mirror a claim value of your IdP so nobody maintains the same list twice. Per provider set the claim that carries the values:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `group_claim` | unset | Dot path into the **validated ID token** (or userinfo response) holding the group values, read exactly like `role_claim`. Unset: this provider feeds no group. |
+| `group_claim_source` | `id_token` | or `userinfo` (ignored when the answer's `sub` differs from the ID token's). |
+
+An org owner or admin then creates a group in the dashboard (**Groups › New group › Linked to sign-in provider**), picks the provider and types the exact claim value. At every sign-in through that provider the user's membership in each linked group of an organization they already belong to is set from the claim (added when present, removed when absent; an absent claim removes all). It **never** adds anybody to an organization: admission stays with invitations, `role_mappings`, `jit` and placement. Members of such a group are read-only in Aurora and show their last sync time. A change at the IdP takes effect at the person's next sign-in; shorten `auth.session_absolute_secs` / `auth.session_idle_secs` if you need faster removal.
+
+**CERN SSO.** The recommended claim is `cern_roles`: in the Application Portal assign the application's roles to e-groups (CERN expands nested e-groups) and set `group_claim: cern_roles` (it may be the very claim used for `role_claim`). The plain `groups` claim also works once CERN has enabled it for the application (a ServiceNow request; CERN discourages it as the default and the value format is not documented, so look at a real token first). Check what arrived under **Account › Roles from your sign-in**, then link groups to those exact values.
+
+```yaml
+auth:
+  oidc_providers:
+    - id: cern
+      # …
+      role_claim: cern_roles
+      group_claim: cern_roles
+```
+
+To try it locally, set the dev IdP's claims with `PUT <dev-idp>/dev/claims/<email>` and a body such as `{"groups": ["eg-platform"]}`, and set `auth.dev_idp.group_claim: groups`.
+
+Removing `group_claim` from a provider stops the sync and leaves existing members until an admin deletes the group.
+
 Verify: `curl -fsS https://<host>/v1/instance` lists every way to sign in under `oidc_providers`. Then sign in through the dashboard (`<external_url>/auth/login`).
 A failed start names the key (for example `auth.oidc_providers[0].client_secret_env: environment variable AURORA_OIDC_CORP_SECRET (or AURORA_OIDC_CORP_SECRET_FILE) is not set`).
 

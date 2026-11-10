@@ -164,6 +164,44 @@ owner cannot be demoted or removed).
 | idp_source | text null | `idp:<provider>:<value>`; `null` exactly when `idp_role` is `null` |
 | base_role | text null CHECK in (`owner`,`approver`,`member`) | the manual role under a claim-raised one; `null` when the claim created the row |
 
+### `groups`
+(phase 4, P4-GRP-1, D-130) Directory groups: flat, per org (`04 §Groups`). A table with no rows changes nothing about the access law.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| org_id | uuid not null FK→organizations (restrict) | unique `(id, org_id)` and `(id, org_id, source)` so child tables can carry a same-org composite foreign key |
+| name | citext not null CHECK 1–80 chars | sanitized by the API; unique `(org_id, name)` |
+| description | text null CHECK ≤ 280 | |
+| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard; (D-156) `idp` groups are created in the dashboard and their membership is synced from a sign-in claim (`04 §IdP-linked groups`) |
+| idp_provider | text null | (D-156) set together with `idp_value` iff `source = idp` (CHECK); unique `(org_id, idp_provider, idp_value)` |
+| idp_value | text null CHECK ≤ 256 | (D-156) the claim value this group mirrors |
+| org_role | text null CHECK in (`admin`,`member`) | the group → org-role mapping; `owner` is not a legal value (`04 §Groups`) |
+| revision | bigint not null default 1 | optimistic concurrency (`If-Match`) |
+| created_by | uuid null FK→users (set null) | null for SCIM-created groups |
+
+### `group_members`
+(phase 4, P4-GRP-1) A group's members. Created only for users who already hold an `org_members` row of the group's org.
+| Column | Type | Notes |
+|---|---|---|
+| group_id | uuid not null | pk part |
+| org_id | uuid not null | denormalized; composite FKs `(group_id, org_id, source)` → `groups(id, org_id, source)` (cascade) and `(org_id, user_id)` → `org_members(org_id, user_id)` (cascade): a member must be a member of the group's org, and leaving the org leaves every group |
+| user_id | uuid not null FK→users (cascade) | pk part |
+| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows; (D-156) an `idp` group only `idp` rows, written by the sign-in sync; enforced by the composite foreign key) |
+| synced_at | timestamptz null | (D-156) `idp` rows: the sign-in that last confirmed the membership |
+| added_by | uuid null FK→users (set null) | |
+| index | `(org_id, user_id)`, `(user_id)`; primary key `(group_id, user_id)` | the index answers "which groups is this user in" (the access law, the gateway) |
+
+### `group_workspace_access`
+(phase 4, P4-GRP-1) A group's workspace bindings.
+| Column | Type | Notes |
+|---|---|---|
+| group_id | uuid not null | pk part |
+| workspace_id | uuid not null | pk part; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(workspace_id, org_id)` → `workspaces(id, org_id)` (cascade; unique index `workspaces_id_org_uq`): a group binds only workspaces of its own org |
+| org_id | uuid not null | denormalized for the composite foreign keys |
+| role | text not null CHECK in (`owner`,`approver`,`member`) | same vocabulary and meaning as `workspace_access.role` |
+| granted_by | uuid null FK→users (set null) | |
+| index | `(workspace_id)` | "who has access to this workspace" |
+
 ### `api_keys`
 | Column | Type | Notes |
 |---|---|---|
@@ -1322,7 +1360,8 @@ The grants are:
 `SELECT` on identity/tenancy tables it needs (`organizations`, `workspaces`,
 `workspace_access`, `org_members`, `users` (id, email, disabled_at only via a
 view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
-`app_connections`, `app_oauth_clients`, `app_instances`, `grants`, `derived_rules`,
+`app_connections`, `app_oauth_clients`, `app_instances`, (phase 4, P4-GRP-1) `groups`,
+`group_members`, `group_workspace_access`, `grants`, `derived_rules`,
 `policy_generations`, `policy_rules`, `registry_snapshots`, `plugin_packages`
 (status only via view), `host_claim_decisions`, `org_app_availability`;
 `INSERT, UPDATE` on `approvals`, `gateway_instances`, plus the column-level
@@ -1372,42 +1411,7 @@ tables above in the same change (and this section shrinks).
 | plugin_packages.status_reason | (existing open vocabulary) | gains `converts_grants`: an upgrade held in `pending_approval` because it would convert full grants | 4 (P4-GRANTS) |
 | registry snapshot `apps[].grants` | `{ custom_only, block_untooled }` booleans, in the snapshot JSON only | no table; copied from the manifest (`09 §9`). Tool entries may also carry `params` (Q8, `09 §3.4`) | 4 (P4-GRANTS) |
 
-#### `groups` (new table; directory groups, phase 4)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 4 (P4-GRP-1) |
-| org_id | uuid not null FK→organizations (restrict) | unique `(id, org_id)` so child tables can carry a same-org composite foreign key | 4 (P4-GRP-1) |
-| name | citext not null | 1–80 chars, sanitized; unique `(org_id, name)` | 4 (P4-GRP-1) |
-| description | text null | ≤ 280 | 4 (P4-GRP-1) |
-| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard; (D-156) `idp` groups are created in the dashboard and their membership is synced from a sign-in claim (`04 §IdP-linked groups`) | 4 (P4-GRP-1) |
-| idp_provider, idp_value | text null, text null (≤ 256) | (D-156) set together iff `source = idp`; unique `(org_id, idp_provider, idp_value)` | 4 (P4-GRP-1) |
-| org_role | text null CHECK in (`admin`,`member`) | the group → org-role mapping; `owner` is not a legal value (`04 §Groups`) | 4 (P4-GRP-1) |
-| revision | bigint not null default 1 | optimistic concurrency (`If-Match`) | 4 (P4-GRP-1) |
-| created_by | uuid null FK→users (set null) | null for SCIM-created groups | 4 (P4-GRP-1) |
-| created_at, updated_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
-
-#### `group_members` (new table)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| group_id | uuid not null | pk part | 4 (P4-GRP-1) |
-| org_id | uuid not null | denormalized; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(org_id, user_id)` → `org_members(org_id, user_id)` (cascade): a member must be a member of the group's org, and leaving the org leaves every group | 4 (P4-GRP-1) |
-| user_id | uuid not null FK→users (cascade) | pk part | 4 (P4-GRP-1) |
-| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows; (D-156) an `idp` group only `idp` rows, written by the sign-in sync) | 4 (P4-GRP-1) |
-| synced_at | timestamptz null | (D-156) `idp` rows: the sign-in that last confirmed the membership | 4 (P4-GRP-1) |
-| added_by | uuid null FK→users (set null) | | 4 (P4-GRP-1) |
-| created_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
-| primary key / index | `(group_id, user_id)` / `(org_id, user_id)` | the index answers "which groups is this user in" (the access law, the gateway) | 4 (P4-GRP-1) |
-
-#### `group_workspace_access` (new table)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| group_id | uuid not null | pk part | 4 (P4-GRP-1) |
-| workspace_id | uuid not null | pk part; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(workspace_id, org_id)` → `workspaces(id, org_id)` (cascade; needs a unique index on that pair): a group binds only workspaces of its own org | 4 (P4-GRP-1) |
-| org_id | uuid not null | denormalized for the composite foreign keys | 4 (P4-GRP-1) |
-| role | text not null CHECK in (`owner`,`approver`,`member`) | same vocabulary and meaning as `workspace_access.role` | 4 (P4-GRP-1) |
-| granted_by | uuid null FK→users (set null) | | 4 (P4-GRP-1) |
-| created_at, updated_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
-| index | `(workspace_id)` | "who has access to this workspace" | 4 (P4-GRP-1) |
+(P4-GRP-1 landed `groups`, `group_members` and `group_workspace_access`: see §1.)
 
 #### `groups` (SCIM columns; phase 4)
 | Planned column | Type | Notes | Phase |

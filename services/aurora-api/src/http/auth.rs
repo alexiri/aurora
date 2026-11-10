@@ -126,12 +126,11 @@ impl Caller {
                 return Err(ApiError::not_found("Organization not found."));
             }
         }
-        match authz::org_membership(&state.pool, self.user_id, org).await? {
-            Some(m) if m.is_active() => Ok(OrgAuth {
-                org_id: org,
-                role: m.role,
-            }),
-            _ => Err(ApiError::not_found("Organization not found.")),
+        // (P4-GRP-1, D-130) The *effective* org role: the strongest of the direct role and the
+        // `org_role` of the user's groups, only while the membership is active.
+        match authz::effective_org_role(&state.pool, self.user_id, org).await? {
+            Some(role) => Ok(OrgAuth { org_id: org, role }),
+            None => Err(ApiError::not_found("Organization not found.")),
         }
     }
 }
@@ -221,6 +220,9 @@ pub struct AuthCache {
     /// Pinged whenever an `aurora_auth_revoked` notification (or resync) is applied, so open
     /// SSE streams can re-validate their principal immediately.
     revoked: tokio::sync::broadcast::Sender<()>,
+    /// (phase 4, P4-GRP-1) `aurora_auth_revoked { kind: "access" }`: a user's (`Some`) or a whole
+    /// org's (`None`) effective access changed; open streams re-authorize themselves.
+    access: tokio::sync::broadcast::Sender<AccessPing>,
     map: Mutex<HashMap<[u8; 32], (Instant, Caller)>>,
 }
 
@@ -235,6 +237,7 @@ impl AuthCache {
         Self {
             ttl: ttl.min(CACHE_TTL),
             revoked: tokio::sync::broadcast::channel(16).0,
+            access: tokio::sync::broadcast::channel(256).0,
             map: Mutex::new(HashMap::new()),
         }
     }
@@ -274,9 +277,29 @@ impl AuthCache {
         self.revoked.subscribe()
     }
 
+    /// Subscribe to `access` pings (see [`AccessPing`]).
+    pub fn subscribe_access(&self) -> tokio::sync::broadcast::Receiver<AccessPing> {
+        self.access.subscribe()
+    }
+
     /// Apply an `aurora_auth_revoked` payload `{kind, id}`; unknown shapes flush everything.
     pub fn invalidate(&self, payload: &serde_json::Value) {
         let kind = payload.get("kind").and_then(|v| v.as_str());
+        if kind == Some("access") {
+            // The cache holds session and key rows, never roles: nothing to drop. Streams of the
+            // affected user (or org) re-authorize themselves.
+            let uuid = |k: &str| {
+                payload
+                    .get(k)
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+            };
+            let _ = self.access.send(AccessPing {
+                user: uuid("id"),
+                org: uuid("org_id"),
+            });
+            return;
+        }
         let id = payload
             .get("id")
             .and_then(|v| v.as_str())
@@ -296,6 +319,21 @@ impl AuthCache {
             "user" => m.retain(|_, (_, c)| c.user_id != id),
             _ => m.clear(),
         }
+    }
+}
+
+/// An effective-access change (`aurora_auth_revoked { kind: "access" }`, `04 §Groups`): `user =
+/// None` means every user of `org`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessPing {
+    pub user: Option<Uuid>,
+    pub org: Option<Uuid>,
+}
+
+impl AccessPing {
+    /// Does the ping concern `user` (a null user concerns everyone)?
+    pub fn concerns(&self, user: Uuid) -> bool {
+        self.user.is_none_or(|u| u == user)
     }
 }
 

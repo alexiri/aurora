@@ -81,6 +81,8 @@ fn parse(channel: Channel, payload: &serde_json::Value) -> Option<Result<Invalid
                 (Some("org"), Some(i)) => Scope::Org(i),
                 (Some("workspace"), Some(i)) => Scope::Workspace(i),
                 (Some("agent"), Some(i)) => Scope::Agent(i),
+                // (P4-GRP-1) A membership change: drop that speaker's cached identities.
+                (Some("user"), Some(i)) => Scope::User(i),
                 (Some("credential"), Some(i)) => Scope::Credential(i),
                 (Some("connection"), Some(i)) => Scope::Connection(i),
                 // Malformed: be safe and flush everything.

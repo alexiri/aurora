@@ -951,6 +951,7 @@ async fn a_policy_read_that_cannot_connect_is_an_outage_and_is_refused_as_degrad
         turn_id: None,
         context_label: None,
         speaker_user_id: None,
+        speaker_group_ids: Vec::new(),
         capabilities: vec![],
         byo: None,
     };

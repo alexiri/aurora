@@ -19,6 +19,7 @@ import {
   type AccessBinding,
 } from "@/lib/api/account";
 import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
+import { GroupAccess } from "./group-access";
 import { useWorkspaceOffboarding } from "@/lib/api/automations";
 import { errorMessage } from "@/lib/api/errors";
 
@@ -253,6 +254,7 @@ export function AccessTab({
         </DataTable>
       )}
       {canOwn ? <AddBinding wsId={wsId} orgId={orgId} bound={bound} /> : null}
+      <GroupAccess wsId={wsId} orgId={orgId} canOwn={canOwn} data={access.data} />
     </div>
   );
 }

@@ -10,8 +10,16 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Identity {
-    Agent { id: Uuid },
-    User { id: Uuid },
+    Agent {
+        id: Uuid,
+    },
+    User {
+        id: Uuid,
+    },
+    /// (phase 4, P4-GRP-1, D-131, SEC-71) A directory group of the rule's org.
+    Group {
+        id: Uuid,
+    },
 }
 
 impl Identity {
@@ -20,6 +28,13 @@ impl Identity {
             Self::Agent { id } => *id == who.agent_id,
             // Fail closed: no speaker never matches a `user` identity (RFE-005).
             Self::User { id } => who.speaker_user_id == Some(*id),
+            // Fail closed twice: no speaker never matches a `group` identity (the gateway
+            // resolves group ids only for a speaker, and this guard holds even if a caller
+            // passed ids without one), and a deleted group is in no principal set so it matches
+            // nobody. The policy crate never loads a group.
+            Self::Group { id } => {
+                who.speaker_user_id.is_some() && who.speaker_group_ids.contains(id)
+            }
         }
     }
 }

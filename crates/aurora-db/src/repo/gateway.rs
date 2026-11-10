@@ -130,11 +130,39 @@ pub async fn can_use<'e, E: PgExecutor<'e>>(
          WHERE w.id = $1 AND m.user_id = $2 \
            AND (m.role IN ('owner', 'admin') \
                 OR EXISTS (SELECT 1 FROM workspace_access x \
-                           WHERE x.workspace_id = w.id AND x.user_id = m.user_id)))",
+                           WHERE x.workspace_id = w.id AND x.user_id = m.user_id) \
+                OR EXISTS (SELECT 1 FROM group_members gm \
+                           JOIN groups g ON g.id = gm.group_id \
+                           WHERE gm.org_id = w.org_id AND gm.user_id = m.user_id \
+                             AND (g.org_role = 'admin' \
+                                  OR EXISTS (SELECT 1 FROM group_workspace_access b \
+                                             WHERE b.group_id = g.id AND b.workspace_id = w.id)))))",
     )
     .bind(workspace_id)
     .bind(user_id)
     .fetch_one(exec)
+    .await?)
+}
+
+/// (P4-GRP-1, D-131, SEC-71) The ids of the groups **of `org`** that contain `user` (an active
+/// member only), at most `GROUPS_PER_USER` (100): the speaker's principals beyond the agent id
+/// (`06 §Credential authentication`). One indexed query per credential resolution. Callers
+/// pass it only for a speaker that holds `can_use`; a request without a speaker has none.
+pub async fn speaker_group_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT gm.group_id FROM group_members gm \
+         JOIN org_members m ON m.org_id = gm.org_id AND m.user_id = gm.user_id \
+              AND m.status = 'active' \
+         WHERE gm.org_id = $1 AND gm.user_id = $2 \
+         ORDER BY gm.group_id LIMIT 100",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_all(exec)
     .await?)
 }
 

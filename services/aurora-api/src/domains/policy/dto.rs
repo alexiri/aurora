@@ -9,8 +9,17 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Identity {
-    Agent { id: Uuid },
-    User { id: Uuid },
+    Agent {
+        id: Uuid,
+    },
+    User {
+        id: Uuid,
+    },
+    /// (phase 4, P4-GRP-1, D-131) A directory group of the scope's org; matches only a speaker
+    /// who is in the group.
+    Group {
+        id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -311,6 +320,16 @@ pub enum WarningCode {
     /// (phase 2, RFE-005) an allow rule that grants credentials names only `user` identities, so
     /// speakerless traffic gets no credential from it.
     UserRuleNoAgentFallback,
+    /// (phase 4, P4-GRP-1) informational: a rule with `group` identities matches only turns
+    /// spoken by a member of the group.
+    GroupRuleNeedsSpeaker,
+    /// (phase 4, P4-GRP-1) an allow rule that grants credentials names only `group` identities.
+    GroupRuleNoAgentFallback,
+    /// (phase 4, P4-GRP-1) informational: a named group has no members.
+    GroupRuleEmpty,
+    /// (phase 4, P4-GRP-1, SEC-71) the rule names a group that no longer exists and matches
+    /// nobody (`details.group_id`).
+    RuleNamesRemovedGroup,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]

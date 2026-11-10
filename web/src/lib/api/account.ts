@@ -83,7 +83,11 @@ export function useAccess(wsId: string) {
     queryKey: accountKeys.access(wsId),
     queryFn: () =>
       unwrap(
-        api.GET("/v1/workspaces/{ws}/access", { params: { path: { ws: wsId } } }),
+        // (P4-GRP-1) `expand=groups` adds the bound groups and the people whose access comes
+        // through a group or an org role.
+        api.GET("/v1/workspaces/{ws}/access", {
+          params: { path: { ws: wsId }, query: { expand: "groups" } },
+        }),
       ),
     retry,
   });

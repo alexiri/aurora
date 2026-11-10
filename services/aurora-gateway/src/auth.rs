@@ -36,6 +36,10 @@ pub struct RequestIdentity {
     /// user still holds `can_use` on the workspace; `None` for every other credential (boot,
     /// BYO agent, BYO context, non-person turns). Policy `user` identities match only this.
     pub speaker_user_id: Option<Uuid>,
+    /// (phase 4, P4-GRP-1, D-131, SEC-71) The ids of the speaker's groups of the agent's org
+    /// (at most `GROUPS_PER_USER`), resolved with the speaker. Always empty when
+    /// `speaker_user_id` is `None`: `group` identities never match speakerless traffic.
+    pub speaker_group_ids: Vec<Uuid>,
     /// Credential capabilities (`gateway_credentials.capabilities`, 08 §7); only `boot`
     /// credentials can hold any. Phase 1: `browser` (open-lane use, RFE-003).
     pub capabilities: Vec<String>,

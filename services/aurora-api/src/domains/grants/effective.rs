@@ -43,9 +43,16 @@ async fn compute_inner(
     let ws: ScopePolicy = to_scope_policy(
         policy::load_scope_rows(&state.pool, agent.org_id, Some(agent.workspace_id), false).await?,
     )?;
+    // (P4-GRP-1, D-131) The speaker's current groups are resolved from the database and passed
+    // as principals; no speaker, no groups.
+    let speaker_group_ids = match speaker {
+        Some(u) => gateway::speaker_group_ids(&state.pool, agent.org_id, u).await?,
+        None => Vec::new(),
+    };
     let identity = RequestIdentity {
         agent_id: agent.id,
         speaker_user_id: speaker,
+        speaker_group_ids,
     };
     let allow: Vec<_> = org
         .ordered_rules
@@ -63,9 +70,13 @@ async fn compute_inner(
         .iter()
         .copied()
         .filter(|r| {
-            r.identities
-                .iter()
-                .any(|i| matches!(i, aurora_policy::rule::Identity::User { .. }))
+            r.identities.iter().any(|i| {
+                matches!(
+                    i,
+                    aurora_policy::rule::Identity::User { .. }
+                        | aurora_policy::rule::Identity::Group { .. }
+                )
+            })
         })
         .collect();
     let secrets = gateway::active_secrets(&state.pool, agent.org_id, agent.workspace_id).await?;
@@ -230,7 +241,19 @@ async fn compute_inner(
             }
         }
     }
-    Ok((Effective { credentials, tools }, granted_apps))
+    let speaker_groups = aurora_db::repo::groups::names(&state.pool, &identity.speaker_group_ids)
+        .await?
+        .into_iter()
+        .map(|(id, name, _, _)| super::dto::SpeakerGroup { id, name })
+        .collect();
+    Ok((
+        Effective {
+            credentials,
+            tools,
+            speaker_groups,
+        },
+        granted_apps,
+    ))
 }
 
 fn verdict_str(v: Verdict) -> &'static str {

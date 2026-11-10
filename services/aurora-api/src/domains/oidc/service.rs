@@ -292,6 +292,8 @@ struct Verified {
     /// (P4-IDP-1) Role values read from the validated token (or userinfo); empty when the provider
     /// has no `role_claim` or the claim is absent.
     role_values: Vec<String>,
+    /// (P4-GRP-1, D-156) Values of the provider's `group_claim` (validated token or userinfo).
+    group_values: Vec<String>,
     /// (P4-ONB-1) The validated ID-token payload, the only source of workspace-name template
     /// variables (SEC-79); `Null` when it could not be read.
     claims: serde_json::Value,
@@ -354,31 +356,46 @@ async fn exchange(
     let payload = verified_payload(id_token);
     // SEC-78: only this provider's validated token (or its userinfo, fetched with this flow's
     // access token and bound to the same `sub`) is ever read for roles.
-    let role_values = match p.role_claim.as_deref() {
-        None => vec![],
-        Some(path) if p.role_claim_from_userinfo() => {
-            let info = state
-                .oidc
-                .userinfo(p, OAuth2TokenResponse::access_token(&tokens).secret())
-                .await
-                .map_err(|e| {
-                    tracing::warn!("oidc: userinfo failed: {e}");
-                    FAILED
-                })?;
-            if info.get("sub").and_then(|s| s.as_str()) == Some(sub.as_str()) {
-                roles::extract_values(&p.id, &info, path)
-            } else {
-                tracing::warn!("oidc: userinfo sub does not match the ID token; roles ignored");
-                vec![]
-            }
+    // (P4-GRP-1, D-156) The group claim follows the same rule: the validated ID token, or the
+    // userinfo response bound to the same `sub`. Userinfo is fetched at most once.
+    let needs_userinfo = (p.role_claim.is_some() && p.role_claim_from_userinfo())
+        || (p.group_claim.is_some() && p.group_claim_from_userinfo());
+    let userinfo = if needs_userinfo {
+        let info = state
+            .oidc
+            .userinfo(p, OAuth2TokenResponse::access_token(&tokens).secret())
+            .await
+            .map_err(|e| {
+                tracing::warn!("oidc: userinfo failed: {e}");
+                FAILED
+            })?;
+        if info.get("sub").and_then(|s| s.as_str()) == Some(sub.as_str()) {
+            Some(info)
+        } else {
+            tracing::warn!("oidc: userinfo sub does not match the ID token; claims ignored");
+            None
         }
-        Some(path) => payload
-            .as_ref()
-            .map(|pl| roles::extract_values(&p.id, pl, path))
-            .unwrap_or_default(),
+    } else {
+        None
     };
+    let read = |path: Option<&str>, from_userinfo: bool| -> Vec<String> {
+        match path {
+            None => vec![],
+            Some(path) if from_userinfo => userinfo
+                .as_ref()
+                .map(|i| roles::extract_values(&p.id, i, path))
+                .unwrap_or_default(),
+            Some(path) => payload
+                .as_ref()
+                .map(|pl| roles::extract_values(&p.id, pl, path))
+                .unwrap_or_default(),
+        }
+    };
+    let role_values = read(p.role_claim.as_deref(), p.role_claim_from_userinfo());
+    let group_values = read(p.group_claim.as_deref(), p.group_claim_from_userinfo());
     Ok(Verified {
         role_values,
+        group_values,
         claims: payload.unwrap_or(serde_json::Value::Null),
         sub,
         email,
@@ -611,6 +628,17 @@ async fn sign_in(
         tracing::error!("oidc: placement: {e:?}");
         Fail("oidc_failed")
     })?;
+    // (P4-GRP-1, D-156) IdP-linked group memberships, in the same transaction after the role
+    // sync, JIT and placement: those are what can create the org membership a group needs (a
+    // first sign-in is then already in its groups). Never creates a membership itself.
+    if p.group_claim.is_some() {
+        crate::domains::groups::sync::sync_signin(&mut tx, p, user.id, &v.group_values)
+            .await
+            .map_err(|e| {
+                tracing::error!("oidc: group sync: {e:?}");
+                Fail("oidc_failed")
+            })?;
+    }
 
     user = users::record_login(&mut *tx, user.id).await?;
     let token = auth::issue_session(&mut tx, state, user.id, client)

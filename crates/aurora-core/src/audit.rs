@@ -82,6 +82,14 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "user.delete",
     "workspace_access.remove",
     "workspace_access.set",
+    // (P4-GRP-1, D-130, D-156) directory groups: membership, org-role mapping, bindings
+    "group.create",
+    "group.delete",
+    "group.update",
+    "group_access.remove",
+    "group_access.set",
+    "group_member.add",
+    "group_member.remove",
     // (P4-ONB-1, D-140) the instance admin saves the new-user placement
     "placement.update",
     // Skill library (P4-GSL, D-148; emitted as written)

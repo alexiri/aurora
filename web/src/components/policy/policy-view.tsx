@@ -12,6 +12,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
+import { useGroups } from "@/lib/api/groups";
 import {
   describeTarget,
   draftFromGeneration,
@@ -95,6 +96,8 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
   const wsSecrets = useSecrets(scope.kind === "workspace" ? { kind: "workspace", id: scope.id } : { kind: "organization", id: orgId });
   const orgSecrets = useSecrets({ kind: "organization", id: orgId });
   const eff = useEffectiveGovernance(orgId);
+  // (P4-GRP-1) The org's groups for the identity picker; unknown when the caller may not list them.
+  const groupsQ = useGroups(orgId);
   const byoEnabled = eff.data?.byo?.posture.value === "enabled";
   const [confirmBroad, setConfirmBroad] = useState(false);
   const put = usePutDraft(scope);
@@ -127,6 +130,7 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
   const picker: PickerData = {
     agents: agents.map((a) => ({ id: a.id, label: `${a.name} (@${a.handle})` })),
     users,
+    groups: groupsQ.data?.items.map((g) => ({ id: g.id, label: `${g.name} (${g.member_count})` })),
     secrets: allSecrets.map((s) => ({ id: s.id, label: `${s.name} (${s.scope})` })),
   };
   const secretName = (id: string) => allSecrets.find((s) => s.id === id)?.name ?? id;
