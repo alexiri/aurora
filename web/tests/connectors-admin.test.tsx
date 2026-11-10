@@ -444,6 +444,30 @@ describe("Detail without a running host", () => {
   });
 });
 
+// D-142: a type accepted unsigned under `plugins.allow_unsigned` is badged (development only).
+describe("Unsigned (development) badge", () => {
+  it("marks an unsigned type on its card and in the review, and not a signed one", async () => {
+    await openAdd({
+      "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, signed: false }, fakeType({ signed: true })])),
+    });
+    const list = within(await screen.findByRole("list", { name: "Connector types" }));
+    expect(list.getAllByText("Unsigned (development)")).toHaveLength(1);
+    fireEvent.click(list.getByRole("button", { name: "Add Mattermost" }));
+    expect(await screen.findByText("Unsigned (development)")).toBeInTheDocument();
+    expect(screen.queryByText("Signature verified")).toBeNull();
+  });
+
+  it("marks the connector of an unsigned type, and not one of a signed type", async () => {
+    mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [mmConnector, fakeConnector()] }),
+      "GET /v1/admin/connector-types": () => json(200, types([{ ...mattermost, signed: false }, fakeType({ signed: true })])),
+    });
+    wrap(<ConnectorsAdminView />);
+    expect(await screen.findByText("Unsigned (development)")).toBeInTheDocument();
+    expect(screen.getAllByText("Unsigned (development)")).toHaveLength(1);
+  });
+});
+
 describe("Self-hosted path", () => {
   it("still shows the registration token once", async () => {
     mockFetch({

@@ -83,6 +83,7 @@ async fn register(
         .map_err(|e| ApiError::invalid_request(e.to_string(), vec![]))?;
     let mut accepted: Vec<Value> = Vec::new();
     let mut rejected = Vec::new();
+    let mut unsigned: Vec<String> = Vec::new();
     for t in &req.types {
         let reject = |reason| RejectedType {
             type_id: sanitize::one_line(&t.type_id, 64),
@@ -97,17 +98,39 @@ async fn register(
             rejected.push(reject(RejectReason::InvalidManifest));
             continue;
         }
+        // D-142: only with `plugins.allow_unsigned` (development) is an EMPTY signature accepted,
+        // marked `signed: false`. A present signature is always verified, never waved through.
+        if s.config.plugins.allow_unsigned && t.manifest_signature.trim().is_empty() {
+            let digest = manifest::digest(m).map_err(|e| ApiError::internal(e.to_string()))?;
+            unsigned.push(t.type_id.clone());
+            accepted.push(json!({
+                "type_id": t.type_id,
+                "manifest": m,
+                "manifest_digest": manifest::hex(&digest),
+                "signed": false,
+            }));
+            continue;
+        }
         match verify_manifest(&s, m, &t.manifest_signature).await {
             Ok(digest) => accepted.push(json!({
                 "type_id": t.type_id,
                 "manifest": m,
                 "manifest_digest": digest,
+                "signed": true,
             })),
             Err(e) if e.status() == StatusCode::UNPROCESSABLE_ENTITY => {
                 rejected.push(reject(RejectReason::Signature));
             }
             Err(e) => return Err(e),
         }
+    }
+    if !unsigned.is_empty() {
+        let types: Vec<String> = unsigned.iter().map(|t| sanitize::one_line(t, 64)).collect();
+        tracing::warn!(
+            host = %req.instance_id,
+            types = ?types,
+            "plugins.allow_unsigned: connector host types accepted without a signature (development only)"
+        );
     }
     connector_hosts::upsert_host(&s.pool, req.instance_id, &req.version, &json!(accepted)).await?;
     // Heartbeat rows older than a day are of no use.

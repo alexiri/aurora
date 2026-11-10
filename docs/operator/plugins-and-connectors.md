@@ -148,7 +148,10 @@ What a managed connector can and cannot do:
 - The connector host signs nothing at run time. Its release image embeds the manifest signatures
   made with the project key, and the API refuses a type whose signature does not verify (the
   catalogue then does not list it). A build without the project key, such as a local development
-  build, announces unsigned manifests and shows no types. `plugins.allow_unsigned` does not change this.
+  build, announces unsigned manifests: with the default `plugins.allow_unsigned: false` the
+  catalogue shows no types, and with `plugins.allow_unsigned: true` (development only) the types
+  are accepted, logged with a warning and badged "Unsigned (development)" in the dashboard. A
+  signature that is present but invalid is refused either way.
 
 The API routes behind the dashboard: `GET /v1/admin/connector-types`, `POST /v1/admin/connectors`
 with `"managed": true`, and `PATCH /v1/admin/connectors/{id}` (docs/05).

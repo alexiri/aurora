@@ -20,7 +20,7 @@ import {
 } from "@/lib/api/connectors";
 
 import { ManifestSummary } from "./manifest-views";
-import { ConnectorError, ConnectorIcon, settingErrors } from "./shared";
+import { ConnectorError, ConnectorIcon, UnsignedBadge, settingErrors } from "./shared";
 import { requiredErrors, typedValue } from "./setup-values";
 
 type Step = "choose" | "review" | "settings";
@@ -57,6 +57,7 @@ function TypeList({ items, onPick }: { items: ConnectorType[]; onPick: (t: Conne
                 <span className="text-xs font-normal text-muted">
                   v{t.version} · {t.publisher}
                 </span>
+                {t.signed === false ? <UnsignedBadge /> : null}
               </p>
               {desc ? <p className="text-sm text-ink-2">{desc}</p> : null}
             </div>
@@ -93,7 +94,7 @@ function Review({ type, onBack, onNext, stale }: { type: ConnectorType; onBack: 
               v{type.version} · {type.publisher}
             </p>
           </div>
-          <Badge tone="accent">Signature verified</Badge>
+          {type.signed === false ? <UnsignedBadge /> : <Badge tone="accent">Signature verified</Badge>}
         </div>
         <ManifestSummary manifest={type.manifest} />
         <div className="flex flex-wrap gap-2">
