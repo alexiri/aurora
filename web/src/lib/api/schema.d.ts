@@ -521,6 +521,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status of each instance setup step with reason codes (instance administrators). */
+        get: operations["adminSetup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/storage": {
         parameters: {
             query?: never;
@@ -2281,6 +2298,24 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/me/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's onboarding progress (Welcome seen, dismissed guides, tour). */
+        get: operations["getMeOnboarding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change the caller's onboarding progress; only the fields sent change. */
+        patch: operations["patchMeOnboarding"];
         trace?: never;
     };
     "/v1/oauth-clients/{id}": {
@@ -6184,6 +6219,18 @@ export interface components {
             /** @description Workspaces the user can use; empty while the membership is suspended. */
             workspaces: components["schemas"]["MeWorkspace"][];
         };
+        /** @description `GET/PATCH /v1/me/onboarding` (C-530): what cannot be computed from real state. */
+        MeOnboarding: {
+            /** @description Workspaces whose getting-started guide the person dismissed. */
+            guide_dismissed: string[];
+            /**
+             * Format: date-time
+             * @description When the navigation tour was finished or skipped; `null` = not yet.
+             */
+            tour_completed_at?: string | null;
+            /** @description The Welcome page was opened (or skipped). `false` for a person who has not seen it. */
+            welcome_seen: boolean;
+        };
         MeRoleSource: {
             group?: null | components["schemas"]["MeGroupRef"];
             /** @description `direct` | `group`. */
@@ -6194,6 +6241,11 @@ export interface components {
             id: string;
             my_role: components["schemas"]["WorkspaceRole"];
             name: string;
+            /**
+             * @description (phase 4, P4-ONB-2, C-531) This is the caller's own personal workspace (D-140): the
+             *     Welcome page opens there.
+             */
+            personal: boolean;
             slug: string;
         };
         Member: {
@@ -7610,6 +7662,13 @@ export interface components {
                 [key: string]: string;
             } | null;
         };
+        PatchOnboarding: {
+            /** @description The whole list (at most 200 workspaces). `[]` shows every guide again. */
+            guide_dismissed?: string[] | null;
+            /** @description `true` records now; `false` clears it so the tour is offered again. */
+            tour_completed?: boolean | null;
+            welcome_seen?: boolean | null;
+        };
         PatchOrgRequest: {
             name?: string | null;
             settings?: null | components["schemas"]["OrgSettingsPatch"];
@@ -8628,6 +8687,47 @@ export interface components {
         };
         /** @enum {string} */
         SettableStatus: "active" | "disabled";
+        SetupCheck: {
+            /** @description The Helm value that changes it, for config-only things. */
+            helm?: string | null;
+            /** @description Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`. */
+            id: string;
+            /** @description One short plain sentence for the page. */
+            message: string;
+            reason: string;
+            status: components["schemas"]["SetupState"];
+            /** @description The current value (never a secret): a model id, an image, a count. */
+            value?: string | null;
+        };
+        /**
+         * @description Status of one setup step or check.
+         * @enum {string}
+         */
+        SetupState: "ok" | "warning" | "todo";
+        /** @description `GET /v1/admin/setup` (C-533): the setup wizard's live status, no secrets. */
+        SetupStatus: {
+            /** @description A placement has been saved: the wizard is no longer shown at sign-in. */
+            placement_saved: boolean;
+            /** @description In order: `roles`, `placement`, `llm`, `runners`, `optional`. ("Try it" is the client's.) */
+            steps: components["schemas"]["SetupStep"][];
+            you?: null | components["schemas"]["SetupYou"];
+        };
+        SetupStep: {
+            checks: components["schemas"]["SetupCheck"][];
+            id: string;
+            /** @description Machine-readable reason of the worst check (see `API_CONTRACTS` C-533). */
+            reason: string;
+            status: components["schemas"]["SetupState"];
+        };
+        SetupYou: {
+            granted: components["schemas"]["IdpGrant"][];
+            provider: string;
+            provider_name?: string | null;
+            /** @description The claim path the provider reads, when it reads one. */
+            role_claim?: string | null;
+            /** @description Every role value in the token, mapped or not. */
+            values: string[];
+        };
         ShadowedSkill: {
             enabled: boolean;
             shadowed_by?: null | components["schemas"]["TierRef"];
@@ -10807,6 +10907,33 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatus"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16061,6 +16188,72 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getMeOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOnboarding"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchMeOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchOnboarding"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOnboarding"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

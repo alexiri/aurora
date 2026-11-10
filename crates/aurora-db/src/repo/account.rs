@@ -37,6 +37,8 @@ pub struct UsableWorkspaceRow {
     pub slug: String,
     pub name: String,
     pub role: String,
+    /// The user's own personal workspace (`personal_owner_user_id`, D-140).
+    pub personal: bool,
 }
 
 /// Workspaces the user can use through an *active* membership, with the effective role
@@ -47,7 +49,8 @@ pub async fn usable_workspaces<'e, E: PgExecutor<'e>>(
 ) -> Result<Vec<UsableWorkspaceRow>, DbError> {
     Ok(sqlx::query_as(
         "SELECT w.org_id, w.id, w.slug, w.name,
-                ea.role AS role
+                ea.role AS role,
+                COALESCE(w.personal_owner_user_id = $1, false) AS personal
          FROM workspaces w
          JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1
          ORDER BY w.created_at, w.id",

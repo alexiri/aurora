@@ -284,6 +284,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::governance::router())
         .merge(domains::me::router())
         .merge(domains::admin::router())
+        .merge(domains::onboarding::router())
         .merge(domains::placement::router())
         .merge(domains::groups::router())
         .merge(domains::runners_admin::router())

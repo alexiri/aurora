@@ -33,6 +33,8 @@ export interface GrantSubject {
   appWorkspaceId?: string;
   /** Connections only: the app allows only custom grants (`custom_only`, P4-GRANTS), so ask for tools first. */
   customOnly?: boolean;
+  /** Agents ticked when the picker opens (the getting-started guide preselects the workspace's own agent). */
+  preselect?: string[];
 }
 
 type AgentLite = { id: string; name: string; handle: string; kind: string };
@@ -204,7 +206,7 @@ export function GiveAccessPanel({
 }) {
   const grants = useCredentialGrants(subject.target);
   const add = useAddCredentialGrants(subject.target);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(subject.preselect ?? []));
   const [names, setNames] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ created: number; existing: number } | null>(null);
   const [tools, setTools] = useState<Set<string>>(new Set());

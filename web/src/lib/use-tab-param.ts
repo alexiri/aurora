@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 
 /** The tab a `?tab=` value selects: the value when it is one of `valid`, otherwise `fallback`. */
@@ -13,21 +14,33 @@ const currentSearch = () => (typeof window === "undefined" ? "" : window.locatio
  * Tab state addressable by `?tab=` (C-506): read on load, and every change *replaces* the URL (no history entry). An
  * unknown value falls back. Other query parameters are kept, except those in `drop`.
  *
- * The URL is read and written through the History API, which the App Router patches to keep `useSearchParams` in step
- * (the chat's `?c=` does the same). `router.replace` would start a navigation transition that races with those
- * writes: the chat's Back button lost its `?c=` removal to it.
+ * The initial read prefers `useSearchParams`: during a client-side navigation (a `<Link>` click) the component can
+ * mount while `window.location` still shows the previous page, so a plain read races the router and the tab from the
+ * link's `?tab=` was lost (the guide's "Say hello" landed on Instructions). `useSearchParams` follows the navigation.
+ *
+ * Changes are written through the History API, which the App Router patches to keep `useSearchParams` in step (the
+ * chat's `?c=` does the same). `router.replace` would start a navigation transition that races with those writes:
+ * the chat's Back button lost its `?c=` removal to it.
  */
 export function useTabParam<T extends string>(
   valid: readonly T[],
   fallback: T,
   opts: { initial?: (params: URLSearchParams) => T | null; drop?: (tab: T) => string[] } = {},
 ): [T, (tab: T) => void] {
+  const searchParams = useSearchParams();
   const [tab, setTabState] = useState<T>(() => {
     const params = new URLSearchParams(currentSearch());
     const raw = params.get("tab");
     if (raw) return resolveTab(raw, valid, fallback);
     return opts.initial?.(params) || fallback;
   });
+  // A client-side navigation landed here with a `?tab=` the mount-time read missed (it raced the router):
+  // adopt the router's value. Only when window.location carries no valid `tab` — after a local setTab it
+  // already has the new one (written before the router catches up), and adopting then would undo the click.
+  const routerRaw = searchParams.get("tab");
+  const routerTab: T | null = routerRaw && (valid as readonly string[]).includes(routerRaw) ? (routerRaw as T) : null;
+  const locRaw = new URLSearchParams(currentSearch()).get("tab");
+  if (routerTab && routerTab !== tab && !(locRaw && (valid as readonly string[]).includes(locRaw))) setTabState(routerTab);
   const setTab = useCallback(
     (next: T) => {
       setTabState(next);

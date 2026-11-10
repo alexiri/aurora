@@ -10,6 +10,9 @@ pub struct MeWorkspace {
     pub slug: String,
     pub name: String,
     pub my_role: WorkspaceRole,
+    /// (phase 4, P4-ONB-2, C-531) This is the caller's own personal workspace (D-140): the
+    /// Welcome page opens there.
+    pub personal: bool,
 }
 
 #[derive(Serialize, ToSchema)]

@@ -238,7 +238,22 @@ export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agent
       }
     >
       {creating ? <ScheduleForm agentId={agentId} defaultTimezone={defaultTimezone} canOwn={canOwn} onDone={() => setCreating(false)} /> : null}
-      {q.data.items.length === 0 && !creating ? <EmptyState title="No schedules">Schedules wake the agent with a prompt on a cron.</EmptyState> : null}
+      {q.data.items.length === 0 && !creating ? (
+        <EmptyState
+          title="No schedules"
+          when="Use one for recurring work, such as a summary every morning."
+          action={
+            canOwn ? (
+              <Button size="sm" onClick={() => setCreating(true)}>
+                New schedule
+              </Button>
+            ) : undefined
+          }
+          ask="Ask a workspace owner to set one up."
+        >
+          A schedule wakes the agent with a prompt at set times, such as every day at 9.
+        </EmptyState>
+      ) : null}
       {q.data.items.length > 0 ? (
         <ItemList aria-label="Schedule list">
           {q.data.items.map((s) => (

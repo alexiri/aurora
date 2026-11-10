@@ -114,6 +114,42 @@ export const groupFixture = (n: number, source: "manual" | "idp") => ({
   org_role: source === "idp" ? "member" : null, member_count: 1, workspace_count: 1, revision: 1, created_at: now,
 });
 
+/** P4-ONB-2: Daneel holds the organization's LiteLLM key (AIGW) and a default model resolves. */
+export const readinessReady = {
+  harness: "claude-code",
+  keys: [{ secret_id: id(300), name: "AIGW", scope: "organization", provider: "litellm", endpoint_id: "litellm", usable: true, reason: null }],
+  override_dropped: false,
+  default: { endpoint_id: "litellm", model_id: "claude-sonnet-4", provider: "litellm", source: "endpoint_default" },
+};
+/** Nothing granted yet: the guide opens the key step. */
+export const readinessEmpty = { harness: "claude-code", keys: [], override_dropped: false, default: null };
+
+const setupCheck = (cid: string, status: string, reason: string, message: string, extra: Record<string, unknown> = {}) => ({ id: cid, status, reason, message, value: null, helm: null, ...extra });
+/** `GET /v1/admin/setup` (C-533) for an instance with real names: CERN SSO, LiteLLM (AIGW), Mattermost. */
+export const setupStatus = {
+  placement_saved: false,
+  you: {
+    provider: "cern", provider_name: "CERN SSO", role_claim: "cern_roles", values: ["aurora-admins", "aurora-users"],
+    granted: [
+      { value: "aurora-admins", instance_admin: true, org: null, workspaces: [] },
+      { value: "aurora-users", instance_admin: false, org: { slug: "users", role: "member" }, workspaces: [] },
+    ],
+  },
+  steps: [
+    { id: "roles", status: "ok", reason: "roles_ok", checks: [setupCheck("role_mappings", "ok", "role_mappings_set", "Roles in the sign-in token decide who is an admin.", { helm: "auth.oidc_providers[].role_mappings" })] },
+    { id: "placement", status: "todo", reason: "placement_unsaved", checks: [setupCheck("placement", "todo", "placement_unsaved", "Choose where new users land.")] },
+    {
+      id: "llm", status: "warning", reason: "no_default_model",
+      checks: [
+        setupCheck("endpoint:litellm", "ok", "endpoint_reachable", "AIGW answers.", { value: "https://aigw.example.org" }),
+        setupCheck("default_model:litellm", "warning", "no_default_model", "AIGW has no default model. Agents would need a model chosen one by one.", { helm: "llm.endpoints[].default_model" }),
+      ],
+    },
+    { id: "runners", status: "ok", reason: "runners_ok", checks: [setupCheck("runners", "ok", "runner_online", "1 runner(s) online.", { value: "1" }), setupCheck("gateway", "ok", "gateway_online", "The gateway is up: agents reach the internet through it.", { value: "1" })] },
+    { id: "optional", status: "ok", reason: "optional", checks: [setupCheck("connectors", "todo", "no_connectors", "Connectors bring chat tools such as Mattermost to your agents.", { value: "0" })] },
+  ],
+};
+
 export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@example.test", is_instance_admin: true };
 
 export async function mockApi(page: Page) {
@@ -128,8 +164,12 @@ export async function mockApi(page: Page) {
       return route.fulfill({ status: 200, contentType: "image/png", body: readFileSync(join(BUILTIN, icon[1], "assets", file)) });
     }
     if (p === "/v1/me") {
-      return json({ user, memberships: [{ org, status: "active", workspaces: [ws] }], default_org_id: id(1), client_address: "203.0.113.7" });
+      return json({ user, memberships: [{ org, status: "active", workspaces: [{ ...ws, personal: false }] }], default_org_id: id(1), client_address: "203.0.113.7" });
     }
+    // P4-ONB-2: onboarding progress (seen, so `/` stays on the workspace), the guide's readiness and the setup wizard.
+    if (p === "/v1/me/onboarding") return json({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null });
+    if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(readinessReady);
+    if (p === "/v1/admin/setup") return json(setupStatus);
     if (p.endsWith("/policy") && (p.startsWith("/v1/orgs/") || p.startsWith("/v1/workspaces/"))) return json(policyDoc);
     if (p === "/v1/llm/providers") return json({ providers: [] });
     if (p.endsWith("/governance/effective")) return json(effective);
@@ -226,6 +266,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "account-api-keys", path: "/account/api-keys" },
   { name: "account-channels", path: "/account/channels" },
   { name: "account-delete", path: "/account/delete" },
+  { name: "admin-setup", path: "/admin/setup" },
   { name: "admin-users", path: "/admin/users" },
   { name: "admin-orgs", path: "/admin/orgs" },
   { name: "admin-placement", path: "/admin/placement" },
@@ -255,6 +296,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "org-skill-libraries", path: "/o/acme/skills/libraries" },
   { name: "org-storage", path: "/o/acme/storage" },
   { name: "ws-overview", path: "/o/acme/w/main" },
+  { name: "ws-welcome", path: "/o/acme/w/main/welcome" },
   { name: "ws-activity", path: "/o/acme/w/main/activity" },
   { name: "ws-agents", path: "/o/acme/w/main/agents" },
   { name: "ws-agent", path: "/o/acme/w/main/agents/daneel" },

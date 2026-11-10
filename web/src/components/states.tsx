@@ -29,17 +29,29 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   );
 }
 
+/**
+ * An empty list. A *teaching* empty state (D-141) says what the list is (`children`), when you need it (`when`) and the
+ * primary action (`action`). A person who cannot act sees `ask` instead: who to ask, never a dead button.
+ */
 export function EmptyState({
   title,
   children,
+  when,
+  action,
+  ask,
 }: {
   title: string;
   children?: ReactNode;
+  when?: ReactNode;
+  action?: ReactNode;
+  ask?: ReactNode;
 }) {
   return (
     <div className="rounded-card border border-dashed border-line-strong bg-surface p-8 text-center">
       <h2 className="font-display text-base font-semibold text-ink">{title}</h2>
       {children ? <div className="mt-2 text-sm text-ink-2">{children}</div> : null}
+      {when ? <div className="mt-1 text-sm text-ink-2">{when}</div> : null}
+      {action ? <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div> : ask ? <div className="mt-3 text-sm text-ink-2">{ask}</div> : null}
     </div>
   );
 }

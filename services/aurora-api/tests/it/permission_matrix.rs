@@ -358,8 +358,13 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/admin/placement", G::Inst, false),
     r("GET", "/v1/admin/placement/preview", G::Inst, false),
     r("GET", "/v1/admin/placement/choices", G::Inst, false),
+    // (P4-ONB-2, C-533) setup wizard status
+    r("GET", "/v1/admin/setup", G::Inst, false),
     r("POST", "/v1/orgs", G::Inst, false),
     // ---- any authenticated principal ----
+    // (P4-ONB-2, C-530) the caller's own onboarding progress
+    r("GET", "/v1/me/onboarding", G::Auth, false),
+    r("PATCH", "/v1/me/onboarding", G::Auth, false),
     // I-27: instance governance is config without secrets, readable by any signed-in user
     r("GET", "/v1/governance/instance", G::Auth, false),
     r("GET", "/v1/me", G::Auth, false),

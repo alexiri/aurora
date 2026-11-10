@@ -2301,6 +2301,42 @@
         ]
       }
     },
+    "/v1/admin/setup": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Status of each instance setup step with reason codes (instance administrators).",
+        "operationId": "adminSetup",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/storage": {
       "get": {
         "tags": [
@@ -10506,6 +10542,102 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/onboarding": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "The caller's onboarding progress (Welcome seen, dismissed guides, tour).",
+        "operationId": "getMeOnboarding",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOnboarding"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Change the caller's onboarding progress; only the fields sent change.",
+        "operationId": "patchMeOnboarding",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchOnboarding"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOnboarding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
           }
         ]
       }
@@ -28121,6 +28253,36 @@
           }
         }
       },
+      "MeOnboarding": {
+        "type": "object",
+        "description": "`GET/PATCH /v1/me/onboarding` (C-530): what cannot be computed from real state.",
+        "required": [
+          "welcome_seen",
+          "guide_dismissed"
+        ],
+        "properties": {
+          "guide_dismissed": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Workspaces whose getting-started guide the person dismissed."
+          },
+          "tour_completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the navigation tour was finished or skipped; `null` = not yet."
+          },
+          "welcome_seen": {
+            "type": "boolean",
+            "description": "The Welcome page was opened (or skipped). `false` for a person who has not seen it."
+          }
+        }
+      },
       "MeRoleSource": {
         "type": "object",
         "required": [
@@ -28149,7 +28311,8 @@
           "id",
           "slug",
           "name",
-          "my_role"
+          "my_role",
+          "personal"
         ],
         "properties": {
           "id": {
@@ -28161,6 +28324,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "personal": {
+            "type": "boolean",
+            "description": "(phase 4, P4-ONB-2, C-531) This is the caller's own personal workspace (D-140): the\nWelcome page opens there."
           },
           "slug": {
             "type": "string"
@@ -33027,6 +33194,36 @@
         },
         "additionalProperties": false
       },
+      "PatchOnboarding": {
+        "type": "object",
+        "properties": {
+          "guide_dismissed": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The whole list (at most 200 workspaces). `[]` shows every guide again."
+          },
+          "tour_completed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` records now; `false` clears it so the tour is offered again."
+          },
+          "welcome_seen": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "PatchOrgRequest": {
         "type": "object",
         "properties": {
@@ -36331,6 +36528,152 @@
           "active",
           "disabled"
         ]
+      },
+      "SetupCheck": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "reason",
+          "message"
+        ],
+        "properties": {
+          "helm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Helm value that changes it, for config-only things."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`."
+          },
+          "message": {
+            "type": "string",
+            "description": "One short plain sentence for the page."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SetupState"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The current value (never a secret): a model id, an image, a count."
+          }
+        }
+      },
+      "SetupState": {
+        "type": "string",
+        "description": "Status of one setup step or check.",
+        "enum": [
+          "ok",
+          "warning",
+          "todo"
+        ]
+      },
+      "SetupStatus": {
+        "type": "object",
+        "description": "`GET /v1/admin/setup` (C-533): the setup wizard's live status, no secrets.",
+        "required": [
+          "placement_saved",
+          "steps"
+        ],
+        "properties": {
+          "placement_saved": {
+            "type": "boolean",
+            "description": "A placement has been saved: the wizard is no longer shown at sign-in."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupStep"
+            },
+            "description": "In order: `roles`, `placement`, `llm`, `runners`, `optional`. (\"Try it\" is the client's.)"
+          },
+          "you": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SetupYou",
+                "description": "The calling admin's last sign-in, when it read a role claim."
+              }
+            ]
+          }
+        }
+      },
+      "SetupStep": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "reason",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupCheck"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Machine-readable reason of the worst check (see `API_CONTRACTS` C-533)."
+          },
+          "status": {
+            "$ref": "#/components/schemas/SetupState"
+          }
+        }
+      },
+      "SetupYou": {
+        "type": "object",
+        "required": [
+          "provider",
+          "values",
+          "granted"
+        ],
+        "properties": {
+          "granted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdpGrant"
+            }
+          },
+          "provider": {
+            "type": "string"
+          },
+          "provider_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role_claim": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The claim path the provider reads, when it reads one."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every role value in the token, mapped or not."
+          }
+        }
       },
       "ShadowedSkill": {
         "type": "object",

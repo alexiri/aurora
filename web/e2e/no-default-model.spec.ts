@@ -19,9 +19,10 @@ test("owner's endpoint shape: no_default_model, then a reply after choosing a mo
   await page.goto("/auth/login");
   await page.goto(`/v1/auth/oidc/dev/start?login_hint=${encodeURIComponent(email)}&return_to=%2F`);
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible({ timeout: 30_000 });
-  await expect(page).toHaveURL(/\/o\/[^/]+\/w\/([^/]+)$/);
-  const [, orgSlug, wsSlug] = /\/o\/([^/]+)\/w\/([^/]+)$/.exec(new URL(page.url()).pathname)!;
-  const base = new URL(page.url()).pathname;
+  // (P4-ONB-2) A first sign-in lands on the workspace's Welcome page.
+  await expect(page).toHaveURL(/\/o\/[^/]+\/w\/([^/]+)(\/welcome)?$/);
+  const [, orgSlug, wsSlug] = /\/o\/([^/]+)\/w\/([^/]+?)(?:\/welcome)?$/.exec(new URL(page.url()).pathname)!;
+  const base = `/o/${orgSlug}/w/${wsSlug}`;
   const origin = new URL(page.url()).origin;
   const h = { origin };
   const api = page.request;

@@ -80,6 +80,14 @@ export function ErrorBlock({
             </span>
           ) : null;
         })}
+        {copy.guideStep ? (
+          <span>
+            {" "}
+            <Link href={`${base}/welcome?step=${copy.guideStep}`} className="font-semibold underline">
+              Fix it in the guide
+            </Link>
+          </span>
+        ) : null}
         {copy.link && copy.link.path === "computer" ? <span> (see the Computer tab)</span> : null}
       </p>
       {copy.showServerMessage && message ? <p className="mt-1 break-words text-xs">{message}</p> : null}
