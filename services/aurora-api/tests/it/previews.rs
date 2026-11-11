@@ -609,6 +609,62 @@ async fn labels_are_well_formed_unique_and_never_reused() {
     }
 }
 
+// FIX-043: the spent-label tombstone (`preview_labels`) — written transactionally by create,
+// kept by delete, and part of the mint's exclusion set (the "never reused" law, SEC-80).
+#[tokio::test]
+async fn deleted_label_is_tombstoned_and_excluded_from_the_mint() {
+    let r = prv_rig().await;
+    let agent = hosted_agent(&r).await;
+    let (s, v) = r.create(agent, json!({"port": 3000})).await;
+    assert_eq!(s, 201, "{v}");
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let label: String = v["label"].as_str().unwrap().to_owned();
+
+    // Create tombstones the minted label in the same transaction as the share row.
+    let tombstoned: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM preview_labels WHERE label = $1)")
+            .bind(&label)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert!(tombstoned, "create did not tombstone {label}");
+
+    // Delete: the share row is gone, the tombstone survives.
+    assert_eq!(r.delete(id).await, 204);
+    let share_gone: bool =
+        sqlx::query_scalar("SELECT NOT EXISTS (SELECT 1 FROM preview_shares WHERE label = $1)")
+            .bind(&label)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert!(share_gone, "the share survived the delete");
+    let tombstoned: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM preview_labels WHERE label = $1)")
+            .bind(&label)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert!(tombstoned, "the delete removed the tombstone of {label}");
+
+    // The mint's exclusion query (existing rows union tombstones) still contains the deleted
+    // label — the rows alone no longer do, so the tombstone is what keeps it out of the draw.
+    let excluded: Vec<String> = sqlx::query_scalar(
+        "SELECT label::text FROM preview_shares UNION SELECT label::text FROM preview_labels",
+    )
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap();
+    assert!(
+        excluded.iter().any(|l| l == &label),
+        "the mint's exclusion query lost the deleted label {label}"
+    );
+
+    // And the port freed by the delete can be taken again, under a fresh label.
+    let (s, v) = r.create(agent, json!({"port": 3000})).await;
+    assert_eq!(s, 201, "{v}");
+    assert_ne!(v["label"].as_str().unwrap(), label, "the label was reused");
+}
+
 // ---- start ----
 
 #[tokio::test]

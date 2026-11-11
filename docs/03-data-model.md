@@ -1551,6 +1551,19 @@ The gateway database role gets nothing on this table (the gateway has no part in
 Deleting the agent, workspace or org deletes the shares (the org delete service removes them in
 dependency order). The `previews` home-sync part is computed from this table (`16 §W5`).
 
+### `preview_labels` — tombstones of spent hostname labels (phase 4, FIX-043, D-144, SEC-80)
+| Column | Type | Notes |
+|---|---|---|
+| label | citext pk | the minted hostname label, `p` + 24 base32 chars — exactly the value the share holds in `preview_shares.label` |
+
+A ledger of every label that has ever been minted, so the contract "unique and **never reused**"
+(`11 §Port previews`, `17 §Security`) holds after a delete: `create` writes the minted label here
+in the same transaction as the share row, and deleting the share never removes the tombstone — the
+mint excludes every existing row **union** every tombstone. No FK by design (a ledger, per
+§Conventions): the tombstone outlives the share it describes. `created_at` follows §Conventions.
+The gateway database role gets nothing on this table. Backfilled from `preview_shares` by the
+migration that adds it (every existing label is already spent).
+
 #### `preview_sessions` (new table; phase 4, P4-PRV-2, D-146)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

@@ -589,6 +589,9 @@
       "require_approval",
       "targets"
     ],
+    "preview_labels": [
+      "label"
+    ],
     "preview_shares": [
       "agent_id",
       "created_by_label",
