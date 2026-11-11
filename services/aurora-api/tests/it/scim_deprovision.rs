@@ -249,6 +249,165 @@ async fn reactivation_only_when_suspended_by_scim() {
 }
 
 #[tokio::test]
+async fn adopted_active_member_suspended_on_post_inactive() {
+    let fx = ScimFx::new().await;
+    // An active member created in Aurora (JIT or invitation), then pushed by the IdP
+    // with `active: false`: the adoption must suspend, not just record the suspension.
+    let user = fx.h.user("adopt-active@x.io", false).await;
+    fx.h.member(fx.org, user, "member", "active").await;
+    let (_, key) = fx.h.api_key(user, fx.org, None, false).await;
+    let _ = &key;
+    let (_, sess) = fx.h.good_session(user).await;
+    let _ = &sess;
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            USERS,
+            Some(json!({"userName": "adopt-active@x.io", "active": false})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let sid = v["id"].as_str().unwrap().to_owned();
+    // Membership suspended, link suspended with `suspended_by_scim`.
+    let st: String =
+        sqlx::query_scalar("SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(st, "suspended", "the adopted membership is suspended");
+    let (state, by_scim): (String, bool) =
+        sqlx::query_as("SELECT state, suspended_by_scim FROM scim_users WHERE id = $1")
+            .bind(sid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((state.as_str(), by_scim), ("suspended", true));
+    // C-474 effects: org keys revoked, session revoked (the only membership).
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM api_keys WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(user)
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, 0, "org keys revoked on the adopted suspension");
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()",
+    )
+    .bind(user)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, 0, "last-org sessions revoked");
+    // Both audit rows in the one transaction: the adoption and the suspension.
+    let n = count(
+        &fx.h,
+        "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = 'member.add' AND outcome = 'success'",
+        fx.org,
+    )
+    .await;
+    assert!(n >= 1, "the adoption audited");
+    let n = count(
+        &fx.h,
+        "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = 'member.update' AND metadata @> '{\"via\":\"scim\"}'",
+        fx.org,
+    )
+    .await;
+    assert!(n >= 1, "the suspension audited alongside the member.add");
+    // The suspension is SCIM's own: the IdP may lift it again.
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{"op": "replace", "path": "active", "value": true}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let st: String =
+        sqlx::query_scalar("SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(st, "active", "reactivated");
+}
+
+#[tokio::test]
+async fn adopted_suspended_member_stays_human_owned() {
+    let fx = ScimFx::new().await;
+    // A human-suspended member adopted by `POST active: false`: the link records the
+    // suspension but must not claim it (`suspended_by_scim = false`) and must not run
+    // any deprovisioning effects — so the IdP can never lift the human suspension.
+    let user = fx.h.user("adopt-human@x.io", false).await;
+    fx.h.member(fx.org, user, "member", "active").await;
+    fx.h.set_member_status(fx.org, user, "suspended").await;
+    let (_, key) = fx.h.api_key(user, fx.org, None, false).await;
+    let _ = &key;
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            USERS,
+            Some(json!({"userName": "adopt-human@x.io", "active": false})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let sid = v["id"].as_str().unwrap().to_owned();
+    // Link suspended, membership still suspended, and the flag stays SCIM-false.
+    let st: String =
+        sqlx::query_scalar("SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(st, "suspended");
+    let (state, by_scim): (String, bool) =
+        sqlx::query_as("SELECT state, suspended_by_scim FROM scim_users WHERE id = $1")
+            .bind(sid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((state.as_str(), by_scim), ("suspended", false));
+    // No deprovisioning effects ran: the key was not revoked (SCIM did not suspend).
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM api_keys WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(user)
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, 1, "keys untouched for a human suspension");
+    // The human suspension is not SCIM's: the IdP cannot lift it.
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{"op": "replace", "path": "active", "value": true}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    let st: String =
+        sqlx::query_scalar("SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(st, "suspended", "still suspended");
+}
+
+#[tokio::test]
 async fn jit_and_invitation_gates() {
     // The dev provider JITs into the fixture org, so sign-ins hit the SCIM admission gate.
     let fx = ScimFx::with_jit(&[]).await;
