@@ -68,8 +68,14 @@ fn wake_limited() -> ApiError {
     )
 }
 
+/// A paused share is a plain refusal (403, docs/11 §Port previews) — not one of the
+/// retryable 409 state conflicts of this domain (FIX-044).
 fn paused() -> ApiError {
-    ApiError::conflict("preview_paused", "This preview share is paused.")
+    ApiError::new(
+        axum::http::StatusCode::FORBIDDEN,
+        "preview_paused",
+        "This preview share is paused.",
+    )
 }
 
 fn no_start_command() -> ApiError {
