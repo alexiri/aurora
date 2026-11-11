@@ -154,3 +154,85 @@ async fn unverified_claim_does_not_bind() {
             .unwrap();
     assert_eq!(link, target);
 }
+
+/// FIX-034: `PUT /Users/{id}` enforces the e-mail domain allow-list like POST and PATCH —
+/// a `userName` outside the org's `email_domains` is 400 `invalidValue` before any write;
+/// the link and its membership are unchanged; the same PUT with the original domain stays 200.
+#[tokio::test]
+async fn put_rejects_email_domain_outside_org_allow_list() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("linked@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let aurora = fx.aurora_user(&sid).await;
+    // The state a rejected PUT must leave untouched: the link row and the membership.
+    let before: (Uuid, String, Option<String>, String, Option<String>) = sqlx::query_as(
+        "SELECT user_id, user_name::text, external_id, state, display_name \
+         FROM scim_users WHERE id = $1",
+    )
+    .bind(sid.parse::<Uuid>().unwrap())
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    let seat_before: (String, String) =
+        sqlx::query_as("SELECT role, status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(aurora)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+
+    // PUT to a domain outside the org allow-list (`x.io`): 400 invalidValue, same detail
+    // as PATCH, and nothing written — the link still points at the original user.
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({"userName": "moved@other.io", "displayName": "Moved"})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+    assert_eq!(scim_type(&v), Some("invalidValue"), "{v}");
+    assert_eq!(
+        v["detail"], "The e-mail domain is not allowed for this organization.",
+        "{v}"
+    );
+    let after: (Uuid, String, Option<String>, String, Option<String>) = sqlx::query_as(
+        "SELECT user_id, user_name::text, external_id, state, display_name \
+         FROM scim_users WHERE id = $1",
+    )
+    .bind(sid.parse::<Uuid>().unwrap())
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(after, before, "link untouched by the rejected PUT");
+    let seat_after: (String, String) =
+        sqlx::query_as("SELECT role, status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(aurora)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(seat_after, seat_before, "membership untouched");
+    // No stray user was created for the refused address either.
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE email = 'moved@other.io'")
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "no write before the domain check");
+
+    // The same PUT on the original domain is still a full replacement: 200.
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({"userName": "linked@x.io", "displayName": "Linked"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let name: String = sqlx::query_scalar("SELECT user_name::text FROM scim_users WHERE id = $1")
+        .bind(sid.parse::<Uuid>().unwrap())
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(name, "linked@x.io");
+}
