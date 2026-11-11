@@ -1,0 +1,164 @@
+[
+  {
+    "comment": "Keycloak user federation sync: GET by id after the admin event, then create.",
+    "pair": "probe-create",
+    "request": {
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName%20eq%20%22kim%40keycloak.example%22&startIndex=1&count=100"
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": 0,
+        "startIndex": 1,
+        "itemsPerPage": 0,
+        "Resources": []
+      }
+    }
+  },
+  {
+    "comment": "Keycloak create: externalId carries the Keycloak user id.",
+    "pair": "probe-create",
+    "request": {
+      "method": "POST",
+      "path": "/scim/v2/Users",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "userName": "kim@keycloak.example",
+        "externalId": "8a4b1c9e-6d1f-4c2a-9f3e-5b7d2a1c0e11",
+        "name": {"givenName": "Kim", "familyName": "Larsen"},
+        "displayName": "Kim Larsen",
+        "emails": [{"value": "kim@keycloak.example", "primary": true}],
+        "active": true
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "externalId": "8a4b1c9e-6d1f-4c2a-9f3e-5b7d2a1c0e11",
+        "userName": "kim@keycloak.example",
+        "active": true
+      }
+    }
+  },
+  {
+    "comment": "Keycloak attribute update: PUT with the full resource (it uses PUT for edits).",
+    "pair": "attr-update",
+    "request": {
+      "method": "PUT",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "userName": "kim@keycloak.example",
+        "externalId": "8a4b1c9e-6d1f-4c2a-9f3e-5b7d2a1c0e11",
+        "name": {"givenName": "Kim", "familyName": "Larsen-Holm"},
+        "displayName": "Kim Larsen-Holm",
+        "active": true
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "displayName": "Kim Larsen-Holm",
+        "active": true
+      }
+    }
+  },
+  {
+    "comment": "Keycloak disable (user temporarily disabled in the realm).",
+    "pair": "deactivate",
+    "request": {
+      "method": "PUT",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "userName": "kim@keycloak.example",
+        "active": false
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«scim_id»", "active": false}
+    }
+  },
+  {
+    "comment": "Keycloak re-enable.",
+    "pair": "reactivate",
+    "request": {
+      "method": "PUT",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "userName": "kim@keycloak.example",
+        "active": true
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«scim_id»", "active": true}
+    }
+  },
+  {
+    "comment": "Keycloak group mapper pushes the group with the user as a member.",
+    "pair": "group-create",
+    "request": {
+      "method": "POST",
+      "path": "/scim/v2/Groups",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "displayName": "Platform",
+        "externalId": "kc-platform",
+        "members": [{"value": "«scim_id»"}]
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "id": "«group_id»",
+        "displayName": "Platform",
+        "members": [{"value": "«scim_id»"}]
+      }
+    }
+  },
+  {
+    "comment": "Keycloak group rename (PUT with the same members).",
+    "pair": "group-churn",
+    "request": {
+      "method": "PUT",
+      "path": "/scim/v2/Groups/«group_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "displayName": "Platform Core",
+        "members": [{"value": "«scim_id»"}]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«group_id»", "displayName": "Platform Core"}
+    }
+  },
+  {
+    "comment": "Keycloak user deleted in the realm: DELETE the link.",
+    "pair": "delete",
+    "request": {
+      "method": "DELETE",
+      "path": "/scim/v2/Users/«scim_id»"
+    },
+    "response": {"status": 204}
+  }
+]

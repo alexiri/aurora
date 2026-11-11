@@ -138,7 +138,7 @@ pub struct Spec {
 }
 
 impl Spec {
-    const fn per_min(limit: u32, burst: u32) -> Self {
+    pub const fn per_min(limit: u32, burst: u32) -> Self {
         Self {
             burst,
             limit,

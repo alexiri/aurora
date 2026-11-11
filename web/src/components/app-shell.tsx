@@ -263,6 +263,8 @@ const ORG_LINKS: { path: string; label: string; icon: IconType }[] = [
   { path: "skills", label: "Skills", icon: BookIcon },
   { path: "members", label: "Members", icon: UsersIcon },
   { path: "groups", label: "Groups", icon: UsersIcon },
+  // (P4-GRP-2) Owners only: the SCIM directory sync page lives under /settings/directory.
+  { path: "settings/directory", label: "Directory sync", icon: KeyIcon },
   { path: "channels", label: "Channels", icon: MessageIcon },
   { path: "instances", label: "Instances", icon: ServerIcon },
   { path: "api-keys", label: "API keys", icon: KeyIcon },

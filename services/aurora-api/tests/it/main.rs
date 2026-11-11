@@ -69,6 +69,14 @@ mod policy;
 mod runner_plane;
 mod sandbox_env;
 mod schedules;
+mod scim_auth;
+mod scim_common;
+mod scim_deprovision;
+mod scim_groups;
+mod scim_idp_replay;
+mod scim_link;
+mod scim_protocol;
+mod scim_scope;
 mod secrets;
 mod secrets_migrate;
 mod skill_library;
@@ -77,3 +85,19 @@ mod sse_revocation;
 mod tenancy;
 mod tools;
 mod webhooks;
+
+#[test]
+fn init_scim_logs() {
+    scim_test_logs();
+}
+
+/// SCIM debugging: surface the `tracing` output of the API code (the 500 paths log the
+/// real cause) on stderr. A no-op unless `SCIM_LOG` is set.
+fn scim_test_logs() {
+    if std::env::var("SCIM_LOG").is_ok() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing_subscriber::filter::LevelFilter::DEBUG)
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+}

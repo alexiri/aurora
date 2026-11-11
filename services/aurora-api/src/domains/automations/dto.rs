@@ -85,4 +85,12 @@ pub struct Offboarding {
     pub peer_tasks: Vec<OffboardingItem>,
     /// Personal API keys that would stop working.
     pub api_keys: i64,
+    /// (P4-GRP-2) BYO agents this person created and owns; removing them without reassigning
+    /// takes the agents' credentials and sessions with them.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub byo_agents_created: i64,
+}
+
+fn is_zero(v: &i64) -> bool {
+    *v == 0
 }

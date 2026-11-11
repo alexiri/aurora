@@ -80,6 +80,15 @@ export function MemberRow({
       </Td>
       <Td>
         <Badge tone={m.status === "active" ? "accent" : "pending"}>{m.status}</Badge>
+        {m.directory ? (
+          <Badge
+            tone="neutral"
+            title="Managed by directory sync: this member is provisioned by your identity provider (SCIM)."
+            className="ml-1.5 normal-case tracking-normal"
+          >
+            Directory{m.directory.state === "suspended" ? " (suspended)" : ""}
+          </Badge>
+        ) : null}
       </Td>
       <Td className="whitespace-nowrap text-ink-2">{fmtDate(m.created_at)}</Td>
       <Td>

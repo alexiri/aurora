@@ -30,6 +30,8 @@ pub struct GroupRow {
     pub source: String,
     pub idp_provider: Option<String>,
     pub idp_value: Option<String>,
+    /// (P4-GRP-2) The IdP's SCIM `externalId`; `scim` groups only.
+    pub external_id: Option<String>,
     pub org_role: Option<String>,
     pub revision: i64,
     pub created_by: Option<Uuid>,
@@ -40,7 +42,8 @@ pub struct GroupRow {
 }
 
 const SEL: &str = "SELECT g.id, g.org_id, g.name::text AS name, g.description, g.source, \
-    g.idp_provider, g.idp_value, g.org_role, g.revision, g.created_by, g.created_at, g.updated_at, \
+    g.idp_provider, g.idp_value, g.external_id, g.org_role, g.revision, g.created_by, g.created_at, \
+    g.updated_at, \
     (SELECT count(*) FROM group_members m WHERE m.group_id = g.id) AS member_count, \
     (SELECT count(*) FROM group_workspace_access b WHERE b.group_id = g.id) AS workspace_count \
     FROM groups g";
@@ -124,13 +127,15 @@ pub async fn insert(
     description: Option<&str>,
     source: &str,
     idp_link: Option<(&str, &str)>,
+    // (P4-GRP-2) SCIM `externalId` (a `scim` group only).
+    external_id: Option<&str>,
     org_role: Option<&str>,
     created_by: Option<Uuid>,
 ) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO groups (id, org_id, name, description, source, org_role, created_by, \
-                             idp_provider, idp_value) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                             idp_provider, idp_value, external_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(id)
     .bind(org)
@@ -141,6 +146,7 @@ pub async fn insert(
     .bind(created_by)
     .bind(idp_link.map(|l| l.0))
     .bind(idp_link.map(|l| l.1))
+    .bind(external_id)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -305,6 +311,69 @@ pub async fn remove_member(
             .rows_affected()
             > 0,
     )
+}
+
+/// Rename (SCIM `displayName`; bumps `revision`).
+pub async fn rename(conn: &mut PgConnection, id: Uuid, name: &str) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE groups SET name = $2, revision = revision + 1, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(name)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Set the SCIM `externalId` (`scim` groups only; the CHECK keeps other sources NULL).
+pub async fn set_external_id(
+    conn: &mut PgConnection,
+    id: Uuid,
+    external_id: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE groups SET external_id = $2, revision = revision + 1, updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(external_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Another group of the org with this (case-insensitive) name, excluding `id`.
+pub async fn existing_in_org_name<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    id: Uuid,
+    name: &str,
+) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM groups WHERE org_id = $1 AND name = $2::citext AND id <> $3",
+    )
+    .bind(org)
+    .bind(name)
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// Another *scim* group of the org with this `externalId`, excluding `id`.
+pub async fn existing_in_org_external<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    id: Uuid,
+    external_id: &str,
+) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM groups WHERE org_id = $1 AND external_id = $2 AND id <> $3",
+    )
+    .bind(org)
+    .bind(external_id)
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn member_ids<'e, E: PgExecutor<'e>>(exec: E, group: Uuid) -> Result<Vec<Uuid>, DbError> {

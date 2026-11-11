@@ -404,7 +404,7 @@ struct JsonBody {
 }
 
 pub fn test_router(state: AppState) -> Router {
-    let (api, _) = app::api_router();
+    let (api, _) = app::api_router(Some(&state));
     let t = Router::new()
         .route(
             "/t/whoami",

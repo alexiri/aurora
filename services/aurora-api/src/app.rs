@@ -10,6 +10,7 @@ use aurora_config::ApiConfig;
 use aurora_db::PgPool;
 use axum::Router;
 use axum::middleware;
+use axum::response::IntoResponse;
 use std::sync::Arc;
 use utoipa_axum::router::OpenApiRouter;
 
@@ -317,16 +318,58 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::channels::router())
 }
 
-/// Public API router (without ops endpoints) and its OpenAPI document.
-pub fn api_router() -> (Router<AppState>, utoipa::openapi::OpenApi) {
+/// Public API router (without ops endpoints) and its OpenAPI document. The SCIM plane
+/// (`/scim/v2`, P4-GRP-2) is nested here — a plain axum router outside the OpenAPI
+/// document — and answers **404 for the whole surface while the instance switch
+/// `scim.enabled` is off** (checked by a middleware before auth). `state` is `None` only
+/// for the OpenAPI document build (a layer never changes the document; the nested SCIM
+/// rate-limit middleware needs the state at router-build time).
+pub fn api_router(state: Option<&AppState>) -> (Router<AppState>, utoipa::openapi::OpenApi) {
     let (router, doc) = OpenApiRouter::with_openapi(openapi::base())
         .nest("/v1", v1_router())
         .split_for_parts();
-    let router = router.route(
-        "/v1/openapi.json",
-        axum::routing::get(openapi::serve_document),
-    );
+    let router = router
+        .route(
+            "/v1/openapi.json",
+            axum::routing::get(openapi::serve_document),
+        )
+        // (P4-GRP-2) The SCIM management routes are `/v1` paths but not OpenAPI paths.
+        .merge(domains::scim::management_router());
+    // The SCIM plane never appears in the OpenAPI document and its nested rate-limit
+    // middleware needs the real state at build time (`from_fn_with_state`), so it is only
+    // wired when actually serving (`Some`); the document build passes `None`.
+    let router = match state {
+        Some(s) => {
+            let scim_enabled = s.config.scim.enabled;
+            router
+                .nest("/scim/v2", domains::scim::router(s))
+                .layer(middleware::from_fn(move |req, next| {
+                    scim_gate(scim_enabled, req, next)
+                }))
+        }
+        None => router,
+    };
     (router, doc)
+}
+
+/// (P4-GRP-2, SEC-72) While the instance switch is off, the whole `/scim/v2` surface is 404
+/// before anything else runs (no auth oracle); the management routes stay reachable so the
+/// owners see `available: false`.
+async fn scim_gate(
+    scim_enabled: bool,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    if !scim_enabled && req.uri().path().starts_with("/scim/v2") {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({
+                "error": {"code": "not_found", "message": "Not found."}
+            })),
+        )
+            .into_response();
+    }
+    next.run(req).await
 }
 
 /// Cross-cutting middleware: client IP (outer), CSRF, then the API rate limiter (RFE-017).
@@ -348,7 +391,7 @@ pub fn with_middleware(router: Router<AppState>, state: &AppState) -> Router<App
 
 /// Full public router. `fallback` serves anything unmatched (ops endpoints, 404 envelope).
 pub fn router(state: AppState, fallback: Router) -> Router {
-    let (api, _) = api_router();
+    let (api, _) = api_router(Some(&state));
     with_middleware(api, &state)
         .method_not_allowed_fallback(web::error::method_not_allowed_fallback)
         .fallback_service(fallback)

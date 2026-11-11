@@ -35,9 +35,10 @@ pub fn base() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
 }
 
-/// The complete generated document.
+/// The complete generated document. The SCIM plane is not part of the document and the
+/// router build with `None` simply skips wiring it, so no `AppState` is needed here.
 pub fn document() -> utoipa::openapi::OpenApi {
-    crate::app::api_router().1
+    crate::app::api_router(None).1
 }
 
 /// Pretty JSON with a trailing newline, as checked in at `web/openapi.json`.

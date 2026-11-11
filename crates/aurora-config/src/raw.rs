@@ -73,6 +73,8 @@ pub struct RawConfig {
     pub ratelimit: RatelimitSection,
     /// (phase 4, P4-GSL) git skill library switches and limits.
     pub skills: SkillsSection,
+    /// (phase 4, P4-GRP-2, D-132) SCIM 2.0 provisioning (`/scim/v2`).
+    pub scim: ScimSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -506,6 +508,32 @@ impl Default for SkillsLibrarySection {
             enabled: true,
             refresh_interval_secs: 900,
             bytes_per_agent: 1024 * 1024,
+        }
+    }
+}
+
+/// `[scim]` (phase 4, P4-GRP-2, D-132, SEC-72; docs/15 §SCIM directory sync).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ScimSection {
+    /// Serve `/scim/v2` and show the Directory sync page; while `false` every
+    /// `/scim/v2` path is 404 and no org can enable SCIM.
+    pub enabled: bool,
+    /// Optional instance allow-list of the e-mail domains an org may provision (exact,
+    /// case-insensitive; empty = any domain the org owner lists).
+    pub allowed_email_domains: Vec<String>,
+    /// `SCIM_RATE` per token per minute (burst is a fifth of it).
+    pub rate_per_minute: u32,
+    /// Longest lifetime of an `aud_` token, in days.
+    pub token_max_days: u32,
+}
+impl Default for ScimSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            allowed_email_domains: vec![],
+            rate_per_minute: 600,
+            token_max_days: 730,
         }
     }
 }

@@ -24,6 +24,13 @@ spec:
     - host: {{ $host | quote }}
       http:
         paths:
+          {{- if .Values.scim.enabled }}
+          # (P4-GRP-2) SCIM provisioning: the /scim/v2 plane, served by the API. Rendered only
+          # when the instance switch is on (while off the API answers 404 for every /scim path).
+          - path: /scim
+            pathType: Prefix
+            backend: {service: {name: {{ $full }}-api, port: {number: 4101}}}
+          {{- end }}
           - path: /v1
             pathType: Prefix
             backend: {service: {name: {{ $full }}-api, port: {number: 4101}}}
@@ -54,6 +61,15 @@ spec:
   {{- end }}
   hostnames: {{ toJson (default (list $host) .Values.gatewayApi.hostnames) }}
   rules:
+    {{- if .Values.scim.enabled }}
+    # (P4-GRP-2) SCIM provisioning, see the Ingress above.
+    - matches:
+        - path: {type: PathPrefix, value: /scim}
+      timeouts:
+        request: {{ .Values.gatewayApi.requestTimeout }}
+      backendRefs:
+        - {name: {{ $full }}-api, port: 4101}
+    {{- end }}
     - matches:
         - path: {type: PathPrefix, value: /v1}
       timeouts:

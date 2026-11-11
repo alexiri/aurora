@@ -143,6 +143,21 @@ pub struct Governance {
     pub agent_token_max_age_days: Option<u32>,
 }
 
+/// (phase 4, P4-GSL) validated `[skills.library]`.
+pub use crate::raw::SkillsLibrarySection;
+/// (phase 4, P4-GRP-2, D-132) `[scim]` after validation: domains normalised to lower-case.
+#[derive(Debug, Clone)]
+pub struct ScimConfig {
+    /// Serve `/scim/v2` (404 everywhere while `false`).
+    pub enabled: bool,
+    /// Instance allow-list of provisionable e-mail domains (lower-case; empty = unrestricted).
+    pub allowed_email_domains: Vec<String>,
+    /// `SCIM_RATE` per token per minute.
+    pub rate_per_minute: u32,
+    /// Longest `aud_` token lifetime in days.
+    pub token_max_days: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub server: ServerSection,
@@ -190,6 +205,8 @@ pub struct ApiConfig {
     pub gateway_internal_url: String,
     /// (phase 4, P4-GSL) validated `[skills.library]`.
     pub skills_library: SkillsLibrarySection,
+    /// (phase 4, P4-GRP-2, D-132) validated `[scim]`.
+    pub scim: ScimConfig,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
@@ -447,6 +464,22 @@ impl RawConfig {
                 "must be between 1 and 1048576 (an operator may only lower LIBRARY_BYTES_PER_AGENT)",
             );
         }
+        // (P4-GRP-2, D-132) SCIM limits; domains are validated for every service that reads
+        // them (only the API serves SCIM, but a typo should fail startup everywhere).
+        check_scim_domains(
+            &mut c,
+            "scim.allowed_email_domains",
+            &self.scim.allowed_email_domains,
+        );
+        if !(30..=6000).contains(&self.scim.rate_per_minute) {
+            c.err(
+                "scim.rate_per_minute",
+                "must be between 30 and 6000 requests per minute",
+            );
+        }
+        if !(1..=1825).contains(&self.scim.token_max_days) {
+            c.err("scim.token_max_days", "must be between 1 and 1825 days");
+        }
         if self.plugins.dir.is_empty() {
             c.err("plugins.dir", "must not be empty");
         }
@@ -552,6 +585,17 @@ impl RawConfig {
             hookhost_url: self.api.hookhost_url.clone(),
             gateway_internal_url: self.api.gateway_internal_url.clone(),
             skills_library: self.skills.library.clone(),
+            scim: ScimConfig {
+                enabled: self.scim.enabled,
+                allowed_email_domains: self
+                    .scim
+                    .allowed_email_domains
+                    .iter()
+                    .map(|d| d.trim().to_ascii_lowercase())
+                    .collect(),
+                rate_per_minute: self.scim.rate_per_minute,
+                token_max_days: self.scim.token_max_days,
+            },
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
             attachments: self.attachments.clone(),
@@ -1272,6 +1316,26 @@ fn is_dns_subdomain(s: &str) -> bool {
 fn check_pos<T: Into<u64> + Copy>(c: &mut Ctx, key: &str, v: Option<T>) {
     if v.is_some_and(|v| v.into() == 0) {
         c.err(key, "must be greater than 0");
+    }
+}
+
+/// (P4-GRP-2) `scim.allowed_email_domains`: exact domains (no `@`, no wildcard, at least one
+/// dot), matched case-insensitively against the domain of provisioned e-mails.
+fn check_scim_domains(c: &mut Ctx, key: &str, domains: &[String]) {
+    for d in domains {
+        let d = d.trim();
+        let bad = d.is_empty()
+            || d.contains('@')
+            || d.contains('*')
+            || !d.contains('.')
+            || d.starts_with('.')
+            || d.ends_with('.')
+            || !d
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-');
+        if bad {
+            c.err(key, format!("`{d}` is not a domain (like `example.com`)"));
+        }
     }
 }
 

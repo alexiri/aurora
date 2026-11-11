@@ -21,6 +21,7 @@ path = "src/main.rs"
 aurora-core = { workspace = true, features = ["service"] }
 aurora-config = { workspace = true }
 axum = { workspace = true }
+http-body-util = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

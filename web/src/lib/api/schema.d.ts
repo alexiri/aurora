@@ -6342,6 +6342,7 @@ export interface components {
         Member: {
             /** Format: date-time */
             created_at: string;
+            directory?: null | components["schemas"]["MemberDirectory"];
             display_name: string;
             email: string;
             /**
@@ -6354,6 +6355,14 @@ export interface components {
             status: components["schemas"]["MemberStatus"];
             /** Format: uuid */
             user_id: string;
+        };
+        /**
+         * @description (P4-GRP-2) The SCIM projection of the Members page: `directory` is present only with a
+         *     `scim_users` link (`state` + the IdP's `externalId`).
+         */
+        MemberDirectory: {
+            external_id?: string | null;
+            state: string;
         };
         /** @enum {string} */
         MemberStatus: "active" | "suspended";
@@ -6488,6 +6497,12 @@ export interface components {
              * @description Personal API keys that would stop working.
              */
             api_keys: number;
+            /**
+             * Format: int64
+             * @description (P4-GRP-2) BYO agents this person created and owns; removing them without reassigning
+             *     takes the agents' credentials and sessions with them.
+             */
+            byo_agents_created?: number;
             /** @description Queued or open peer tasks the person requested (`name` is "from → to"). */
             peer_tasks: components["schemas"]["OffboardingItem"][];
             schedules: components["schemas"]["OffboardingItem"][];
@@ -7146,6 +7161,7 @@ export interface components {
             items: {
                 /** Format: date-time */
                 created_at: string;
+                directory?: null | components["schemas"]["MemberDirectory"];
                 display_name: string;
                 email: string;
                 /**

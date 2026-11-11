@@ -68,6 +68,7 @@ async fn workspace_offboarding(
             webhooks: vec![],
             peer_tasks: vec![],
             api_keys: 0,
+            byo_agents_created: 0,
         }));
     }
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
