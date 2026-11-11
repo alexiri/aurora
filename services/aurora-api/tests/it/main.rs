@@ -65,6 +65,7 @@ mod plugins;
 mod plugins_lifecycle;
 mod plugins_upgrade;
 mod policy;
+mod previews;
 mod runner_plane;
 mod sandbox_env;
 mod schedules;

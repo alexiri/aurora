@@ -328,6 +328,8 @@ pub async fn create(
     let id = Uuid::now_v7();
     let mut tx = audit::begin(s).await?;
     ensure_org_enabled(&mut tx, a.org_id).await?;
+    // A frozen agent is never given a new share (423 `frozen`, docs/05) — the same law as start.
+    freeze::ensure_agent_active(&mut tx, agent).await?;
     repo::lock_org(&mut tx, a.org_id).await?;
     // The config may only lower the built-in limits (validated at startup).
     if repo::count_in_org(&mut *tx, a.org_id).await? >= repo::SHARES_PER_ORG
@@ -351,6 +353,7 @@ pub async fn create(
         a.org_id,
         a.workspace_id,
         agent,
+        req.port,
         command.as_deref(),
         cwd.as_deref(),
         (Some(c.user_id), Some(c.email.as_str())),

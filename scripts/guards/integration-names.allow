@@ -15,3 +15,7 @@
 
 # Bundled top-10k common-password list (I-11) is data, not integration code.
 ^services/aurora-api/data/common-passwords\.txt$:.*
+
+# (P4-PRV-1) The previews-domain validator's coarse public-suffix list: `github.io` is a
+# public suffix that must never be a previews domain (no real integration code).
+^crates/aurora-config/src/validate\.rs$:github\.io

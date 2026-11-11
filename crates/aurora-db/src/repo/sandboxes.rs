@@ -222,6 +222,8 @@ pub async fn pending_start(
     default_harness: &str,
     wake_window_secs: f64,
 ) -> Result<bool, DbError> {
+    // `start_eligible()` is shared with `claim_starts`, where `$4`/`$5` are the limit and the
+    // lease and `$6` the wake window: bind the unused `$4`/`$5` so `$6` stays the wake window.
     Ok(sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM sandboxes s JOIN agents a ON a.id = s.agent_id
                         WHERE {})",
@@ -230,6 +232,8 @@ pub async fn pending_start(
     .bind(runner)
     .bind(replica)
     .bind(default_harness)
+    .bind(0_i64)
+    .bind(0_f64)
     .bind(wake_window_secs)
     .fetch_one(conn)
     .await?)

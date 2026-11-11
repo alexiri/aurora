@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 
 import { OrgFreeze } from "@/components/freeze/freeze-sections";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -12,6 +13,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { DangerZone, Section } from "@/components/ui/section";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { deleteOrg, usePatchOrg, usePutRetention, useRetention } from "@/lib/api/org";
+import { useInstance } from "@/lib/api/queries";
 import type { Org } from "@/lib/api/queries";
 
 function parseLimit(v: string): number | null | "invalid" {
@@ -142,6 +144,67 @@ function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
       ) : null}
     </Form>
   );
+}
+
+/** The org's Port previews switch (P4-PRV-1, C-549, docs/14). The card exists only when the
+ * instance runs previews; the switch is owners/admins and audited. Turning it off asks for
+ * confirmation: existing links stop working until it is turned back on. */
+function PreviewsForm({ org }: { org: Org }) {
+  const patch = usePatchOrg(org.id);
+  const instance = useInstance();
+  const [confirmOff, setConfirmOff] = useState(false);
+  const on = org.settings.previews_enabled;
+  const domain = instance.data?.previews?.domain ?? "";
+  const enabled = instance.data?.previews?.enabled === true;
+  if (!enabled) return null;
+  return (
+    <Section
+      id="org-previews"
+      title="Port previews"
+      description="Lets people who can use a workspace open web apps that its agents run, at https://<random>.<previews domain>. Only signed-in people who can use that workspace can open them, and agents cannot create them."
+      card
+    >
+      <CheckboxField
+        id="org-previews-on"
+        label="Allow port previews in this organization"
+        checked={on}
+        disabled={!isOwnerAdmin(org) || patch.isPending}
+        onChange={(v) => {
+          if (!v) {
+            setConfirmOff(true);
+            return;
+          }
+          patch.mutate({ settings: { previews_enabled: true } });
+        }}
+      />
+      {domain ? (
+        <Field id="org-previews-domain" label="Preview domain">
+          <input id="org-previews-domain" className={inputClass} value={domain} readOnly aria-readonly="true" />
+        </Field>
+      ) : null}
+      <ConfirmDialog
+        open={confirmOff}
+        onOpenChange={setConfirmOff}
+        title="Turn port previews off?"
+        description="Existing links stop working until you turn it back on. The shares are kept."
+        confirmLabel="Turn off"
+        danger
+        busy={patch.isPending}
+        onConfirm={() => {
+          patch.mutate({ settings: { previews_enabled: false } }, { onSettled: () => setConfirmOff(false) });
+        }}
+      />
+      {patch.error ? (
+        <Notice tone="danger" role="alert">
+          {errorMessage(patch.error)}
+        </Notice>
+      ) : null}
+    </Section>
+  );
+}
+
+function isOwnerAdmin(org: Org): boolean {
+  return org.my_role === "owner" || org.my_role === "admin";
 }
 
 /** Conversation retention (RFE-010): a window of 7 to 3650 days, or none; owners and admins. */
@@ -275,6 +338,7 @@ export function OrgSettingsView({ org }: { org: Org }) {
       <Section id="org-general" title="General" card>
         <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={isOwner} />
       </Section>
+      {isOwner || org.my_role === "admin" ? <PreviewsForm org={org} /> : null}
       {isOwner || org.my_role === "admin" ? (
         <Section
           id="org-retention"

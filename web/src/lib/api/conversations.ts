@@ -38,7 +38,9 @@ export interface SandboxView {
   failure_message: string | null;
   start_attempt: SandboxStartAttempt | null;
   processes: { id: string; name: string; state: string; busy: boolean; started_at: string | null }[];
-  ports: { port: number; protocol: string }[];
+  ports: { port: number; protocol: string; shared?: string | null }[];
+  // (P4-PRV-1, D-145) `preview` is among `keep_awake_reasons` while this is true.
+  preview_in_use?: boolean;
   restart_to_update: boolean;
 }
 export interface ModelOption {

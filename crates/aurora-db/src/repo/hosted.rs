@@ -807,8 +807,8 @@ pub async fn sandbox_view(
                 AND p.status = 'running' AND p.busy) AS busy_process,
             EXISTS (SELECT 1 FROM watches w JOIN processes p ON p.id = w.process_id
                 WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id AND w.status = 'armed') AS armed_watch,
-            -- (P4-PRV-1) keep-awake reason `preview` is live now.
-            (s.preview_active_until > now()) AS preview_in_use,
+            -- (P4-PRV-1) keep-awake reason `preview` is live now (NULL when never awake).
+            coalesce(s.preview_active_until > now(), false) AS preview_in_use,
             -- ports of the current boot with an active share (parallel arrays for the API view)
             coalesce((SELECT array_agg(x.port ORDER BY x.port) FROM preview_shares x
                 WHERE x.agent_id = s.agent_id AND x.state = 'active'

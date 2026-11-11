@@ -193,6 +193,7 @@ pub async fn insert(
     org: Uuid,
     workspace: Uuid,
     agent: Uuid,
+    port: i32,
     start_command: Option<&str>,
     cwd: Option<&str>,
     created_by: (Option<Uuid>, Option<&str>),
@@ -207,6 +208,7 @@ pub async fn insert(
     .bind(org)
     .bind(workspace)
     .bind(agent)
+    .bind(port)
     .bind(&label)
     .bind(start_command)
     .bind(cwd)

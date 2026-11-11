@@ -5193,6 +5193,146 @@
         ]
       }
     },
+    "/v1/agents/{agent}/previews": {
+      "get": {
+        "tags": [
+          "previews"
+        ],
+        "summary": "An agent's preview shares (C-540).",
+        "operationId": "listAgentPreviews",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewShareList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "previews"
+        ],
+        "summary": "Create a share (C-541): `{ port, start_command?, cwd? }` → 201 `PreviewShare`.",
+        "operationId": "createAgentPreview",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePreviewShareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewShare"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/reach": {
       "get": {
         "tags": [
@@ -14863,6 +15003,259 @@
             }
           },
           "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/previews/{id}": {
+      "get": {
+        "tags": [
+          "previews"
+        ],
+        "summary": "One share (C-542); 404 for a share of a workspace the caller cannot use.",
+        "operationId": "getPreviewShare",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Preview share id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewShare"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "previews"
+        ],
+        "summary": "Delete a share (C-542); the hostname is never reused.",
+        "operationId": "deletePreviewShare",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Preview share id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "previews"
+        ],
+        "summary": "Patch state / start command / cwd (C-542); the port and the label are immutable.",
+        "operationId": "patchPreviewShare",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Preview share id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchPreviewShareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewShare"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/previews/{id}/start": {
+      "post": {
+        "tags": [
+          "previews"
+        ],
+        "summary": "Start the share's app now (C-544): wakes the sandbox if parked, enqueues the on-demand start.",
+        "operationId": "startPreviewShare",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Preview share id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewStartAccepted"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
             "description": "",
             "content": {
               "application/json": {
@@ -24962,6 +25355,33 @@
           }
         }
       },
+      "CreatePreviewShareRequest": {
+        "type": "object",
+        "required": [
+          "port"
+        ],
+        "properties": {
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional working directory relative to `/workspace` (no `..`, ≤ 200 chars)."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "TCP port of the agent's sandbox, 1024..65535, not one of the supervisor's listeners."
+          },
+          "start_command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional on-demand start command (one line, ≤ 1024 chars)."
+          }
+        }
+      },
       "CreateRunnerRequest": {
         "type": "object",
         "required": [
@@ -25958,7 +26378,8 @@
         "type": "object",
         "required": [
           "hosted",
-          "channels"
+          "channels",
+          "previews"
         ],
         "properties": {
           "channels": {
@@ -25966,6 +26387,10 @@
           },
           "hosted": {
             "type": "boolean"
+          },
+          "previews": {
+            "type": "boolean",
+            "description": "(phase 4, P4-PRV-1) Port previews are configured on this instance."
           }
         }
       },
@@ -27255,6 +27680,7 @@
           "features",
           "default_agent_name",
           "external_url",
+          "previews",
           "email_delivery",
           "approval_email",
           "setup_errors"
@@ -27286,6 +27712,10 @@
           "org_creation": {
             "type": "string",
             "description": "`instance_admins` | `anyone`."
+          },
+          "previews": {
+            "$ref": "#/components/schemas/PreviewsInfo",
+            "description": "(phase 4, P4-PRV-1) Port previews on this instance (C-548)."
           },
           "setup_errors": {
             "type": "array",
@@ -29259,7 +29689,8 @@
       "OrgSettings": {
         "type": "object",
         "required": [
-          "members_can_create_workspaces"
+          "members_can_create_workspaces",
+          "previews_enabled"
         ],
         "properties": {
           "max_agents": {
@@ -29278,6 +29709,10 @@
           },
           "members_can_create_workspaces": {
             "type": "boolean"
+          },
+          "previews_enabled": {
+            "type": "boolean",
+            "description": "(phase 4, P4-PRV-1, C-549) Port previews for this organization (default `false`)."
           }
         }
       },
@@ -29304,6 +29739,13 @@
               "boolean",
               "null"
             ]
+          },
+          "previews_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(phase 4, P4-PRV-1, C-549) Port previews for the organization; audited\n`org.previews.update` (security-critical)."
           }
         }
       },
@@ -33251,6 +33693,30 @@
           }
         }
       },
+      "PatchPreviewShareRequest": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`active` | `paused`."
+          }
+        }
+      },
       "PatchSecretRequest": {
         "type": "object",
         "properties": {
@@ -34665,6 +35131,196 @@
           "needs_attention"
         ]
       },
+      "PreviewCreatedBy": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PreviewLastStart": {
+        "type": "object",
+        "required": [
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "tail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PreviewShare": {
+        "type": "object",
+        "description": "One preview share of a hosted agent: `https://<label>.<previews.domain>/`.",
+        "required": [
+          "id",
+          "agent_id",
+          "port",
+          "label",
+          "hostname",
+          "url",
+          "visibility",
+          "state",
+          "status",
+          "created_by",
+          "created_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/PreviewCreatedBy"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hostname": {
+            "type": "string",
+            "description": "`https://<label>.<previews.domain>/`"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string",
+            "description": "Hostname label, `p` + 24 base32 lowercase chars; stable for the share's life, never reused."
+          },
+          "last_accessed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_start": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PreviewLastStart"
+              }
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "start_command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/PreviewState"
+          },
+          "status": {
+            "type": "string",
+            "description": "`listening` | `not_listening` | `waking` | `paused` | `frozen` (derived, docs/05)."
+          },
+          "url": {
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/PreviewVisibility"
+          }
+        }
+      },
+      "PreviewShareList": {
+        "type": "object",
+        "required": [
+          "shares"
+        ],
+        "properties": {
+          "shares": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewShare"
+            }
+          }
+        }
+      },
+      "PreviewStartAccepted": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`starting` (the demand was recorded; the sandbox boots or the command launches)."
+          }
+        }
+      },
+      "PreviewState": {
+        "type": "string",
+        "description": "`active` | `paused` (stored state; the displayed `status` is derived, not stored).",
+        "enum": [
+          "active",
+          "paused"
+        ]
+      },
+      "PreviewVisibility": {
+        "type": "string",
+        "description": "`private`: the only visibility in phase 4 (a live dashboard session or an API key of someone\nfor whom `can_use(workspace)` holds; never an agent credential, docs/04 §Preview access).",
+        "enum": [
+          "private"
+        ]
+      },
+      "PreviewsInfo": {
+        "type": "object",
+        "description": "(phase 4, P4-PRV-1) The instance's preview configuration; the domain is public in DNS, so it\nis not a secret. The dashboard shows the Previews tab only when `enabled` is true.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
       "PublishRequest": {
         "type": "object",
         "required": [
@@ -35736,6 +36392,14 @@
           },
           "protocol": {
             "type": "string"
+          },
+          "shared": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(P4-PRV-1) The active preview share for this port, when one exists."
           }
         }
       },
@@ -35821,6 +36485,7 @@
           "keep_awake_reasons",
           "processes",
           "ports",
+          "preview_in_use",
           "restart_to_update"
         ],
         "properties": {
@@ -35864,6 +36529,10 @@
             "items": {
               "$ref": "#/components/schemas/SandboxPort"
             }
+          },
+          "preview_in_use": {
+            "type": "boolean",
+            "description": "(P4-PRV-1, D-145) `preview` is among `keep_awake_reasons` while this is true\n(\"Preview in use\")."
           },
           "processes": {
             "type": "array",
