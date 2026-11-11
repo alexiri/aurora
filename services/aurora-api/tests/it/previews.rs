@@ -677,7 +677,7 @@ async fn start_requires_active_share_with_command_and_is_rate_limited() {
     let no_cmd: Uuid = v["id"].as_str().unwrap().parse().unwrap();
     let (s, v) = r.start(no_cmd).await;
     assert_eq!((s, code(&v)), (409, "preview_no_start_command"), "{v}");
-    // Paused: 409.
+    // Paused: 403 (FIX-044, docs/11 §Port previews).
     let (_, v) = r
         .create(agent, json!({"port": 3001, "start_command": "npm run dev"}))
         .await;
@@ -685,7 +685,7 @@ async fn start_requires_active_share_with_command_and_is_rate_limited() {
     let (s, _) = r.patch(paused, json!({"state": "paused"})).await;
     assert_eq!(s, 200);
     let (s, v) = r.start(paused).await;
-    assert_eq!((s, code(&v)), (409, "preview_paused"), "{v}");
+    assert_eq!((s, code(&v)), (403, "preview_paused"), "{v}");
     // A good one: 202, both stamps set, the best-effort audit row, no command text anywhere.
     let (_, v) = r
         .create(
