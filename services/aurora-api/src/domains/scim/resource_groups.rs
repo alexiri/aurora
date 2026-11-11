@@ -343,6 +343,7 @@ fn member_evs(
                 "group_member.add",
                 Outcome::Success,
             )
+            .org(caller.org.org_id)
             .target("group", group)
             .metadata(json!({"via": VIA, "user": u})),
         );
@@ -354,6 +355,7 @@ fn member_evs(
                 "group_member.remove",
                 Outcome::Success,
             )
+            .org(caller.org.org_id)
             .target("group", group)
             .metadata(json!({"via": VIA, "user": u})),
         );

@@ -185,9 +185,10 @@ async fn put_replaces_atomically_one_audit_row_per_change() {
     assert_eq!(members.len(), 2, "unchanged after the failed PUT: {v}");
     // A good PUT: replace [a,b] with [b,c] → one add, one remove, two audit rows.
     let before: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM audit_log WHERE action IN ('group_member.add','group_member.remove') AND target_id = $1::text",
+        "SELECT count(*) FROM audit_log WHERE action IN ('group_member.add','group_member.remove') AND target_id = $1::text AND org_id = $2",
     )
     .bind(gid.clone())
+    .bind(fx.org)
     .fetch_one(fx.h.pool())
     .await
     .unwrap();
@@ -211,9 +212,10 @@ async fn put_replaces_atomically_one_audit_row_per_change() {
         .collect();
     assert_eq!(members, vec![sid_b.as_str(), sid_c.as_str()], "{v}");
     let after: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM audit_log WHERE action IN ('group_member.add','group_member.remove') AND target_id = $1::text",
+        "SELECT count(*) FROM audit_log WHERE action IN ('group_member.add','group_member.remove') AND target_id = $1::text AND org_id = $2",
     )
     .bind(gid.clone())
+    .bind(fx.org)
     .fetch_one(fx.h.pool())
     .await
     .unwrap();
