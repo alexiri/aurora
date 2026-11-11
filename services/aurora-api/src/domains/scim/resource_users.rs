@@ -560,6 +560,15 @@ pub async fn put_user(
         .map_err(|e| ScimError::invalid_syntax(e.to_string()))?;
     bad_input(&body)?;
     let email = resolved_email(&input)?;
+    if !email_domain_allowed(
+        &caller.org,
+        &state.config.scim.allowed_email_domains,
+        &email,
+    ) {
+        return Err(ScimError::invalid_value(
+            "The e-mail domain is not allowed for this organization.",
+        ));
+    }
     let external_id = clean_external_id(input.external_id.as_deref())?;
     let names = names_of(&input)?;
     let display = display_of(&input, &names);
