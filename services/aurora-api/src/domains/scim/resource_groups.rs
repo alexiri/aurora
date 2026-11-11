@@ -364,7 +364,9 @@ fn member_evs(
 }
 
 /// The shared body of `PUT` and the folded `PATCH` operations: rename and/or replace
-/// members, atomically, one critical audit row per change plus `group.update` on a rename.
+/// members, atomically, one critical audit row per change plus `group.update` when the
+/// name/externalId actually changed (C-478: a no-op — the request asserts the stored
+/// values — writes nothing, no `revision` bump and no audit row).
 async fn apply_group_change(
     state: &AppState,
     caller: &ScimToken,
@@ -436,11 +438,25 @@ async fn apply_group_change(
             ensure_member_limit(&mut *tx, org.org_id, *uid).await?;
         }
     }
-    if let Some(n) = &name {
-        grepo::rename(&mut tx, id, n).await.map_err(db)?;
-    }
-    let had_external_id = external_id.is_some();
-    if let Some(ext) = external_id {
+    let renamed = match &name {
+        // A no-op rename (the request asserts the stored name) must not bump
+        // `revision` or churn `updated_at` (C-478).
+        Some(n) if *n == row.name => false,
+        Some(n) => {
+            grepo::rename(&mut tx, id, n).await.map_err(db)?;
+            true
+        }
+        None => false,
+    };
+    let external_changed = match &external_id {
+        // `Some(None)` (an explicit clear) equals a stored NULL; the stored value is
+        // compared so a repeated `externalId` writes nothing.
+        Some(ext) => ext.as_deref() != row.external_id.as_deref(),
+        None => false,
+    };
+    if let Some(ext) = external_id
+        && external_changed
+    {
         grepo::set_external_id(&mut tx, id, ext.as_deref())
             .await
             .map_err(db)?;
@@ -467,7 +483,7 @@ async fn apply_group_change(
             .map_err(db)?;
     }
     let mut evs = member_evs(caller, id, &added, &removed);
-    if name.is_some() || had_external_id {
+    if renamed || external_changed {
         evs.insert(
             0,
             AuditEvent::new(
@@ -479,8 +495,8 @@ async fn apply_group_change(
             .target("group", id)
             .metadata(json!({
                 "via": VIA,
-                "rename": name.is_some(),
-                "external_id": had_external_id,
+                "rename": renamed,
+                "external_id": external_changed,
             })),
         );
     }

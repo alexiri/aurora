@@ -6,6 +6,7 @@
 //! groups.
 
 use crate::scim_common::*;
+use chrono::{DateTime, Utc};
 use http::Method;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -345,5 +346,118 @@ async fn scim_group_members_derive_workspace_access() {
     assert!(
         src.contains("derivers") || src.contains(&gid),
         "source naming: {entry}"
+    );
+}
+
+/// `revision`/`updated_at` of one group row.
+async fn group_row(pool: &sqlx::PgPool, gid: &str) -> (i64, DateTime<Utc>) {
+    sqlx::query_as("SELECT revision, updated_at FROM groups WHERE id = $1")
+        .bind(gid.parse::<Uuid>().unwrap())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Audit rows of one action for a group.
+async fn audit_count(pool: &sqlx::PgPool, org: Uuid, gid: &str, action: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = $1 AND target_id = $2::text AND org_id = $3",
+    )
+    .bind(action)
+    .bind(gid)
+    .bind(org)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn put_same_body_twice_writes_nothing_the_second_time() {
+    let fx = ScimFx::new().await;
+    let a = fx.provision_ok("noop-a@x.io").await;
+    let b = fx.provision_ok("noop-b@x.io").await;
+    let (sid_a, sid_b) = (
+        a["id"].as_str().unwrap().to_owned(),
+        b["id"].as_str().unwrap().to_owned(),
+    );
+    let body = json!({
+        "schemas": [GROUP_SCHEMA],
+        "displayName": "no-op-2",
+        "externalId": "noop-1",
+        "members": [{"value": sid_a}, {"value": sid_b}],
+    });
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            GROUPS,
+            Some(json!({
+                "schemas": [GROUP_SCHEMA],
+                "displayName": "no-op",
+                "externalId": "noop-1",
+                "members": [{"value": sid_a}, {"value": sid_b}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let gid = v["id"].as_str().unwrap().to_owned();
+    // The first PUT renames (`no-op` → `no-op-2`): a real change, audited and
+    // revision-bumped as before.
+    let (s, _, v) = fx
+        .scim(Method::PUT, &format!("{GROUPS}/{gid}"), Some(body.clone()))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (revision, updated_at) = group_row(fx.h.pool(), &gid).await;
+    assert_eq!(
+        audit_count(fx.h.pool(), fx.org, &gid, "group.update").await,
+        1,
+        "the rename PUT audited the group.update"
+    );
+    // The second identical PUT (the name/externalId equal the stored values):
+    // no rename UPDATE (revision unchanged), no new `group.update` row
+    // (C-478: idempotent no-ops write nothing).
+    let (s, _, v) = fx
+        .scim(Method::PUT, &format!("{GROUPS}/{gid}"), Some(body.clone()))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["externalId"], "noop-1", "{v}");
+    let (revision_after, updated_at_after) = group_row(fx.h.pool(), &gid).await;
+    assert_eq!(revision_after, revision, "no revision bump");
+    assert_eq!(updated_at_after, updated_at, "not touched");
+    assert_eq!(
+        audit_count(fx.h.pool(), fx.org, &gid, "group.update").await,
+        1,
+        "no `group.update` row for a no-op PUT"
+    );
+    // Member diffs keep auditing: a PUT that removes a member (same name,
+    // externalId) audits the removal and still no `group.update`.
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{GROUPS}/{gid}"),
+            Some(json!({
+                "schemas": [GROUP_SCHEMA],
+                "displayName": "no-op-2",
+                "externalId": "noop-1",
+                "members": [{"value": sid_b}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let members: Vec<&str> = v["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["value"].as_str())
+        .collect();
+    assert_eq!(members, vec![sid_b.as_str()], "{v}");
+    assert_eq!(
+        audit_count(fx.h.pool(), fx.org, &gid, "group_member.remove").await,
+        1,
+        "the removal audited"
+    );
+    assert_eq!(
+        audit_count(fx.h.pool(), fx.org, &gid, "group.update").await,
+        1,
+        "no group.update for a members-only change"
     );
 }
