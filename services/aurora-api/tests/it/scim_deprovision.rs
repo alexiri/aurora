@@ -700,6 +700,131 @@ async fn exclusive_mode_gate_direct() {
     assert_eq!(gate, aurora_api::domains::scim::gates::Admission::Allowed);
 }
 
+// ---- human offboarding reconciles the link (FIX-037) -------------------------------
+
+#[tokio::test]
+async fn admin_suspend_reconciles_link_and_idp_cannot_lift_it() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("admin-sus@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let user = fx.aurora_user(&sid).await;
+    // The admin suspends the member by hand (the dashboard path).
+    let (s, v) = fx
+        .mgmt(
+            Method::PATCH,
+            &format!("/v1/orgs/{}/members/{}", fx.org, user),
+            Some(json!({"status": "suspended"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The link reconciled in the same transaction: suspended, but not SCIM's.
+    let (state, by_scim): (String, bool) = sqlx::query_as(
+        "SELECT state, suspended_by_scim FROM scim_users WHERE org_id = $1 AND user_id = $2",
+    )
+    .bind(fx.org)
+    .bind(user)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((state.as_str(), by_scim), ("suspended", false));
+    // The IdP's later `active=true` push is refused (a human suspension is never lifted).
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{"op": "replace", "path": "active", "value": true}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    assert_scim_error(403, &v);
+    let st: String =
+        sqlx::query_scalar("SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(st, "suspended", "still suspended after the IdP's push");
+    // The admin re-activates by hand: the link goes active and the gate admits again.
+    let (s, v) = fx
+        .mgmt(
+            Method::PATCH,
+            &format!("/v1/orgs/{}/members/{}", fx.org, user),
+            Some(json!({"status": "active"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM scim_users WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(state, "active", "the link follows the manual reactivation");
+    let mut tx = fx.h.pool().begin().await.unwrap();
+    let gate = aurora_api::domains::scim::gates::admission_gate(&mut tx, fx.org, user)
+        .await
+        .unwrap();
+    drop(tx);
+    assert_eq!(gate, aurora_api::domains::scim::gates::Admission::Allowed);
+}
+
+#[tokio::test]
+async fn admin_remove_tombstones_link_and_blocks_jit() {
+    // The dev provider JITs into the fixture org, so the sign-in after the human removal
+    // hits the SCIM admission gate exactly as after a SCIM-side delete.
+    let fx = ScimFx::with_jit(&[]).await;
+    let u = fx.provision_ok("jit-rm@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let user = fx.aurora_user(&sid).await;
+    // The admin removes the member by hand.
+    let (s, v) = fx
+        .mgmt(
+            Method::DELETE,
+            &format!("/v1/orgs/{}/members/{}", fx.org, user),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    // The link is a tombstone (`removed_at` set, flag false); the membership is gone.
+    let (state, by_scim, removed_at): (String, bool, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT state, suspended_by_scim, removed_at FROM scim_users \
+         WHERE org_id = $1 AND user_id = $2",
+    )
+    .bind(fx.org)
+    .bind(user)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(state, "removed");
+    assert!(!by_scim);
+    assert!(removed_at.is_some(), "the tombstone is stamped");
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(n, 0, "the membership is gone");
+    // JIT with the same e-mail is refused, and the denial is audited (`scim_removed`),
+    // exactly as for a SCIM-side delete.
+    let signed = fx.h.try_sign_in("dev", "jit-rm@x.io").await;
+    assert!(signed.is_err(), "JIT refused after the human removal");
+    let n = count(
+        &fx.h,
+        "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = 'member.add' \
+         AND outcome = 'denied' AND metadata->>'reason' = 'scim_removed'",
+        fx.org,
+    )
+    .await;
+    assert!(n >= 1, "the scim_removed denial is audited");
+}
+
 #[tokio::test]
 async fn other_org_unaffected_by_removal() {
     let fx = ScimFx::new().await;
