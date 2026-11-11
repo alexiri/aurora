@@ -6,6 +6,8 @@ use crate::plugins_lifecycle::{Admin, setup};
 use http::Method;
 use serde_json::{Value, json};
 use sqlx::postgres::PgListener;
+use std::future::Future;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Package `up` with one app `up_app`; `creds` = `(name, optional)`.
@@ -111,6 +113,27 @@ async fn audit_meta(h: &Harness, action: &str) -> Vec<Value> {
         .fetch_all(h.pool())
         .await
         .unwrap()
+}
+
+/// Poll `f` deadline-bounded until it yields a value. Effects written by the best-effort
+/// audit writer (`audit::record` spawns the insert after the change commits) appear
+/// asynchronously, so an awaited audit row must be awaited by polling, never read once.
+async fn poll_within<T, F: Future<Output = Option<T>>>(
+    deadline: Duration,
+    what: &str,
+    mut f: impl FnMut() -> F,
+) -> T {
+    let dl = tokio::time::Instant::now() + deadline;
+    loop {
+        if let Some(v) = f().await {
+            return v;
+        }
+        assert!(
+            tokio::time::Instant::now() < dl,
+            "{what} did not appear within {deadline:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 #[tokio::test]
@@ -287,9 +310,33 @@ async fn major_without_impact_activates_automatically_with_an_audit_row() {
         .await;
     assert_eq!(v2["status"], "active", "{v2}");
     assert_eq!(row(&h, c).await.0, "active");
-    let meta = audit_meta(&h, "plugin.activate").await;
-    assert_eq!(meta.last().unwrap()["connections_reauth"], 0);
-    assert_eq!(meta.last().unwrap()["auto"], true);
+    // The auto-activation audit row is written by the best-effort writer (audit::record
+    // spawns the insert after the ingest transaction commits), so it lands after the upload
+    // has already responded: poll for this package's row instead of reading once, and scope
+    // the read to its target so a row of another activation can never satisfy the assertion.
+    let id = v2["id"].as_str().unwrap().to_owned();
+    let pool = h.pool().clone();
+    let meta = poll_within(
+        Duration::from_secs(10),
+        "the plugin.activate audit row",
+        || {
+            let (id, pool) = (id.clone(), pool.clone());
+            async move {
+                sqlx::query_scalar::<_, serde_json::Value>(
+                    "SELECT metadata FROM audit_log \
+                     WHERE action = 'plugin.activate' AND target_id = $1 ORDER BY id",
+                )
+                .bind(&id)
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .pop()
+            }
+        },
+    )
+    .await;
+    assert_eq!(meta["connections_reauth"], 0, "{meta}");
+    assert_eq!(meta["auto"], true, "{meta}");
 }
 
 #[tokio::test]
