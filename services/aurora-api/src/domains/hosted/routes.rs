@@ -104,6 +104,7 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
             start_log: vec![],
             processes: vec![],
             ports: vec![],
+            preview_in_use: false,
             restart_to_update: false,
         });
     };
@@ -204,11 +205,18 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
         ports: r
             .listening_ports
             .into_iter()
-            .map(|port| SandboxPort {
-                port,
-                protocol: "tcp".into(),
+            .map(|port| {
+                // (P4-PRV-1) Which ports of the boot carry an active share (parallel arrays,
+                // same order).
+                let idx = r.shared_ports.iter().position(|p| *p == port);
+                SandboxPort {
+                    port,
+                    protocol: "tcp".into(),
+                    shared: idx.and_then(|i| r.shared_share_ids.get(i).copied()),
+                }
             })
             .collect(),
+        preview_in_use: r.preview_in_use,
         restart_to_update,
     })
 }

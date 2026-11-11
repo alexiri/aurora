@@ -111,6 +111,18 @@ pub struct Supervisor {
     db_relay: Option<ProxyHandle>,
     /// The relay's credential: boot token, turn context credential during exactly one turn.
     db_turns: Arc<crate::pgrelay::DbTurns>,
+    /// (P4-PRV-1, D-144) The active preview shares, from the `previews` home-sync part: held in
+    /// memory only (the home is agent-writable), replaced whole on every sync
+    /// (`12 §Previews`): `share_id -> (port, start_command, cwd)`.
+    preview_shares: HashMap<Uuid, PreviewShareEntry>,
+}
+
+/// One share of the in-memory allow-list.
+#[derive(Debug, Clone)]
+pub struct PreviewShareEntry {
+    pub port: u16,
+    pub start_command: Option<String>,
+    pub cwd: Option<String>,
 }
 
 /// Resolves a harness id to its adapter (the compile-time registry, `crate::adapters`).
@@ -209,6 +221,7 @@ impl Supervisor {
             ready: false,
             pending_purges: Vec::new(),
             purge_lookup: Arc::new(crate::adapters::adapter_for),
+            preview_shares: HashMap::new(),
         }
     }
 
@@ -357,6 +370,7 @@ impl Supervisor {
                     .await;
             }
             RunnerToSupervisor::HomeSync(h) => self.home_sync(h).await,
+            RunnerToSupervisor::PreviewStart(p) => self.preview_start(p.port).await,
             RunnerToSupervisor::MemoryWriteResult(r) => {
                 if !r.ok
                     && let Ok(mut h) = self.home.lock()
@@ -463,6 +477,40 @@ impl Supervisor {
     }
 
     async fn home_sync(&mut self, h: aurora_protocol::runner::HomeSync) {
+        // (P4-PRV-1, D-144) The `previews` part never touches the home (it is agent-writable):
+        // its single entry replaces the in-memory share list. An older API sends nothing.
+        if h.part.kind == aurora_protocol::runner::HomeSyncKind::Previews {
+            self.preview_shares = h
+                .part
+                .entries
+                .iter()
+                .filter_map(|e| e.get("shares")?.as_array())
+                .flatten()
+                .filter_map(|s| {
+                    let id = s.get("share_id")?.as_str()?.parse::<Uuid>().ok()?;
+                    let port = s.get("port")?.as_u64()?;
+                    if port == 0 || port > u16::MAX as u64 {
+                        return None;
+                    }
+                    Some((
+                        id,
+                        PreviewShareEntry {
+                            port: port as u16,
+                            start_command: s
+                                .get("start_command")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_owned),
+                            cwd: s.get("cwd").and_then(|v| v.as_str()).map(str::to_owned),
+                        },
+                    ))
+                })
+                .collect();
+            tracing::debug!(
+                shares = self.preview_shares.len(),
+                "preview share list applied"
+            );
+            return;
+        }
         if h.part.kind == aurora_protocol::runner::HomeSyncKind::RenderInputs {
             for e in &h.part.entries {
                 let Some(list) = e.get("purges").and_then(serde_json::Value::as_array) else {
@@ -535,6 +583,50 @@ impl Supervisor {
             usage: None,
         }))
         .await;
+    }
+
+    /// (P4-PRV-1, D-145) On-demand start of a share's app: the forwarded `preview.start { port }`
+    /// frame looks the port up in the **in-memory share list** (never the home, never the frame):
+    /// with a `start_command` and the port not listening, the command starts as a background
+    /// process `preview:<port>` (an ordinary process; `12 §Previews`). An unknown port, a share
+    /// without a command or a port that is already listening is a no-op. The share list is empty
+    /// while the agent is frozen, so a frozen sandbox never starts anything.
+    async fn preview_start(&mut self, port: u16) {
+        let Some(share) = self
+            .preview_shares
+            .values()
+            .find(|s| s.port == port)
+            .cloned()
+        else {
+            tracing::debug!(port, "preview.start for an unknown port; ignored");
+            return;
+        };
+        let Some(command) = share.start_command.as_deref().map(str::trim) else {
+            tracing::debug!(port, "preview.start for a share without a command; ignored");
+            return;
+        };
+        if command.is_empty() {
+            return;
+        }
+        // Already listening (the supervisor's own listeners are never in the share list).
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            tracing::debug!(port, "preview port already listening; ignored");
+            return;
+        }
+        match self
+            .procs
+            .start(&format!("preview:{port}"), command, share.cwd.as_deref())
+        {
+            Ok(id) => tracing::info!(%port, %id, "preview app started"),
+            Err(e) => {
+                // Logged only: the command is the agent's own; the next request retries within
+                // the attempt window (`11 §Port previews`).
+                tracing::warn!(%port, error = %e, "preview start command failed");
+            }
+        }
     }
 
     async fn deliver(&mut self, d: TurnDeliver, done_tx: &mpsc::UnboundedSender<Uuid>) {

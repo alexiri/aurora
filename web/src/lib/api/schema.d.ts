@@ -1106,6 +1106,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An agent's preview shares (C-540). */
+        get: operations["listAgentPreviews"];
+        put?: never;
+        /** Create a share (C-541): `{ port, start_command?, cwd? }` → 201 `PreviewShare`. */
+        post: operations["createAgentPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/reach": {
         parameters: {
             query?: never;
@@ -3027,6 +3045,42 @@ export interface paths {
         put?: never;
         /** Re-run provisioning/validation. The body is optional (`fields` for manual setup). */
         post: operations["reattachPresence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/previews/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One share (C-542); 404 for a share of a workspace the caller cannot use. */
+        get: operations["getPreviewShare"];
+        put?: never;
+        post?: never;
+        /** Delete a share (C-542); the hostname is never reused. */
+        delete: operations["deletePreviewShare"];
+        options?: never;
+        head?: never;
+        /** Patch state / start command / cwd (C-542); the port and the label are immutable. */
+        patch: operations["patchPreviewShare"];
+        trace?: never;
+    };
+    "/v1/previews/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start the share's app now (C-544): wakes the sandbox if parked, enqueues the on-demand start. */
+        post: operations["startPreviewShare"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5345,6 +5399,17 @@ export interface components {
             org: components["schemas"]["Org"];
             workspace: components["schemas"]["Workspace"];
         };
+        CreatePreviewShareRequest: {
+            /** @description Optional working directory relative to `/workspace` (no `..`, ≤ 200 chars). */
+            cwd?: string | null;
+            /**
+             * Format: int32
+             * @description TCP port of the agent's sandbox, 1024..65535, not one of the supervisor's listeners.
+             */
+            port: number;
+            /** @description Optional on-demand start command (one line, ≤ 1024 chars). */
+            start_command?: string | null;
+        };
         CreateRunnerRequest: {
             /** @description Unique runner name (1-64 chars). */
             name: string;
@@ -5650,6 +5715,8 @@ export interface components {
         Features: {
             channels: boolean;
             hosted: boolean;
+            /** @description (phase 4, P4-PRV-1) Port previews are configured on this instance. */
+            previews: boolean;
         };
         Followup: {
             /** Format: date-time */
@@ -6034,6 +6101,8 @@ export interface components {
             oidc_providers: components["schemas"]["OidcProviderInfo"][];
             /** @description `instance_admins` | `anyone`. */
             org_creation: string;
+            /** @description (phase 4, P4-PRV-1) Port previews on this instance (C-548). */
+            previews: components["schemas"]["PreviewsInfo"];
             setup_errors: string[];
             /** @description `open` | `invite_only` | `sso_jit`. */
             signup_mode: string;
@@ -6667,6 +6736,8 @@ export interface components {
             /** Format: int64 */
             max_members?: number | null;
             members_can_create_workspaces: boolean;
+            /** @description (phase 4, P4-PRV-1, C-549) Port previews for this organization (default `false`). */
+            previews_enabled: boolean;
         };
         OrgSettingsPatch: {
             /** Format: int64 */
@@ -6677,6 +6748,11 @@ export interface components {
              */
             max_members?: number | null;
             members_can_create_workspaces?: boolean | null;
+            /**
+             * @description (phase 4, P4-PRV-1, C-549) Port previews for the organization; audited
+             *     `org.previews.update` (security-critical).
+             */
+            previews_enabled?: boolean | null;
         };
         /** @description `GET /orgs/{org}/storage` (API_CONTRACTS C-171). */
         OrgStorage: {
@@ -7781,6 +7857,12 @@ export interface components {
             settings?: null | components["schemas"]["OrgSettingsPatch"];
             slug?: string | null;
         };
+        PatchPreviewShareRequest: {
+            cwd?: string | null;
+            start_command?: string | null;
+            /** @description `active` | `paused`. */
+            state?: string | null;
+        };
         PatchSecretRequest: {
             host_pattern?: string | null;
             injection?: null | components["schemas"]["InjectionRecipe"];
@@ -8206,6 +8288,70 @@ export interface components {
         };
         /** @enum {string} */
         PresenceStatus: "pending_setup" | "active" | "disabled" | "needs_attention";
+        PreviewCreatedBy: {
+            /** Format: uuid */
+            id?: string | null;
+            label?: string | null;
+        };
+        PreviewLastStart: {
+            /** Format: date-time */
+            at: string;
+            /** Format: int32 */
+            exit_code?: number | null;
+            tail?: string | null;
+        };
+        /** @description One preview share of a hosted agent: `https://<label>.<previews.domain>/`. */
+        PreviewShare: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: date-time */
+            created_at: string;
+            created_by: components["schemas"]["PreviewCreatedBy"];
+            cwd?: string | null;
+            /** @description `https://<label>.<previews.domain>/` */
+            hostname: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Hostname label, `p` + 24 base32 lowercase chars; stable for the share's life, never reused. */
+            label: string;
+            /** Format: date-time */
+            last_accessed_at?: string | null;
+            last_start?: null | components["schemas"]["PreviewLastStart"];
+            /** Format: int32 */
+            port: number;
+            start_command?: string | null;
+            state: components["schemas"]["PreviewState"];
+            /** @description `listening` | `not_listening` | `waking` | `paused` | `frozen` (derived, docs/05). */
+            status: string;
+            url: string;
+            visibility: components["schemas"]["PreviewVisibility"];
+        };
+        PreviewShareList: {
+            shares: components["schemas"]["PreviewShare"][];
+        };
+        PreviewStartAccepted: {
+            /** @description `starting` (the demand was recorded; the sandbox boots or the command launches). */
+            status: string;
+        };
+        /**
+         * @description `active` | `paused` (stored state; the displayed `status` is derived, not stored).
+         * @enum {string}
+         */
+        PreviewState: "active" | "paused";
+        /**
+         * @description `private`: the only visibility in phase 4 (a live dashboard session or an API key of someone
+         *     for whom `can_use(workspace)` holds; never an agent credential, docs/04 §Preview access).
+         * @enum {string}
+         */
+        PreviewVisibility: "private";
+        /**
+         * @description (phase 4, P4-PRV-1) The instance's preview configuration; the domain is public in DNS, so it
+         *     is not a secret. The dashboard shows the Previews tab only when `enabled` is true.
+         */
+        PreviewsInfo: {
+            domain?: string | null;
+            enabled: boolean;
+        };
         PublishRequest: {
             /** Format: int64 */
             revision: number;
@@ -8560,6 +8706,11 @@ export interface components {
             /** Format: int32 */
             port: number;
             protocol: string;
+            /**
+             * Format: uuid
+             * @description (P4-PRV-1) The active preview share for this port, when one exists.
+             */
+            shared?: string | null;
         };
         SandboxProcess: {
             busy: boolean;
@@ -8601,6 +8752,11 @@ export interface components {
             image?: string | null;
             keep_awake_reasons: string[];
             ports: components["schemas"]["SandboxPort"][];
+            /**
+             * @description (P4-PRV-1, D-145) `preview` is among `keep_awake_reasons` while this is true
+             *     ("Preview in use").
+             */
+            preview_in_use: boolean;
             processes: components["schemas"]["SandboxProcess"][];
             restart_to_update: boolean;
             /**
@@ -12880,6 +13036,94 @@ export interface operations {
                 };
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentPreviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewShareList"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createAgentPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePreviewShareRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewShare"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19108,6 +19352,169 @@ export interface operations {
                 };
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getPreviewShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preview share id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewShare"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deletePreviewShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preview share id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchPreviewShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preview share id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchPreviewShareRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewShare"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    startPreviewShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preview share id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewStartAccepted"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

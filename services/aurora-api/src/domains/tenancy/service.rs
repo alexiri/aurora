@@ -237,13 +237,15 @@ pub async fn validate_language(conn: &mut PgConnection, lang: &str) -> Result<St
     }
 }
 
-/// Org owner patch (name, slug, settings).
+/// Org owner patch (name, slug, settings). `previews_ev` writes the extra security-critical
+/// `org.previews.update` row into the same transaction when the switch was sent.
 pub async fn patch_org(
     pool: &PgPool,
     org_id: Uuid,
     user: Uuid,
     req: PatchOrgRequest,
     ev: &crate::audit::AuditEvent,
+    previews_ev: Option<&crate::audit::AuditEvent>,
 ) -> Result<OrgRow, ApiError> {
     let name = req
         .name
@@ -264,6 +266,11 @@ pub async fn patch_org(
                 .ok_or_else(|| ApiError::internal("Internal error."))?;
             if let Some(b) = p.members_can_create_workspaces {
                 obj.insert("members_can_create_workspaces".into(), b.into());
+            }
+            // (P4-PRV-1, C-549) The org's Port previews switch; switching off keeps the shares
+            // but ends access (`11 §Port previews`).
+            if let Some(b) = p.previews_enabled {
+                obj.insert("previews_enabled".into(), b.into());
             }
             for (key, v) in [("max_members", p.max_members), ("max_agents", p.max_agents)] {
                 match v {
@@ -294,7 +301,12 @@ pub async fn patch_org(
     let out = orgs::get(&mut *tx, org_id, user)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
-    crate::audit::commit_critical(tx, ev).await?;
+    // (P4-PRV-1, C-549) Both rows commit together or not at all: the settings write and the
+    // security-critical `org.previews.update` switch (docs/04 §Audit).
+    match previews_ev {
+        Some(pev) => crate::audit::commit_critical_many(tx, &[ev.clone(), pev.clone()]).await?,
+        None => crate::audit::commit_critical(tx, ev).await?,
+    }
     Ok(out)
 }
 

@@ -5,6 +5,8 @@
 #[macro_use]
 mod tagged;
 
+pub use tagged::UnknownMessage;
+
 pub mod common;
 pub mod connector;
 pub mod gateway_internal;

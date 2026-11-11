@@ -44,7 +44,9 @@ export interface SandboxView {
   /** (FIX-029, C-611) The boot's start log, newest first (C-612). */
   start_log: StartLogEntry[];
   processes: { id: string; name: string; state: string; busy: boolean; started_at: string | null }[];
-  ports: { port: number; protocol: string }[];
+  ports: { port: number; protocol: string; shared?: string | null }[];
+  // (P4-PRV-1, D-145) `preview` is among `keep_awake_reasons` while this is true.
+  preview_in_use?: boolean;
   restart_to_update: boolean;
 }
 export interface ModelOption {

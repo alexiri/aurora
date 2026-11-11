@@ -12,12 +12,12 @@ export const now = new Date().toISOString();
 export const later = new Date(Date.now() + 3_600_000).toISOString();
 export const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-export const org = { id: id(1), slug: "acme", name: "Acme Labs", my_role: "owner", app_posture: "open", external_id: "x", settings: {}, created_at: now };
+export const org = { id: id(1), slug: "acme", name: "Acme Labs", my_role: "owner", app_posture: "open", external_id: "x", settings: { previews_enabled: true }, created_at: now };
 export const ws = { id: id(2), org_id: id(1), slug: "main", name: "Main workspace", my_role: "owner", memory_language: "en", timezone: "UTC", created_at: now, updated_at: now };
 export const agent = {
   id: id(11), org_id: id(1), workspace_id: id(2), handle: "daneel", name: "Daneel", kind: "hosted", is_default: true,
   avatar_url: null, brief: "Triage the team's pull requests and issues.", harness: null, model_provider: null, model_endpoint_id: null, model_id: null,
-  effort: null, proactive_messaging: "ask", created_at: now, updated_at: now,
+  effort: null, proactive_messaging: "ask", frozen: null, effective_frozen: false, created_at: now, updated_at: now,
 };
 
 /** Real built-in packages: id, display name (plugin.yaml `name:`). Every one ships icon.png and icon-dark.png. */
@@ -150,6 +150,18 @@ export const setupStatus = {
   ],
 };
 
+/** P4-PRV-1: the shares of the mock agent, at `/v1/agents/{agent}/previews`. */
+export const previewShares = [
+  {
+    id: id(120), agent_id: agent.id, port: 3000, label: "pqvgh2sjkbmxfwqondslrazi",
+    hostname: "pqvgh2sjkbmxfwqondslrazi.previews.example.org",
+    url: "https://pqvgh2sjkbmxfwqondslrazi.previews.example.org/",
+    visibility: "private", state: "active", status: "listening",
+    start_command: "npm run dev", cwd: null, last_start: { at: now, exit_code: 0, tail: "ready on 3000" },
+    last_accessed_at: now, created_by: { id: id(99), label: "ada@example.test" }, created_at: now,
+  },
+];
+
 export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@example.test", is_instance_admin: true };
 
 export async function mockApi(
@@ -277,7 +289,12 @@ export async function mockApi(
       });
     }
     if (p === "/v1/instance") {
-      return json({ version: "0.1.0", signup_mode: "closed", features: { hosted: true }, setup_errors: [], oidc_providers: [{ id: "corp", display_name: "Corporate SSO", groups: true }] });
+      return json({
+        version: "0.1.0", signup_mode: "closed", setup_errors: [],
+        features: { hosted: true, previews: true },
+        previews: { enabled: true, domain: "previews.example.org" },
+        oidc_providers: [{ id: "corp", display_name: "Corporate SSO", groups: true }],
+      });
     }
     if (p === "/v1/orgs") return json({ items: [org] });
     if (p === "/v1/resolve") return json({ org, workspace: ws });
@@ -297,6 +314,15 @@ export async function mockApi(
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
     if (p.endsWith("/agents")) return json({ items: [agent] });
+    // P4-PRV-1: the agent's preview shares (the Previews tab; the sandbox view marks port 3000 shared).
+    if (/^\/v1\/agents\/[^/]+\/previews$/.test(p)) return json({ shares: previewShares });
+    if (/^\/v1\/agents\/[^/]+\/sandbox$/.test(p)) {
+      return json({
+        agent_id: agent.id, state: "running", boot_id: id(130), runner_id: id(131), image: "aurora-sandbox:latest",
+        started_at: now, keep_awake_reasons: ["preview"], failure_code: null, failure_message: null, start_attempt: null,
+        processes: [], ports: [{ port: 3000, protocol: "tcp", shared: previewShares[0].hostname }], restart_to_update: false, preview_in_use: true,
+      });
+    }
     if (p === `/v1/workspaces/${ws.id}`) return json(ws);
     if (p.endsWith("/storage") && p.startsWith("/v1/orgs/")) {
       return json({ org_id: id(1), used_bytes: 850_000_000, quota_bytes: 1_000_000_000, files: 12, purged_files: 3, notice: "warning", by_workspace: [{ workspace_id: id(2), workspace_name: "Main workspace", direction: "in", files: 12, bytes: 850_000_000 }] });

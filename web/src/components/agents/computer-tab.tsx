@@ -13,6 +13,9 @@ import { StatusDot } from "@/components/ui/status-dot";
 import { errorMessage } from "@/lib/api/errors";
 import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures } from "@/lib/api/conversations";
 import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
+import { useInstance, useOrg, useResolve } from "@/lib/api/queries";
+import { useParams } from "next/navigation";
+import { ShareDialog } from "@/components/agents/previews-tab";
 import { clockTime } from "@/lib/chat/layout";
 import { errorCopy } from "@/lib/chat/transcript";
 
@@ -22,6 +25,8 @@ const REASONS: Record<string, string> = {
   schedule_soon: "A schedule fires soon",
   recent_activity: "Recent activity",
   open_session: "An interactive session is open",
+  // (P4-PRV-1, D-145) the preview keep-awake reason.
+  preview: "Preview in use",
 };
 export const reasonLabel = (r: string) => REASONS[r] ?? r.replace(/_/g, " ");
 
@@ -122,6 +127,14 @@ export function ComputerTab({ agentId }: { agentId: string }) {
   const restart = useRestartSandbox(agentId);
   const retry = useRetrySandbox(agentId);
   const [open, setOpen] = useState(false);
+  // (P4-PRV-1) Share… opens the add-share dialog prefilled with a listening port. The action exists
+  // only when the org has switched Port previews on (docs/14): the instance flag alone is not enough.
+  const instance = useInstance();
+  const { org } = useParams<{ org: string }>();
+  const resolved = useResolve(org);
+  const orgQ = useOrg(resolved.data?.org.id);
+  const previewsUsable = instance.data?.features.previews === true && orgQ.data?.settings.previews_enabled === true;
+  const [sharePort, setSharePort] = useState<number | null>(null);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const v = q.data;
@@ -143,6 +156,39 @@ export function ComputerTab({ agentId }: { agentId: string }) {
           State: <StatusDot tone={tone}>{v.state}</StatusDot>
         </div>
       </Section>
+      {sharePort !== null ? <ShareDialog agentId={agentId} prefillPort={sharePort} onDone={() => setSharePort(null)} /> : null}
+      {v.ports.length ? (
+        <Section id="computer-ports" title="Ports" description="TCP ports currently listening inside this computer.">
+          <DataTable caption="Listening ports">
+            <thead>
+              <tr>
+                <Th>Port</Th>
+                <Th>Protocol</Th>
+                <Th>Shared</Th>
+                <Th>
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </tr>
+            </thead>
+            <tbody>
+              {v.ports.map((p) => (
+                <tr key={p.port}>
+                  <Td className="font-mono">{p.port}</Td>
+                  <Td>{p.protocol}</Td>
+                  <Td>{p.shared ? <Badge tone="accent">Shared</Badge> : <span className="text-muted">—</span>}</Td>
+                  <Td className="text-right">
+                    {previewsUsable ? (
+                      <Button size="sm" variant="outline" onClick={() => setSharePort(p.port)}>
+                        {p.shared ? "Shares" : "Share…"}
+                      </Button>
+                    ) : null}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        </Section>
+      ) : null}
       <ConfirmDialog
         open={open}
         onOpenChange={setOpen}

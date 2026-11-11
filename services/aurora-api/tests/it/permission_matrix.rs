@@ -286,6 +286,40 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "/v1/groups/{id}/impact",
         "by group id; matrix proven in groups.rs with a seeded group",
     ),
+    // (P4-PRV-1, D-144, SEC-80) Preview share routes: while the feature switch is off (the
+    // harness default) every route answers 404 `previews_disabled` for every principal, and the
+    // share-addressed routes need a seeded share id. The authority law (`can_use`, never an
+    // agent credential) is proven per route in `api/it/previews.rs`.
+    (
+        "GET",
+        "/v1/agents/{agent}/previews",
+        "feature-switched; authority proven in previews.rs (can_use, SEC-80)",
+    ),
+    (
+        "POST",
+        "/v1/agents/{agent}/previews",
+        "feature-switched; authority proven in previews.rs (can_use, SEC-80)",
+    ),
+    (
+        "GET",
+        "/v1/previews/{id}",
+        "feature-switched, by share id; proven in previews.rs with a seeded share",
+    ),
+    (
+        "PATCH",
+        "/v1/previews/{id}",
+        "feature-switched, by share id; proven in previews.rs with a seeded share",
+    ),
+    (
+        "DELETE",
+        "/v1/previews/{id}",
+        "feature-switched, by share id; proven in previews.rs with a seeded share",
+    ),
+    (
+        "POST",
+        "/v1/previews/{id}/start",
+        "feature-switched, by share id; proven in previews.rs with a seeded share",
+    ),
 ];
 
 /// Route table. `p` is the OpenAPI path template (placeholder names are normalized).

@@ -311,6 +311,8 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     // (P4-CNT) `counters_prune`: dead rows of the shared-counter tables, whatever the backend
     // (rows stay behind after a switch back to `memory` and are removed here).
     aurora_api::jobs::spawn_counters_prune(pool.clone());
+    // (P4-PRV-1) preview housekeeping: stale wake/start stamps and the shares gauge.
+    aurora_api::jobs::spawn_preview_housekeeping(pool.clone());
     aurora_api::jobs::spawn(
         pool,
         cfg.retention.request_log_days,

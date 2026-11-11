@@ -88,7 +88,10 @@ open_vocab! {
 open_vocab! {
     pub enum HomeSyncKind {
         Skills = "skills", Memory = "memory", RenderInputs = "render_inputs",
-        Tools = "tools", Manifest = "manifest", Final = "final",
+        Tools = "tools",
+        // (phase 4, P4-PRV-1, D-144) The active preview shares; held in supervisor memory only.
+        Previews = "previews",
+        Manifest = "manifest", Final = "final",
     }
 }
 open_vocab! {
@@ -403,6 +406,21 @@ pub struct SessionPurged {
     pub ok: bool,
 }
 
+/// (phase 4, P4-PRV-1, D-145) On-demand start of a share's app: the work item the API enqueues
+/// when the share's port is not listening. The command text never travels on the wire: the
+/// supervisor looks the command up in its in-memory share list (home-sync part `previews`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewStart {
+    pub share_id: Uuid,
+}
+
+/// The frame the runner forwards to the supervisor: only the port, resolved from the share
+/// (`16 §W5`); the supervisor refuses an unknown port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewStartFrame {
+    pub port: u16,
+}
+
 tagged_open! {
     /// Work-item body, tagged by `kind`.
     pub enum WorkItemBody, mode = Internal, tag = "kind" {
@@ -416,6 +434,7 @@ tagged_open! {
         TurnNotice(TurnNotice) = "turn.notice",
         SessionRelease(SessionRelease) = "session.release",
         SessionPurge(SessionPurge) = "session.purge",
+        PreviewStart(PreviewStart) = "preview.start",
     }
 }
 

@@ -1941,3 +1941,140 @@ fn vault_address_auth_and_mount_rules() {
     // Unknown keys are refused, not ignored.
     assert!(with("https://vault:8200", k8s, "adress = \"x\"\n").is_err());
 }
+
+// P4-PRV-1 (D-144, SEC-80): `[previews]` validation — inert while disabled, `enabled` requires a
+// valid domain that never shadows a host carrying a session or a credential.
+#[test]
+fn previews_disabled_is_inert_and_enabled_needs_a_domain() {
+    // Defaults: off, no domain — valid, nothing else changes.
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    assert!(!api.previews.enabled);
+    assert_eq!(api.previews.domain, None);
+    // Disabled with a domain: the domain is normalized (trimmed) but never shadow-checked hard.
+    let api = load_with(
+        &format!("{BASE}[previews]\ndomain = \" preview.example.org \"\n"),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert_eq!(api.previews.domain.as_deref(), Some("preview.example.org"));
+    // Enabled without a domain refuses startup.
+    let e = load_with(&format!("{BASE}[previews]\nenabled = true\n"), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(e.has_key("previews.domain"), "{e}");
+}
+
+#[test]
+fn previews_domain_shape() {
+    let ok = |domain: &str| {
+        load_with(
+            &format!("{BASE}[previews]\nenabled = true\ndomain = \"{domain}\"\n"),
+            &[],
+        )
+    };
+    // A valid registrable domain passes (two labels, lower case, sane lengths).
+    ok("preview.example.org").unwrap();
+    ok("p.example.org").unwrap();
+    // Shape refusals: upper case, one label, too long, IP literal, bad characters, bare suffix.
+    for bad in [
+        "Preview.Example.Org",
+        "example.org ", // interior space is caught by the label charset
+        "example..org",
+        "-example.org",
+        "example-.org",
+        "example.org-",
+        "192.168.1.1",
+        "[::1]",
+        "co.uk",
+        "github.io",
+        "pages.dev",
+    ] {
+        let e = ok(bad).unwrap().api_config().unwrap_err();
+        assert!(e.has_key("previews.domain"), "{bad}: {e}");
+    }
+    // A single label fails too (needs at least two).
+    let e = ok("localhost").unwrap().api_config().unwrap_err();
+    assert!(e.has_key("previews.domain"), "{e}");
+    // > 120 characters fails.
+    let long = format!("a.{}", "b".repeat(120));
+    let e = ok(&long).unwrap().api_config().unwrap_err();
+    assert!(e.has_key("previews.domain"), "{e}");
+}
+
+#[test]
+fn previews_domain_never_shadows_a_session_or_credential_host() {
+    let with = |domain: &str, extra: &str| {
+        load_with(
+            &format!("{BASE}{extra}[previews]\nenabled = true\ndomain = \"{domain}\"\n"),
+            &[],
+        )
+    };
+    // Equal to, containing or under the dashboard host.
+    for bad in ["aurora.example.org", "previews.aurora.example.org"] {
+        let e = with(bad, "").unwrap().api_config().unwrap_err();
+        assert!(
+            e.has_key("previews.domain") && format!("{e}").contains("server.external_url"),
+            "{bad}: {e}"
+        );
+    }
+    // The dashboard host is itself under the domain: also refused (containment both ways).
+    let e = with("example.org", "").unwrap().api_config().unwrap_err();
+    assert!(e.has_key("previews.domain"), "{e}");
+    // Under a trusted origin's host.
+    let e = with(
+        "app.trusted.example.org",
+        "[auth]\ntrusted_origins = [\"https://trusted.example.org\"]\n",
+    )
+    .unwrap()
+    .api_config()
+    .unwrap_err();
+    assert!(
+        e.has_key("previews.domain") && format!("{e}").contains("trusted_origins[0]"),
+        "{e}"
+    );
+    // Under the gateway's advertised proxy host (default: dashboard host + :4102).
+    let e = with("gw.aurora.example.org", "")
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(
+        e.has_key("previews.domain") && format!("{e}").contains("gateway"),
+        "{e}"
+    );
+    // Unrelated hosts are fine.
+    with(
+        "preview.example.org",
+        "[auth]\ntrusted_origins = [\"https://trusted.example.org\"]\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn previews_limits_and_awake_cap() {
+    let with = |extra: &str| load_with(&format!("{BASE}[previews]\n{extra}"), &[]);
+    // Defaults are in range.
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    assert_eq!(api.previews.shares_per_agent, 10);
+    assert_eq!(api.previews.shares_per_org, 200);
+    assert_eq!(api.previews.awake_cap_secs, 4 * 3600);
+    for (extra, key) in [
+        ("shares_per_agent = 0\n", "previews.shares_per_agent"),
+        ("shares_per_agent = 11\n", "previews.shares_per_agent"),
+        ("shares_per_org = 0\n", "previews.shares_per_org"),
+        ("shares_per_org = 201\n", "previews.shares_per_org"),
+        ("awake_cap_secs = 0\n", "previews.awake_cap_secs"),
+        (
+            // above hosted.background_cap_secs (default 12 h)
+            "awake_cap_secs = 43201\n",
+            "previews.awake_cap_secs",
+        ),
+    ] {
+        let e = with(extra).unwrap().api_config().unwrap_err();
+        assert!(e.has_key(key), "{extra}: {e}");
+    }
+    // At the boundaries: accepted.
+    with("shares_per_agent = 1\nshares_per_org = 200\nawake_cap_secs = 43200\n").unwrap();
+}

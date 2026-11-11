@@ -137,6 +137,19 @@
       ],
       "type": "object"
     },
+    "PreviewStart": {
+      "description": "(phase 4, P4-PRV-1, D-145) On-demand start of a share's app: the work item the API enqueues\nwhen the share's port is not listening. The command text never travels on the wire: the\nsupervisor looks the command up in its in-memory share list (home-sync part `previews`).",
+      "properties": {
+        "share_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "share_id"
+      ],
+      "type": "object"
+    },
     "Recall": {
       "properties": {
         "index": {
@@ -641,6 +654,24 @@
               "properties": {
                 "kind": {
                   "const": "session.purge"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/PreviewStart"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "preview.start"
                 }
               },
               "required": [

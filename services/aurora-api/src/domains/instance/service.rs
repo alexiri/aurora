@@ -16,6 +16,16 @@ pub struct OidcProviderInfo {
 pub struct Features {
     pub hosted: bool,
     pub channels: bool,
+    /// (phase 4, P4-PRV-1) Port previews are configured on this instance.
+    pub previews: bool,
+}
+
+/// (phase 4, P4-PRV-1) The instance's preview configuration; the domain is public in DNS, so it
+/// is not a secret. The dashboard shows the Previews tab only when `enabled` is true.
+#[derive(Serialize, ToSchema)]
+pub struct PreviewsInfo {
+    pub enabled: bool,
+    pub domain: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -29,6 +39,8 @@ pub struct InstanceInfo {
     pub features: Features,
     pub default_agent_name: String,
     pub external_url: String,
+    /// (phase 4, P4-PRV-1) Port previews on this instance (C-548).
+    pub previews: PreviewsInfo,
     /// `smtp` | `log`.
     pub email_delivery: String,
     /// (phase 2, RFE-011a) `smtp` (approval e-mails are sent), `log` (SMTP unset: they are only
@@ -65,6 +77,14 @@ pub fn instance_info(cfg: &ApiConfig) -> InstanceInfo {
         features: Features {
             hosted: cfg.hosted.enabled,
             channels: false,
+            previews: cfg.previews.enabled,
+        },
+        previews: PreviewsInfo {
+            enabled: cfg.previews.enabled,
+            domain: cfg
+                .previews
+                .enabled
+                .then(|| cfg.previews.domain.clone().unwrap_or_default()),
         },
         default_agent_name: cfg.agents.default_name.clone(),
         external_url: cfg.external_url.clone(),

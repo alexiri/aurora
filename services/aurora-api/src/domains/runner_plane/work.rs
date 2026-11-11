@@ -143,6 +143,7 @@ async fn compute(
         hosted.idle_stop_secs as f64,
         hosted.background_cap_secs as f64,
         STOP_LEASE_SECS,
+        s.config.previews.awake_cap_secs as f64,
         ARM_LIMIT,
     )
     .await?;
@@ -154,6 +155,7 @@ async fn compute(
         ceiling,
         default_harness,
         STOP_LEASE_SECS,
+        limits::PREVIEW_WAKE_WINDOW.as_secs_f64(),
     )
     .await?
     {
@@ -176,6 +178,7 @@ async fn compute(
             default_harness,
             free.min(ARM_LIMIT),
             start_lease_secs(hosted.sandbox_ready_timeout_secs),
+            limits::PREVIEW_WAKE_WINDOW.as_secs_f64(),
         )
         .await?;
         if !claims.is_empty() {

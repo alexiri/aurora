@@ -721,6 +721,12 @@ pub struct SandboxViewRow {
     pub active_turn: bool,
     pub busy_process: bool,
     pub armed_watch: bool,
+    /// (P4-PRV-1, D-145) Keep-awake reason `preview` is live right now ("Preview in use").
+    pub preview_in_use: bool,
+    /// (P4-PRV-1) Ports of the current boot that carry an active preview share.
+    pub shared_ports: Vec<i32>,
+    /// (P4-PRV-1) Share ids for `shared_ports` (same order; empty when none).
+    pub shared_share_ids: Vec<Uuid>,
 }
 
 /// The env/files hash recorded when the agent's current boot started (`resource_profile`).
@@ -803,7 +809,18 @@ pub async fn sandbox_view(
             EXISTS (SELECT 1 FROM processes p WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id
                 AND p.status = 'running' AND p.busy) AS busy_process,
             EXISTS (SELECT 1 FROM watches w JOIN processes p ON p.id = w.process_id
-                WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id AND w.status = 'armed') AS armed_watch
+                WHERE p.sandbox_id = s.id AND p.boot_id = s.boot_id AND w.status = 'armed') AS armed_watch,
+            -- (P4-PRV-1) keep-awake reason `preview` is live now (NULL when never awake).
+            coalesce(s.preview_active_until > now(), false) AS preview_in_use,
+            -- ports of the current boot with an active share (parallel arrays for the API view)
+            coalesce((SELECT array_agg(x.port ORDER BY x.port) FROM preview_shares x
+                WHERE x.agent_id = s.agent_id AND x.state = 'active'
+                  AND s.listening_ports @> ARRAY[x.port]
+                  AND x.port BETWEEN 1024 AND 65535), '{}') AS shared_ports,
+            coalesce((SELECT array_agg(x.id ORDER BY x.port) FROM preview_shares x
+                WHERE x.agent_id = s.agent_id AND x.state = 'active'
+                  AND s.listening_ports @> ARRAY[x.port]
+                  AND x.port BETWEEN 1024 AND 65535), '{}') AS shared_share_ids
          FROM sandboxes s WHERE s.agent_id = $1",
     )
     .bind(agent)

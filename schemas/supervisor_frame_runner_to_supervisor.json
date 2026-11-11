@@ -265,6 +265,21 @@
       ],
       "type": "object"
     },
+    "PreviewStartFrame": {
+      "description": "The frame the runner forwards to the supervisor: only the port, resolved from the share\n(`16 §W5`); the supervisor refuses an unknown port.",
+      "properties": {
+        "port": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "port"
+      ],
+      "type": "object"
+    },
     "Recall": {
       "properties": {
         "index": {
@@ -767,6 +782,20 @@
         },
         "kind": {
           "const": "file.in"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PreviewStartFrame"
+        },
+        "kind": {
+          "const": "preview.start"
         }
       },
       "required": [

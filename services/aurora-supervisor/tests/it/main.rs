@@ -4,6 +4,7 @@ mod common;
 mod home;
 mod inbound;
 mod pgrelay;
+mod previews;
 mod spawn_env;
 mod tools;
 mod turns;

@@ -207,6 +207,8 @@ pub struct ApiConfig {
     pub skills_library: SkillsLibrarySection,
     /// (phase 4, P4-GRP-2, D-132) validated `[scim]`.
     pub scim: ScimConfig,
+    /// (phase 4, P4-PRV-1) validated `[previews]` (off means inert; on requires a domain).
+    pub previews: PreviewsSection,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
@@ -480,6 +482,8 @@ impl RawConfig {
         if !(1..=1825).contains(&self.scim.token_max_days) {
             c.err("scim.token_max_days", "must be between 1 and 1825 days");
         }
+
+        let previews = check_previews(&mut c, &self.previews, self, &external_url);
         if self.plugins.dir.is_empty() {
             c.err("plugins.dir", "must not be empty");
         }
@@ -596,6 +600,7 @@ impl RawConfig {
                 rate_per_minute: self.scim.rate_per_minute,
                 token_max_days: self.scim.token_max_days,
             },
+            previews,
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
             attachments: self.attachments.clone(),
@@ -2278,4 +2283,123 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
     if h.default_timezone.is_empty() {
         c.err("hosted.default_timezone", "must not be empty");
     }
+}
+
+/// (P4-PRV-1, D-144, SEC-80) `[previews]` validation (docs/15 §Port previews): `enabled`
+/// requires a valid `previews.domain` that can never shadow a host carrying a session or a
+/// credential. Inert when disabled (the default), so existing configurations are unchanged.
+fn check_previews(
+    c: &mut Ctx,
+    p: &PreviewsSection,
+    raw: &RawConfig,
+    external_url: &Option<String>,
+) -> PreviewsSection {
+    let mut out = p.clone();
+    if p.shares_per_agent == 0 || p.shares_per_agent > 10 {
+        c.err(
+            "previews.shares_per_agent",
+            "must be between 1 and 10 (an operator may only lower PREVIEW_SHARES_PER_AGENT)",
+        );
+    }
+    if p.shares_per_org == 0 || p.shares_per_org > 200 {
+        c.err(
+            "previews.shares_per_org",
+            "must be between 1 and 200 (an operator may only lower PREVIEW_SHARES_PER_ORG)",
+        );
+    }
+    if p.awake_cap_secs == 0 || p.awake_cap_secs > raw.hosted.background_cap_secs {
+        c.err(
+            "previews.awake_cap_secs",
+            "must be greater than 0 and at most hosted.background_cap_secs",
+        );
+    }
+    let Some(domain) = p.domain.as_deref().map(str::trim) else {
+        if p.enabled {
+            c.err("previews.domain", "required when previews.enabled is true");
+        }
+        return out;
+    };
+    let domain_ok = valid_preview_domain(domain);
+    if !domain_ok {
+        c.err(
+            "previews.domain",
+            "must be a lower-case DNS name of at least two labels and at most 120 characters, not a bare public suffix",
+        );
+    }
+    if p.enabled && !domain_ok {
+        return out;
+    }
+    out.domain = Some(domain.to_owned());
+    // Hosts the domain must be disjoint from: the dashboard (`server.external_url`), every
+    // `auth.trusted_origins` entry and the gateway's advertised proxy host.
+    let mut hosts: Vec<(String, String)> = Vec::new();
+    if let Some(u) = external_url.as_deref().and_then(host_of) {
+        hosts.push(("server.external_url".to_string(), u));
+    }
+    for (i, o) in raw.auth.trusted_origins.iter().enumerate() {
+        if let Some(h) = host_of(o) {
+            hosts.push((format!("auth.trusted_origins[{i}]"), h));
+        }
+    }
+    if let Some(h) = host_of(&advertised_proxy_url(&raw.gateway, external_url.as_deref())) {
+        hosts.push(("gateway.advertised_proxy_url".to_string(), h));
+    }
+    let d = domain.to_owned();
+    for (key, host) in hosts {
+        if host == d || d.ends_with(&format!(".{host}")) || host.ends_with(&format!(".{d}")) {
+            c.err(
+                "previews.domain",
+                format!("must not be, contain or sit under the host of {key} (`{host}`)"),
+            );
+        }
+    }
+    out
+}
+
+/// A preview domain: lower-case DNS name, 1..=120 chars, at least two labels, no IP literal and
+/// not a bare public suffix (coarse built-in list; a registrable domain is recommended).
+fn valid_preview_domain(d: &str) -> bool {
+    const PUBLIC_SUFFIXES: &[&str] = &[
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "gov.uk",
+        "com.au",
+        "net.au",
+        "org.au",
+        "co.jp",
+        "or.jp",
+        "ne.jp",
+        "com.br",
+        "com.cn",
+        "com.mx",
+        "co.in",
+        "co.nz",
+        "co.za",
+        "com.ar",
+        "com.tr",
+        "com.sg",
+        "com.hk",
+        "github.io",
+        "pages.dev",
+        "workers.dev",
+        "netlify.app",
+    ];
+    if d.is_empty() || d.len() > 120 || d != d.to_ascii_lowercase() {
+        return false;
+    }
+    if d.parse::<std::net::IpAddr>().is_ok() || d.starts_with('[') {
+        return false;
+    }
+    let labels: Vec<&str> = d.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|l| {
+            let b = l.as_bytes();
+            (2..=63).contains(&b.len())
+                && b[0].is_ascii_lowercase()
+                && b[b.len() - 1].is_ascii_lowercase()
+                && b.iter()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        })
+        && !PUBLIC_SUFFIXES.contains(&d)
 }

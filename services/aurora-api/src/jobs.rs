@@ -149,6 +149,46 @@ pub const COUNTER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 /// `COUNTER_PRUNE_BATCH`.
 pub const COUNTER_PRUNE_BATCH: i64 = 5_000;
 
+/// Preview housekeeping (docs/05 §Background jobs): clear the stale wake/start stamps of
+/// `sandboxes` past their windows and set the `aurora_preview_shares` gauge (active shares per
+/// org). Idempotent, safe on every replica. The session/grant deletions arrive with P4-PRV-2.
+pub async fn preview_housekeeping(pool: &PgPool) -> Result<u64, aurora_db::DbError> {
+    let cleared = {
+        let mut conn = pool.acquire().await.map_err(aurora_db::DbError::from)?;
+        aurora_db::repo::preview_shares::clear_stale_sandbox_stamps(&mut conn).await?
+    };
+    let orgs: Vec<(uuid::Uuid, String, i64)> = sqlx::query_as(
+        "SELECT o.id, o.slug, count(ps.id) FROM organizations o \
+           LEFT JOIN preview_shares ps ON ps.org_id = o.id AND ps.state = 'active' \
+         GROUP BY o.id, o.slug",
+    )
+    .fetch_all(pool)
+    .await?;
+    for (id, slug, n) in orgs {
+        metrics::gauge!("aurora_preview_shares", "org" => slug).set(n as f64);
+        tracing::trace!(org = %id, shares = n, "preview shares gauge");
+    }
+    Ok(cleared)
+}
+
+/// Run the preview-housekeeping arm on this replica every [`PREVIEW_HOUSEKEEPING_EVERY`].
+pub const PREVIEW_HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
+
+pub fn spawn_preview_housekeeping(pool: PgPool) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(PREVIEW_HOUSEKEEPING_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match preview_housekeeping(&pool).await {
+                Ok(n) if n > 0 => tracing::debug!(cleared = n, "preview housekeeping"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "preview housekeeping failed"),
+            }
+        }
+    });
+}
+
 /// (phase 4, P4-CNT) One `counters_prune` pass: delete dead rows (`expires_at < now()`) of
 /// `rate_limit_windows` and `rate_limit_buckets`, `FOR UPDATE SKIP LOCKED`, in batches. Safe on
 /// every replica at once. Returns the number of rows deleted.

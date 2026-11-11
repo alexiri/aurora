@@ -35,6 +35,9 @@ pub struct SandboxProcess {
 pub struct SandboxPort {
     pub port: i32,
     pub protocol: String,
+    /// (P4-PRV-1) The active preview share for this port, when one exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared: Option<Uuid>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -61,6 +64,9 @@ pub struct SandboxView {
     pub start_log: Vec<StartLogEntry>,
     pub processes: Vec<SandboxProcess>,
     pub ports: Vec<SandboxPort>,
+    /// (P4-PRV-1, D-145) `preview` is among `keep_awake_reasons` while this is true
+    /// ("Preview in use").
+    pub preview_in_use: bool,
     pub restart_to_update: bool,
 }
 

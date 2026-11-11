@@ -176,6 +176,38 @@ async fn arm5_home_sync(
             items.push(item(c.sandbox_id, c.boot_id, WorkItemBody::HomeSync(part)));
         }
     }
+    // (P4-PRV-1, D-145) On-demand starts: after the sync is applied (arm 5 claims only
+    // `applied < desired`), a waiting request starts the share's app — an active share with a
+    // start command, port not listening, not frozen, at most `PREVIEW_START_ATTEMPTS` per window.
+    // The runner resolves the share to a port from the `previews` part it just forwarded.
+    for d in aurora_db::repo::preview_shares::claim_start_demands(
+        tx,
+        runner,
+        replica,
+        secs(limits::PREVIEW_WAKE_WAIT),
+        ARM_LIMIT,
+    )
+    .await?
+    {
+        if !aurora_db::repo::preview_shares::record_start_attempt(
+            tx,
+            d.share_id,
+            aurora_db::repo::preview_shares::START_WINDOW_SECS,
+            limits::PREVIEW_START_ATTEMPTS,
+        )
+        .await?
+        {
+            continue;
+        }
+        aurora_db::repo::preview_shares::stamp_start_requested(tx, d.agent_id).await?;
+        items.push(item(
+            d.sandbox_id,
+            d.boot_id,
+            WorkItemBody::PreviewStart(aurora_protocol::runner::PreviewStart {
+                share_id: d.share_id,
+            }),
+        ));
+    }
     Ok(())
 }
 
