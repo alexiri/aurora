@@ -190,7 +190,7 @@ describe("shell nav", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
     render(
       <QueryClientProvider client={qc}>
-        <WorkspaceNav base="/o/a/w/b" orgSlug="a" wsId={undefined} pathname="/o/a/w/b/agents" />
+        <WorkspaceNav base="/o/a/w/b" wsId={undefined} pathname="/o/a/w/b/agents" />
       </QueryClientProvider>,
     );
     expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
