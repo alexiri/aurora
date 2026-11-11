@@ -37,6 +37,7 @@ pub mod peer_tasks;
 pub mod placement;
 pub mod plugins;
 pub mod policy;
+pub mod previews;
 pub mod runner_plane;
 pub mod runners_admin;
 pub mod schedules;

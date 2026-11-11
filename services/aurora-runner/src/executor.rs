@@ -8,8 +8,8 @@ use std::time::Duration;
 use aurora_core::limits::ATTACH_IN_FILE_MAX;
 use aurora_protocol::runner::AttachmentRef;
 use aurora_protocol::runner::{
-    NAMESPACE_AURORA_REPORT, ReportBody, SandboxStart, SandboxState, SandboxStatus, SandboxStop,
-    StopReason, WorkItem, WorkItemBody,
+    HomeSyncKind, NAMESPACE_AURORA_REPORT, ReportBody, SandboxStart, SandboxState, SandboxStatus,
+    SandboxStop, StopReason, WorkItem, WorkItemBody,
 };
 use aurora_protocol::supervisor::{FileIn, MAX_FILE_PART_DECODED};
 use base64::Engine as _;
@@ -79,6 +79,10 @@ struct Inner {
     settings: ExecutorSettings,
     permits: Semaphore,
     q: Mutex<Queues>,
+    /// (P4-PRV-1, D-145) `share_id -> port` observed from the `previews` home-sync parts this
+    /// runner has forwarded: the only source for resolving a `preview.start { share_id }` work
+    /// item to the supervisor's `preview.start { port }` frame (no command text ever travels).
+    preview_ports: Mutex<HashMap<Uuid, u16>>,
 }
 
 #[derive(Clone)]
@@ -224,6 +228,7 @@ impl Executor {
             sink,
             settings,
             q: Mutex::default(),
+            preview_ports: Mutex::default(),
         }))
     }
 
@@ -331,6 +336,41 @@ impl Executor {
         match item.body {
             WorkItemBody::SandboxStart(s) => self.start(item_id, sandbox, boot, s).await,
             WorkItemBody::SandboxStop(s) => self.stop(item_id, sandbox, boot, s).await,
+            // (P4-PRV-1, D-145) Resolved to the supervisor's `preview.start { port }` frame: the
+            // port comes from the `previews` home part this runner already forwarded. A share the
+            // runner has no port for (part not applied, stale) is dropped. Sent directly (not
+            // through `forward`, which skips unknown kinds): this frame is the private
+            // runner->supervisor signal of `16 §W5` and carries no command text.
+            WorkItemBody::PreviewStart(p) => {
+                let port = self
+                    .0
+                    .preview_ports
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(&p.share_id)
+                    .copied();
+                match port {
+                    Some(port) => {
+                        if let Err(e) = self
+                            .0
+                            .hub
+                            .send(
+                                sandbox,
+                                Frame {
+                                    kind: "preview.start".to_owned(),
+                                    body: serde_json::json!({ "port": port }),
+                                },
+                            )
+                            .await
+                        {
+                            tracing::warn!(%sandbox, error = %e, "preview.start not delivered");
+                        }
+                    }
+                    None => {
+                        tracing::warn!(%sandbox, share = %p.share_id, "preview.start without a known port; dropped")
+                    }
+                }
+            }
             other => self.forward(sandbox, other).await,
         }
     }
@@ -519,6 +559,33 @@ impl Executor {
         if matches!(body, WorkItemBody::Other(_)) {
             tracing::warn!(%kind, "unknown work item kind skipped");
             return;
+        }
+        // (P4-PRV-1, D-145) Remember the share->port mapping of the `previews` home part this
+        // runner forwarded: `preview.start { share_id }` work items resolve against it.
+        if let WorkItemBody::HomeSync(h) = &body
+            && h.part.kind == HomeSyncKind::Previews
+        {
+            let mut ports = self
+                .0
+                .preview_ports
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for s in h
+                .part
+                .entries
+                .iter()
+                .filter_map(|e| e.get("shares").and_then(|s| s.as_array()))
+                .flatten()
+            {
+                if let (Some(id), Some(port)) = (
+                    s.get("share_id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|v| v.parse::<Uuid>().ok()),
+                    s.get("port").and_then(|v| v.as_u64()),
+                ) {
+                    ports.insert(id, u16::try_from(port).unwrap_or(0));
+                }
+            }
         }
         // Channel order is seq order: every `file.in` frame precedes the `turn.deliver` it belongs to.
         if let WorkItemBody::TurnDeliver(d) = &body {

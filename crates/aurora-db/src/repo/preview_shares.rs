@@ -164,7 +164,7 @@ async fn mint_label(conn: &mut PgConnection) -> Result<String, DbError> {
         let mut s = String::with_capacity(1 + PREVIEW_LABEL_CHARS);
         s.push('p');
         // 15 bytes = 120 bits = 24 base32 chars, exactly.
-        for chunk in raw.chunks_exact(5) {
+        for chunk in raw.as_chunks::<5>().0 {
             let v = u64::from(chunk[0])
                 | (u64::from(chunk[1]) << 8)
                 | (u64::from(chunk[2]) << 16)
@@ -260,10 +260,10 @@ pub async fn delete(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> 
         .execute(&mut *conn)
         .await?
         .rows_affected();
-    if n > 0 {
-        if let Some(agent) = row {
-            bump_agent(conn, agent).await?;
-        }
+    if n > 0
+        && let Some(agent) = row
+    {
+        bump_agent(conn, agent).await?;
     }
     Ok(n > 0)
 }
@@ -302,7 +302,10 @@ fn json_times(v: &serde_json::Value) -> Vec<DateTime<Utc>> {
     v.as_array()
         .map(|a| {
             a.iter()
-                .filter_map(|x| x.as_str().and_then(|s| DateTime::parse_from_rfc3339(s).ok()))
+                .filter_map(|x| {
+                    x.as_str()
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                })
                 .map(|t| t.with_timezone(&Utc))
                 .collect()
         })
@@ -423,7 +426,10 @@ pub async fn touch_accessed(conn: &mut PgConnection, share: Uuid) -> Result<(), 
 }
 
 /// Count of the org's active shares (the `aurora_preview_shares` gauge, docs/05 §Background jobs).
-pub async fn count_active_in_org<'e, E: PgExecutor<'e>>(exec: E, org: Uuid) -> Result<i64, DbError> {
+pub async fn count_active_in_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+) -> Result<i64, DbError> {
     Ok(sqlx::query_scalar(
         "SELECT count(*) FROM preview_shares WHERE org_id = $1 AND state = 'active'",
     )
@@ -447,3 +453,70 @@ pub async fn clear_stale_sandbox_stamps(conn: &mut PgConnection) -> Result<u64, 
 }
 
 pub const START_WINDOW_SECS: f64 = PREVIEW_START_WINDOW.as_secs_f64();
+
+/// One pending on-demand start: a running sandbox whose channel this replica holds, with a wake
+/// or start demand younger than its window and an active share with a start command whose port is
+/// not listening (docs/05 arm 5, docs/11 §Port previews).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct StartDemand {
+    pub share_id: Uuid,
+    pub agent_id: Uuid,
+    pub sandbox_id: Uuid,
+    pub boot_id: Uuid,
+}
+
+/// Shares to start on a running sandbox after its home sync is applied: `home_applied_generation`
+/// is at the desired level (the `previews` part has been applied), the share is active with a
+/// start command, the port is not in `listening_ports`, and a request is waiting
+/// (`preview_start_requested_at` younger than `wake_wait_secs`). The caller records the attempt
+/// (`record_start_attempt`, `PREVIEW_START_ATTEMPTS` per window) and stamps
+/// `preview_start_requested_at = now()` per emitted item.
+pub async fn claim_start_demands(
+    conn: &mut PgConnection,
+    runner: Uuid,
+    replica: Uuid,
+    wake_wait_secs: f64,
+    limit: i64,
+) -> Result<Vec<StartDemand>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT ps.id AS share_id, ps.agent_id, s.id AS sandbox_id, s.boot_id \
+         FROM preview_shares ps \
+           JOIN sandboxes s ON s.agent_id = ps.agent_id \
+           JOIN agents a ON a.id = ps.agent_id \
+           JOIN workspaces w ON w.id = a.workspace_id \
+           JOIN organizations o ON o.id = a.org_id \
+         WHERE ps.state = 'active' AND ps.start_command IS NOT NULL AND ps.start_command <> '' \
+           AND s.runner_id = $1 AND s.channel_replica_id = $2 AND s.state = 'running' \
+           AND s.boot_id IS NOT NULL \
+           AND s.home_applied_generation >= (a.home_sync_generation + w.home_sync_generation + 1) \
+           AND NOT (s.listening_ports @> ARRAY[ps.port]) \
+           AND s.preview_start_requested_at IS NOT NULL \
+           AND s.preview_start_requested_at > now() - make_interval(secs => $3) \
+           AND NOT (EXISTS (SELECT 1 FROM agents fa \
+                 JOIN workspaces fw ON fw.id = fa.workspace_id \
+                 JOIN organizations fo ON fo.id = fa.org_id \
+                 WHERE fa.id = ps.agent_id \
+                   AND (fa.frozen_at IS NOT NULL OR fw.frozen_at IS NOT NULL \
+                        OR fo.frozen_at IS NOT NULL))) \
+           AND coalesce((o.settings->'previews_enabled')::bool, false) \
+         ORDER BY s.preview_start_requested_at LIMIT $4 FOR UPDATE OF ps",
+    )
+    .bind(runner)
+    .bind(replica)
+    .bind(wake_wait_secs)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// Stamp the start request of an emitted `preview.start` item (docs/05 arm 5).
+pub async fn stamp_start_requested(conn: &mut PgConnection, agent: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE sandboxes SET preview_start_requested_at = now(), updated_at = now() \
+         WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}

@@ -78,6 +78,8 @@ pub struct OrgSettings {
     pub members_can_create_workspaces: bool,
     pub max_members: Option<i64>,
     pub max_agents: Option<i64>,
+    /// (phase 4, P4-PRV-1, C-549) Port previews for this organization (default `false`).
+    pub previews_enabled: bool,
 }
 
 impl OrgSettings {
@@ -89,6 +91,10 @@ impl OrgSettings {
                 .unwrap_or(true),
             max_members: v.get("max_members").and_then(serde_json::Value::as_i64),
             max_agents: v.get("max_agents").and_then(serde_json::Value::as_i64),
+            previews_enabled: v
+                .get("previews_enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
         }
     }
 }
@@ -253,6 +259,9 @@ pub struct OrgSettingsPatch {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(value_type = Option<i64>)]
     pub max_agents: Option<Option<i64>>,
+    /// (phase 4, P4-PRV-1, C-549) Port previews for the organization; audited
+    /// `org.previews.update` (security-critical).
+    pub previews_enabled: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]

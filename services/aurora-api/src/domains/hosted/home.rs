@@ -6,7 +6,10 @@
 
 use crate::app::AppState;
 use aurora_core::{ApiError, limits};
-use aurora_db::repo::hosted::{self, HomeSyncClaim};
+use aurora_db::{
+    DbError,
+    repo::hosted::{self, HomeSyncClaim},
+};
 use aurora_protocol::runner::{HomeSync, HomeSyncKind, HomeSyncPart};
 use serde_json::{Value, json};
 use sqlx::PgConnection;
@@ -303,6 +306,47 @@ pub async fn render(
         .filter_map(|t| serde_json::to_value(t).ok())
         .collect();
 
+    // (P4-PRV-1, D-144) The `previews` part: the agent's active shares, one entry. Empty while
+    // previews are off (instance or org) or the agent is frozen (the allow-list dies with the
+    // sync; `11 §Port previews`). Held in the supervisor's memory only.
+    let mut preview_entries: Vec<Value> = Vec::new();
+    if state.config.previews.enabled {
+        let frozen = aurora_db::repo::freeze::effective_of_agent(conn, claim.agent_id)
+            .await?
+            .is_some();
+        if !frozen {
+            let on: bool = sqlx::query_scalar(
+                "SELECT coalesce((settings->'previews_enabled')::bool, false) \
+                 FROM organizations WHERE id = $1",
+            )
+            .bind(inputs.org_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(DbError::from)?;
+            if on {
+                let shares: Vec<Value> =
+                    aurora_db::repo::preview_shares::active_for_agent(&mut *conn, claim.agent_id)
+                        .await?
+                        .into_iter()
+                        .map(|s| {
+                            let mut e = json!({
+                                "share_id": s.id,
+                                "port": s.port,
+                            });
+                            if let Some(c) = s.start_command.as_deref().filter(|c| !c.is_empty()) {
+                                e["start_command"] = json!(c);
+                            }
+                            if let Some(c) = s.cwd.as_deref().filter(|c| !c.is_empty()) {
+                                e["cwd"] = json!(c);
+                            }
+                            e
+                        })
+                        .collect();
+                preview_entries.push(json!({ "shares": shares }));
+            }
+        }
+    }
+
     let mut parts = Vec::new();
     pack(HomeSyncKind::Skills, skill_entries, &mut parts);
     pack(HomeSyncKind::Memory, memory_entries, &mut parts);
@@ -311,6 +355,12 @@ pub async fn render(
         entries: vec![render_inputs],
     });
     pack(HomeSyncKind::Tools, tools, &mut parts);
+    // Always present when the instance runs previews (even with no shares): the single entry
+    // replaces the supervisor's in-memory list as a whole, so a pause/delete/off switch reaches
+    // it on the next sync. When the instance is off the part stays absent (nothing ever allowed).
+    if state.config.previews.enabled {
+        pack(HomeSyncKind::Previews, preview_entries, &mut parts);
+    }
     pack(HomeSyncKind::Manifest, manifest, &mut parts);
     parts.push(HomeSyncPart {
         kind: HomeSyncKind::Final,

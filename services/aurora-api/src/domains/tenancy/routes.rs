@@ -177,14 +177,24 @@ async fn patch_org(
     Json(req): Json<PatchOrgRequest>,
 ) -> Result<Json<Org>, ApiError> {
     c.org(&s, org).await?.require_owner()?;
+    let previews_on = req.settings.as_ref().and_then(|p| p.previews_enabled);
     let meta = json!({
-        "name": req.name.is_some(), "slug": req.slug.is_some(), "settings": req.settings.is_some()
+        "name": req.name.is_some(), "slug": req.slug.is_some(),
+        "settings": req.settings.is_some(), "previews_enabled": previews_on,
     });
     let ev = event(&c, "org.update")
         .org(org)
         .target("organization", org)
         .metadata(meta);
-    let row = service::patch_org(&s.pool, org, c.user_id, req, &ev).await?;
+    // (P4-PRV-1, C-549) The Port previews switch is its own security-critical audit row,
+    // committed in the same transaction as the settings write (docs/04 §Audit).
+    let previews_ev = previews_on.map(|on| {
+        event(&c, "org.previews.update")
+            .org(org)
+            .target("organization", org)
+            .metadata(json!({ "previews_enabled": on }))
+    });
+    let row = service::patch_org(&s.pool, org, c.user_id, req, &ev, previews_ev.as_ref()).await?;
     Ok(Json(row.into()))
 }
 
