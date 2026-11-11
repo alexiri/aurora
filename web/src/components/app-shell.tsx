@@ -87,7 +87,6 @@ function SidebarSelect({
   placeholder,
   value,
   avatar,
-  indent,
   testId,
   children,
 }: {
@@ -97,14 +96,12 @@ function SidebarSelect({
   /** The current scope's name, or undefined for the placeholder look. */
   value?: string;
   avatar?: { name: string; tintKey?: string };
-  /** The workspace control sits inside its organization (FIX-027). */
-  indent?: boolean;
   testId: string;
   children: ReactNode;
 }) {
   const id = useId();
   return (
-    <div data-testid={testId} className={cn("space-y-1.5", indent && "pl-8")}>
+    <div data-testid={testId} className="space-y-1.5">
       <p id={`${id}-caption`} className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
         {caption}
       </p>
@@ -185,7 +182,6 @@ function WorkspaceSelector({ orgSlug, wsSlug, pathname }: { orgSlug: string; wsS
       caption="Workspace"
       placeholder={atRoot ? "All workspaces" : (wsSlug ?? "?")}
       value={atRoot ? "All workspaces" : ws?.name}
-      indent
       testId="workspace-selector"
     >
       <MenuLabel>Workspaces</MenuLabel>
@@ -472,7 +468,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DialogPrimitive.Portal>
               <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
               <DialogPrimitive.Content
-                className="fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-3rem))] border-r border-line bg-surface text-ink shadow-pop"
+                className="fixed inset-y-0 right-0 z-50 w-[min(18rem,calc(100vw-3rem))] border-l border-line bg-surface text-ink shadow-pop"
                 onInteractOutside={(e) => {
                   if (tourNav) e.preventDefault();
                 }}

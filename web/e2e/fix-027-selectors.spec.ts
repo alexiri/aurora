@@ -25,12 +25,15 @@ test.describe("sidebar selectors (FIX-027)", () => {
     const ws = sidebar.getByTestId("workspace-selector");
     await expect(org.locator("p")).toHaveText("Organization");
     await expect(ws.locator("p")).toHaveText("Workspace");
-    // Stacked: organization first, workspace below it, inside the indent column
-    // (the trigger div carries `pl-8`; the org control's does not).
-    const indent = ws.getByRole("button").locator("xpath=ancestor::div[contains(@class,'pl-8')][1]");
-    await expect(indent).toBeVisible();
-    await expect(indent.locator("p")).toHaveText("Workspace");
-    expect(await org.getByRole("button").locator("xpath=ancestor::div[contains(@class,'pl-8')][1]").count()).toBe(0);
+    // Stacked: organization first, workspace below it, flush left — no `pl-8`
+    // indent ancestor on either wrapper, and the two triggers share left edge and width (FIX-046).
+    for (const sel of [org, ws]) {
+      expect(await sel.getByRole("button").locator("xpath=ancestor::div[contains(@class,'pl-8')][1]").count()).toBe(0);
+    }
+    const orgBox = await org.getByRole("button").boundingBox();
+    const wsBox = await ws.getByRole("button").boundingBox();
+    expect(Math.abs(orgBox!.x - wsBox!.x)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(orgBox!.width - wsBox!.width)).toBeLessThanOrEqual(0.5);
     // One line tall: the workspace name is the control's whole value (no second subtitle line).
     await expect(org.getByRole("button")).toHaveText(/Acme Labs/);
     await expect(ws.getByRole("button", { name: "Workspace Main workspace" })).toBeVisible();
@@ -76,8 +79,17 @@ test.describe("sidebar selectors (FIX-027)", () => {
   test("narrow (390 px): the drawer carries the same two selectors", async ({ page }) => {
     await open(page, "/o/acme/w/main/agents", "light");
     await page.setViewportSize({ width: 390, height: 800 });
-    await page.getByRole("button", { name: "Open menu" }).click();
+    const openButton = page.getByRole("button", { name: "Open menu" });
+    // The panel opens on the trigger's side (FIX-046): the hamburger sits right of
+    // centre and the open drawer is flush with the viewport's right edge. The trigger
+    // is measured before the click — once the modal drawer opens, Radix aria-hides
+    // the top bar and the button no longer resolves by role.
+    const btnBox = await openButton.boundingBox();
+    expect(btnBox!.x, "hamburger sits right of centre").toBeGreaterThan(390 / 2);
+    await openButton.click();
     const drawer = page.getByRole("dialog");
+    const drawerBox = await drawer.boundingBox();
+    expect(drawerBox!.x + drawerBox!.width, "drawer flush with the right edge").toBeCloseTo(390, 0);
     await expect(drawer.getByTestId("org-selector").getByRole("button", { name: "Organization Acme Labs" })).toBeVisible();
     await expect(drawer.getByTestId("workspace-selector").getByRole("button", { name: "Workspace Main workspace" })).toBeVisible();
   });

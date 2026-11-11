@@ -143,6 +143,8 @@ describe("workspace selector", () => {
     const orgSel = within(shell).getByTestId("org-selector");
     const wsSel = within(shell).getByTestId("workspace-selector");
     expect(orgSel.compareDocumentPosition(wsSel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // FIX-046: flush left, same width — the workspace wrapper carries no `pl-8` indent.
+    expect(wsSel.className).not.toContain("pl-8");
     expect(within(wsSel).getByText("All workspaces")).toBeInTheDocument();
     await open("workspace-selector");
     const all = await item("All workspaces…");
