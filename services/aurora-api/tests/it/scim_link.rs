@@ -3,6 +3,7 @@
 //! sign-in with a verified e-mail claim binds the link; a signed-in user's global row is
 //! never mutated by SCIM; existing users are linked without touching their row.
 
+use crate::common::bearer;
 use crate::scim_common::*;
 use http::Method;
 use serde_json::json;
@@ -235,4 +236,132 @@ async fn put_rejects_email_domain_outside_org_allow_list() {
         .await
         .unwrap();
     assert_eq!(name, "linked@x.io");
+}
+
+/// FIX-036: PUT (or PATCH) re-pointing a link at an existing global user with no membership
+/// in this org inserts the membership (role `member`, seat-capped) instead of answering 500:
+/// the e-mail is free here but taken globally (another org provisioned, invited or JIT'd the
+/// person — a state this code creates itself). A membership that already exists is adopted
+/// as it is.
+#[tokio::test]
+async fn put_adopting_global_user_without_membership_inserts_member() {
+    let fx = ScimFx::new().await;
+    let other = other_org(&fx.h).await;
+    // Org A provisions a@x.io (the shared global user); org B provisions b@x.io — org B's
+    // own link, the one the PUT re-points.
+    let a = fx.provision_ok("a@x.io").await;
+    let (s, _, _) = fx
+        .scim_with(
+            Method::POST,
+            USERS,
+            &bearer(&other.token),
+            Some(json!({"userName": "b@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 201);
+    let a_id = a["id"].as_str().unwrap().to_owned();
+    let aurora = fx.aurora_user(&a_id).await;
+    let b_link: Uuid =
+        sqlx::query_scalar("SELECT id FROM scim_users WHERE org_id = $1 AND user_name = 'b@x.io'")
+            .bind(other.org)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(other.org)
+            .bind(aurora)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(n, 0, "org B has no membership for a@x.io yet");
+    // Org B PUTs its link to a@x.io: 200, the response reflects the link — and org B gains
+    // a member seat for the shared user.
+    let (s, _, v) = fx
+        .scim_with(
+            Method::PUT,
+            &format!("{USERS}/{b_link}"),
+            &bearer(&other.token),
+            Some(json!({"userName": "a@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["id"], b_link.to_string(), "{v}");
+    assert_eq!(v["userName"], "a@x.io", "{v}");
+    let seat: (String, String) =
+        sqlx::query_as("SELECT role, status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(other.org)
+            .bind(aurora)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(seat, ("member".into(), "active".into()));
+    // Org A's link and membership are untouched.
+    let (a_state, a_user): (String, Uuid) =
+        sqlx::query_as("SELECT state, user_id FROM scim_users WHERE org_id = $1 AND id = $2")
+            .bind(fx.org)
+            .bind(a_id.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(a_state, "active");
+    assert_eq!(
+        a_user, aurora,
+        "org A's link still points at the shared user"
+    );
+    // The addition is audited with the SCIM `via` (like `create_user`'s `member.add`).
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = 'member.add' \
+         AND target_id = $2::text AND outcome = 'success'",
+    )
+    .bind(other.org)
+    .bind(aurora.to_string())
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "org B audited the adopted member.add");
+
+    // PATCH inherits the same path: org C provisions its own d@x.io link, then PATCHes it
+    // onto c@x.io — a global user org A provisioned, with no seat in org C.
+    let third = other_org(&fx.h).await;
+    let c = fx.provision_ok("c@x.io").await;
+    let c_id = c["id"].as_str().unwrap().to_owned();
+    let aurora_c = fx.aurora_user(&c_id).await;
+    let (s, _, _) = fx
+        .scim_with(
+            Method::POST,
+            USERS,
+            &bearer(&third.token),
+            Some(json!({"userName": "d@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 201);
+    let c_link: Uuid =
+        sqlx::query_scalar("SELECT id FROM scim_users WHERE org_id = $1 AND user_name = 'd@x.io'")
+            .bind(third.org)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    let (s, _, v) = fx
+        .scim_with(
+            Method::PATCH,
+            &format!("{USERS}/{c_link}"),
+            &bearer(&third.token),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{"op": "replace", "path": "emails[type eq \"work\"].value",
+                                "value": "c@x.io"}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["userName"], "c@x.io", "{v}");
+    let seat: (String, String) =
+        sqlx::query_as("SELECT role, status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(third.org)
+            .bind(aurora_c)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(seat, ("member".into(), "active".into()));
 }
