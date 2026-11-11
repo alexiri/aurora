@@ -2,6 +2,7 @@ use super::dto::*;
 use crate::app::AppState;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, limits};
+use aurora_db::repo::agents;
 use aurora_db::repo::runners::{self, RunnerRow};
 use aurora_db::{DbError, conflict_code};
 use uuid::Uuid;
@@ -89,6 +90,50 @@ pub async fn start_failures(s: &AppState, id: Uuid) -> Result<RunnerStartFailure
                 created_at: r.created_at,
             })
             .collect(),
+    })
+}
+
+/// (FIX-029, C-613/C-614) Map stored start-failure rows to the C-586 shape.
+pub fn agent_failure_items(
+    rows: Vec<aurora_db::repo::sandboxes::AgentStartFailureRow>,
+) -> Vec<crate::domains::hosted::dto::AgentStartFailure> {
+    rows.into_iter()
+        .map(|r| crate::domains::hosted::dto::AgentStartFailure {
+            id: r.id,
+            sandbox_id: r.sandbox_id,
+            runner_id: r.runner_id,
+            agent_id: r.agent_id,
+            code: r.code,
+            message: r.message,
+            phase: r.phase,
+            events: r
+                .events
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|e| e.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            elapsed_secs: r.elapsed_secs,
+            created_at: r.created_at,
+        })
+        .collect()
+}
+
+/// (FIX-029, C-614) An agent's recent start failures with the runner named (instance admins).
+pub async fn agent_start_failures(
+    s: &AppState,
+    agent: Uuid,
+) -> Result<crate::domains::hosted::dto::AgentStartFailures, ApiError> {
+    if agents::get(&s.pool, agent).await?.is_none() {
+        return Err(ApiError::not_found("Agent not found."));
+    }
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    let rows = aurora_db::repo::sandboxes::agent_start_failures(&mut conn, agent, 20).await?;
+    drop(conn);
+    Ok(crate::domains::hosted::dto::AgentStartFailures {
+        items: agent_failure_items(rows),
     })
 }
 

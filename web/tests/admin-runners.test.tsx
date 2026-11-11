@@ -97,6 +97,51 @@ describe("admin runners view (FIX-025, C-586)", () => {
     expect(await screen.findByText("No start failures in the last 30 days.")).toBeTruthy();
   });
 
+  // FIX-029 (C-614/C-615): a failure row names the agent; clicking it opens the **Start
+  // diagnostics** drawer with that agent's history (runner named per row).
+  it("opens the Start diagnostics drawer for an agent's failures from a row click", async () => {
+    mockFetch({
+      "GET /v1/admin/runners": () => json(200, { items: [runner] }),
+      "GET /v1/admin/runners/r1/start-failures": () =>
+        json(200, {
+          items: [
+            {
+              id: "f1", sandbox_id: "sb1", agent_id: "ag1", runner_id: "r1",
+              code: "pod_failed", message: "the pod crashed", phase: "failed",
+              events: [], elapsed_secs: 12, created_at: "2026-11-10T09:58:00Z",
+            },
+          ],
+        }),
+      "GET /v1/admin/agents/ag1/start-failures": () =>
+        json(200, {
+          items: [
+            {
+              id: "g2", sandbox_id: "sb1", agent_id: "ag1", runner_id: "r1",
+              code: "pod_failed", message: "the pod crashed again", phase: "failed",
+              events: [], elapsed_secs: 9, created_at: "2026-11-10T10:05:00Z",
+            },
+            {
+              id: "g1", sandbox_id: "sb0", agent_id: "ag1", runner_id: null,
+              code: "supervisor_unreachable", message: "no hello within 60 s", phase: "booting",
+              events: [], elapsed_secs: 64, created_at: "2026-11-10T09:00:00Z",
+            },
+          ],
+        }),
+    });
+    wrap(<AdminRunnersView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Start failures" }));
+    // The row names the agent (its id).
+    expect(await screen.findByText("ag1")).toBeTruthy();
+    fireEvent.click(screen.getByText("ag1"));
+    const dlg = await screen.findByRole("dialog");
+    expect(dlg.textContent).toContain("Start diagnostics");
+    await within(dlg).findByText("the pod crashed again");
+    expect(dlg.textContent).toContain("supervisor_unreachable");
+    expect(dlg.textContent).toContain("no hello within 60 s");
+    // The drawer's rows name the runner (C-614); a deleted runner's row shows an empty cell.
+    expect(dlg.textContent).toContain("r1");
+  });
+
   it("marks an offline runner", async () => {
     mockFetch({
       "GET /v1/admin/runners": () => json(200, { items: [{ ...runner, live_replicas: 0 }] }),

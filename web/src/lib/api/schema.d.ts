@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/agents/{agent}/start-failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** (FIX-029, C-614) An agent's recent start failures with the runner named (instance admins). */
+        get: operations["adminAgentStartFailures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/app-instances": {
         parameters: {
             query?: never;
@@ -1140,6 +1157,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/sandbox/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (FIX-029, C-610) Retry a failed sandbox start from `failed`: clears the failure, resets the
+         *     automatic-retry bound, claims the ordinary lifecycle lease, appends a retry note to the start
+         *     log and notifies due work — the next start is the ordinary due-work start arm.
+         */
+        post: operations["retryAgentSandbox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/schedules": {
         parameters: {
             query?: never;
@@ -1222,6 +1260,23 @@ export interface paths {
         };
         /** Space bindings of an agent (`can_own`). */
         get: operations["listAgentSpaceBindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/start-failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** (FIX-029, C-613) The agent's recent start failures, newest first, ≤ 20 (C-586 shape). */
+        get: operations["agentStartFailures"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4293,6 +4348,42 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /**
+         * @description (FIX-029, C-613/C-614) One start failure of an agent's sandbox — the C-586 shape; the admin
+         *     route adds `runner_id`.
+         */
+        AgentStartFailure: {
+            /** Format: uuid */
+            agent_id: string;
+            /** @description The failure code (`10 §Failure semantics`; e.g. `supervisor_unreachable`). */
+            code: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: int32
+             * @description Seconds the attempt ran before it failed.
+             */
+            elapsed_secs?: number | null;
+            /** @description Warning events of the pod / home claim, newest first. */
+            events: string[];
+            /** Format: uuid */
+            id: string;
+            /** @description Human reason, sanitised (never a secret). */
+            message: string;
+            /** @description The start attempt's last phase. */
+            phase?: string | null;
+            /**
+             * Format: uuid
+             * @description The runner that hosted the failed attempt (C-614 admin route only; `null` for a legacy
+             *     row whose runner was deleted).
+             */
+            runner_id?: string | null;
+            /** Format: uuid */
+            sandbox_id: string;
+        };
+        AgentStartFailures: {
+            items: components["schemas"]["AgentStartFailure"][];
         };
         AgentToken: {
             container_config: components["schemas"]["ContainerConfig"];
@@ -8496,9 +8587,19 @@ export interface components {
             ports: components["schemas"]["SandboxPort"][];
             processes: components["schemas"]["SandboxProcess"][];
             restart_to_update: boolean;
+            /**
+             * @description (FIX-029, C-611) The boot's start log, newest first; true when the state is `failed` and
+             *     the failed start may be retried (C-610).
+             */
+            retryable: boolean;
             /** Format: uuid */
             runner_id?: string | null;
             start_attempt?: null | components["schemas"]["SandboxStartAttempt"];
+            /**
+             * @description (FIX-029, C-611) The boot's start log (phases, the failure verdict, retry notes), newest
+             *     first. Reset by every new boot.
+             */
+            start_log: components["schemas"]["StartLogEntry"][];
             /** Format: date-time */
             started_at?: string | null;
             /** @description unprovisioned | starting | running | stopping | stopped | failed */
@@ -8957,6 +9058,17 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /** @description (FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612). */
+        StartLogEntry: {
+            /** @description The entry's detail, sanitised at write (≤ 300 chars). */
+            detail?: string | null;
+            /** @description `phase` (a runner phase report or the failure verdict) or `note` (a retry). */
+            kind: string;
+            /** @description The phase the entry records (`starting`, `booting`, `failed`, `retry`…). */
+            phase?: string | null;
+            /** Format: date-time */
+            ts: string;
         };
         StartRequest: {
             /** @description Client host name (sanitized; used to name the minted key). */
@@ -9423,6 +9535,44 @@ export interface operations {
                 };
             };
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminAgentStartFailures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentStartFailures"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12818,6 +12968,52 @@ export interface operations {
             };
         };
     };
+    retryAgentSandbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listSchedules: {
         parameters: {
             query?: never;
@@ -13080,6 +13276,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    agentStartFailures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentStartFailures"];
                 };
             };
             404: {

@@ -6,6 +6,7 @@
 //! spelled out here. No network call happens inside a claim.
 
 use crate::DbError;
+use aurora_core::limits;
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -318,7 +319,7 @@ pub async fn begin_boot(
              resource_profile = $5::jsonb,
              start_attempt_at = now(), start_phase = 'claimed', start_detail = NULL,
              start_events = '[]'::jsonb, start_progress_at = NULL, running_at = NULL,
-             updated_at = now()
+             start_log = '[]'::jsonb, updated_at = now()
          WHERE id = $1",
     )
     .bind(sandbox)
@@ -448,6 +449,8 @@ pub async fn fail_attempt(
     if n == 0 {
         return Ok(false);
     }
+    // (FIX-029, C-612) The readiness sweep's verdict enters the boot's start log.
+    append_start_log(conn, sandbox, "phase", Some("failed"), Some(message)).await?;
     record_start_failure(
         conn,
         sandbox,
@@ -504,6 +507,133 @@ pub fn backoff_secs(failures: i32) -> f64 {
         2 => 120.0,
         _ => 600.0,
     }
+}
+
+/// (FIX-029, D-160, C-612) One entry of a boot's start log (`sandboxes.start_log`).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct StartLogEntry {
+    pub ts: DateTime<Utc>,
+    /// `phase` (a runner report or a failure verdict) or `note` (a retry).
+    pub kind: String,
+    pub phase: Option<String>,
+    pub detail: Option<String>,
+}
+
+/// (FIX-029, C-612) Append one entry to a sandbox's start log: newest first, `detail` sanitised
+/// and clamped, bounded to [`limits::SANDBOX_START_LOG_MAX`] entries and
+/// [`limits::SANDBOX_START_LOG_BYTES`] total (oldest dropped).
+pub async fn append_start_log(
+    conn: &mut PgConnection,
+    sandbox: Uuid,
+    kind: &str,
+    phase: Option<&str>,
+    detail: Option<&str>,
+) -> Result<(), DbError> {
+    let detail = detail.map(|d| aurora_core::sanitize::reason(d, limits::SANDBOX_START_LOG_DETAIL));
+    let entry = serde_json::json!({
+        "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "kind": kind,
+        "phase": phase,
+        "detail": detail,
+    });
+    // Read-modify-write the newest-first ring: prepend, then drop the oldest entries until
+    // both the entry cap and the total byte budget hold.
+    let current: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT start_log FROM sandboxes WHERE id = $1")
+            .bind(sandbox)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let mut entries: Vec<serde_json::Value> = match current {
+        Some(serde_json::Value::Array(entries)) => entries,
+        _ => Vec::new(),
+    };
+    entries.insert(0, entry);
+    entries.truncate(limits::SANDBOX_START_LOG_MAX);
+    while serde_json::to_vec(&entries).is_ok_and(|b| b.len() > limits::SANDBOX_START_LOG_BYTES)
+        && !entries.is_empty()
+    {
+        entries.pop();
+    }
+    sqlx::query("UPDATE sandboxes SET start_log = $2, updated_at = now() WHERE id = $1")
+        .bind(sandbox)
+        .bind(serde_json::Value::Array(entries))
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// (FIX-029, C-610) Retry a failed start from `failed`: clear the failure fields, reset
+/// `start_failures`, park the sandbox back in `stopped` and clear the backoff lease — all in the
+/// caller's transaction. The ordinary due-work start arm (`claim_starts`, notified right after)
+/// then claims the sandbox with a fresh `boot_id` and the ordinary `lifecycle_lease_until` —
+/// the retry itself never sets a lease, because a live lease would block that claim (and the
+/// readiness deadline is shorter than a start lease). Returns `false` when nothing was retried
+/// (the state is not `failed` or a lifecycle lease is still live) so the caller answers 409
+/// `sandbox_not_failed`; the conditional UPDATE also fences concurrent retries.
+pub async fn retry_failed_start(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    note: &str,
+) -> Result<bool, DbError> {
+    let n = sqlx::query(
+        "UPDATE sandboxes SET
+             state = 'stopped', failure_code = NULL, failure_message = NULL,
+             start_failures = 0, lifecycle_lease_until = NULL,
+             stop_reason = NULL, stop_requested_at = NULL, restart_requested_at = NULL,
+             updated_at = now()
+         WHERE agent_id = $1 AND state = 'failed'
+           AND (lifecycle_lease_until IS NULL OR lifecycle_lease_until < now())",
+    )
+    .bind(agent)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        // Another caller won, or the lease is live: 409 `sandbox_not_failed`.
+        return Ok(false);
+    }
+    let sandbox: Uuid = sqlx::query_scalar("SELECT id FROM sandboxes WHERE agent_id = $1")
+        .bind(agent)
+        .fetch_one(&mut *conn)
+        .await?;
+    append_start_log(conn, sandbox, "note", Some("retry"), Some(note)).await?;
+    Ok(true)
+}
+
+/// (FIX-029, C-613) The agent's recent start failures (newest first, ≤ `limit`) with the runner
+/// named, read from `sandbox_start_failures` — the same rows Admin › Runners lists per runner
+/// (C-586, C-613, C-614).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AgentStartFailureRow {
+    pub id: Uuid,
+    pub sandbox_id: Uuid,
+    pub runner_id: Option<Uuid>,
+    pub agent_id: Uuid,
+    pub boot_id: Option<Uuid>,
+    pub code: String,
+    pub message: String,
+    pub phase: Option<String>,
+    pub events: serde_json::Value,
+    pub elapsed_secs: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// (FIX-029, C-613) Typed query for [`AgentStartFailureRow`].
+pub async fn agent_start_failures(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    limit: i64,
+) -> Result<Vec<AgentStartFailureRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, sandbox_id, runner_id, agent_id, boot_id, code, message, phase, events,
+                elapsed_secs, created_at
+         FROM sandbox_start_failures WHERE agent_id = $1
+         ORDER BY created_at DESC, id DESC LIMIT $2",
+    )
+    .bind(agent)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?)
 }
 
 /// `(state, boot, owner, agent, stop_reason, start_failures)`.
@@ -580,6 +710,8 @@ pub async fn apply_status(
             .bind(events_json(u.events))
             .execute(&mut *conn)
             .await?;
+            // (FIX-029, C-612) The phase report enters the boot's start log.
+            append_start_log(conn, sandbox, "phase", Some(phase), u.message).await?;
             Ok((Applied::Applied, vec![]))
         }
         "running" => match state.as_str() {
@@ -683,6 +815,15 @@ pub async fn apply_status(
                     u.reason_code.unwrap_or("failed"),
                     u.message.unwrap_or(""),
                     &events_json(u.events),
+                )
+                .await?;
+                // (FIX-029, C-612) The failure verdict enters the boot's start log.
+                append_start_log(
+                    conn,
+                    sandbox,
+                    "phase",
+                    Some("failed"),
+                    u.message.or(Some(u.reason_code.unwrap_or("failed"))),
                 )
                 .await?;
             }

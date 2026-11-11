@@ -11,8 +11,8 @@ import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
 import { errorMessage } from "@/lib/api/errors";
-import { useRestartSandbox, useSandbox } from "@/lib/api/conversations";
-import type { SandboxStartAttempt } from "@/lib/api/conversations";
+import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures } from "@/lib/api/conversations";
+import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
 import { clockTime } from "@/lib/chat/layout";
 import { errorCopy } from "@/lib/chat/transcript";
 
@@ -68,9 +68,59 @@ function StartAttempt({ a }: { a: SandboxStartAttempt }) {
   );
 }
 
+/** (FIX-029, C-612) One entry of the boot's start log: the phase (or the retry note) and its detail. */
+function StartLogRow({ e }: { e: StartLogEntry }) {
+  const label = e.kind === "note" ? (e.phase === "retry" ? "Retry" : "Note") : (e.phase ?? "phase");
+  return (
+    <li className="break-words text-sm">
+      <span className="whitespace-nowrap font-mono text-xs text-muted">{clockTime(e.ts)}</span>{" "}
+      <span className="font-medium">{label}</span>
+      {e.detail ? <span className="text-ink-2">: {e.detail}</span> : null}
+    </li>
+  );
+}
+
+/** (FIX-029, C-615) The **Start log** list under **Last start attempt**, with the failure-history link. */
+function StartLog({ agentId, log }: { agentId: string; log: StartLogEntry[] }) {
+  const failures = useStartFailures(agentId);
+  return (
+    <Section id="start-log" title="Start log" description="Phases and notes of the current or last start attempt, newest first." card>
+      {log.length ? (
+        <ul className="space-y-1">
+          {log.map((e, i) => (
+            <StartLogRow key={`${e.ts}-${i}`} e={e} />
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted">Nothing logged for this attempt yet.</p>
+      )}
+      <p className="mt-3 text-sm">
+        <a className="font-semibold underline" href="#start-failure-history">
+          Recent start failures
+        </a>
+      </p>
+      <div id="start-failure-history" className="mt-2">
+        {failures.isPending ? null : failures.isError ? null : failures.data.items.length ? (
+          <ul className="space-y-1">
+            {failures.data.items.map((f) => (
+              <li key={f.id} className="break-words text-sm text-ink-2">
+                <span className="whitespace-nowrap font-mono text-xs text-muted">{clockTime(f.created_at)}</span>{" "}
+                <span className="font-medium">{f.code}</span>: {f.message}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted">No start failures in the last 30 days.</p>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 export function ComputerTab({ agentId }: { agentId: string }) {
   const q = useSandbox(agentId);
   const restart = useRestartSandbox(agentId);
+  const retry = useRetrySandbox(agentId);
   const [open, setOpen] = useState(false);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
@@ -113,10 +163,32 @@ export function ComputerTab({ agentId }: { agentId: string }) {
       ) : null}
       {v.state === "failed" ? (
         <Notice tone="danger" role="alert">
-          {errorCopy(v.failure_code).message} {v.failure_message ?? ""}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span className="min-w-0 flex-1 basis-full sm:basis-auto">
+              {errorCopy(v.failure_code).message} {v.failure_message ?? ""}
+            </span>
+            {/* (FIX-029, C-615) Retry now: disabled "Start in flight…" once the start leaves `failed` (the 202 view parks it in `stopped`). */}
+            {v.retryable || retry.isPending ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={retry.isPending || !v.retryable}
+                onClick={() => retry.mutate(undefined)}
+              >
+                {retry.isPending || !v.retryable ? "Start in flight…" : "Retry now"}
+              </Button>
+            ) : null}
+          </div>
+          {retry.error ? (
+            <p role="alert" className="mt-1 text-xs">
+              {errorMessage(retry.error)}
+            </p>
+          ) : null}
         </Notice>
       ) : null}
       {v.start_attempt ? <StartAttempt a={v.start_attempt} /> : null}
+      {/* (FIX-029, C-612/C-615) The boot's start log, live while starting, frozen at the failure. */}
+      <StartLog agentId={agentId} log={v.start_log} />
       <Section id="awake-reasons" title="Awake because" card>
         {v.keep_awake_reasons.length ? (
           <ul className="flex flex-wrap gap-2">

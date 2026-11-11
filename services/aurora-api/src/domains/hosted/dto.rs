@@ -53,9 +53,27 @@ pub struct SandboxView {
     /// reported phase and detail, the pod's Warning events (bounded) and the runner's last
     /// progress report. Reset by every new boot.
     pub start_attempt: Option<SandboxStartAttempt>,
+    /// (FIX-029, C-611) The boot's start log, newest first; true when the state is `failed` and
+    /// the failed start may be retried (C-610).
+    pub retryable: bool,
+    /// (FIX-029, C-611) The boot's start log (phases, the failure verdict, retry notes), newest
+    /// first. Reset by every new boot.
+    pub start_log: Vec<StartLogEntry>,
     pub processes: Vec<SandboxProcess>,
     pub ports: Vec<SandboxPort>,
     pub restart_to_update: bool,
+}
+
+/// (FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612).
+#[derive(Serialize, ToSchema)]
+pub struct StartLogEntry {
+    pub ts: DateTime<Utc>,
+    /// `phase` (a runner phase report or the failure verdict) or `note` (a retry).
+    pub kind: String,
+    /// The phase the entry records (`starting`, `booting`, `failed`, `retry`…).
+    pub phase: Option<String>,
+    /// The entry's detail, sanitised at write (≤ 300 chars).
+    pub detail: Option<String>,
 }
 
 /// (FIX-025, C-584) One start attempt of the agent's computer (Computer tab).
@@ -124,4 +142,33 @@ pub struct ModelReadiness {
 #[derive(Serialize, ToSchema)]
 pub struct ModelOptions {
     pub items: Vec<ModelOption>,
+}
+
+/// (FIX-029, C-613/C-614) One start failure of an agent's sandbox — the C-586 shape; the admin
+/// route adds `runner_id`.
+#[derive(Serialize, ToSchema)]
+pub struct AgentStartFailure {
+    pub id: Uuid,
+    pub sandbox_id: Uuid,
+    /// The runner that hosted the failed attempt (C-614 admin route only; `null` for a legacy
+    /// row whose runner was deleted).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runner_id: Option<Uuid>,
+    pub agent_id: Uuid,
+    /// The failure code (`10 §Failure semantics`; e.g. `supervisor_unreachable`).
+    pub code: String,
+    /// Human reason, sanitised (never a secret).
+    pub message: String,
+    /// The start attempt's last phase.
+    pub phase: Option<String>,
+    /// Warning events of the pod / home claim, newest first.
+    pub events: Vec<String>,
+    /// Seconds the attempt ran before it failed.
+    pub elapsed_secs: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AgentStartFailures {
+    pub items: Vec<AgentStartFailure>,
 }

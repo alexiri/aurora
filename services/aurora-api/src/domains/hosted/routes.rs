@@ -2,11 +2,13 @@
 //! (contract M4).
 
 use super::dto::{
-    DefaultModel, HarnessList, HarnessView, KeyReadiness, ModelOption, ModelOptions,
-    ModelReadiness, SandboxPort, SandboxProcess, SandboxStartAttempt, SandboxView,
+    AgentStartFailure, AgentStartFailures, DefaultModel, HarnessList, HarnessView, KeyReadiness,
+    ModelOption, ModelOptions, ModelReadiness, SandboxPort, SandboxProcess, SandboxStartAttempt,
+    SandboxView, StartLogEntry,
 };
 use super::{lifecycle, model};
 use crate::app::AppState;
+use crate::audit::{AuditActor, AuditEvent, Outcome};
 use crate::domains::conversations::service::{self as conv, load_agent};
 use crate::domains::runner_plane::boot;
 use crate::http::auth::Caller;
@@ -26,6 +28,8 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_sandbox))
         .routes(routes!(restart))
+        .routes(routes!(retry_sandbox))
+        .routes(routes!(start_failures))
         .routes(routes!(list_models))
         .routes(routes!(model_readiness))
         .routes(routes!(list_harnesses))
@@ -96,6 +100,8 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
             failure_code: None,
             failure_message: None,
             start_attempt: None,
+            retryable: false,
+            start_log: vec![],
             processes: vec![],
             ports: vec![],
             restart_to_update: false,
@@ -159,7 +165,7 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
     };
     Ok(SandboxView {
         agent_id: agent,
-        state: r.state,
+        state: r.state.clone(),
         boot_id: r.boot_id,
         runner_id: r.runner_id,
         image,
@@ -182,6 +188,9 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
                 .unwrap_or_default(),
             progress_at: r.start_progress_at,
         }),
+        // (FIX-029, C-611) `retryable = state == "failed"`.
+        retryable: r.state == "failed",
+        start_log: start_log_entries(&r.start_log),
         processes: processes
             .into_iter()
             .map(|p| SandboxProcess {
@@ -216,6 +225,145 @@ async fn get_sandbox(
 ) -> Result<Json<SandboxView>, ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
     Ok(Json(view(&s, &a).await?))
+}
+
+/// (FIX-029, C-611) Parse the `start_log` jsonb into `StartLogEntry`s (already newest first).
+fn start_log_entries(v: &serde_json::Value) -> Vec<StartLogEntry> {
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    let ts = e.get("ts")?.as_str()?.parse().ok()?;
+                    Some(StartLogEntry {
+                        ts,
+                        kind: e
+                            .get("kind")
+                            .and_then(|k| k.as_str())
+                            .unwrap_or("phase")
+                            .to_owned(),
+                        phase: e.get("phase").and_then(|p| p.as_str()).map(str::to_owned),
+                        detail: e.get("detail").and_then(|d| d.as_str()).map(str::to_owned),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Map the stored start-failure rows to the C-586 shape (with or without `runner_id`).
+fn failure_items(
+    rows: Vec<aurora_db::repo::sandboxes::AgentStartFailureRow>,
+    with_runner: bool,
+) -> Vec<AgentStartFailure> {
+    rows.into_iter()
+        .map(|r| {
+            let events = r
+                .events
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|e| e.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            AgentStartFailure {
+                id: r.id,
+                sandbox_id: r.sandbox_id,
+                runner_id: with_runner.then_some(r.runner_id).flatten(),
+                agent_id: r.agent_id,
+                code: r.code,
+                message: r.message,
+                phase: r.phase,
+                events,
+                elapsed_secs: r.elapsed_secs,
+                created_at: r.created_at,
+            }
+        })
+        .collect()
+}
+
+/// (FIX-029, C-613) The agent's recent start failures, newest first, ≤ 20 (C-586 shape).
+#[utoipa::path(get, path = "/agents/{agent}/start-failures", operation_id = "agentStartFailures", tag = "agents",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = AgentStartFailures), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn start_failures(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Json<AgentStartFailures>, ApiError> {
+    let a = hosted_agent(&s, &c, agent).await?;
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    let rows = aurora_db::repo::sandboxes::agent_start_failures(&mut conn, a.id, 20).await?;
+    drop(conn);
+    Ok(Json(AgentStartFailures {
+        items: failure_items(rows, false),
+    }))
+}
+
+/// (FIX-029, C-610) Retry a failed sandbox start from `failed`: clears the failure, resets the
+/// automatic-retry bound, claims the ordinary lifecycle lease, appends a retry note to the start
+/// log and notifies due work — the next start is the ordinary due-work start arm.
+#[utoipa::path(post, path = "/agents/{agent}/sandbox/retry", operation_id = "retryAgentSandbox", tag = "agents",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 202, body = SandboxView), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope), (status = 423, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn retry_sandbox(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
+    let a = hosted_agent(&s, &c, agent).await?;
+    // 423 `frozen` on an effectively frozen agent (a retry would start work).
+    crate::domains::freeze::service::ensure_agent_active_pool(&s, agent).await?;
+    let label = AuditActor::from_caller(&c).label;
+    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let (retried, previous_code) = {
+        // The note names the failure code being retried; the row is fenced by the conditional
+        // UPDATE inside `retry_failed_start`, so a concurrent retry cannot double-claim.
+        let current: Option<String> = sqlx::query_scalar(
+            "SELECT coalesce(failure_code, 'unknown') FROM sandboxes WHERE agent_id = $1",
+        )
+        .bind(agent)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(DbError::from)?
+        .flatten();
+        let note = format!(
+            "Start retried by {label} after {}.",
+            current.clone().unwrap_or_else(|| "unknown".into())
+        );
+        let ok = aurora_db::repo::sandboxes::retry_failed_start(&mut tx, agent, &note).await?;
+        (ok, current.filter(|c| c != "unknown"))
+    };
+    if !retried {
+        return Err(ApiError::conflict(
+            "sandbox_not_failed",
+            "The sandbox start is not failed (it may be in flight or its backoff lease is live).",
+        ));
+    }
+    conv::notify_work(&mut tx).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    // Best-effort audit (docs/04 §Audit): metadata carries the previous failure code only.
+    audit_event(&s, &c, &a, previous_code);
+    Ok((StatusCode::ACCEPTED, Json(view(&s, &a).await?)))
+}
+
+/// Best-effort `agent.sandbox_retry` audit row.
+fn audit_event(s: &AppState, c: &Caller, a: &AgentRow, previous_code: Option<String>) {
+    crate::audit::record(
+        s,
+        AuditEvent::new(
+            AuditActor::from_caller(c),
+            "agent.sandbox_retry",
+            Outcome::Success,
+        )
+        .org(a.org_id)
+        .workspace(a.workspace_id)
+        .target("agent", a.id)
+        .metadata(serde_json::json!({ "previous_failure_code": previous_code })),
+    );
 }
 
 /// Restart the agent's computer; its active turns fail with `agent_restarted`.

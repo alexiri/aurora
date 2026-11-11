@@ -17,6 +17,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(delete_runner))
         .routes(routes!(rotate_runner_token))
         .routes(routes!(runner_start_failures))
+        .routes(routes!(agent_start_failures))
 }
 
 /// List runners with replicas and capacity (instance administrators).
@@ -87,4 +88,18 @@ async fn runner_start_failures(
     Path(id): Path<Uuid>,
 ) -> Result<Json<RunnerStartFailures>, ApiError> {
     Ok(Json(service::start_failures(&s, id).await?))
+}
+
+/// (FIX-029, C-614) An agent's recent start failures with the runner named (instance admins).
+#[utoipa::path(get, path = "/admin/agents/{agent}/start-failures", operation_id = "adminAgentStartFailures", tag = "admin",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = crate::domains::hosted::dto::AgentStartFailures),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn agent_start_failures(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Json<crate::domains::hosted::dto::AgentStartFailures>, ApiError> {
+    Ok(Json(service::agent_start_failures(&s, agent).await?))
 }
