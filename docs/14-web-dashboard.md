@@ -162,9 +162,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   (FIX-027): the **Organization** select (caption above a one-line control with
   org avatar, name and chevron) listing the person's organizations and — for
   instance admins only — a separated **"All organizations"** entry to `/admin`;
-  and, below it and indented, the **Workspace** select for the active
-  organization's workspaces with a pinned **"All workspaces…"** entry, rendered
-  only where an organization is active (never on `/admin/*` or `/account/*`).
+  and, below it, aligned with it (same left edge and width; the nesting is
+  conveyed by order and caption, not indentation), the **Workspace** select for
+  the active organization's workspaces with a pinned **"All workspaces…"**
+  entry, rendered only where an organization is active (never on `/admin/*` or
+  `/account/*`).
   On `/admin/*` the organization trigger reads "All organizations"; on
   `/account/*` it shows the "Select organization" placeholder. The selectors
   are the only path to the admin area: the account menu has no Admin item and
@@ -183,7 +185,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - The nav lists only real destinations. There are no "coming soon"
   placeholders.
 - Below 768 px the sidebar collapses into a top bar with a menu button that
-  opens the same nav in a dialog (focus trapped, Esc closes).
+  opens the same nav in a dialog from the right, under the button (focus
+  trapped, Esc closes).
 - Frozen-entity banners (RFE-006) and the version banner render above the page
   content, inside the shell.
 - **Page header** on every shell page: breadcrumb (org/workspace/section
