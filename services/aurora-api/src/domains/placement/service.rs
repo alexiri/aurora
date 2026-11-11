@@ -531,9 +531,34 @@ pub async fn put(
             StarterKind::Secret => secrets::get(&mut *tx, s.id).await?.is_some_and(|x| {
                 Some(x.org_id) == org_id && x.workspace_id.is_none() && x.status == "active"
             }),
-            StarterKind::Connection => connections::get(&mut *tx, s.id).await?.is_some_and(|x| {
-                Some(x.org_id) == org_id && x.workspace_id.is_none() && x.status != "orphaned"
-            }),
+            StarterKind::Connection => {
+                match connections::get(&mut *tx, s.id).await? {
+                    // (FIX-038, P4-GRANTS D-123) A `custom_only` app is never granted `full`
+                    // anywhere, and that is the mode a starter connection is granted in: saving
+                    // one would make every sign-in skip it. Refused at save time, decided by the
+                    // same app restrictions the grants writer reads.
+                    Some(x)
+                        if Some(x.org_id) == org_id
+                            && x.workspace_id.is_none()
+                            && x.status != "orphaned" =>
+                    {
+                        if grants::app_restrictions(state, &x.app_id)
+                            .await?
+                            .custom_only
+                        {
+                            return Err(bad(
+                                &path,
+                                &format!(
+                                    "{} only allows custom access: a starter grant would be full access.",
+                                    x.app_id
+                                ),
+                            ));
+                        }
+                        true
+                    }
+                    _ => false,
+                }
+            }
         };
         if !ok {
             return Err(bad(

@@ -853,3 +853,188 @@ async fn choices_offer_org_level_credentials_and_never_personal_workspaces() {
         .await;
     assert_eq!(s, 404);
 }
+
+// ---- FIX-038: a `custom_only` app's connection is never saved as a starter grant ---------
+
+/// Package `pkg` (app `pkg_app`) with the given `grants:` line (may be empty).
+fn fix038_yaml(version: &str, grants: &str) -> String {
+    let host = "api.fix038.example";
+    format!(
+        r#"package: {{ id: pkg, version: {version}, contract: 1, min_core: 0.1.0, publisher: acme, name: P }}
+apps:
+  - about: {{ id: pkg_app, name: P }}
+    credentials: [ {{ name: api_token, secret: true }} ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ {{ name: api_token, label: T, type: secret, required: true }} ]
+{grants}    tools:
+      read:
+        items:
+          - {{ id: list_items, name: List, host: "{host}", path: /items, methods: [GET] }}
+    hosts:
+      - match: {{ host: "{host}" }}
+        inject:
+          - bearer: "{{credentials.api_token}}"
+"#
+    )
+}
+
+const FIX038_CUSTOM_ONLY: &str = "    grants: { custom_only: true }\n";
+
+impl Env {
+    /// An org-level connection of `pkg_app`, installed from `yaml`.
+    async fn fix038_connection(&self, yaml: &str) -> Uuid {
+        let a = crate::plugins_lifecycle::setup(&self.h).await;
+        let v = a.upload(yaml).await;
+        let v = if v["status"] == "pending_approval" {
+            let (s, b) = a.act(&v["id"], "approve").await;
+            assert_eq!(s, 200, "{b}");
+            b
+        } else {
+            v
+        };
+        assert_eq!(v["status"], "active", "{v}");
+        let id = Uuid::now_v7();
+        sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,NULL,'pkg_app','pkg','1.0.0','cc','active','x')")
+            .bind(id)
+            .bind(self.org_id().await)
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn org_id(&self) -> Uuid {
+        sqlx::query_scalar("SELECT id FROM organizations WHERE name = 'Users'")
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn fix038_custom_only_app_connection_is_refused_as_a_starter_grant() {
+    let e = env(SignupMode::Open).await;
+    let org = e
+        .shared(json!({"personal_workspace": {"enabled": true}}))
+        .await;
+    let conn = e
+        .fix038_connection(&fix038_yaml("1.0.0", FIX038_CUSTOM_ONLY))
+        .await;
+    let (s, v) = e
+        .put(json!({
+            "mode": "shared_org", "default_org_id": org,
+            "personal_workspace": {"enabled": true},
+            "starter_grants": [{"kind": "connection", "id": conn}]
+        }))
+        .await;
+    assert_eq!(s, 400, "{v}");
+    assert_eq!(v["error"]["code"].as_str(), Some("invalid_request"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"][0]["path"].as_str(),
+        Some("/starter_grants/0/id"),
+        "{v}"
+    );
+    // The error names the app.
+    assert!(
+        v["error"]["details"]["fields"][0]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("pkg_app") && m.contains("custom access")),
+        "{v}"
+    );
+    // Nothing was saved.
+    assert_eq!(
+        e.n("SELECT count(*) FROM instance_placement WHERE starter_grants <> '[]'")
+            .await,
+        0
+    );
+    // A secret of the same instance is unaffected (secrets have no manifest restrictions).
+    let key = e.org_secret(org, "org-llm-key", "generic").await;
+    let (s, _) = e
+        .put(json!({
+            "mode": "shared_org", "default_org_id": org,
+            "personal_workspace": {"enabled": true},
+            "starter_grants": [{"kind": "secret", "id": key}]
+        }))
+        .await;
+    assert_eq!(s, 200);
+}
+
+#[tokio::test]
+async fn fix038_full_mode_app_connection_is_still_saved_and_granted_at_sign_in() {
+    let e = env(SignupMode::Open).await;
+    let org = e
+        .shared(json!({"personal_workspace": {"enabled": true}}))
+        .await;
+    let conn = e.fix038_connection(&fix038_yaml("1.0.0", "")).await;
+    let (s, v) = e
+        .put(json!({
+            "mode": "shared_org", "default_org_id": org,
+            "personal_workspace": {"enabled": true},
+            "starter_grants": [{"kind": "connection", "id": conn}]
+        }))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["starter_grants"][0]["id"], json!(conn), "{v}");
+
+    // The saved starter row keeps working: the new user's default agent gets the full grant.
+    e.who("s1", "bob@example.com", Some("bobj"));
+    e.sign_in().await.unwrap();
+    assert!(e.personal("bob@example.com").await.is_some());
+    assert_eq!(
+        e.n(&format!(
+            "SELECT count(*) FROM grants g JOIN agents a ON a.id = g.agent_id \
+             JOIN workspaces w ON w.id = a.workspace_id \
+             WHERE a.is_default AND g.connection_id = '{conn}' AND g.mode = 'full' \
+             AND w.personal_owner_user_id IS NOT NULL"
+        ))
+        .await,
+        1
+    );
+    let ev: Value = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND outcome = 'success' AND actor_label = 'placement'",
+    )
+    .fetch_one(e.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(ev["connection_id"], json!(conn));
+    assert_eq!(ev["starter"], json!(true));
+    let denied = e
+        .n("SELECT count(*) FROM audit_log WHERE action = 'grant.create' AND outcome = 'denied'")
+        .await;
+    assert_eq!(denied, 0, "no skip-and-audit for a healthy starter");
+}
+
+#[tokio::test]
+async fn fix038_pre_fix_custom_only_starter_row_skips_and_audits_without_blocking_sign_in() {
+    let e = env(SignupMode::Open).await;
+    let org = e
+        .shared(json!({"personal_workspace": {"enabled": true}}))
+        .await;
+    let conn = e
+        .fix038_connection(&fix038_yaml("1.0.0", FIX038_CUSTOM_ONLY))
+        .await;
+    // A row saved before the fix (the PUT now refuses this): write it directly.
+    sqlx::query("UPDATE instance_placement SET starter_grants = $2 WHERE default_org_id = $1")
+        .bind(org)
+        .bind(json!([{"kind": "connection", "id": conn}]))
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    // Sign-in must not be blocked: the starter is skipped and the skip is audited with the
+    // established (wrong-cause but fail-open) reason.
+    e.who("s1", "bob@example.com", Some("bobj"));
+    e.sign_in().await.unwrap();
+    let (slug, _, _) = e.personal("bob@example.com").await.unwrap();
+    assert_eq!(slug, "bobj");
+    assert_eq!(e.n("SELECT count(*) FROM grants").await, 0);
+    let ev: Value = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND outcome = 'denied' AND actor_label = 'placement'",
+    )
+    .fetch_one(e.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(ev["starter"], json!(true));
+    assert_eq!(ev["reason"], "credential_unavailable");
+}
