@@ -4,7 +4,7 @@
 //! This module only stores and reads; authority (`can_use`), the feature switches and the
 //! command/cwd validation live in the API service. The label is minted here: `p` + 24 base32
 //! lowercase characters (120 bits of CSPRNG), unique and **never reused** (the unique index plus
-//! the ever-growing excluded set; a deleted share's label is never minted again).
+//! the ever-growing `preview_labels` tombstones; a deleted share's label is never minted again).
 
 use super::After;
 use super::split;
@@ -149,14 +149,17 @@ pub async fn active_for_agent<'e, E: PgExecutor<'e>>(
 const B32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 
 /// `p` + 24 base32 lowercase chars from the OS CSPRNG, excluding every label that has ever
-/// existed (a deleted share's label is never minted again; the checked set stays tiny and is
-/// loaded at most a few times ever).
+/// existed (the share rows union the `preview_labels` tombstones: a deleted share's label is
+/// never minted again; the checked set stays tiny and is loaded at most a few times ever).
 async fn mint_label(conn: &mut PgConnection) -> Result<String, DbError> {
-    let used: BTreeSet<String> = sqlx::query_scalar("SELECT label::text FROM preview_shares")
-        .fetch_all(&mut *conn)
-        .await?
-        .into_iter()
-        .collect();
+    let used: BTreeSet<String> = sqlx::query_scalar(
+        "SELECT label::text FROM preview_shares \
+         UNION SELECT label::text FROM preview_labels",
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
     for _ in 0..8 {
         let mut raw = [0u8; 15]; // 120 bits
         aws_lc_rs::rand::fill(&mut raw)
@@ -216,6 +219,14 @@ pub async fn insert(
     .bind(created_by.1)
     .execute(&mut *conn)
     .await?;
+    // The label is spent forever (FIX-043): tombstone it in the same transaction as the share
+    // row, so a deleted share's label can never be minted again. A conflict is impossible (the
+    // mint just excluded this label and tombstones are never deleted); `ON CONFLICT DO NOTHING`
+    // keeps the invariant write itself unable to fail the create.
+    sqlx::query("INSERT INTO preview_labels (label) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(&label)
+        .execute(&mut *conn)
+        .await?;
     let row = get(&mut *conn, id).await?.ok_or(DbError::NotFound)?;
     Ok((row, label))
 }
@@ -251,7 +262,8 @@ pub async fn update(
     Ok(r.rows_affected() > 0)
 }
 
-/// Deletes the share (preview sessions go with it, cascade); bumps the generation.
+/// Deletes the share (preview sessions go with it, cascade); the `preview_labels` tombstone of
+/// its label stays (a deleted share's label is never minted again); bumps the generation.
 pub async fn delete(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> {
     let row: Option<Uuid> = sqlx::query_scalar("SELECT agent_id FROM preview_shares WHERE id = $1")
         .bind(id)
