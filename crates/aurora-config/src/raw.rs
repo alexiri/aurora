@@ -73,6 +73,8 @@ pub struct RawConfig {
     pub ratelimit: RatelimitSection,
     /// (phase 4, P4-GSL) git skill library switches and limits.
     pub skills: SkillsSection,
+    /// (phase 4, P4-PRV-1) port previews: master switch, domain and limits.
+    pub previews: PreviewsSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -487,7 +489,6 @@ impl Default for ApiSection {
 pub struct SkillsSection {
     pub library: SkillsLibrarySection,
 }
-
 /// `[skills.library]` (phase 4, P4-GSL, D-149; docs/15 §Git skill library).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -506,6 +507,35 @@ impl Default for SkillsLibrarySection {
             enabled: true,
             refresh_interval_secs: 900,
             bytes_per_agent: 1024 * 1024,
+        }
+    }
+}
+
+/// `[previews]` (phase 4, P4-PRV-1, D-144; docs/15 §Port previews operations).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PreviewsSection {
+    /// Master switch: `false` (default) means every preview route answers 404
+    /// `previews_disabled`, no relay is deployed and nothing else changes.
+    pub enabled: bool,
+    /// The DNS suffix of preview hostnames, e.g. `preview.example.org` (wildcard DNS and a
+    /// wildcard TLS certificate). Required when `enabled` (startup validation).
+    pub domain: Option<String>,
+    /// `PREVIEW_SHARES_PER_AGENT` (an operator may only lower it).
+    pub shares_per_agent: u32,
+    /// `PREVIEW_SHARES_PER_ORG` (an operator may only lower it).
+    pub shares_per_org: u32,
+    /// `PREVIEW_AWAKE_CAP` in seconds; at most `hosted.background_cap_secs`.
+    pub awake_cap_secs: u64,
+}
+impl Default for PreviewsSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            domain: None,
+            shares_per_agent: 10,
+            shares_per_org: 200,
+            awake_cap_secs: 4 * 3600,
         }
     }
 }

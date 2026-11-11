@@ -210,6 +210,33 @@ pub const AVATAR_MAX: usize = 512 * KIB;
 pub const SSE_KEEPALIVE: Duration = Duration::from_secs(15);
 pub const LONG_POLL_MAX: Duration = Duration::from_secs(30);
 
+// Port previews (phase 4, P4-PRV-1, D-144, D-145; docs/02 §Limits, docs/11 §Port previews).
+/// shares per hosted agent; beyond it 409 `preview_limit`.
+pub const PREVIEW_SHARES_PER_AGENT: u32 = 10;
+/// shares per organization; beyond it 409 `preview_limit`.
+pub const PREVIEW_SHARES_PER_ORG: u32 = 200;
+/// max length of a share's start command (one line).
+pub const PREVIEW_START_COMMAND_MAX: usize = 1024;
+/// max length of a share's `cwd` (relative to `/workspace`, no `..`).
+pub const PREVIEW_CWD_MAX: usize = 200;
+/// a preview wake demand stays due work for this long (the start arm).
+pub const PREVIEW_WAKE_WINDOW: Duration = Duration::from_secs(60);
+/// the relay waits this long for a woken port, then answers its 503 page.
+pub const PREVIEW_WAKE_WAIT: Duration = Duration::from_secs(45);
+/// a request to a running sandbox whose port is not listening (no start command) waits this long.
+pub const PREVIEW_LISTEN_WAIT: Duration = Duration::from_secs(5);
+/// wakes per share per hour; beyond it 429 `preview_wake_limited`.
+pub const PREVIEW_WAKES_PER_SHARE_HOUR: u32 = 12;
+/// launches of a share's start command per share per `PREVIEW_START_WINDOW`.
+pub const PREVIEW_START_ATTEMPTS: u32 = 3;
+pub const PREVIEW_START_WINDOW: Duration = Duration::from_secs(600);
+/// each relay heartbeat of an open/recent stream refreshes `preview_active_until` by this much.
+pub const PREVIEW_AWAKE_GRACE: Duration = Duration::from_secs(120);
+/// the keep-awake reason `preview` ends this long after the boot's first heartbeat (`preview_awake_since`).
+pub const PREVIEW_AWAKE_CAP: Duration = Duration::from_secs(4 * 3600);
+/// the label of a share hostname: `p` + this many base32 chars (120 bits of CSPRNG).
+pub const PREVIEW_LABEL_CHARS: usize = 24;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +249,10 @@ mod tests {
         assert_eq!(CONDITION_BODY_BUFFER, 262_144);
         assert_eq!(SKILL_TOTAL_MAX, 32_000);
         assert_eq!(WEBHOOK_PAYLOAD_MAX, 1_048_576);
+        assert_eq!(PREVIEW_SHARES_PER_AGENT, 10);
+        assert_eq!(PREVIEW_SHARES_PER_ORG, 200);
+        assert_eq!(PREVIEW_WAKE_WINDOW, Duration::from_secs(60));
+        assert_eq!(PREVIEW_AWAKE_CAP, Duration::from_secs(4 * 3600));
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
         const { assert!(CONDITION_BODY_BUFFER <= CONDITION_BODY_BUFFER_MAX) };
     }

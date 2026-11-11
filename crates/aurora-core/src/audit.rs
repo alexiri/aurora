@@ -107,6 +107,11 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "org.unfreeze",
     "workspace.freeze",
     "workspace.unfreeze",
+    // Port previews (P4-PRV-1, D-144, D-145, SEC-80): share lifecycle and the org switch
+    "org.previews.update",
+    "preview.share.create",
+    "preview.share.delete",
+    "preview.share.update",
     // Governance and tenant settings
     "governance.update",
     "org.app_availability.update",
