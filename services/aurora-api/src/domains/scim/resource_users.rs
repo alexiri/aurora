@@ -314,16 +314,20 @@ pub async fn create_user(
 
     let mut tx = state.pool.begin().await.map_err(sq)?;
     // (c) an unremoved link of this org with the same e-mail or externalId → 409 uniqueness.
-    let dup = repo::users_by_email(&mut *tx, org.org_id, &email)
+    let by_email = repo::users_by_email(&mut *tx, org.org_id, &email)
         .await
-        .map_err(db)?
-        .into_iter()
-        .any(|u| u.state != "removed");
-    if dup {
+        .map_err(db)?;
+    if by_email.iter().any(|u| u.state != "removed") {
         return Err(ScimError::uniqueness(
             "A user with this e-mail already exists in this organization.",
         ));
     }
+    // A removed link with this e-mail is revived (C-474: "POST of a removed user
+    // re-provisions"): the tombstone keeps its id and its `user_id` under
+    // `UNIQUE (org_id, user_id)`, so the row is updated in place instead of re-inserted.
+    // Its global user always still exists (a `users` delete cascades the tombstone away,
+    // so a found tombstone implies a live global user behind it).
+    let removed = by_email.iter().find(|u| u.state == "removed").map(|u| u.id);
     if let Some(ext) = &external_id
         && repo::user_by_external_id(&mut *tx, org.org_id, ext)
             .await
@@ -341,6 +345,11 @@ pub async fn create_user(
     {
         Some(u) => (u.id, false),
         None => {
+            // A removed link with no global user behind it cannot happen (a `users` delete
+            // cascades the link away); refuse loudly rather than resurrect blindly.
+            if removed.is_some() {
+                return Err(ScimError::internal());
+            }
             let id = ids::new_id();
             let name = global_display(&input, &names).unwrap_or_else(|| email.clone());
             sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2::citext, $3)")
@@ -405,23 +414,43 @@ pub async fn create_user(
             }
         }
     }
-    let row = repo::insert_user(
-        &mut *tx,
-        &repo::NewScimUser {
-            id: ids::new_id(),
-            org_id: org.org_id,
+    // A revived tombstone is updated in place (its `scim_users.id` survives); otherwise a
+    // fresh link row is inserted.
+    let row = match removed {
+        Some(id) => repo::revive_user(
+            &mut tx,
+            org.org_id,
+            id,
             user_id,
-            external_id: external_id.as_deref(),
-            user_name: &email,
-            display_name: display.as_deref(),
-            given_name: names.0.as_deref(),
-            family_name: names.1.as_deref(),
-            state: state_str,
-            suspended_by_scim: !active && existing.is_none_or(|m| m.status != "suspended"),
-        },
-    )
-    .await
-    .map_err(uniqueness)?;
+            external_id.as_deref(),
+            &email,
+            display.as_deref(),
+            names.0.as_deref(),
+            names.1.as_deref(),
+            state_str,
+            !active && existing.is_none_or(|m| m.status != "suspended"),
+        )
+        .await
+        .map_err(db)?
+        .ok_or_else(ScimError::internal)?,
+        None => repo::insert_user(
+            &mut *tx,
+            &repo::NewScimUser {
+                id: ids::new_id(),
+                org_id: org.org_id,
+                user_id,
+                external_id: external_id.as_deref(),
+                user_name: &email,
+                display_name: display.as_deref(),
+                given_name: names.0.as_deref(),
+                family_name: names.1.as_deref(),
+                state: state_str,
+                suspended_by_scim: !active && existing.is_none_or(|m| m.status != "suspended"),
+            },
+        )
+        .await
+        .map_err(uniqueness)?,
+    };
     let ev = AuditEvent::new(
         service::actor(&caller.token.name),
         "member.add",
@@ -839,11 +868,16 @@ async fn apply_update(
         .filter(|r| r.state != "removed")
         .ok_or_else(ScimError::not_found)?;
     // Uniqueness: the new e-mail / externalId must belong to this very link (or be free).
+    // A removed link in the result is a tombstone: its `user_name` always mirrors
+    // `users.email` of the `user_id` it pins under `UNIQUE (org_id, user_id)`, so this
+    // e-mail resolves onto that pinned identity and re-pointing the link would violate
+    // the index. That is a deterministic 409 here — never the raw index error (FIX-040);
+    // POST treats the tombstone differently (revival), PUT cannot.
     for other in repo::users_by_email(&mut *tx, org.org_id, &u.email)
         .await
         .map_err(db)?
     {
-        if other.id != id && other.state != "removed" {
+        if other.id != id {
             return Err(ScimError::uniqueness(
                 "A user with this e-mail already exists in this organization.",
             ));
@@ -935,6 +969,9 @@ async fn apply_update(
             .await
             .map_err(scim_of_api)?;
         deprovision::revoke_sessions_if_last(&mut tx, row.user_id)
+            .await
+            .map_err(scim_of_api)?;
+        deprovision::cancel_invitations(&mut tx, &row.user_name)
             .await
             .map_err(scim_of_api)?;
     } else if want_active && row.state == "suspended" {
