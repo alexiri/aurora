@@ -1,8 +1,8 @@
 # Implementation progress
 
-Last updated: 2026-11-09 (phase 2 complete: reconciled with git through 4ba0fea8, FIX-014 merged; FEATURES reconciled the same day)
+Last updated: 2026-11-11 (phase 2 complete: reconciled with git through 4ba0fea8, FIX-014 merged; FEATURES reconciled the same day; OPS-024 spec written after the 2026-11-11 production `helm upgrade` timeout, chart fix 192c4fd4)
 
-Scope: **Phase 0 (M0–M7) and phase 1 are complete and merged to `master`.** Current: **phase 2** (in progress); lanes branch from `master` in worktrees and merge back to `master` (owner, 2026-11-08: no phase branches). Phases 3 and 4 after 1 and 2; phase 5 = OPS-021, OPS-022, P5-SLACK. The plan for everything left is in §Remaining work plan (by feature).
+Scope: **Phase 0 (M0–M7) and phase 1 are complete and merged to `master`.** Current: **phase 2** (in progress); lanes branch from `master` in worktrees and merge back to `master` (owner, 2026-11-08: no phase branches). Phases 3 and 4 after 1 and 2; phase 5 = OPS-021, OPS-022, OPS-024, P5-SLACK. The plan for everything left is in §Remaining work plan (by feature).
 
 ## Summary by phase
 
@@ -15,8 +15,8 @@ Counted from the task tables below. The coordinator updates this table at every 
 | 2 | 52 | 51 | 1 (FIX-017: owner real-cluster install) | 0 | 0 | 0 | §Phase 2: remaining tasks |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | §Phase 3 tasks (**phase 3 closed 2026-11-10**: AUDIT-003 + its follow-ups) |
 | 4 | 31 | 22 | 1 (P4-PRV-2, after P4-PRV-1) | 0 | 2 (AUDIT-004, P4-TERM) | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks (six items moved to phase 5 by the owner, 2026-11-09, D-138) |
-| 5 | 11 | 0 | 0 | 0 | 10 (OPS-021, P5-SLACK, P4-S3, P4-LLM, P4-011B, P4-SSH-1, P4-SSH-2, P4-EVAL, P5-ASRC, P5-CERN-ADDONS) | 1 (OPS-022 deferred) | §Phase 5 tasks |
-| **All** | **236** | **206** | **5** | **3** | **12** | **8** | |
+| 5 | 12 | 0 | 0 | 0 | 11 (OPS-021, P5-SLACK, P4-S3, P4-LLM, P4-011B, P4-SSH-1, P4-SSH-2, P4-EVAL, P5-ASRC, P5-CERN-ADDONS, OPS-024) | 1 (OPS-022 deferred) | §Phase 5 tasks |
+| **All** | **237** | **206** | **5** | **3** | **13** | **8** | |
 
 **Phase 2 build work is complete (48/48, 2026-11-09).** AUDIT-002 (`docs/audit/phase2-exit.md`) found every runnable check green; its defect (F-1 → FIX-014) and doc findings (F-2..F-7) are closed. Not evidenced, pending the owner: the real-cluster Helm install and project-key signing (no cluster; CI-only key), and GitHub CI itself (replaced by local runs, owner-accepted). **Phase 3 started 2026-11-09** on the owner's "go on, don't stop". The open questions went to the coordinator's recommendations: the real-cluster install and real-key signing stay recorded as known gaps; chat v2 gets a compact header (P2-UI-5b); both sides of the chat render as Markdown (owner, 2026-11-09); image visibility waits for CI to return. CI on GitHub is not running (see §Blockers), so local verification is the merge gate.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -391,6 +391,7 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | P5-SLACK | Slack connector (was P4-SLACK; moved to phase 5 by the owner, 2026-11-08) | `21 §Other later items`, `19 §Phase 4+` | L | Rust | the connector contract (`13`) | new connector crate only (no core change per `21`) | needed | planned (phase 5) |
 | P5-ASRC | Addon sources: third-party package repositories (repo manifest `aurora-addons.yaml`, signing key + TOFU registration, ingestion into the ordinary lifecycle, poll interval `6h\|12h\|1d\|1w\|2w\|1mo\|never` default `1d`, manual "Check for updates" / "Check now" buttons, update badges, key-change re-confirm, `docs/22` format doc) | owner 2026-11-10, `09 §10`, D-159, C-590..C-609, SEC-86 | L | both | — | api plugins/addon-sources domains, poll job, `docs/22-addon-repos.md`, `09 §10`, `03`/`05`/`14`/`15`/`17` | `docs/tasks/P5-ASRC.md` | todo |
 | P5-CERN-ADDONS | `aurora-addons-cern` repo (exists, empty): `aurora-addons.yaml` + release script + CI (build + fixture-run + signature-verify on every push with manifest regen fail-on-drift, no auto-commit; on `v*` tags sign with the repo key from an Actions secret and publish the signed `.aurora-plugin` archives as immutable GitHub release assets — the manifest's URLs; Actions run artifacts don't count); `cern-phonebook` (xldap.cern.ch anonymous LDAPS people lookup: e-mail, department, office, manager chain, e-groups; gateway LDAP virtual-host lane or in-sandbox fallback — owner picks at start) and `cern-maps` (keyless maps.cern.ch search/FeatureServer/GeocodeServer/NAServer routing + URL-parameter deep links; APIs verified live 2026-11-10) | owner 2026-11-10, P5-ASRC | M–L | package (+ Rust if the LDAP lane) | P5-ASRC | `/home/alex/agent-platform/aurora-addons-cern/**` (outside the Aurora repo), gateway LDAP lane if chosen | `docs/tasks/P5-CERN-ADDONS.md` | todo |
+| OPS-024 | `helm upgrade` covered by CI: kind-e2e upgrade legs (value-only `helm upgrade` with `--wait` on the running kind stack) + `scripts/guards/hook-policies.sh` (every `pre-upgrade` hook job using the Kubernetes API selected by a hook-rendered NetworkPolicy, and on Cilium also a `kube-apiserver` CNP) + docs | owner 2026-11-11, found by the 2026-11-11 production timeout (fixed 192c4fd4), install-helm §Known limits (migrate-policy hang) | M | ops | — | `scripts/e2e/kind.sh` (or a new script + its nightly line), `scripts/guards/hook-policies.sh` + one `run-all.sh` line, docs upgrades/18/install-helm; minimal chart fixes only if a leg finds a defect (OPS-011 convention) | `docs/tasks/OPS-024.md` | todo |
 
 Moved from phase 4 by the owner, 2026-11-09 (D-138). The ids keep their `P4-` prefix because the specs, decisions and SEC rows already cite them; their spec text keeps its "(phase 4, …)" tags as the spec batch they were written in, and they are implemented in phase 5.
 
@@ -459,7 +460,7 @@ Collisions serialized: **P3-013 after P3-014** (both rewrite gateway credential 
 
 Collisions serialized: **P4-GRP-2 after P4-GRP-1** (SCIM writes the groups model); **P4-PRV-2 after P4-PRV-1**. P4-NARR and P4-UTOK stay unscheduled (Q11). **Moved to phase 5 (owner, 2026-11-09, D-138):** P4-SSH-1, P4-SSH-2, P4-LLM, P4-EVAL, P4-S3, P4-011B (park-and-resume and Web Push).
 
-**Phase 5** (starts on the owner's word): OPS-022 (deferred), OPS-021, P5-SLACK, and the six items moved from phase 4; SSH and evals need a spec batch first.
+**Phase 5** (starts on the owner's word): OPS-022 (deferred), OPS-021, OPS-024, P5-SLACK, and the six items moved from phase 4; SSH and evals need a spec batch first.
 
 ### Number reservations (the coordinator assigns a block in every lane spec)
 
