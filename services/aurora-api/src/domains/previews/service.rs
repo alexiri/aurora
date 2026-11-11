@@ -567,6 +567,10 @@ pub async fn set_org_enabled(
     .execute(&mut *tx)
     .await
     .map_err(DbError::from)?;
+    // (FIX-042) The next home sync must carry the (possibly empty) `previews` part so a running
+    // sandbox's share list is emptied at once: bump every agent of the org (the `bump_org`
+    // pattern) inside the same transaction.
+    aurora_db::repo::skills::bump_org(&mut tx, org).await?;
     let ev = event(c, "org.previews.update")
         .org(org)
         .target("organization", org)

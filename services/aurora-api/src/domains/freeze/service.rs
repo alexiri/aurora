@@ -158,6 +158,10 @@ pub async fn freeze(
     let mut flush = Vec::new();
     if created {
         flush = apply_effects(&mut tx, target).await?;
+        // (FIX-042) The next home sync must carry an empty `previews` part (the allow-list dies
+        // with the sync, `11 §Port previews`): bump the affected agents' generation inside the
+        // same transaction so the sync is not left to an unrelated change.
+        bump_agents_of(&mut tx, target).await?;
         let mut ev = AuditEvent::new(
             who.actor.clone(),
             format!("{}.freeze", label(target.scope)),
@@ -205,6 +209,9 @@ pub async fn unfreeze(
             return Err(insufficient(who.authority, &cur.authority));
         }
         repo::unfreeze(&mut tx, target.scope, target.id).await?;
+        // (FIX-042) Unfreeze bumps too so access restoration is not delayed: the next home sync
+        // re-carries the share list inside the same transaction.
+        bump_agents_of(&mut tx, target).await?;
         let mut ev = AuditEvent::new(
             who.actor.clone(),
             format!("{}.unfreeze", label(target.scope)),
@@ -246,6 +253,23 @@ pub async fn unfreeze(
 fn audit_failed(e: DbError) -> ApiError {
     tracing::error!(error = %e, "freeze audit write failed");
     ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
+}
+
+/// (FIX-042) Bumps the home-sync generation of every agent the freeze state change touches
+/// (the `bump_org` pattern): the next sync re-renders the `previews` part — empty after a
+/// freeze, the share list again after an unfreeze — without waiting for an unrelated change.
+async fn bump_agents_of(tx: &mut PgConnection, target: &Target) -> Result<(), DbError> {
+    let agents = repo::agents_in(tx, target.scope, target.id).await?;
+    if agents.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE agents SET home_sync_generation = home_sync_generation + 1 WHERE id = ANY($1)",
+    )
+    .bind(&agents)
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
 }
 
 /// Effects of a new freeze that are database state (docs/04 §Freeze effects 1–3): pending

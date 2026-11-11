@@ -814,3 +814,218 @@ async fn preview_start_demanded_via_arm5_shape_is_claimable() {
         .unwrap();
     assert_eq!(d.len(), 0, "a frozen agent never claims starts");
 }
+
+// ---- FIX-042: the empty `previews` part reaches the sync on every shrinking transition ----
+
+/// The `shares` array of the next rendered home-sync `previews` part (`home::render`, the same
+/// call `home_checksum.rs` makes). `None` when the part is absent (the instance switch is off).
+async fn rendered_shares(r: &Rig, agent: Uuid) -> Option<Vec<Value>> {
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let claim = aurora_db::repo::hosted::HomeSyncClaim {
+        sandbox_id: Uuid::now_v7(),
+        boot_id: Uuid::now_v7(),
+        agent_id: agent,
+        generation: 1,
+        harness_id: None,
+    };
+    let parts = aurora_api::domains::hosted::home::render(&r.h.state, &mut conn, &claim)
+        .await
+        .unwrap();
+    parts
+        .iter()
+        .find(|p| p.part.kind.as_str() == "previews")
+        .map(|p| {
+            p.part
+                .entries
+                .iter()
+                .flat_map(|e| e["shares"].as_array().cloned().unwrap_or_default())
+                .collect()
+        })
+}
+
+async fn home_generation(r: &Rig, agent: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT home_sync_generation FROM agents WHERE id = $1")
+        .bind(agent)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap()
+}
+
+/// A hosted agent with a running sandbox (the rig's real runner) and one active share with a
+/// start command: the state every transition starts from.
+async fn running_agent_with_share(r: &Rig) -> (Uuid, Uuid) {
+    let agent = hosted_agent_on(r, r.rep).await;
+    let (_, v) = r
+        .create(agent, json!({"port": 3000, "start_command": "npm run dev"}))
+        .await;
+    assert_eq!(v["state"], "active", "{v}");
+    let share: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    (agent, share)
+}
+
+/// A workspace- and org-owner session cookie: the caller for the org settings PATCH (the org
+/// switch) and the freeze routes.
+async fn owner_cookie(r: &Rig) -> String {
+    let u = r.h.user("prv-owner@x.io", false).await;
+    r.h.member(r.org, u, "owner", "active").await;
+    r.h.bind_ws(r.ws, u, "owner").await;
+    let (_, st) = r.h.good_session(u).await;
+    cookie(&st)
+}
+
+#[tokio::test]
+async fn org_switch_off_bumps_and_the_next_sync_empties_the_share_list() {
+    let r = prv_rig().await;
+    let (agent, _share) = running_agent_with_share(&r).await;
+    let pre = home_generation(&r, agent).await;
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part is packed");
+    assert_eq!(shares.len(), 1, "{shares:?}");
+
+    // The org switch rides the real org settings PATCH (the audited `org.previews.update`).
+    let oc = owner_cookie(&r).await;
+    let (s, _, v) =
+        r.h.send(
+            Method::PATCH,
+            &format!("/v1/orgs/{}", r.org),
+            &[("cookie", &oc), ("origin", ORIGIN)],
+            Some(json!({"settings": {"previews_enabled": false}})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    // The switch bumped the generation (the sync is not left to an unrelated change)…
+    assert!(
+        home_generation(&r, agent).await > pre,
+        "org switch off must bump the home-sync generation"
+    );
+    // …and the next rendered sync carries the `previews` part with an empty list.
+    let shares = rendered_shares(&r, agent).await.expect(
+        "the part must still be packed with an empty list so the supervisor replaces its memory",
+    );
+    assert!(shares.is_empty(), "{shares:?}");
+
+    // On again (same route): the share (kept, inert) returns.
+    let (s, _, v) =
+        r.h.send(
+            Method::PATCH,
+            &format!("/v1/orgs/{}", r.org),
+            &[("cookie", &oc), ("origin", ORIGIN)],
+            Some(json!({"settings": {"previews_enabled": true}})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part is packed");
+    assert_eq!(shares.len(), 1, "{shares:?}");
+}
+
+#[tokio::test]
+async fn instance_switch_off_keeps_the_part_absent_entirely() {
+    // The instance switch is off (the rig's default): the routes are 404, so the share is
+    // seeded directly — and still no `previews` part at all, empty or otherwise.
+    let r = rig_with(|_| {}).await;
+    r.org_on().await;
+    let agent = hosted_agent_on(&r, r.rep).await;
+    sqlx::query(
+        "INSERT INTO preview_shares (id, org_id, workspace_id, agent_id, port, label, state, start_command) \
+         VALUES ($1,$2,$3,$4,3000,'paaaaaaaaaaaaaaaaaaaaaaaa','active','npm run dev')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(r.org)
+    .bind(r.ws)
+    .bind(agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let shares = rendered_shares(&r, agent).await;
+    assert!(
+        shares.is_none(),
+        "no previews part when the instance is off"
+    );
+}
+
+#[tokio::test]
+async fn freeze_bumps_and_the_next_sync_empties_the_share_list_unfreeze_restores() {
+    let r = prv_rig().await;
+    let (agent, _share) = running_agent_with_share(&r).await;
+    let pre = home_generation(&r, agent).await;
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part is packed");
+    assert_eq!(shares.len(), 1, "{shares:?}");
+
+    // Freeze via the real route (a workspace owner; `can_own`).
+    let oc = owner_cookie(&r).await;
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/agents/{agent}/freeze"),
+            &[("cookie", &oc), ("origin", ORIGIN)],
+            Some(json!({"reason": "incident 42"})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    // The freeze bumped the generation…
+    assert!(
+        home_generation(&r, agent).await > pre,
+        "freeze must bump the home-sync generation"
+    );
+    // …and the next rendered sync carries an empty list (the allow-list dies with the sync).
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part must still be packed with an empty list");
+    assert!(shares.is_empty(), "{shares:?}");
+
+    // Unfreeze bumps too (access restoration is not delayed) and restores the list.
+    let pre = home_generation(&r, agent).await;
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/agents/{agent}/unfreeze"),
+            &[("cookie", &oc), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    assert!(
+        home_generation(&r, agent).await > pre,
+        "unfreeze must bump the home-sync generation"
+    );
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part is packed");
+    assert_eq!(shares.len(), 1, "{shares:?}");
+}
+
+#[tokio::test]
+async fn pausing_or_deleting_the_last_share_syncs_an_empty_list() {
+    let r = prv_rig().await;
+    let (agent, share) = running_agent_with_share(&r).await;
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part is packed");
+    assert_eq!(shares.len(), 1, "{shares:?}");
+
+    // Pause the only active share: the share row stays, the list empties.
+    let (s, v) = r.patch(share, json!({"state": "paused"})).await;
+    assert_eq!(s, 200, "{v}");
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part must still be packed with an empty list");
+    assert!(shares.is_empty(), "{shares:?}");
+
+    // Back active, then delete: the same empty list.
+    let (s, v) = r.patch(share, json!({"state": "active"})).await;
+    assert_eq!(s, 200, "{v}");
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part is packed");
+    assert_eq!(shares.len(), 1, "{shares:?}");
+    assert_eq!(r.delete(share).await, 204);
+    let shares = rendered_shares(&r, agent)
+        .await
+        .expect("the part must still be packed with an empty list");
+    assert!(shares.is_empty(), "{shares:?}");
+}
