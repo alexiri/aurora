@@ -101,6 +101,64 @@
         ]
       }
     },
+    "/v1/admin/agents/{agent}/start-failures": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "(FIX-029, C-614) An agent's recent start failures with the runner named (instance admins).",
+        "operationId": "adminAgentStartFailures",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentStartFailures"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/app-instances": {
       "get": {
         "tags": [
@@ -5366,6 +5424,77 @@
         ]
       }
     },
+    "/v1/agents/{agent}/sandbox/retry": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "(FIX-029, C-610) Retry a failed sandbox start from `failed`: clears the failure, resets the\nautomatic-retry bound, claims the ordinary lifecycle lease, appends a retry note to the start\nlog and notifies due work — the next start is the ordinary due-work start arm.",
+        "operationId": "retryAgentSandbox",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/schedules": {
       "get": {
         "tags": [
@@ -5784,6 +5913,57 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/start-failures": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "(FIX-029, C-613) The agent's recent start failures, newest first, ≤ 20 (C-586 shape).",
+        "operationId": "agentStartFailures",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentStartFailures"
                 }
               }
             }
@@ -21792,6 +21972,89 @@
           }
         }
       },
+      "AgentStartFailure": {
+        "type": "object",
+        "description": "(FIX-029, C-613/C-614) One start failure of an agent's sandbox — the C-586 shape; the admin\nroute adds `runner_id`.",
+        "required": [
+          "id",
+          "sandbox_id",
+          "agent_id",
+          "code",
+          "message",
+          "events",
+          "created_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "code": {
+            "type": "string",
+            "description": "The failure code (`10 §Failure semantics`; e.g. `supervisor_unreachable`)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "elapsed_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds the attempt ran before it failed."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Warning events of the pod / home claim, newest first."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human reason, sanitised (never a secret)."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start attempt's last phase."
+          },
+          "runner_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The runner that hosted the failed attempt (C-614 admin route only; `null` for a legacy\nrow whose runner was deleted)."
+          },
+          "sandbox_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AgentStartFailures": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentStartFailure"
+            }
+          }
+        }
+      },
       "AgentToken": {
         "type": "object",
         "required": [
@@ -35819,6 +36082,8 @@
           "agent_id",
           "state",
           "keep_awake_reasons",
+          "retryable",
+          "start_log",
           "processes",
           "ports",
           "restart_to_update"
@@ -35874,6 +36139,10 @@
           "restart_to_update": {
             "type": "boolean"
           },
+          "retryable": {
+            "type": "boolean",
+            "description": "(FIX-029, C-611) The boot's start log, newest first; true when the state is `failed` and\nthe failed start may be retried (C-610)."
+          },
           "runner_id": {
             "type": [
               "string",
@@ -35891,6 +36160,13 @@
                 "description": "(FIX-025, C-584) The last start attempt, when there was one: when it was claimed, its last\nreported phase and detail, the pod's Warning events (bounded) and the runner's last\nprogress report. Reset by every new boot."
               }
             ]
+          },
+          "start_log": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StartLogEntry"
+            },
+            "description": "(FIX-029, C-611) The boot's start log (phases, the failure verdict, retry notes), newest\nfirst. Reset by every new boot."
           },
           "started_at": {
             "type": [
@@ -37500,6 +37776,38 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "StartLogEntry": {
+        "type": "object",
+        "description": "(FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612).",
+        "required": [
+          "ts",
+          "kind"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The entry's detail, sanitised at write (≤ 300 chars)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`phase` (a runner phase report or the failure verdict) or `note` (a retry)."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The phase the entry records (`starting`, `booting`, `failed`, `retry`…)."
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

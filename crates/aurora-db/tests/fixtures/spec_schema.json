@@ -739,6 +739,7 @@
       "start_detail",
       "start_events",
       "start_failures",
+      "start_log",
       "start_phase",
       "start_progress_at",
       "state",

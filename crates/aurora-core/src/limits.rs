@@ -155,6 +155,14 @@ pub const REPLICA_ONLINE_THRESHOLD: Duration = Duration::from_secs(90);
 pub const RUNNER_SUPERVISOR_HELLO: Duration = Duration::from_secs(60);
 /// (FIX-025) How often each API replica runs the sandbox readiness sweep.
 pub const SANDBOX_READINESS_SWEEP: Duration = Duration::from_secs(10);
+/// (FIX-029, D-160, C-612) Entries and bytes of a boot's start-log ring
+/// (`sandboxes.start_log`): at most 30 entries totalling 8 KiB, oldest dropped; each
+/// entry's `detail` is at most 300 chars after sanitising.
+pub const SANDBOX_START_LOG_MAX: usize = 30;
+/// (FIX-029, D-160, C-612) Total serialized size of one boot's start log.
+pub const SANDBOX_START_LOG_BYTES: usize = 8 * KIB;
+/// (FIX-029, D-160, C-612) Maximum length of one start-log entry's `detail`.
+pub const SANDBOX_START_LOG_DETAIL: usize = 300;
 /// (P4-MCON) A connector host not seen for this long leaves the catalogue and `host_running`.
 pub const CONNECTOR_HOST_STALE: Duration = Duration::from_secs(90);
 /// (P4-MCON) Connector host rows older than this are pruned.

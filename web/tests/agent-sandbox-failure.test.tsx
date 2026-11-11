@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -13,6 +13,7 @@ vi.mock("@/components/agents/instructions-tab", () => ({ InstructionsTab: () => 
 vi.mock("@/components/agents/delete-zone", () => ({ DeleteZone: () => null }));
 
 import { AgentPage } from "@/components/agents/agent-page";
+import { ComputerTab } from "@/components/agents/computer-tab";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -49,8 +50,10 @@ function routes(sandbox: Record<string, unknown>) {
       json(200, {
         agent_id: "a1", state: "stopped", boot_id: null, runner_id: null, image: null, started_at: null,
         keep_awake_reasons: [], failure_code: null, failure_message: null, start_attempt: null,
+        retryable: false, start_log: [],
         processes: [], ports: [], restart_to_update: false, ...sandbox,
       }),
+    "GET /v1/agents/a1/start-failures": () => json(200, { items: [] }),
   };
 }
 
@@ -108,5 +111,79 @@ describe("agent header sandbox pill (FIX-025)", () => {
     // The failure notice carries the human reason too.
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("could not reach the runner");
+  });
+});
+
+// FIX-029 (C-611/C-612/C-615): the Computer tab renders the boot's start log under Last start
+// attempt with a link to the failure history, and the failed notice gains **Retry now**.
+describe("Computer tab start log and retry (FIX-029)", () => {
+  it("renders the Start log (newest first) and the history link, empty state included", async () => {
+    renderPage(
+      routes({
+        state: "failed",
+        failure_code: "pod_failed",
+        failure_message: "the pod crashed",
+        retryable: true,
+        start_log: [
+          { ts: "2026-11-10T10:01:00Z", kind: "phase", phase: "failed", detail: "the pod crashed" },
+          { ts: "2026-11-10T10:00:10Z", kind: "phase", phase: "pulling", detail: "pulling image" },
+        ],
+      }),
+    );
+    fireEvent.click(await screen.findByRole("tab", { name: "Computer" }));
+    expect(await screen.findByText("Start log")).toBeTruthy();
+    expect(screen.getAllByText(/the pod crashed/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/pulling image/)).toBeTruthy();
+    expect(screen.getByText("Recent start failures")).toBeTruthy();
+  });
+
+  it("shows Retry now on a retryable failure, disabled as 'Start in flight…' once the retry answered", async () => {
+    const calls: string[] = [];
+    // A deferred POST: the pending state is observable.
+    let release: (v: Response) => void = () => undefined;    const rts: Record<string, Handler> = {
+      ...routes({
+        state: "failed",
+        failure_code: "pod_failed",
+        failure_message: "the pod crashed",
+        retryable: true,
+        start_log: [{ ts: "2026-11-10T10:01:00Z", kind: "phase", phase: "failed", detail: "the pod crashed" }],
+      }),
+      // A deferred POST: the pending state is observable.
+      "POST /v1/agents/a1/sandbox/retry": () =>
+        new Promise<Response>((res) => {
+          calls.push("retry");
+          release = res;
+        }),
+    };
+    mockFetch(rts);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ComputerTab agentId="a1" />
+      </QueryClientProvider>,
+    );
+    const btn = await screen.findByRole("button", { name: "Retry now" });
+    fireEvent.click(btn);
+    await waitFor(() => expect(calls).toContain("retry"));
+    // While the POST is in flight the button is disabled ("Start in flight…", C-615).
+    const inflight = await screen.findByRole("button", { name: "Start in flight…" });
+    expect((inflight as HTMLButtonElement).disabled).toBe(true);
+    // The 202 view parks the sandbox in `stopped`: the failed notice (and the button) go away.
+    release(
+      json(202, {
+        agent_id: "a1", state: "stopped", boot_id: null, runner_id: null, image: null, started_at: null,
+        keep_awake_reasons: [], failure_code: null, failure_message: null, start_attempt: null,
+        retryable: false, start_log: [], processes: [], ports: [], restart_to_update: false,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Start in flight…" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("hides Retry now when the sandbox is not retryable (another state or frozen)", async () => {
+    renderPage(routes({ state: "starting", retryable: false }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Computer" }));
+    await screen.findByText("Start log");
+    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
   });
 });

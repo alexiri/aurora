@@ -33,6 +33,7 @@ mod conversation_lifecycle;
 mod conversations;
 mod counters;
 mod direct_visibility;
+mod fix_029;
 mod foundation;
 mod freeze;
 mod governance;

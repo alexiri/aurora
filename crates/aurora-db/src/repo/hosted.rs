@@ -716,6 +716,8 @@ pub struct SandboxViewRow {
     pub start_detail: Option<String>,
     pub start_events: serde_json::Value,
     pub start_progress_at: Option<DateTime<Utc>>,
+    /// (FIX-029, C-611) The boot's start log, newest first (Computer tab).
+    pub start_log: serde_json::Value,
     pub active_turn: bool,
     pub busy_process: bool,
     pub armed_watch: bool,
@@ -794,6 +796,7 @@ pub async fn sandbox_view(
             (SELECT ri.started_at FROM runtime_intervals ri WHERE ri.boot_id = s.boot_id) AS started_at,
             s.failure_code, s.failure_message, s.listening_ports,
             s.start_attempt_at, s.start_phase, s.start_detail, s.start_events, s.start_progress_at,
+            coalesce(s.start_log, '[]'::jsonb) AS start_log,
             EXISTS (SELECT 1 FROM turns t WHERE t.agent_id = s.agent_id AND (
                 (t.role = 'turn' AND t.status IN ('queued','dispatched','running'))
                 OR (t.role = 'followup' AND t.status = 'joining'))) AS active_turn,

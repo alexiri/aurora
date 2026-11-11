@@ -17,6 +17,8 @@ export type TranscriptEvent = Omit<components["schemas"]["TranscriptEvent"], "pa
   payload: Record<string, unknown>;
 };
 export type SendResult = components["schemas"]["MessageAccepted"];
+export type StartLogEntry = components["schemas"]["StartLogEntry"];
+export type AgentStartFailure = components["schemas"]["AgentStartFailure"];
 
 // Not in the generated schema yet (wrapper routes below).
 export interface SandboxStartAttempt {
@@ -37,6 +39,10 @@ export interface SandboxView {
   failure_code: string | null;
   failure_message: string | null;
   start_attempt: SandboxStartAttempt | null;
+  /** (FIX-029, C-611) The failed start may be retried (state `failed`). */
+  retryable: boolean;
+  /** (FIX-029, C-611) The boot's start log, newest first (C-612). */
+  start_log: StartLogEntry[];
   processes: { id: string; name: string; state: string; busy: boolean; started_at: string | null }[];
   ports: { port: number; protocol: string }[];
   restart_to_update: boolean;
@@ -88,6 +94,10 @@ export const chatApi = {
   sendNow: (turn: string) => unwrap(api.POST("/v1/turns/{id}/send-now", { params: { path: { id: turn } } })),
   sandbox: (agent: string) => call<SandboxView>("GET", `/v1/agents/${agent}/sandbox`),
   restart: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/restart`),
+  /** (FIX-029, C-610) Retry a failed start: 202 → the parked sandbox view. */
+  retry: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/sandbox/retry`),
+  /** (FIX-029, C-613) The agent's recent start failures, newest first (≤ 20). */
+  startFailures: (agent: string) => unwrap(api.GET("/v1/agents/{agent}/start-failures", { params: { path: { agent } } })),
   models: (agent: string) => call<{ items: ModelOption[] }>("GET", `/v1/agents/${agent}/models`),
 };
 
@@ -118,6 +128,27 @@ export function useRestartSandbox(agentId: string) {
   return useMutation({
     mutationFn: () => chatApi.restart(agentId),
     onSuccess: (view) => qc.setQueryData(["agents", agentId, "sandbox"], view),
+  });
+}
+/** (FIX-029, C-610) Retry a failed start; the 202 view parks the sandbox back in `stopped`. */
+export function useRetrySandbox(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => chatApi.retry(agentId),
+    onSuccess: (view) => {
+      qc.setQueryData(["agents", agentId, "sandbox"], view);
+      // The start arm claims the retry on the next runner poll: refetch to follow the new boot.
+      void qc.invalidateQueries({ queryKey: ["agents", agentId, "start-failures"] });
+    },
+  });
+}
+/** (FIX-029, C-613) The agent's recent start failures (newest first, ≤ 20). */
+export function useStartFailures(agentId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["agents", agentId, "start-failures"] as const,
+    queryFn: () => chatApi.startFailures(agentId),
+    enabled,
+    retry: false,
   });
 }
 export function useModels(agentId: string, enabled: boolean) {

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckIcon, CopyIcon, MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import type { TranscriptEvent } from "@/lib/api/conversations";
+import { chatApi } from "@/lib/api/conversations";
 import { useWorkspace } from "@/lib/api/queries";
 import { clockTime, type Block, type Row } from "@/lib/chat/layout";
 import type { TranscriptState } from "@/lib/chat/transcript";
@@ -16,7 +17,7 @@ import { cn } from "@/lib/utils";
 
 import { ActionApprovalNote, ApprovalCard } from "./approval-card";
 import { AttachmentCard } from "./attachments";
-import { ErrorBlock } from "./status-rows";
+import { ErrorBlock, RetryStart, isRetryableCode } from "./status-rows";
 import { ToolCallGroup } from "./tool-call-group";
 import type { AgentIdent } from "./types";
 
@@ -137,6 +138,7 @@ function BlockView({
   base,
   convId,
   side,
+  agentId,
 }: {
   block: Block;
   state: TranscriptState;
@@ -144,6 +146,8 @@ function BlockView({
   base: string;
   convId: string;
   side: "person" | "agent";
+  /** The agent of the chat, when known (the Chat tab passes it): enables **Retry now** (C-615). */
+  agentId?: string;
 }) {
   switch (block.kind) {
     case "bubble":
@@ -171,10 +175,24 @@ function BlockView({
     }
     case "error": {
       const p = block.ev.payload;
-      return block.ev.type === "error" ? (
-        <TurnError code={s(p.code)} message={s(p.message)} base={base} wsId={wsId} />
+      const turnId = s(p.turn_id);
+      const retryProps =
+        agentId && turnId
+          ? { agentId, turnId, convId, state }
+          : null;
+      if (block.ev.type === "error") {
+        const code = s(p.code);
+        return retryProps ? (
+          <TurnErrorWithRetry code={code} message={s(p.message)} base={base} wsId={wsId} {...retryProps} />
+        ) : (
+          <TurnError code={code} message={s(p.message)} base={base} wsId={wsId} />
+        );
+      }
+      const code = s(p.error_code);
+      return retryProps ? (
+        <TurnErrorWithRetry code={code} base={base} wsId={wsId} {...retryProps} />
       ) : (
-        <TurnError code={s(p.error_code)} base={base} wsId={wsId} />
+        <TurnError code={code} base={base} wsId={wsId} />
       );
     }
   }
@@ -184,6 +202,47 @@ function BlockView({
 function TurnError({ code, message, base, wsId }: { code: string; message?: string; base: string; wsId: string }) {
   const ws = useWorkspace(wsId);
   return <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"} />;
+}
+
+/** The error block with **Retry now** (FIX-029, C-615): the chat's start-failure codes, agent-side. */
+function TurnErrorWithRetry({
+  code,
+  message,
+  base,
+  wsId,
+  agentId,
+  turnId,
+  convId,
+  state,
+}: {
+  code: string;
+  message?: string;
+  base: string;
+  wsId: string;
+  agentId: string;
+  /** The failed turn: its text (from its `turn.queued` event) is re-posted after a 202 (C-615). */
+  turnId: string;
+  convId: string;
+  state: TranscriptState;
+}) {
+  const ws = useWorkspace(wsId);
+  // (C-615) Only the start-failure codes the retry endpoint accepts get the button (C-585, C-610).
+  if (!isRetryableCode(code)) {
+    return <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"} />;
+  }
+  return (
+    <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"}>
+      <RetryStart
+        agentId={agentId}
+        // (C-615) The failed turn stays failed; the re-posted text opens the next turn.
+        onRetried={() => {
+          const queued = state.events.find((e) => e.type === "turn.queued" && e.payload.turn_id === turnId);
+          const text = typeof queued?.payload.text === "string" ? queued.payload.text : "";
+          if (text.trim()) void chatApi.send(convId, text);
+        }}
+      />
+    </ErrorBlock>
+  );
 }
 
 /** One sender group: the meta line (name, time, door chip) once, then that sender's blocks. */
@@ -212,7 +271,16 @@ export function MessageGroup({
     </p>
   );
   const blocks = row.blocks.map((b, i) => (
-    <BlockView key={b.kind === "tools" ? b.key : `${b.kind}-${"ev" in b ? b.ev.seq : i}`} block={b} state={state} wsId={wsId} base={base} convId={convId} side={row.side} />
+    <BlockView
+      key={b.kind === "tools" ? b.key : `${b.kind}-${"ev" in b ? b.ev.seq : i}`}
+      block={b}
+      state={state}
+      wsId={wsId}
+      base={base}
+      convId={convId}
+      side={row.side}
+      agentId={agent?.id}
+    />
   ));
   if (person) {
     return (

@@ -152,12 +152,28 @@ export const setupStatus = {
 
 export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@example.test", is_instance_admin: true };
 
-export async function mockApi(page: Page) {
+export async function mockApi(
+  page: Page,
+  /** (FIX-029) Extra canned responses: a regex or exact path → JSON body, or `{status, body}`. */
+  overrides: Record<string, unknown> = {},
+) {
+  const exact = new Map<string, unknown>();
+  const patterns: [RegExp, unknown][] = [];
+  for (const [k, v] of Object.entries(overrides)) {
+    if (/[\^*+()[\]{}|\\]/.test(k)) patterns.push([new RegExp(k.startsWith("/") ? `^${k}$` : k), v]);
+    else exact.set(k, v);
+  }
   await page.route("**/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
     const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
     if (p.includes("/stream")) return route.abort();
+    const hit = exact.get(p) ?? patterns.find(([re]) => re.test(p))?.[1];
+    if (hit !== undefined) {
+      const { status = 200, body = hit, ...rest } = hit && typeof hit === "object" && "body" in (hit as Record<string, unknown>) ? (hit as Record<string, unknown>) : { body: hit };
+      void rest;
+      return json(body, status as number);
+    }
     const icon = p.match(/^\/v1\/apps\/([^/]+)\/icon$/);
     if (icon) {
       const file = url.searchParams.get("variant") === "dark" ? "icon-dark.png" : "icon.png";
@@ -169,6 +185,18 @@ export async function mockApi(page: Page) {
     // P4-ONB-2: onboarding progress (seen, so `/` stays on the workspace), the guide's readiness and the setup wizard.
     if (p === "/v1/me/onboarding") return json({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null });
     if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(readinessReady);
+    // FIX-029 (C-611): the agent's sandbox view with a per-boot start log; the retry and
+    // start-failure routes back the Computer tab's Start log section and Retry now button.
+    if (/^\/v1\/agents\/[^/]+\/sandbox$/.test(p)) {
+      return json({
+        agent_id: agent.id, state: "stopped", boot_id: null, runner_id: null, image: null, started_at: null,
+        keep_awake_reasons: [], failure_code: null, failure_message: null, start_attempt: null,
+        retryable: false, start_log: [], processes: [], ports: [], restart_to_update: false,
+      });
+    }
+    if (/^\/v1\/agents\/[^/]+\/start-failures$/.test(p)) return json({ items: [] });
+    if (/^\/v1\/agents\/[^/]+\/sandbox\/retry$/.test(p)) return json({ error: { code: "sandbox_not_failed", message: "not failed" } }, 409);
+    if (/^\/v1\/admin\/agents\/[^/]+\/start-failures$/.test(p)) return json({ items: [] });
     if (p === "/v1/admin/setup") return json(setupStatus);
     if (p.endsWith("/policy") && (p.startsWith("/v1/orgs/") || p.startsWith("/v1/workspaces/"))) return json(policyDoc);
     if (p === "/v1/llm/providers") return json({ providers: [] });
@@ -213,6 +241,8 @@ export async function mockApi(page: Page) {
     if (p === "/v1/admin/orgs") return json({ items: [{ id: id(1), slug: "users", name: "Users", frozen: null, created_at: now }], next_cursor: null });
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
+    // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.
+    if (p === "/v1/admin/runners") return json({ items: [] });
     if (/^\/v1\/connectors\/[^/]+\/icon$/.test(p)) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
     if (/^\/v1\/admin\/plugins\/[^/]+$/.test(p)) {
       const pkg = PACKAGES.find((x) => x.id === p.split("/")[4]) ?? PACKAGES[3];

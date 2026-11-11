@@ -1079,6 +1079,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | start_events | jsonb not null default `'[]'` | the pod's Warning events (bounded, newest first) (phase 4, FIX-025) |
 | start_progress_at | timestamptz null | when the runner last reported progress (phase 4, FIX-025) |
 | running_at | timestamptz null | when the runner reported `running` for the current boot (phase 4, FIX-025) |
+| start_log | jsonb not null default `'[]'` | the boot's start log: a ring of ≤ 30 entries `{ts, kind: "phase"\|"note", phase?, detail?}` (≤ 300 chars per detail, sanitised, 8 KiB total, oldest dropped), reset by every new boot (phase 4, FIX-029, C-612) |
 
 ### `sandbox_start_failures` (per-runner start failures for Admin › Runners; phase 4, FIX-025, D-158, C-587)
 | Column | Type | Notes |

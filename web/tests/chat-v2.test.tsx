@@ -245,6 +245,47 @@ describe("transcript", () => {
     expect(chip.textContent).toContain("Expired by retention");
     expect(screen.queryByRole("link", { name: "report.pdf" })).toBeNull();
   });
+
+  // FIX-029 (C-615): a start-failure error block gains **Retry now**; after the 202 the failed
+  // turn's text is re-posted as a new message (the failed turn stays failed).
+  it("offers Retry now on a start-failure error and re-posts the turn text after the 202", async () => {
+    st.events = [
+      e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: "summarise the log" }),
+      e(2, "error", { turn_id: "t1", code: "pod_failed", message: "the pod crashed" }),
+    ];
+    const calls = mock({
+      "GET /v1/agents/a1/sandbox": () =>
+        json(200, {
+          agent_id: "a1", state: "failed", boot_id: "b1", runner_id: null, image: null, started_at: null,
+          keep_awake_reasons: [], failure_code: "pod_failed", failure_message: "the pod crashed", start_attempt: null,
+          retryable: true, start_log: [], processes: [], ports: [], restart_to_update: false,
+        }),
+      "POST /v1/agents/a1/sandbox/retry": () =>
+        json(202, {
+          agent_id: "a1", state: "stopped", boot_id: null, runner_id: null, image: null, started_at: null,
+          keep_awake_reasons: [], failure_code: null, failure_message: null, start_attempt: null,
+          retryable: false, start_log: [], processes: [], ports: [], restart_to_update: false,
+        }),
+      "POST /v1/conversations/c1/messages": () => json(202, { turn: { id: "t2" }, followup: null }),
+    });
+    pane();
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("ended while it was starting");
+    const btn = await screen.findByRole("button", { name: "Retry now" });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      const post = calls.find((c) => c.method === "POST" && c.path === "/v1/conversations/c1/messages");
+      expect(post?.body).toEqual({ text: "summarise the log" });
+    });
+  });
+
+  it("offers no Retry now for a non-start error (e.g. no_model_key)", () => {
+    st.events = [e(1, "error", { turn_id: "t1", code: "no_model_key", message: "No usable LLM key." })];
+    mock();
+    pane();
+    const alert = screen.getByRole("alert");
+    expect(within(alert).queryByRole("button", { name: "Retry now" })).toBeNull();
+  });
 });
 
 describe("message actions", () => {
