@@ -610,7 +610,7 @@ async fn sign_in(
     }
     // Precedence: invitation (in `create_user`) → role claims → provider `jit` → placement.
     roles::sync(&mut tx, state, p, &mut user, &v.role_values, &desired).await?;
-    apply_jit(&mut tx, p, &mut user).await?;
+    apply_jit(state, &mut tx, p, &mut user).await?;
     // (P4-ONB-1, D-140) placement last: the default organization, shared workspaces and the
     // user's personal workspace, found by user id only.
     placement::service::apply_signin(
@@ -776,6 +776,7 @@ async fn create_user(
 
 /// Add org membership and workspace bindings from the provider's `jit` block.
 async fn apply_jit(
+    state: &AppState,
     tx: &mut sqlx::PgConnection,
     p: &OidcProvider,
     user: &mut UserRow,
@@ -787,6 +788,25 @@ async fn apply_jit(
     };
     if members::get(&mut *tx, org_id, user.id).await?.is_some() {
         return Ok(());
+    }
+    // (P4-GRP-2, SEC-73) SCIM gate on JIT: a `removed` directory link of this org refuses the
+    // membership outright (deprovisioned by the IdP), an `exclusive` org admits only people
+    // with an `active` link. The refusal fails the sign-in (the transaction rolls back), so
+    // the denied `member.add` row is written on its own connection to survive.
+    match crate::domains::scim::gates::admission_gate(&mut *tx, org_id, user.id).await? {
+        crate::domains::scim::gates::Admission::Allowed => {}
+        g => {
+            let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
+            crate::domains::scim::gates::audit_denied(
+                &mut conn,
+                org_id,
+                user.id,
+                "jit",
+                g.reason().unwrap_or("scim_refused"),
+            )
+            .await?;
+            return Err(Fail("scim_refused"));
+        }
     }
     let role = if j.role == "admin" { "admin" } else { "member" };
     members::insert(&mut *tx, org_id, user.id, role).await?;

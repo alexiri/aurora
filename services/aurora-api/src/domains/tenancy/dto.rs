@@ -189,6 +189,14 @@ impl Workspace {
     }
 }
 
+/// (P4-GRP-2) The SCIM projection of the Members page: `directory` is present only with a
+/// `scim_users` link (`state` + the IdP's `externalId`).
+#[derive(Serialize, ToSchema)]
+pub struct MemberDirectory {
+    pub state: String,
+    pub external_id: Option<String>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct Member {
     pub user_id: Uuid,
@@ -201,6 +209,9 @@ pub struct Member {
     /// badge); `null` for a manual role. A role with a value cannot be edited or removed (409
     /// `managed_by_idp`).
     pub idp_value: Option<String>,
+    /// (phase 4, P4-GRP-2) The SCIM directory link; absent when the member has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<MemberDirectory>,
 }
 
 #[derive(Serialize, ToSchema)]

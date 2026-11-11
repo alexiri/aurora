@@ -406,6 +406,7 @@
     "groups": [
       "created_by",
       "description",
+      "external_id",
       "id",
       "idp_provider",
       "idp_value",
@@ -772,6 +773,30 @@
       "prompt",
       "run_conversation_id",
       "timezone"
+    ],
+    "scim_tokens": [
+      "created_by",
+      "display_prefix",
+      "expires_at",
+      "id",
+      "last_used_at",
+      "name",
+      "org_id",
+      "revoked_at",
+      "token_hash"
+    ],
+    "scim_users": [
+      "display_name",
+      "external_id",
+      "family_name",
+      "given_name",
+      "id",
+      "org_id",
+      "removed_at",
+      "state",
+      "suspended_by_scim",
+      "user_id",
+      "user_name"
     ],
     "secrets": [
       "created_by",

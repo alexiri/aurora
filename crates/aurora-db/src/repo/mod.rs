@@ -52,6 +52,7 @@ pub mod request_log;
 pub mod runners;
 pub mod sandboxes;
 pub mod schedules;
+pub mod scim;
 pub mod secrets;
 pub mod sessions;
 pub mod skill_libraries;

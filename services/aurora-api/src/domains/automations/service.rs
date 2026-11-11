@@ -263,6 +263,8 @@ pub async fn offboarding(
         webhooks: items(repo::webhooks(&mut *conn, org, workspace, user).await?),
         peer_tasks: items(repo::peer_tasks(&mut *conn, org, workspace, user).await?),
         api_keys: repo::api_keys(&mut *conn, org, workspace, user).await?,
+        // (P4-GRP-2) The BYO agents the person created (removal deprovisions them too).
+        byo_agents_created: repo::byo_agents_created(&mut *conn, org, workspace, user).await?,
     };
     // (P4-GRP-1) "What would break" for people whose access comes through groups: name the
     // groups that currently give the person access to each item's workspace.

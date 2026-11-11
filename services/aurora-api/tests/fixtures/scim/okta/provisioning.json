@@ -1,0 +1,173 @@
+[
+  {
+    "comment": "Okta import probe: filter by userName eq; 200 with zero results creates the user.",
+    "pair": "probe-create",
+    "request": {
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName%20eq%20%22oka%40okta.example%22&startIndex=1&count=100"
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": 0,
+        "startIndex": 1,
+        "itemsPerPage": 0,
+        "Resources": []
+      }
+    }
+  },
+  {
+    "comment": "Okta create: no `name` block, only userName/name.givenName style flat fields.",
+    "pair": "probe-create",
+    "request": {
+      "method": "POST",
+      "path": "/scim/v2/Users",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "userName": "oka@okta.example",
+        "name": {"givenName": "Ola", "familyName": "Nordmann"},
+        "displayName": "Ola Nordmann",
+        "emails": [{"primary": true, "value": "oka@okta.example", "type": "work"}],
+        "active": true
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "userName": "oka@okta.example",
+        "active": true
+      }
+    }
+  },
+  {
+    "comment": "Okta deactivation (suspend in Okta): replace active=false.",
+    "pair": "deactivate",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "replace", "path": "active", "value": false}]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«scim_id»", "active": false}
+    }
+  },
+  {
+    "comment": "Okta reactivation.",
+    "pair": "reactivate",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "replace", "path": "active", "value": true}]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«scim_id»", "active": true}
+    }
+  },
+  {
+    "comment": "Okta duplicate create after a lost response: 409 uniqueness with scimType.",
+    "pair": "duplicate-create",
+    "request": {
+      "method": "POST",
+      "path": "/scim/v2/Users",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "userName": "oka@okta.example",
+        "active": true
+      }
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+        "scimType": "uniqueness",
+        "detail": "One or more of the attribute values are already in use or are reserved.",
+        "status": "409"
+      }
+    }
+  },
+  {
+    "comment": "Okta push group create (no members yet).",
+    "pair": "group-create",
+    "request": {
+      "method": "POST",
+      "path": "/scim/v2/Groups",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "displayName": "Engineering",
+        "members": []
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "id": "«group_id»",
+        "displayName": "Engineering",
+        "members": []
+      }
+    }
+  },
+  {
+    "comment": "Okta membership add: PATCH members with an add op.",
+    "pair": "group-churn",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/«group_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [
+          {"op": "add", "path": "members", "value": [{"value": "«scim_id»"}]}
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«group_id»", "members": [{"value": "«scim_id»"}]}
+    }
+  },
+  {
+    "comment": "Okta group membership remove by value filter.",
+    "pair": "group-remove-member",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/«group_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [
+          {"op": "remove", "path": "members[value eq \"«scim_id»\"]"}
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«group_id»", "members": []}
+    }
+  },
+  {
+    "comment": "Okta app unassignment: DELETE the user (deprovision).",
+    "pair": "delete",
+    "request": {
+      "method": "DELETE",
+      "path": "/scim/v2/Users/«scim_id»"
+    },
+    "response": {"status": 204}
+  }
+]

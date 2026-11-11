@@ -182,6 +182,29 @@ export async function mockApi(page: Page) {
     }
     // P4-GRP-1: org Groups (a manual group and a sign-in-linked one).
     if (p === `/v1/orgs/${id(1)}/groups`) return json({ items: [groupFixture(401, "manual"), groupFixture(402, "idp")], next_cursor: null });
+    // P4-GRP-2: SCIM directory sync (org settings page shows the members' badges too).
+    if (p === `/v1/orgs/${id(1)}/scim`) {
+      return json({
+        available: true, enabled: true, exclusive: false, base_url: "https://aurora.example.org/scim/v2",
+        email_domains: ["example.test"],
+      });
+    }
+    if (p === `/v1/orgs/${id(1)}/scim/tokens`) {
+      return json({
+        tokens: [
+          { id: id(420), name: "Entra ID", display_prefix: "aud_Ej4KUq2mTz9", created_at: now, expires_at: new Date(Date.now() + 300 * 86_400_000).toISOString(), last_used_at: now, revoked: false, expiring: false },
+          { id: id(421), name: "Old keycloak", display_prefix: "aud_Yb3Rn8wQx1c", created_at: now, expires_at: new Date(Date.now() + 10 * 86_400_000).toISOString(), last_used_at: null, revoked: false, expiring: true },
+        ],
+      });
+    }
+    if (p === `/v1/orgs/${id(1)}/scim/status`) {
+      return json({
+        enabled: true, last_request_at: now,
+        users: { active: 2, suspended: 1, removed: 3 },
+        groups: 1,
+        errors: [{ at: now, method: "POST", resource: "/Users", status: 409, scim_type: "uniqueness" }],
+      });
+    }
     const grp = p.match(/^\/v1\/groups\/([^/]+)(\/[a-z]+)?$/);
     if (grp) {
       const g = grp[1] === id(402) ? groupFixture(402, "idp") : groupFixture(401, "manual");
@@ -248,6 +271,16 @@ export async function mockApi(page: Page) {
     if (p.endsWith("/storage") && p.startsWith("/v1/orgs/")) {
       return json({ org_id: id(1), used_bytes: 850_000_000, quota_bytes: 1_000_000_000, files: 12, purged_files: 3, notice: "warning", by_workspace: [{ workspace_id: id(2), workspace_name: "Main workspace", direction: "in", files: 12, bytes: 850_000_000 }] });
     }
+    // P4-GRP-2: the Members page shows a "Directory" badge for SCIM-provisioned members.
+    if (p === `/v1/orgs/${id(1)}/members`) {
+      return json({
+        items: [
+          { user_id: id(99), email: "ada@example.test", display_name: "Ada Lovelace", role: "owner", status: "active", created_at: now, idp_value: null },
+          { user_id: id(102), email: "bob@example.test", display_name: "Bob Builder", role: "member", status: "active", created_at: now, idp_value: "aurora-users", directory: { state: "active", external_id: "entra-bob-1" } },
+        ],
+        next_cursor: null,
+      });
+    }
     if (/^\/v1\/orgs\/[^/]+$/.test(p)) return json(org);
     return json({ items: [] });
   });
@@ -292,6 +325,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "org-group-idp", path: `/o/acme/groups/${id(402)}` },
   { name: "org-policy", path: "/o/acme/policy" },
   { name: "org-settings", path: "/o/acme/settings" },
+  { name: "org-directory", path: "/o/acme/settings/directory" },
   { name: "org-skills", path: "/o/acme/skills" },
   { name: "org-skill-libraries", path: "/o/acme/skills/libraries" },
   { name: "org-storage", path: "/o/acme/storage" },

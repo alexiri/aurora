@@ -1,0 +1,177 @@
+[
+  {
+    "comment": "Entra ID initial sync: probe with a filter for the user, create on empty result.",
+    "pair": "probe-create",
+    "request": {
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName%20eq%20%22maria%40contoso.example%22&startIndex=1&count=20"
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": 0,
+        "startIndex": 1,
+        "itemsPerPage": 0,
+        "Resources": []
+      }
+    }
+  },
+  {
+    "comment": "Entra initial create: the full core+displayName body it sends for a new member.",
+    "pair": "probe-create",
+    "request": {
+      "method": "POST",
+      "path": "/scim/v2/Users",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "externalId": "00aa11bb22cc",
+        "userName": "maria@contoso.example",
+        "name": {"givenName": "Maria", "familyName": "Santos", "formatted": "Maria Santos"},
+        "displayName": "Maria Santos",
+        "active": true,
+        "emails": [{"primary": true, "type": "work", "value": "maria@contoso.example"}]
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "externalId": "00aa11bb22cc",
+        "userName": "maria@contoso.example",
+        "displayName": "Maria Santos",
+        "active": true,
+        "meta": {"resourceType": "User", "location": "«location»"}
+      }
+    }
+  },
+  {
+    "comment": "Entra re-probe after a lost create response: the filter finds the user (dedupe).",
+    "pair": "lost-response",
+    "request": {
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName%20eq%20%22maria%40contoso.example%22&startIndex=1&count=20"
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": 1,
+        "startIndex": 1,
+        "itemsPerPage": 1,
+        "Resources": [{"id": "«scim_id»", "userName": "maria@contoso.example", "active": true}]
+      }
+    }
+  },
+  {
+    "comment": "Entra attribute update: PATCH with an object value (no path).",
+    "pair": "attr-update",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [
+          {"op": "Replace", "value": {"name.familyName": "Santos-Lima"}}
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "id": "«scim_id»",
+        "name": {"familyName": "Santos-Lima"},
+        "active": true
+      }
+    }
+  },
+  {
+    "comment": "Entra disable: PATCH active=false.",
+    "pair": "deactivate",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Replace", "path": "active", "value": false}]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«scim_id»", "active": false}
+    }
+  },
+  {
+    "comment": "Entra re-enable after the directory re-adds the member.",
+    "pair": "reactivate",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Users/«scim_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Replace", "path": "active", "value": true}]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«scim_id»", "active": true}
+    }
+  },
+  {
+    "comment": "Entra group create with an existing member.",
+    "pair": "group-create",
+    "request": {
+      "method": "POST",
+      "path": "/scim/v2/Groups",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "displayName": "Finance",
+        "externalId": "grp-finance-01",
+        "members": [{"value": "«scim_id»", "display": "Maria Santos"}]
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "id": "«group_id»",
+        "displayName": "Finance",
+        "externalId": "grp-finance-01",
+        "members": [{"value": "«scim_id»", "display": "Maria Santos"}]
+      }
+    }
+  },
+  {
+    "comment": "Entra group member churn: replace the whole members list.",
+    "pair": "group-churn",
+    "request": {
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/«group_id»",
+      "headers": {"content-type": "application/scim+json"},
+      "body": {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "Replace", "path": "members", "value": []}]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {"id": "«group_id»", "members": []}
+    }
+  },
+  {
+    "comment": "Entra soft delete (directory delete): PATCH active=false then DELETE.",
+    "pair": "delete",
+    "request": {
+      "method": "DELETE",
+      "path": "/scim/v2/Users/«scim_id»"
+    },
+    "response": {"status": 204}
+  }
+]

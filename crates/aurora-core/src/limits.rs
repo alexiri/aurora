@@ -210,6 +210,28 @@ pub const AVATAR_MAX: usize = 512 * KIB;
 pub const SSE_KEEPALIVE: Duration = Duration::from_secs(15);
 pub const LONG_POLL_MAX: Duration = Duration::from_secs(30);
 
+// SCIM provisioning (phase 4, P4-GRP-2, D-132; docs/02 §Limits, docs/04 §SCIM).
+/// `SCIM_RATE`: requests per minute per token (burst is a fifth of it); `scim.rate_per_minute`.
+pub const SCIM_RATE: u32 = 600;
+/// `SCIM_BODY_MAX`.
+pub const SCIM_BODY_MAX: usize = MIB;
+/// `SCIM_MAX_PATCH_OPS`.
+pub const SCIM_MAX_PATCH_OPS: usize = 100;
+/// `SCIM_MAX_MEMBERS_PER_REQUEST`.
+pub const SCIM_MAX_MEMBERS_PER_REQUEST: usize = 1_000;
+/// `SCIM_PAGE_MAX`.
+pub const SCIM_PAGE_MAX: usize = 100;
+/// `SCIM_PAGE_DEFAULT`.
+pub const SCIM_PAGE_DEFAULT: usize = 50;
+/// `SCIM_TOKENS_PER_ORG`: active (unrevoked, unexpired) tokens per org.
+pub const SCIM_TOKENS_PER_ORG: usize = 5;
+/// `SCIM_TOKEN_DEFAULT_DAYS` (the dashboard's offered default; never above the maximum).
+pub const SCIM_TOKEN_DEFAULT_DAYS: u32 = 365;
+/// `SCIM_TOKEN_MAX_DAYS`: longest token lifetime (`scim.token_max_days`; no non-expiring token).
+pub const SCIM_TOKEN_MAX_DAYS: u32 = 730;
+/// `SCIM_ERROR_LOG`: last N sanitized errors kept per org (Directory sync page).
+pub const SCIM_ERROR_LOG: usize = 20;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +244,11 @@ mod tests {
         assert_eq!(CONDITION_BODY_BUFFER, 262_144);
         assert_eq!(SKILL_TOTAL_MAX, 32_000);
         assert_eq!(WEBHOOK_PAYLOAD_MAX, 1_048_576);
+        assert_eq!(SCIM_RATE, 600);
+        assert_eq!(SCIM_BODY_MAX, 1_048_576);
+        assert_eq!(SCIM_PAGE_MAX, 100);
+        assert_eq!(SCIM_PAGE_DEFAULT, 50);
+        assert_eq!(SCIM_TOKEN_MAX_DAYS, 730);
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
         const { assert!(CONDITION_BODY_BUFFER <= CONDITION_BODY_BUFFER_MAX) };
     }

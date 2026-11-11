@@ -28349,6 +28349,17 @@
             "type": "string",
             "format": "date-time"
           },
+          "directory": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MemberDirectory",
+                "description": "(phase 4, P4-GRP-2) The SCIM directory link; absent when the member has none."
+              }
+            ]
+          },
           "display_name": {
             "type": "string"
           },
@@ -28371,6 +28382,24 @@
           "user_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "MemberDirectory": {
+        "type": "object",
+        "description": "(P4-GRP-2) The SCIM projection of the Members page: `directory` is present only with a\n`scim_users` link (`state` + the IdP's `externalId`).",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
           }
         }
       },
@@ -28845,6 +28874,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Personal API keys that would stop working."
+          },
+          "byo_agents_created": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(P4-GRP-2) BYO agents this person created and owns; removing them without reassigning\ntakes the agents' credentials and sessions with them."
           },
           "peer_tasks": {
             "type": "array",
@@ -31015,6 +31049,17 @@
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "directory": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MemberDirectory",
+                      "description": "(phase 4, P4-GRP-2) The SCIM directory link; absent when the member has none."
+                    }
+                  ]
                 },
                 "display_name": {
                   "type": "string"

@@ -31,7 +31,12 @@ fn is_unsafe(m: &Method) -> bool {
 }
 
 pub async fn middleware(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    if is_unsafe(req.method())
+    // Only `/v1/**` reads the session cookie (the SCIM plane ignores cookies and `Origin`
+    // entirely, 04 §SCIM: a cookie-only request there is answered by its own 401). The
+    // plane's paths live under `/scim/v2`; everything else (test routes, ops) keeps the
+    // check so the middleware is path-scoped, not method-scoped.
+    if (req.uri().path().starts_with("/v1/") || !req.uri().path().starts_with("/scim/"))
+        && is_unsafe(req.method())
         && !req.headers().contains_key(header::AUTHORIZATION)
         && cookie_value(req.headers(), SESSION_COOKIE).is_some()
     {
@@ -65,5 +70,13 @@ mod tests {
         );
         assert_eq!(origin_of("https://a.b/x/y").as_deref(), Some("https://a.b"));
         assert_eq!(origin_of("null"), None);
+    }
+
+    #[test]
+    fn unsafe_paths() {
+        // (P4-GRP-2) The CSRF check itself is path-scoped in the middleware; this keeps the
+        // method table pinned.
+        assert!(is_unsafe(&http::Method::POST));
+        assert!(!is_unsafe(&http::Method::GET));
     }
 }

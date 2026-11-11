@@ -127,6 +127,11 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "conversation.delete",
     "memory.redact",
     "transcript_event.redact",
+    // SCIM provisioning (P4-GRP-2, D-132; docs/04 §SCIM): the membership and group changes go
+    // through the existing `member.*` / `group*` actions above with `metadata.via = "scim"`.
+    "scim.update",
+    "scim_token.create",
+    "scim_token.revoke",
 ];
 
 /// Is `action` in the security-critical set?

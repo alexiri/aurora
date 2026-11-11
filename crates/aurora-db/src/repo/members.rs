@@ -21,6 +21,47 @@ pub struct MemberRow {
 const SEL: &str = "m.user_id, u.email::text AS email, u.display_name, m.role, m.status, m.created_at, \
     substring(m.idp_source from '^idp:[^:]*:(.*)$') AS idp_value";
 
+/// The directory-sync projection of one member (P4-GRP-2): the `scim_users` link state and the
+/// IdP's `externalId` (`None` without a link; the Members page shows a "Directory" badge).
+const SCIM_SEL: &str = "s.state AS scim_state, s.external_id AS scim_external_id";
+
+/// A member with their SCIM link projection (the tenancy Members list; `scim_state` is `None`
+/// when the org has no link for this user).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MemberWithScimRow {
+    #[sqlx(flatten)]
+    pub member: MemberRow,
+    pub scim_state: Option<String>,
+    pub scim_external_id: Option<String>,
+}
+
+/// List an org's members with their SCIM link projection (one extra `LEFT JOIN`).
+pub async fn list_with_scim<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    after: super::After,
+    limit: i64,
+    status: Option<&str>,
+) -> Result<Vec<MemberWithScimRow>, DbError> {
+    let (after_ts, after_id) = super::split(after);
+    Ok(sqlx::query_as(&format!(
+        "SELECT {SEL}, {SCIM_SEL} FROM org_members m \
+         JOIN users u ON u.id = m.user_id \
+         LEFT JOIN scim_users s ON s.org_id = m.org_id AND s.user_id = m.user_id \
+         WHERE m.org_id = $1 \
+           AND ($2::text IS NULL OR m.status = $2) \
+           AND ($3::timestamptz IS NULL OR (m.created_at, m.user_id) < ($3, $4)) \
+         ORDER BY m.created_at DESC, m.user_id DESC LIMIT $5"
+    ))
+    .bind(org)
+    .bind(status)
+    .bind(after_ts)
+    .bind(after_id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
 pub async fn insert<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,

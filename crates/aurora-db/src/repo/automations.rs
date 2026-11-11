@@ -109,3 +109,24 @@ pub async fn api_keys<'e, E: PgExecutor<'e>>(
     .fetch_one(exec)
     .await?)
 }
+
+/// (P4-GRP-2) BYO agents `user` created in the org (or workspace scope): they lose their
+/// creator with the membership; the offboarding dialog names the count.
+pub async fn byo_agents_created<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    workspace: Option<Uuid>,
+    user: Uuid,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM agents a
+         JOIN workspaces w ON w.id = a.workspace_id
+         WHERE w.org_id = $1 AND a.created_by = $3 AND a.kind = 'byo'
+           AND ($2::uuid IS NULL OR a.workspace_id = $2)",
+    )
+    .bind(org)
+    .bind(workspace)
+    .bind(user)
+    .fetch_one(exec)
+    .await?)
+}

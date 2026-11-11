@@ -285,6 +285,26 @@ async fn accept_in_tx(
     if members::get(&mut *tx, inv.org_id, user.id).await?.is_some() {
         return Err(already_member());
     }
+    // (P4-GRP-2, SEC-73) SCIM gate on acceptance: a `removed` or `suspended` directory link
+    // refuses (deprovisioned people are not re-admitted by an invitation), and an `exclusive`
+    // org admits only people with an `active` link. The gate runs before the seat-cap check.
+    // Denied, not cancelled: the invitation stays pending for when the directory state (or the
+    // org setting) changes.
+    let gate = crate::domains::scim::gates::admission_gate(&mut *tx, inv.org_id, user.id).await?;
+    if let Some(reason) = gate.reason() {
+        crate::domains::scim::gates::audit_denied(
+            &mut *tx,
+            inv.org_id,
+            user.id,
+            "invitation",
+            reason,
+        )
+        .await?;
+        return Err(forbidden(
+            "scim_refused",
+            "This organization is managed by your directory; ask your administrator.",
+        ));
+    }
     let (_, settings) = repo::lock_org(&mut *tx, inv.org_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Organization not found."))?;

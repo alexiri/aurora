@@ -225,7 +225,19 @@ fn member(m: members::MemberRow) -> Member {
         status: parse_status(&m.status),
         created_at: m.created_at,
         idp_value: m.idp_value,
+        directory: None,
     }
+}
+
+fn member_with_scim(m: members::MemberWithScimRow) -> Member {
+    let mut v = member(m.member);
+    if let Some(state) = m.scim_state {
+        v.directory = Some(MemberDirectory {
+            state,
+            external_id: m.scim_external_id,
+        });
+    }
+    v
 }
 
 /// List organization members (owner/admin).
@@ -242,19 +254,19 @@ async fn list_members(
 ) -> Result<Json<Page<Member>>, ApiError> {
     c.org(&s, org).await?.require_admin()?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    let rows = members::list(
+    let rows = members::list_with_scim(
         &s.pool,
         org,
-        q.status.map(MemberStatus::as_str),
         after(&p),
         p.fetch(),
+        q.status.map(MemberStatus::as_str),
     )
     .await?;
     Ok(Json(page_of(
         rows,
         &p,
-        |r| (r.created_at, r.user_id),
-        member,
+        |r| (r.member.created_at, r.member.user_id),
+        member_with_scim,
     )))
 }
 

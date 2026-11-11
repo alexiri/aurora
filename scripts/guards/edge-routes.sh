@@ -42,6 +42,9 @@ for path, svc, port in routes:
         fail("routes " + path)
     if path == "/v1" and not (svc.endswith("-api") and port == 4101):
         fail("/v1 must go to api:4101")
+    # (P4-GRP-2) SCIM: /scim (the /scim/v2 plane) is served by the API, only when enabled.
+    if path == "/scim" and not (svc.endswith("-api") and port == 4101):
+        fail("/scim must go to api:4101")
     if path == "/" and not (svc.endswith("-web") and port == 4100):
         fail("/ must go to web:4100")
     if path == "/connectors" and not (svc.endswith("-connector-host") and port == 4110):
@@ -56,3 +59,9 @@ print("edge-routes: %s ok" % label)
 check_render "helm Ingress"
 check_render "helm HTTPRoute" --set ingress.enabled=false --set gatewayApi.enabled=true
 check_render "kind dev profile Ingress" -f deploy/kind/values-dev.yaml
+# (P4-GRP-2) With the SCIM switch on, the edge must route /scim to the API in both edge types.
+check_render "helm Ingress with scim" --set scim.enabled=true
+check_render "helm HTTPRoute with scim" --set ingress.enabled=false --set gatewayApi.enabled=true --set scim.enabled=true
+if helm template guard deploy/helm/aurora 2>/dev/null | grep -q "path: /scim"; then
+  fail "/scim route rendered while scim.enabled is false (SEC-72: the surface must 404)"
+fi

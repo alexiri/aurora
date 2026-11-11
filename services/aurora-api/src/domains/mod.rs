@@ -40,6 +40,7 @@ pub mod policy;
 pub mod runner_plane;
 pub mod runners_admin;
 pub mod schedules;
+pub mod scim;
 pub mod secrets;
 pub mod skill_libraries;
 pub mod skills;

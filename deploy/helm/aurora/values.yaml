@@ -157,6 +157,8 @@ config:
   # runner.image is derived from image.registry/image.tag (D-159); set runner.sandboxImage
   # above for a different sandbox image. `runner.backend`, `runner.api_url` and `runner.k8s.*`
   # are also set by the chart.
+  # (P4-GRP-2) SCIM provisioning: set `scim.enabled` below to serve /scim/v2 (the edge routes
+  # it to api:4101); while false the whole surface is 404 and no org can enable SCIM.
 
 # ---- Workloads -----------------------------------------------------------------
 api:
@@ -304,6 +306,14 @@ devIdp:
     limits: {memory: 128Mi}
 
 # ---- Routing -------------------------------------------------------------------
+# (P4-GRP-2) SCIM: while `scim.enabled` is true the edge routes /scim/v2 to api:4101 (before
+# the /v1 and / rules); while false no /scim route is rendered and the API answers 404 for the
+# whole surface (SEC-72).
+scim:
+  enabled: false
+  # Rate limit per SCIM token per minute ([scim] rate_per_minute; burst is a fifth of it).
+  ratePerMinute: 600
+
 ingress:
   enabled: true
   className: ""           # e.g. nginx

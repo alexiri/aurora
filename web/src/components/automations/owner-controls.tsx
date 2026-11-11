@@ -192,6 +192,13 @@ export function OffboardingPrompt({
         <p className="text-ink-2">{data.peer_tasks.length} open peer task(s) they requested will stop.</p>
       ) : null}
       {data.api_keys > 0 ? <p className="text-ink-2">{data.api_keys} API key(s) will stop working.</p> : null}
+      {(data.byo_agents_created ?? 0) > 0 ? (
+        <p className="text-ink-2">
+          {data.byo_agents_created} BYO agent{(data.byo_agents_created ?? 0) === 1 ? "" : "s"}{" "}
+          they created &mdash; regenerate their tokens: removal takes the agents&apos;
+          credentials with them.
+        </p>
+      ) : null}
     </div>
   );
 }

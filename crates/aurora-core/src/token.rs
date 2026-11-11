@@ -39,10 +39,12 @@ pub enum TokenPrefix {
     Supervisor,
     /// Connector host anchor token (P4-MCON).
     ConnectorHost,
+    /// SCIM provisioning token (P4-GRP-2).
+    Scim,
 }
 
 impl TokenPrefix {
-    pub const ALL: [TokenPrefix; 13] = [
+    pub const ALL: [TokenPrefix; 14] = [
         Self::Gateway,
         Self::Boot,
         Self::Context,
@@ -56,6 +58,7 @@ impl TokenPrefix {
         Self::Invitation,
         Self::Supervisor,
         Self::ConnectorHost,
+        Self::Scim,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -73,6 +76,7 @@ impl TokenPrefix {
             Self::Invitation => "aui_",
             Self::Supervisor => "aup_",
             Self::ConnectorHost => "auh_",
+            Self::Scim => "aud_",
         }
     }
 }

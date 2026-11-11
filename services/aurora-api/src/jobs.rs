@@ -21,6 +21,10 @@ pub const ACTION_SWEEP_EVERY: Duration = Duration::from_secs(60);
 pub const RETENTION_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
 const RETENTION_JOB: &str = "conversation_retention";
 const ATTACHMENT_SWEEP_JOB: &str = "attachment_sweep";
+/// SCIM token expiry notices (P4-GRP-2, singleton; fires once per token per threshold via the
+/// audit-log lookup in [`aurora_db::repo::scim::tokens_expiring_within`]).
+pub const SCIM_EXPIRY_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
+const SCIM_EXPIRY_JOB: &str = "scim_token_expiry";
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
 pub const PARTITIONS_AHEAD: u32 = 2;
 const PARTITION_JOB: &str = "request_log_partitions";
@@ -86,6 +90,58 @@ pub async fn maintain_request_log(
         None => Ok(false),
         Some(r) => r.map(|()| true),
     }
+}
+
+/// (P4-GRP-2) One SCIM token expiry-notice pass: for every live token expiring within 14 days
+/// (and again within 1 day) write a non-critical `scim_token.expiry_notice` audit row (once
+/// per token per threshold — the repo query checks the audit log). Singleton: `Ok(None)` when
+/// another replica holds the lock. Returns the number of notices written.
+pub async fn sweep_scim_token_expiry(
+    pool: &PgPool,
+) -> Result<Option<usize>, aurora_core::ApiError> {
+    let ran =
+        aurora_db::jobs::try_singleton(pool, SCIM_EXPIRY_JOB, || run_scim_expiry_notices(pool))
+            .await?
+            .transpose()
+            .map_err(aurora_core::ApiError::from)?;
+    Ok(ran)
+}
+
+/// The body of the SCIM token expiry-notice pass (the singleton's closure; returns the
+/// number of notices written).
+async fn run_scim_expiry_notices(pool: &PgPool) -> Result<usize, aurora_db::DbError> {
+    let now = Utc::now();
+    let mut notices = 0;
+    for days in [14i64, 1] {
+        let due = aurora_db::repo::scim::tokens_expiring_within(pool, days, now).await?;
+        for (id, org, name, expires_at) in due {
+            let ev = crate::audit::AuditEvent::new(
+                crate::audit::AuditActor {
+                    kind: "service",
+                    id: None,
+                    label: "scim".to_owned(),
+                    source: "api",
+                    ip: None,
+                },
+                "scim_token.expiry_notice",
+                crate::audit::Outcome::Success,
+            )
+            .org(org)
+            .target("scim_token", id)
+            .metadata(serde_json::json!({
+                "name": name,
+                "expires_at": expires_at,
+                "threshold_days": days,
+            }));
+            // Non-critical: a lost notice row is re-raised on the next daily pass.
+            if let Err(e) = crate::audit::insert_tx(&mut *pool.acquire().await?, &ev).await {
+                tracing::warn!(error = %e, "scim: expiry notice failed");
+            } else {
+                notices += 1;
+            }
+        }
+    }
+    Ok(notices)
 }
 
 /// `COUNTER_PRUNE_INTERVAL`.
@@ -163,6 +219,12 @@ pub fn spawn(
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "attachment storage sweep failed"),
+            }
+            // (P4-GRP-2) SCIM token expiry notices share the daily tick as well.
+            match sweep_scim_token_expiry(&rp).await {
+                Ok(Some(n)) if n > 0 => tracing::info!(notices = n, "scim token expiry notices"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "scim token expiry sweep failed"),
             }
         }
     });

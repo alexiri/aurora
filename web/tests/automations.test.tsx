@@ -199,4 +199,34 @@ describe("members offboarding", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/can use the workspace/));
     expect(screen.getByRole("button", { name: "Remove member" })).toBeInTheDocument();
   });
+
+  it("lists the BYO agents the person created (P4-GRP-2)", async () => {
+    mockFetch({
+      "GET /v1/orgs/o1/members": () => json(200, members),
+      "GET /v1/orgs/o1/members/u1/offboarding": () =>
+        json(200, {
+          schedules: [item("s1", "Daily digest")],
+          webhooks: [],
+          peer_tasks: [],
+          api_keys: 0,
+          byo_agents_created: 2,
+        }),
+      "DELETE /v1/orgs/o1/members/u1": () => json(204, null),
+    });
+    wrap(<MembersView orgId="o1" viewer="owner" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove alice@x.io" }));
+    expect(await screen.findByText(/2 BYO agents they created/)).toBeInTheDocument();
+  });
+
+  it("no BYO line when the person created none", async () => {
+    mockFetch({
+      "GET /v1/orgs/o1/members": () => json(200, members),
+      "GET /v1/orgs/o1/members/u1/offboarding": offboarding,
+      "DELETE /v1/orgs/o1/members/u1": () => json(204, null),
+    });
+    wrap(<MembersView orgId="o1" viewer="owner" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove alice@x.io" }));
+    await screen.findByText(/Removing Alice disables/);
+    expect(screen.queryByText(/BYO agent/)).not.toBeInTheDocument();
+  });
 });

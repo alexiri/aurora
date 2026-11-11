@@ -30,6 +30,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [key-rotation.md](key-rotation.md) | Rotating the signing key and the internal secret (rings, `aurora-api keys`, status endpoints) |
 | [upgrades.md](upgrades.md) | Upgrade order, migrations, running sandboxes during an upgrade |
 | [sign-in.md](sign-in.md) | OIDC-only sign-in (`auth.oidc_providers`), first administrator, the development IdP (`auth.dev_idp`, loopback only) |
+| [scim-provisioning.md](scim-provisioning.md) | Directory sync (phase 4, P4-GRP-2): `scim.enabled`, org tokens, IdP setup for Entra ID, Okta and Keycloak, rotation and monitoring |
 | [gateway-posture.md](gateway-posture.md) | TLS proxy listener (`gateway.proxy_tls.*`), open-lane posture, BYO posture and source allow-lists (`byo.*`, `gateway.trusted_proxies`, PROXY protocol), the database lane |
 | [retention-and-quota.md](retention-and-quota.md) | `retention.conversation_days_max`, `attachments.*`, org settings and the daily sweeps |
 | [limits-and-approvals.md](limits-and-approvals.md) | API rate limits (`ratelimit.api.*`), approval timeouts (`approvals.*`), approval e-mail (`email.*`) and streaming fan-out (`events.*`) |
