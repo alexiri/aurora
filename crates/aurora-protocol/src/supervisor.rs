@@ -15,10 +15,10 @@ use crate::common::{
     Empty, SecretString, Validate, ValidationError, check_chars, check_max, json_len,
 };
 use crate::runner::{
-    Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, ProcessStates, SandboxStatus,
-    SendNowResult, SessionPurge, SessionPurged, SessionRelease, SessionReport, SteerResult,
-    SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult,
-    WatchFired,
+    Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, PreviewStartFrame,
+    ProcessStates, SandboxStatus, SendNowResult, SessionPurge, SessionPurged, SessionRelease,
+    SessionReport, SteerResult, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice,
+    TurnRef, TurnResult, WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
@@ -182,6 +182,9 @@ tagged_open! {
         MemoryWriteResult(MemoryWriteResult) = "memory.write.result",
         FileResult(FileResult) = "file.result",
         FileIn(FileIn) = "file.in",
+        // (phase 4, P4-PRV-1, D-145) forwarded `preview.start`: only the port; the supervisor
+        // resolves the command from its own share list (`12 §Previews`).
+        PreviewStart(PreviewStartFrame) = "preview.start",
         Shutdown(ShutdownBody) = "shutdown",
         Ack(Empty) = "ack",
     }
