@@ -7982,7 +7982,7 @@ export interface components {
         PersonalRole: "owner" | "approver" | "member";
         PersonalWorkspaceInput: {
             enabled: boolean;
-            /** @description `{variable}` text with `|` between fallbacks; default `{preferred_username}|{email_local}`. */
+            /** @description `{variable}` text with `|` between fallbacks; default `{sub}|{email_local}`. */
             name_template?: string | null;
             role?: null | components["schemas"]["PersonalRole"];
         };
@@ -10593,7 +10593,7 @@ export interface operations {
                 template?: string | null;
                 /**
                  * @description A typed sample ("bobj", "Ada Lovelace") standing for every simple variable; without it
-                 *     the caller's own profile is used.
+                 *     the caller's own profile is used. The sample never stands for `{sub}` or `{claim:…}`.
                  */
                 sample?: string | null;
             };

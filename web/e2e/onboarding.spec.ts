@@ -32,7 +32,7 @@ async function open(page: Page, path: string, scheme: Scheme, scenario: Scenario
       r.fulfill(
         json({
           saved: false, signup_mode: "open", mode: "personal_org", default_org: null, default_org_role: "member", shared_workspaces: [],
-          personal_workspace: { enabled: false, role: "owner", name_template: "{preferred_username}|{email_local}" }, starter_grants: [],
+          personal_workspace: { enabled: false, role: "owner", name_template: "{sub}|{email_local}" }, starter_grants: [],
           personal_orgs: { count: 0, items: [] }, warnings: ["placement_unsaved"], updated_at: null, updated_by: null,
         }),
       ),

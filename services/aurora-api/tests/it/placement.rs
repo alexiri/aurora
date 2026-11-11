@@ -3,8 +3,8 @@
 
 use crate::common::{Harness, ORIGIN, cookie};
 use crate::oidc::{authorize, callback, count, harness, has_session, header, location};
-use aurora_config::SignupMode;
-use aurora_testkit::oidc::MockIdp;
+use aurora_config::{OidcProvider, Redacted, SignupMode};
+use aurora_testkit::oidc::{CLIENT_ID, CLIENT_SECRET, MockIdp};
 use http::{Method, StatusCode};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -48,7 +48,7 @@ impl Env {
     async fn shared(&self, extra: Value) -> Uuid {
         let mut b = json!({
             "mode": "shared_org", "create_default_org": "Users",
-            "personal_workspace": {"enabled": true, "name_template": "{preferred_username}|{email_local}"}
+            "personal_workspace": {"enabled": true, "name_template": "{sub}|{email_local}"}
         });
         for (k, v) in extra.as_object().unwrap() {
             b[k] = v.clone();
@@ -206,7 +206,12 @@ async fn two_users_one_org_two_personal_workspaces_with_starter_grant() {
 #[tokio::test]
 async fn sec79_collisions_never_attach_a_user_to_an_existing_workspace() {
     let e = env(SignupMode::Open).await;
-    let org = e.shared(json!({})).await;
+    // The legacy alias template keeps its SEC-79 behaviour under an explicit save
+    // (the new default names from `sub`, FIX-045).
+    let org = e
+        .shared(json!({"personal_workspace": {"enabled": true,
+            "name_template": "{preferred_username}|{email_local}"}}))
+        .await;
     // A pre-existing workspace already owns the slug.
     let (s, v) = e
         .call(
@@ -517,16 +522,21 @@ async fn sec79_placement_routes_need_an_instance_admin_and_changes_are_audited()
 #[tokio::test]
 async fn personal_workspaces_turned_on_later_reach_existing_members_only() {
     let e = env(SignupMode::Open).await;
+    // The legacy alias template, explicit: this test pins `preferred_username` naming.
     let org = e
-        .shared(json!({"personal_workspace": {"enabled": false}}))
+        .shared(json!({"personal_workspace": {"enabled": false,
+            "name_template": "{preferred_username}|{email_local}"}}))
         .await;
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     assert!(e.personal("bob@example.com").await.is_none());
     // An existing user who is not in the default org is not moved.
     e.h.user("old@example.com", false).await;
-    e.shared_again(json!({"personal_workspace": {"enabled": true, "role": "approver"}}))
-        .await;
+    e.shared_again(
+        json!({"personal_workspace": {"enabled": true, "role": "approver",
+        "name_template": "{preferred_username}|{email_local}"}}),
+    )
+    .await;
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     let (slug, _, role) = e.personal("bob@example.com").await.unwrap();
@@ -794,7 +804,11 @@ async fn mode_none_admits_only_by_invitation_claim_or_jit() {
 #[tokio::test]
 async fn invited_users_also_get_their_personal_workspace() {
     let e = env(SignupMode::InviteOnly).await;
-    let org = e.shared(json!({})).await;
+    // The legacy alias template, explicit: this test pins `preferred_username` naming.
+    let org = e
+        .shared(json!({"personal_workspace": {"enabled": true,
+            "name_template": "{preferred_username}|{email_local}"}}))
+        .await;
     let (s, v) = e
         .call(
             &e.admin,
@@ -852,6 +866,268 @@ async fn choices_offer_org_level_credentials_and_never_personal_workspaces() {
         )
         .await;
     assert_eq!(s, 404);
+}
+
+// ---- FIX-045 (D-162): the default template names workspaces from the OIDC-unique `sub` ----
+
+#[tokio::test]
+async fn fix045_default_template_names_new_workspaces_from_the_sub() {
+    let e = env(SignupMode::Open).await;
+    // The unsaved view and the PUT default report the new default (D-162).
+    let (_, v) = e
+        .call(&e.admin, Method::GET, "/v1/admin/placement", None)
+        .await;
+    assert_eq!(
+        v["personal_workspace"]["name_template"],
+        "{sub}|{email_local}"
+    );
+    let _org = e.shared(json!({})).await;
+    // `shared` omits name_template: the saved row carries the PUT default.
+    let saved: String = sqlx::query_scalar("SELECT name_template FROM instance_placement")
+        .fetch_one(e.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(saved, "{sub}|{email_local}");
+
+    // Two users with the same `preferred_username` (providers recycle aliases): their
+    // workspaces are named from their distinct subs, no numbered slug.
+    e.who("sub-bob-1", "bob@example.com", Some("bobj"));
+    e.sign_in().await.unwrap();
+    e.who("sub-bob-2", "robert@example.com", Some("bobj"));
+    e.sign_in().await.unwrap();
+    let (slug1, name1, _) = e.personal("bob@example.com").await.unwrap();
+    let (slug2, name2, _) = e.personal("robert@example.com").await.unwrap();
+    assert_eq!((slug1.as_str(), name1.as_str()), ("sub-bob-1", "sub-bob-1"));
+    assert_eq!((slug2.as_str(), name2.as_str()), ("sub-bob-2", "sub-bob-2"));
+    // A `sub` with characters the slug derivation trims still yields a usable slug.
+    e.who("Sub.Bob@3", "bobby@example.com", Some("bobj"));
+    e.sign_in().await.unwrap();
+    let (slug3, name3, _) = e.personal("bobby@example.com").await.unwrap();
+    assert_eq!(name3, "Sub.Bob@3");
+    assert_eq!(slug3, "sub-bob-3");
+    // Three distinct workspaces, no collision slug anywhere.
+    assert_eq!(
+        e.n("SELECT count(*) FROM workspaces WHERE personal_owner_user_id IS NOT NULL")
+            .await,
+        3
+    );
+    // The legacy alias slugs (the old default) never appear: naming comes from the subs.
+    assert_eq!(
+        e.n("SELECT count(*) FROM workspaces WHERE slug IN ('bobj', 'bobj-2')")
+            .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn fix045_same_alias_from_two_providers_gets_distinct_sub_named_workspaces() {
+    // The SEC-79 matrix extension (D-162): two users, same `preferred_username`, different
+    // providers/subs, the new default -> subs-named distinct workspaces, no numbered slug.
+    // A second provider ("corp") over the same mock issuer: same alias, different sub.
+    let idp = MockIdp::start().await;
+    let corp_issuer = idp.issuer().to_owned();
+    let h = Harness::with_config(move |c| {
+        // Both providers are served by the one mock IdP; both share its issuer and client.
+        c.signup_mode = SignupMode::Open;
+        c.oidc_client_secrets
+            .insert("mock".into(), Redacted::new(CLIENT_SECRET.into()));
+        c.oidc_client_secrets
+            .insert("corp".into(), Redacted::new(CLIENT_SECRET.into()));
+        let base = |id: &str, secret_env: &str| OidcProvider {
+            id: id.into(),
+            display_name: Some("Mock SSO".into()),
+            issuer: corp_issuer.clone(),
+            client_id: CLIENT_ID.into(),
+            client_secret_env: secret_env.into(),
+            ..OidcProvider::default()
+        };
+        c.auth.oidc_providers = vec![
+            base("mock", "MOCK_SECRET"),
+            base("corp", "MOCK_CORP_SECRET"),
+        ];
+    })
+    .await;
+    h.unsave_placement().await;
+    let admin = h.user(ADMIN, true).await;
+    let (_, tok) = h.good_session(admin).await;
+    let admin_cookie = cookie(&tok);
+
+    // Save the placement through the API (C-521) with the new default template.
+    let body = json!({
+        "mode": "shared_org", "create_default_org": "Users",
+        "personal_workspace": {"enabled": true, "name_template": "{sub}|{email_local}"}
+    });
+    let (s, _, v) = h
+        .send(
+            Method::PUT,
+            "/v1/admin/placement",
+            &[("cookie", admin_cookie.as_str()), ("origin", ORIGIN)],
+            Some(body),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+
+    // The same alias through two providers, different subs -> two identities, two workspaces
+    // named from the subs (one per provider row), no numbered slug. Each sign-in drives its
+    // own start -> IdP -> callback chain, so the flow cookie always matches the provider.
+    async fn sign_in_via(
+        idp: &MockIdp,
+        h: &Harness,
+        provider: &str,
+        sub: &str,
+        email: &str,
+        alias: &str,
+    ) {
+        idp_identity(idp, sub, email, alias);
+        let (path, flow) = start_flow(h, provider).await;
+        let (st, hd) = callback(h, &path, &flow).await;
+        assert_eq!(st, StatusCode::FOUND, "{provider} callback");
+        assert!(has_session(&hd), "{provider} session");
+    }
+    sign_in_via(&idp, &h, "mock", "s-bob-a", "bob@example.com", "bobj").await;
+    sign_in_via(&idp, &h, "corp", "s-bob-b", "robert@example.com", "bobj").await;
+
+    let row_a = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        personal_of(&h, "bob@example.com"),
+    )
+    .await;
+    let row_b = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        personal_of(&h, "robert@example.com"),
+    )
+    .await;
+    let (slug_a, name_a) = row_a
+        .expect("personal_of(bob) timed out")
+        .expect("no personal ws for bob");
+    let (slug_b, name_b) = row_b
+        .expect("personal_of(robert) timed out")
+        .expect("no personal ws for robert");
+    assert_eq!((slug_a.as_str(), name_a.as_str()), ("s-bob-a", "s-bob-a"));
+    assert_eq!((slug_b.as_str(), name_b.as_str()), ("s-bob-b", "s-bob-b"));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM workspaces WHERE personal_owner_user_id IS NOT NULL"
+        )
+        .fetch_one(h.pool())
+        .await
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM user_identities WHERE provider_id = 'corp'"
+        )
+        .fetch_one(h.pool())
+        .await
+        .unwrap(),
+        1
+    );
+}
+
+/// Point the mock IdP's next token at `(sub, email)` with a `preferred_username` alias.
+fn idp_identity(idp: &MockIdp, sub: &str, email: &str, alias: &str) {
+    idp.identity(sub, email, true);
+    idp.set(|c| {
+        c.extra.clear();
+        c.extra.insert("preferred_username".into(), json!(alias));
+    });
+}
+
+/// `oidc::authorize` for any provider: `/v1/auth/oidc/{id}/start` plus the IdP step.
+/// Returns `(callback path+query, __Host-aurora_oidc cookie pair)`.
+async fn start_flow(h: &Harness, provider: &str) -> (String, String) {
+    let uri = format!("/v1/auth/oidc/{provider}/start");
+    let (st, hd, _) = h.send(Method::GET, &uri, &[], None).await;
+    assert_eq!(st, StatusCode::FOUND, "start");
+    let flow = header(&hd, "set-cookie")
+        .into_iter()
+        .find(|c| c.starts_with("__Host-aurora_oidc="))
+        .expect("oidc cookie");
+    let flow = flow.split(';').next().unwrap().to_owned();
+    // Follow the provider's authorization URL at the mock IdP (no redirects), like
+    // `oidc::authorize` does for the `mock` provider.
+    let loc = header(&hd, "location").remove(0);
+    assert!(loc.contains("code_challenge_method=S256") && loc.contains("nonce="));
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let res = http.get(&loc).send().await.unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let back = res.headers()["location"].to_str().unwrap().to_owned();
+    let path = back
+        .strip_prefix(ORIGIN)
+        .expect("redirect_uri on external url")
+        .to_owned();
+    (path, flow)
+}
+
+/// `(slug, name)` of the personal workspace of the user with this e-mail.
+async fn personal_of(h: &Harness, email: &str) -> Option<(String, String)> {
+    sqlx::query_as(
+        "SELECT w.slug, w.name FROM workspaces w JOIN users u ON u.id = w.personal_owner_user_id \
+         WHERE u.email = $1",
+    )
+    .bind(email)
+    .fetch_optional(h.pool())
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn fix045_preview_resolves_sub_from_the_callers_identity() {
+    let e = env(SignupMode::Open).await;
+    e.shared(json!({})).await;
+    // The session-based admin has no identity row yet: sign in once through the dev
+    // provider so `(dev, dev-admin@example.com)` is stored. Without a `login_hint` the
+    // mock issues its *configured* claims, so the subject is exactly what's set here.
+    e.idp.identity("dev-admin@example.com", ADMIN, true);
+    e.sign_in().await.unwrap();
+    let get = |q: &str| {
+        let q = q.to_owned();
+        let e = &e;
+        async move {
+            e.call(
+                &e.admin,
+                Method::GET,
+                &format!("/v1/admin/placement/preview?{q}"),
+                None,
+            )
+            .await
+        }
+    };
+    // The admin's stored identity (dev provider, sub `dev-admin@example.com`); no sample.
+    let (s, v) = get("").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["name"].as_str(), Some("dev-admin@example.com"));
+    assert_eq!(v["unresolved"], json!([]));
+    // A typed sample never invents a subject: `{sub}` is reported, the chain falls through.
+    let (_, v) = get("sample=bobj").await;
+    assert_eq!(v["name"].as_str(), Some("bobj"));
+    assert_eq!(v["used"], 1);
+    assert_eq!(v["unresolved"], json!(["sub"]));
+    // `{sub}` first with nothing else: the `user-<short id>` last resort.
+    let (_, v) = get("template=%7Bsub%7D&sample=bobj").await;
+    let admin_id = e.user(ADMIN).await;
+    assert_eq!(
+        v["name"],
+        format!("user-{}", &admin_id.simple().to_string()[..8])
+    );
+    assert_eq!(v["used"], Value::Null);
+    assert_eq!(v["unresolved"], json!(["sub"]));
+    // Without a sample, the saved default resolves `{sub}` from the stored row.
+    let (_, v) = get("template=%7Bsub%7D%7C%7Bemail_local%7D").await;
+    assert_eq!(v["name"].as_str(), Some("dev-admin@example.com"));
+    // An admin with no linked identity (pre-provisioned) leaves `{sub}` unresolved.
+    sqlx::query("DELETE FROM user_identities WHERE user_id = $1")
+        .bind(admin_id)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    let (_, v) = get("template=%7Bsub%7D").await;
+    assert_eq!(v["used"], Value::Null);
+    assert_eq!(v["unresolved"], json!(["sub"]));
 }
 
 // ---- FIX-038: a `custom_only` app's connection is never saved as a starter grant ---------
@@ -1009,8 +1285,10 @@ async fn fix038_full_mode_app_connection_is_still_saved_and_granted_at_sign_in()
 #[tokio::test]
 async fn fix038_pre_fix_custom_only_starter_row_skips_and_audits_without_blocking_sign_in() {
     let e = env(SignupMode::Open).await;
+    // The legacy alias template, explicit: the slug assertion below pins it.
     let org = e
-        .shared(json!({"personal_workspace": {"enabled": true}}))
+        .shared(json!({"personal_workspace": {"enabled": true,
+            "name_template": "{preferred_username}|{email_local}"}}))
         .await;
     let conn = e
         .fix038_connection(&fix038_yaml("1.0.0", FIX038_CUSTOM_ONLY))

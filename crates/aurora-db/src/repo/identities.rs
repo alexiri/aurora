@@ -24,6 +24,21 @@ pub async fn find_user<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// The provider ids and subjects linked to a user, lowest `provider_id` first (the preview's
+/// deterministic choice when a user has several identities, D-162).
+pub async fn by_user<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+) -> Result<Vec<(String, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT provider_id, subject FROM user_identities WHERE user_id = $1 \
+         ORDER BY provider_id ASC, subject ASC",
+    )
+    .bind(user)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Link `(provider, subject)` to `user`. A duplicate is `DbError::UniqueViolation`
 /// on `user_identities_provider_id_subject_key`.
 pub async fn insert<'e, E: PgExecutor<'e>>(

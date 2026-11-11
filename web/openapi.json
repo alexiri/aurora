@@ -1400,7 +1400,7 @@
           {
             "name": "sample",
             "in": "query",
-            "description": "A typed sample (\"bobj\", \"Ada Lovelace\") standing for every simple variable; without it\nthe caller's own profile is used.",
+            "description": "A typed sample (\"bobj\", \"Ada Lovelace\") standing for every simple variable; without it\nthe caller's own profile is used. The sample never stands for `{sub}` or `{claim:…}`.",
             "required": false,
             "schema": {
               "type": [
@@ -34433,7 +34433,7 @@
               "string",
               "null"
             ],
-            "description": "`{variable}` text with `|` between fallbacks; default `{preferred_username}|{email_local}`."
+            "description": "`{variable}` text with `|` between fallbacks; default `{sub}|{email_local}`."
           },
           "role": {
             "oneOf": [

@@ -11,14 +11,14 @@ use crate::http::auth::Caller;
 use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::placement::{self as repo, PlacementRow};
 use aurora_db::repo::users::UserRow;
-use aurora_db::repo::{connections, members, secrets, users, workspaces};
+use aurora_db::repo::{connections, identities, members, secrets, users, workspaces};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use uuid::Uuid;
 
-/// Default template of a new placement.
-pub const DEFAULT_TEMPLATE: &str = "{preferred_username}|{email_local}";
+/// Default template of a new placement (D-162: name from the OIDC-unique `sub`).
+pub const DEFAULT_TEMPLATE: &str = "{sub}|{email_local}";
 const MAX_SHARED_WORKSPACES: usize = 50;
 const MAX_STARTER_GRANTS: usize = 50;
 const PERSONAL_ORG_LIST_CAP: i64 = 100;
@@ -652,11 +652,15 @@ pub async fn choices(state: &AppState, org: Uuid) -> Result<PlacementChoices, Ap
 struct Profile<'a> {
     name: &'a str,
     email: &'a str,
+    /// The caller's first stored identity `(provider_id, subject)` (lowest provider id,
+    /// D-162); `None` when the user has no linked identity (a pre-provisioned admin).
+    identity: Option<(String, String)>,
 }
 
 impl Lookup for Profile<'_> {
     fn get(&self, v: &template::Var) -> Option<String> {
         match v {
+            template::Var::Sub => self.identity.as_ref().map(|(_, s)| s.to_owned()),
             template::Var::Name => Some(self.name.to_owned()),
             template::Var::EmailLocal => self.email.split('@').next().map(str::to_owned),
             _ => None,
@@ -689,9 +693,18 @@ pub async fn preview(
             let u = users::find_by_id(&state.pool, c.user_id)
                 .await?
                 .ok_or_else(|| ApiError::not_found("User not found."))?;
+            // `{sub}` resolves from the caller's stored identity row: already persisted
+            // `(provider_id, subject)` (docs/03 §user_identities), no new claims retention;
+            // lowest `provider_id` when the caller has several (D-162). `{claim:…}` stays
+            // unresolved here (D-151(b)).
+            let identity = identities::by_user(&state.pool, c.user_id)
+                .await?
+                .into_iter()
+                .next();
             tpl.render(&Profile {
                 name: &u.display_name,
                 email: &u.email,
+                identity,
             })
         }
     };

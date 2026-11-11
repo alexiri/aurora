@@ -1,7 +1,7 @@
 //! Workspace name templates (P4-ONB-1, D-140, SEC-79).
 //!
 //! A template is literal text with `{variable}` placeholders; `|` separates a fallback chain
-//! (`{preferred_username}|{email_local}`): the first alternative whose placeholders all resolve
+//! (`{sub}|{email_local}`): the first alternative whose placeholders all resolve
 //! to a non-empty value and whose result still contains a letter or digit wins; when none does,
 //! the caller falls back to `user-<short id>`. Values come only from the signing-in provider's
 //! validated claims (never from request input).
@@ -13,6 +13,8 @@ const MAX_NAME_CHARS: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Var {
+    /// `{sub}`: the provider's unique, never-reassigned subject (OIDC Core §2).
+    Sub,
     PreferredUsername,
     Name,
     EmailLocal,
@@ -25,6 +27,7 @@ pub enum Var {
 impl Var {
     pub fn label(&self) -> String {
         match self {
+            Self::Sub => "sub".into(),
             Self::PreferredUsername => "preferred_username".into(),
             Self::Name => "name".into(),
             Self::EmailLocal => "email_local".into(),
@@ -48,6 +51,7 @@ pub struct Template {
 
 fn parse_var(name: &str) -> Result<Var, String> {
     Ok(match name {
+        "sub" => Var::Sub,
         "preferred_username" => Var::PreferredUsername,
         "name" => Var::Name,
         "email_local" => Var::EmailLocal,
@@ -133,6 +137,8 @@ impl Lookup for TokenClaims<'_> {
     fn get(&self, v: &Var) -> Option<String> {
         match v {
             Var::EmailLocal => self.email.split('@').next().map(str::to_owned),
+            // The provider's subject: the one claim OIDC guarantees unique (D-162).
+            Var::Sub => string_at(self.claims, "sub"),
             Var::PreferredUsername => string_at(self.claims, "preferred_username"),
             Var::Name => string_at(self.claims, "name"),
             Var::GivenName => string_at(self.claims, "given_name"),
@@ -150,6 +156,9 @@ impl Lookup for Sample<'_> {
     fn get(&self, v: &Var) -> Option<String> {
         let s = self.0;
         match v {
+            // A typed sample names a person; it never invents an identity (`{sub}`,
+            // `{claim:…}` stay unresolved so the chain falls through — D-162/D-151(b)).
+            Var::Sub | Var::Claim(_) => None,
             Var::PreferredUsername | Var::Name => Some(s.to_owned()),
             Var::EmailLocal => Some(s.split('@').next().unwrap_or(s).to_owned()),
             Var::GivenName => s.split_whitespace().next().map(str::to_owned),
@@ -158,7 +167,6 @@ impl Lookup for Sample<'_> {
                 w.next()?;
                 w.last().map(str::to_owned)
             }
-            Var::Claim(_) => None,
         }
     }
 }
@@ -317,6 +325,7 @@ mod tests {
         }
         assert!(parse(&"a".repeat(201)).is_err());
         assert!(parse("ws-{preferred_username}").is_ok());
+        assert!(parse("ws-{sub}").is_ok());
     }
 
     #[test]
@@ -326,10 +335,57 @@ mod tests {
             t.render(&Sample("Ada Lovelace")).name.as_deref(),
             Some("Ada-Lovelace")
         );
-        let t = parse("{claim:x}|{preferred_username}").unwrap();
+        let t = parse("{claim:x}|{sub}|{preferred_username}").unwrap();
         let r = t.render(&Sample("bobj"));
         assert_eq!(r.name.as_deref(), Some("bobj"));
-        assert_eq!(r.unresolved, vec!["claim:x"]);
+        // The sample never stands for an identity variable: `sub` falls through like a claim.
+        assert_eq!(r.unresolved, vec!["claim:x", "sub"]);
+        assert_eq!(r.used, Some(2));
+    }
+
+    #[test]
+    fn sub_renders_from_the_token_claims() {
+        let r = render(
+            "{sub}|{email_local}",
+            json!({"sub": "s-1234"}),
+            "bobj@x.org",
+        );
+        assert_eq!(r.name.as_deref(), Some("s-1234"));
+        assert_eq!(r.used, Some(0));
+        assert!(r.unresolved.is_empty());
+        // A missing `sub` (non-conformant provider) falls through to the e-mail.
+        let r = render("{sub}|{email_local}", json!({}), "bobj@x.org");
+        assert_eq!(r.name.as_deref(), Some("bobj"));
+        assert_eq!(r.unresolved, vec!["sub"]);
+    }
+
+    #[test]
+    fn a_255_character_sub_is_capped_at_the_80_character_name_limit() {
+        // OIDC Core §2: `sub` is at most 255 case-sensitive ASCII characters; the name is
+        // cut at 80 (a collision then goes to SEC-79's numbered slug).
+        let long = "s".repeat(255);
+        let r = render("{sub}", json!({"sub": long}), "b@x.org");
+        assert_eq!(r.name.as_deref().map(str::len), Some(80));
+        assert!(
+            r.name
+                .as_deref()
+                .is_some_and(|n| n.chars().all(|c| c == 's'))
+        );
+    }
+
+    #[test]
+    fn sample_path_leaves_sub_unresolved_and_the_chain_falls_through() {
+        // The default template with a typed sample: `{sub}` has no value, the e-mail part does.
+        let t = parse("{sub}|{email_local}").unwrap();
+        let r = t.render(&Sample("bobj"));
+        assert_eq!(r.name.as_deref(), Some("bobj"));
+        assert_eq!(r.unresolved, vec!["sub"]);
+        assert_eq!(r.used, Some(1));
+        // Nothing but `{sub}`: no name, the caller falls back to `user-<short id>`.
+        let t = parse("{sub}").unwrap();
+        let r = t.render(&Sample("bobj"));
+        assert_eq!(r.name, None);
+        assert_eq!(r.unresolved, vec!["sub"]);
     }
 
     #[test]
