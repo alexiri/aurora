@@ -814,3 +814,230 @@ async fn preview_start_demanded_via_arm5_shape_is_claimable() {
         .unwrap();
     assert_eq!(d.len(), 0, "a frozen agent never claims starts");
 }
+
+/// A parked sandbox is woken by the start click (arm 3 claims, `begin_boot` clears the start
+/// stamp), and once the boot's home sync is applied the API re-presents the start demand (the
+/// sandbox still carries the `preview_wake_at` that caused this boot), so arm 5 emits
+/// `preview.start` without a second click (FIX-041). An ordinary turn-caused boot (no wake
+/// stamp) presents no start demand at the same moment.
+#[tokio::test]
+async fn wake_boot_re_stamps_the_start_demand_at_home_sync() {
+    let r = prv_rig().await;
+    let runner: Uuid = sqlx::query_scalar("SELECT id FROM runners LIMIT 1")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let live = |agent: Uuid, conv: Uuid, sb: Uuid, boot: Uuid| crate::hosted::Live {
+        agent,
+        conv,
+        sb: sb.to_string(),
+        boot: boot.to_string(),
+    };
+    async fn desired_generation(pool: &sqlx::PgPool, sb: Uuid) -> i64 {
+        sqlx::query_scalar(
+            "SELECT a.home_sync_generation + w.home_sync_generation + 1 \
+             FROM sandboxes s JOIN agents a ON a.id = s.agent_id \
+             JOIN workspaces w ON w.id = a.workspace_id WHERE s.id = $1",
+        )
+        .bind(sb)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    // Parked: a stopped sandbox row, as after an idle park.
+    let agent = hosted_agent(&r).await;
+    let sb = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO sandboxes (id, agent_id, runner_id, state, boot_id) VALUES ($1,$2,$3,'stopped',$4)",
+    )
+    .bind(sb)
+    .bind(agent)
+    .bind(runner)
+    .bind(Uuid::now_v7())
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (_, v) = r
+        .create(agent, json!({"port": 3000, "start_command": "npm run dev"}))
+        .await;
+    let share: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+
+    // The first click on the parked share: 202, both demands stamped.
+    let (s, v) = r.start(share).await;
+    assert_eq!(s, 202, "{v}");
+    let (wake, req): (bool, bool) = sqlx::query_as(
+        "SELECT preview_wake_at IS NOT NULL, preview_start_requested_at IS NOT NULL \
+         FROM sandboxes WHERE id = $1",
+    )
+    .bind(sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(wake && req, "both stamps must be set");
+
+    // Arm 3 claims the wake; `begin_boot` clears the start stamp (the defect's losing step).
+    let items = r.work().await;
+    let start = items
+        .iter()
+        .find(|i| i["kind"] == "sandbox.start")
+        .expect("the wake must be claimed by arm 3");
+    assert_eq!(start["sandbox_id"].as_str().unwrap(), sb.to_string());
+    let boot: Uuid = start["boot_id"].as_str().unwrap().parse().unwrap();
+    let (state, wake, req): (String, bool, bool) = sqlx::query_as(
+        "SELECT state, preview_wake_at IS NOT NULL, preview_start_requested_at IS NOT NULL \
+         FROM sandboxes WHERE id = $1",
+    )
+    .bind(sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(state, "starting");
+    assert!(wake, "the wake stamp survives begin_boot");
+    assert!(!req, "begin_boot clears the start stamp");
+
+    // The boot completes: running, channel held, supervisor ready, home synced at the desired
+    // generation.
+    assert_eq!(
+        r.report(
+            &live(agent, Uuid::now_v7(), sb, boot),
+            json!({"kind": "sandbox.status", "state": "running", "container_ref": "c"})
+        )
+        .await,
+        "applied"
+    );
+    let (s, _) = r
+        .runner(
+            Some(r.rep),
+            "/v1/runner/channel/hold",
+            json!({"sandbox_id": sb, "boot_id": boot}),
+        )
+        .await;
+    assert_eq!(s, 200);
+    r.report(
+        &live(agent, Uuid::now_v7(), sb, boot),
+        json!({"kind": "supervisor.ready", "version": "0.1",
+            "harness": {"id": "fake", "capabilities": ["steer", "resume"]}}),
+    )
+    .await;
+    let generation = desired_generation(r.h.pool(), sb).await;
+    assert_eq!(
+        r.report(
+            &live(agent, Uuid::now_v7(), sb, boot),
+            json!({"kind": "home.synced", "generation": generation})
+        )
+        .await,
+        "applied"
+    );
+
+    // The fix's moment: the home-synced handling re-stamped the demand because the wake stamp
+    // was still live, and arm 5 claims exactly one start demand — no second click.
+    let req: bool = sqlx::query_scalar(
+        "SELECT preview_start_requested_at IS NOT NULL FROM sandboxes WHERE id = $1",
+    )
+    .bind(sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(req, "the home sync must re-present the start demand");
+    let d = {
+        let mut conn = r.h.pool().acquire().await.unwrap();
+        aurora_db::repo::preview_shares::claim_start_demands(
+            &mut conn,
+            runner,
+            r.rep,
+            aurora_core::limits::PREVIEW_WAKE_WAIT.as_secs_f64(),
+            10,
+        )
+        .await
+        .unwrap()
+    };
+    assert_eq!(d.len(), 1, "the re-stamped demand must be claimable");
+    assert_eq!(d[0].share_id, share);
+    assert_eq!(d[0].agent_id, agent);
+    assert_eq!(d[0].sandbox_id, sb);
+    assert_eq!(d[0].boot_id, boot);
+    // The full arm-5 path on the same state: the poll itself emits the `preview.start` item.
+    let items = r.work().await;
+    assert!(
+        items
+            .iter()
+            .any(|i| i["kind"] == "preview.start" && i["sandbox_id"] == sb.to_string()),
+        "the woken boot must run the share's start command without a second click: {items:?}"
+    );
+
+    // The negative control: an ordinary turn-caused boot (no wake stamp) presents no start
+    // demand at the same home-synced moment.
+    let agent2 = r.agent("prv-fix41-ctrl", true).await;
+    let sb2 = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO sandboxes (id, agent_id, runner_id, state, boot_id) VALUES ($1,$2,$3,'stopped',$4)",
+    )
+    .bind(sb2)
+    .bind(agent2)
+    .bind(runner)
+    .bind(Uuid::now_v7())
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (_, v) = r
+        .create(
+            agent2,
+            json!({"port": 3000, "start_command": "npm run dev"}),
+        )
+        .await;
+    let _: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let conv = r.direct(agent2).await;
+    r.say(conv, "hello").await;
+    let items = r.work().await;
+    let start = items
+        .iter()
+        .find(|i| i["kind"] == "sandbox.start" && i["sandbox_id"] == sb2.to_string())
+        .expect("the turn-caused boot must be claimed");
+    let boot2: Uuid = start["boot_id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        r.report(
+            &live(agent2, conv, sb2, boot2),
+            json!({"kind": "sandbox.status", "state": "running", "container_ref": "c"})
+        )
+        .await,
+        "applied"
+    );
+    let (s, _) = r
+        .runner(
+            Some(r.rep),
+            "/v1/runner/channel/hold",
+            json!({"sandbox_id": sb2, "boot_id": boot2}),
+        )
+        .await;
+    assert_eq!(s, 200);
+    r.report(
+        &live(agent2, conv, sb2, boot2),
+        json!({"kind": "supervisor.ready", "version": "0.1",
+            "harness": {"id": "fake", "capabilities": ["steer", "resume"]}}),
+    )
+    .await;
+    let generation2 = desired_generation(r.h.pool(), sb2).await;
+    assert_eq!(
+        r.report(
+            &live(agent2, conv, sb2, boot2),
+            json!({"kind": "home.synced", "generation": generation2})
+        )
+        .await,
+        "applied"
+    );
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let d2 = aurora_db::repo::preview_shares::claim_start_demands(
+        &mut conn,
+        runner,
+        r.rep,
+        aurora_core::limits::PREVIEW_WAKE_WAIT.as_secs_f64(),
+        10,
+    )
+    .await
+    .unwrap();
+    assert!(
+        d2.iter().all(|d| d.sandbox_id != sb2),
+        "an ordinary boot never presents a start demand: {d2:?}"
+    );
+}
