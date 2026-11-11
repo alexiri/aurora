@@ -419,7 +419,9 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   providers, LLM endpoints for model listing, secret stores); gateway →
   postgres, hookhost, external egress; hookhost → api:4111 and external egress
   (hooks' fetch is additionally filtered in-process); runner → api, Kubernetes
-  API; connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
+  API; the `secrets` hook pod → Kubernetes API (a hook-rendered policy, so it
+  exists before the job on `helm upgrade`, when default deny is already in
+  place); connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
   backend api and gateway also reach the configured Redis peers
   (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 4, P4-S3)
   With the `s3` blob backend the **api** (only) also reaches the configured bucket

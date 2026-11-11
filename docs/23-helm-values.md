@@ -214,8 +214,8 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.enabled` | bool | `true` | render any policies at all (leave on unless the cluster forbids them) | never off in production |
 | `networkPolicy.edgeNamespaceSelector` | label selector | `kubernetes.io/metadata.name: ingress-nginx` | which namespace's pods may reach api:4101, web:4100, connector callbacks | another ingress namespace |
 | `networkPolicy.dnsNamespaceSelector` | label selector | `kube-system` | DNS egress | custom DNS |
-| `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= any:443/6443) / `[443, 6443]` | runner → Kubernetes API egress | pinned API-server endpoints |
-| `networkPolicy.cilium.enabled` | bool | `false` | add a CiliumNetworkPolicy for runner → kube-apiserver (Cilium matches those as entities, not ipBlocks) and admit the `ingress` entity on the edge ports | Cilium cluster (`15 §Production`) |
+| `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= any:443/6443) / `[443, 6443]` | runner and `secrets` hook → Kubernetes API egress | pinned API-server endpoints |
+| `networkPolicy.cilium.enabled` | bool | `false` | add CiliumNetworkPolicies for runner and `secrets` hook → kube-apiserver (Cilium matches those as entities, not ipBlocks) and admit the `ingress` entity on the edge ports | Cilium cluster (`15 §Production`) |
 | `networkPolicy.cilium.edgeEntities` | list of Cilium entities | `[ingress]` | entities admitted on the edge ports (host-network ingresses: `[host, remote-node]`) | host-network ingress |
 | `networkPolicy.externalEgress.cidr` / `.except` | CIDR / list | `0.0.0.0/0` / private ranges | external egress (OIDC, SMTP, LLM endpoints, push services) for api/gateway/hookhost/connectors; `except` carves private ranges out (they need explicit rules) | lock egress down |
 | `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; must also be in `gateway.allowed_private`) | private LLM endpoints |

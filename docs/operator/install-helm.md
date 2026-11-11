@@ -502,6 +502,11 @@ With `networkPolicy.enabled: true` (default) the chart renders:
   bundled database is on), `-connector-<id>` (self-hosted connectors);
 - the `migrate` hook pod (`-migrate`): egress to the database only, so `helm upgrade` can
   run migrations while the other policies are in place;
+- the `secrets` hook pod (`-hooks`): egress to the Kubernetes API on `kubeApiPorts` only
+  (it is rendered as a hook too, at weight −15, before the job: on `helm upgrade` the
+  release's default-deny policy already exists — a regular chart resource would be applied
+  only after the hooks — and without an allow policy the job's `kubectl` calls hang and the
+  upgrade times out);
 - sandboxes namespace: `default-deny` and `allow-gateway-runner`.
 
 Set the selectors for your cluster:
@@ -525,6 +530,9 @@ NodePort) has the same Cilium behaviour. With the option on, the edge ports also
 `networkPolicy.cilium.edgeEntities` (default `[ingress]`, Cilium's own Gateway API / Ingress Envoy),
 one `CiliumNetworkPolicy` per edge-facing component (api 4101, web 4100, connector host 4110,
 dev-idp 4107, self-hosted connector callbacks); see [Behind an external reverse proxy](#behind-an-external-reverse-proxy).
+The `secrets` hook gets the same treatment (`-hooks-kube-api`): on a Cilium cluster without it,
+every `helm upgrade` times out in the hook job even though the NetworkPolicy above allows the
+port — a symptom is a DNS lookup that succeeds while `kubectl` inside the hook pod hangs.
 
 Sandboxes can reach only gateway 4102 and runner 4105 (`docs/11 §kubernetes`). The kind test
 checks this from inside a sandbox Pod: no DNS, no route to the API, Postgres, hookhost, gateway

@@ -33,6 +33,12 @@ helm upgrade aurora deploy/helm/aurora -n aurora -f my-values.yaml --set image.t
 
 - The `migrate` job is a `pre-install,pre-upgrade` hook. It runs before the upgraded Deployments
   roll out.
+- The `secrets` job is also a `pre-install,pre-upgrade` hook. Its Kubernetes API egress is
+  allowed by a hook-rendered NetworkPolicy (`<fullname>-hooks`, weight −15, plus the Cilium
+  policy with `networkPolicy.cilium.enabled`): on upgrade the release's default-deny policy is
+  already in place, and a job pod without an allow rule hangs in `kubectl` until the upgrade
+  times out. On a Cilium cluster the NetworkPolicy alone is not enough — the API server is the
+  `kube-apiserver` entity, which no `ipBlock` matches (see install-helm §NetworkPolicies).
 - The chart uses one `image.tag` for all core components. It does not roll them one at a time,
   so the staged order above is not enforced. Per-component tags do not exist yet
   (**not yet implemented**). `NOTES.txt` tells operators to roll in the documented order, which

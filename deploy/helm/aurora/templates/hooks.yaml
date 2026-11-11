@@ -4,6 +4,7 @@
 {{- $genSecrets := not .Values.secrets.existingSecret -}}
 {{- $genCA := not .Values.gateway.ca.existingSecret -}}
 {{- $rotate := .Values.secrets.rotate | default dict -}}
+{{- $np := .Values.networkPolicy -}}
 {{- /* RFE-007: a rotation request needs the hook on upgrade too (it only appends, never activates).
        P4-MCON: so does a release upgraded from before the connector host, whose Secret has no
        AURORA_CONNECTOR_HOST_TOKEN yet. Every `put` is idempotent (only absent keys are written), so the hook
@@ -44,6 +45,62 @@ metadata:
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-hooks}
 subjects:
   - {kind: ServiceAccount, name: {{ $full }}-hooks}
+{{- if .Values.networkPolicy.enabled }}
+{{- /* The hook jobs talk to the Kubernetes API with kubectl. On pre-upgrade the release's
+       default-deny policy already exists (hooks run before regular resources on upgrade, so
+       the policy cannot be one), and the hook pods carry no component label: without an
+       allow policy of their own their kubectl calls hang and the upgrade times out. Weight
+       -15: after the RBAC (-20), before the secrets job (-10). */}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-hooks
+  annotations:
+    "helm.sh/hook": {{ $secretHook }}
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "secrets") | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- if $np.kubeApiCidrs }}
+        {{- range $np.kubeApiCidrs }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+        {{- else }}
+        - ipBlock: {cidr: 0.0.0.0/0}
+        {{- end }}
+      ports:
+        {{- range (default (list 443 6443) $np.kubeApiPorts) }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+{{- if $np.cilium.enabled }}
+---
+# Cilium: the API server is the `kube-apiserver` entity, which no NetworkPolicy ipBlock
+# matches (mirrors <full>-runner-kube-api in networkpolicy.yaml).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $full }}-hooks-kube-api
+  annotations:
+    "helm.sh/hook": {{ $secretHook }}
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+spec:
+  endpointSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "secrets") | nindent 6 }}
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            {{- range (default (list 443 6443) $np.kubeApiPorts) }}
+            - {port: {{ . | quote }}, protocol: TCP}
+            {{- end }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if $genSecrets }}
 ---
@@ -59,6 +116,9 @@ metadata:
 spec:
   backoffLimit: 3
   template:
+    metadata:
+      labels: {{- include "aurora.labels" . | nindent 8 }}
+        app.kubernetes.io/component: secrets
     spec:
       restartPolicy: OnFailure
       serviceAccountName: {{ $full }}-hooks
