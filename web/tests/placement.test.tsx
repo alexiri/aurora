@@ -18,7 +18,7 @@ const unsaved = {
   default_org: null,
   default_org_role: "member",
   shared_workspaces: [],
-  personal_workspace: { enabled: false, role: "owner", name_template: "{preferred_username}|{email_local}" },
+  personal_workspace: { enabled: false, role: "owner", name_template: "{sub}|{email_local}" },
   starter_grants: [],
   personal_orgs: {
     count: 2,
@@ -91,6 +91,12 @@ describe("Admin › Sign-up & placement (P4-ONB-1, D-140)", () => {
     const org = (await screen.findByLabelText("Organization")) as HTMLSelectElement;
     await waitFor(() => expect(org.value).toBe(ORG));
     expect(screen.getByLabelText("Give every user a workspace of their own")).toBeChecked();
+    // The hint lists every variable, `{sub}` first (FIX-045/D-162).
+    expect(
+      screen.getByText(
+        "Variables: {sub} {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |.",
+      ),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Try it with a name"), { target: { value: "Ada Lovelace" } });
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "{name}" } });
     await waitFor(() => expect(screen.getByTestId("placement-preview")).toHaveTextContent("workspace Ada Lovelace (ada-lovelace)"), { timeout: 3000 });
@@ -110,7 +116,7 @@ describe("Admin › Sign-up & placement (P4-ONB-1, D-140)", () => {
         default_org_id: ORG,
         default_org_role: "member",
         shared_workspaces: [{ workspace_id: "w1", role: "member" }],
-        personal_workspace: { enabled: true, role: "owner", name_template: "{preferred_username}|{email_local}" },
+        personal_workspace: { enabled: true, role: "owner", name_template: "{sub}|{email_local}" },
         starter_grants: [{ kind: "secret", id: KEY }],
       },
     ]);

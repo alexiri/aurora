@@ -213,7 +213,7 @@ describe("getting-started guide: every state", () => {
 // ---------------------------------------------------------------------------------------------------------------------
 const placement = (over: Record<string, unknown> = {}) => ({
   saved: true, signup_mode: "open", mode: "shared_org", default_org: { id: "o1", slug: "users", name: "Users" }, default_org_role: "member",
-  shared_workspaces: [], personal_workspace: { enabled: true, role: "owner", name_template: "{preferred_username}|{email_local}" },
+  shared_workspaces: [], personal_workspace: { enabled: true, role: "owner", name_template: "{sub}|{email_local}" },
   starter_grants: [], personal_orgs: { count: 0, items: [] }, warnings: [], updated_at: "2026-11-10T08:00:00Z", updated_by: "u9", ...over,
 });
 const check = (id: string, status: string, reason: string, message: string, extra: Record<string, unknown> = {}) => ({ id, status, reason, message, value: null, helm: null, ...extra });

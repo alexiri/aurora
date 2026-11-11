@@ -274,7 +274,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                   <Field
                     id="pl-template"
                     label="Workspace name"
-                    hint="Variables: {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |."
+                    hint="Variables: {sub} {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |."
                     error={errs["personal_workspace/name_template"]}
                   >
                     <input

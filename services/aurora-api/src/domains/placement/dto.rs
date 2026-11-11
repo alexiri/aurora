@@ -116,7 +116,7 @@ pub struct PersonalWorkspaceInput {
     /// Default `owner`.
     #[serde(default)]
     pub role: Option<PersonalRole>,
-    /// `{variable}` text with `|` between fallbacks; default `{preferred_username}|{email_local}`.
+    /// `{variable}` text with `|` between fallbacks; default `{sub}|{email_local}`.
     #[serde(default)]
     pub name_template: Option<String>,
 }
@@ -255,7 +255,7 @@ pub struct PreviewQuery {
     /// The template to render (default: the saved one).
     pub template: Option<String>,
     /// A typed sample ("bobj", "Ada Lovelace") standing for every simple variable; without it
-    /// the caller's own profile is used.
+    /// the caller's own profile is used. The sample never stands for `{sub}` or `{claim:…}`.
     pub sample: Option<String>,
 }
 

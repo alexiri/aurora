@@ -263,7 +263,7 @@ export async function mockApi(
       return json({
         saved: true, signup_mode: "open", mode: "shared_org", default_org: { id: id(1), slug: "users", name: "Users" }, default_org_role: "member",
         shared_workspaces: [{ workspace_id: id(2), slug: "main", name: "Main workspace", role: "member" }],
-        personal_workspace: { enabled: true, role: "owner", name_template: "{preferred_username}|{email_local}" },
+        personal_workspace: { enabled: true, role: "owner", name_template: "{sub}|{email_local}" },
         starter_grants: [{ kind: "secret", id: id(300), name: "org-llm-key", detail: "llm" }],
         personal_orgs: { count: 1, items: [{ org_id: id(301), slug: "ada-s-org", name: "Ada's org", owner_email: "ada@example.test", created_at: now }] },
         warnings: ["per_user_orgs_active"], updated_at: now, updated_by: id(99),

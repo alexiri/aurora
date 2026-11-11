@@ -838,7 +838,9 @@ status and either does the thing in place or explains the Helm value to change
    warning when no `role_mappings` exist and only the e-mail list makes admins.
 2. **Where new users land**: the placement form (`04 §New-user placement`) with the
    recommended choice preselected (`shared_org` *Users*, personal workspace
-   `{preferred_username}`) and the preview.
+   `{sub}` — the provider's unique, never-reassigned subject, so recycled
+   `preferred_username` aliases from different providers never collide, D-162) and the
+   preview.
 3. **LLM access**: configured endpoints with reachability, whether `default_model` is
    set (FIX-019 warning in words), and an "Add an organization LLM key" form for the
    default org, plus a "Give it to every new user's agent" switch that fills the
