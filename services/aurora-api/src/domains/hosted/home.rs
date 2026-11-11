@@ -306,14 +306,17 @@ pub async fn render(
         .filter_map(|t| serde_json::to_value(t).ok())
         .collect();
 
-    // (P4-PRV-1, D-144) The `previews` part: the agent's active shares, one entry. Empty while
-    // previews are off (instance or org) or the agent is frozen (the allow-list dies with the
-    // sync; `11 §Port previews`). Held in the supervisor's memory only.
+    // (P4-PRV-1, D-144, FIX-042) The `previews` part: the agent's active shares, one entry —
+    // carried even when empty (the org has previews off, the agent is frozen, or the last share
+    // was paused/deleted), because the supervisor replaces its in-memory list as a whole and
+    // only a part can shrink it (`11 §Port previews`). Absent entirely while the instance
+    // switch is off; held in the supervisor's memory only.
     let mut preview_entries: Vec<Value> = Vec::new();
     if state.config.previews.enabled {
         let frozen = aurora_db::repo::freeze::effective_of_agent(conn, claim.agent_id)
             .await?
             .is_some();
+        let mut shares: Vec<Value> = Vec::new();
         if !frozen {
             let on: bool = sqlx::query_scalar(
                 "SELECT coalesce((settings->'previews_enabled')::bool, false) \
@@ -324,7 +327,7 @@ pub async fn render(
             .await
             .map_err(DbError::from)?;
             if on {
-                let shares: Vec<Value> =
+                shares =
                     aurora_db::repo::preview_shares::active_for_agent(&mut *conn, claim.agent_id)
                         .await?
                         .into_iter()
@@ -342,9 +345,9 @@ pub async fn render(
                             e
                         })
                         .collect();
-                preview_entries.push(json!({ "shares": shares }));
             }
         }
+        preview_entries.push(json!({ "shares": shares }));
     }
 
     let mut parts = Vec::new();
@@ -355,9 +358,10 @@ pub async fn render(
         entries: vec![render_inputs],
     });
     pack(HomeSyncKind::Tools, tools, &mut parts);
-    // Always present when the instance runs previews (even with no shares): the single entry
-    // replaces the supervisor's in-memory list as a whole, so a pause/delete/off switch reaches
-    // it on the next sync. When the instance is off the part stays absent (nothing ever allowed).
+    // Always present when the instance runs previews (even with no shares, org-off, frozen or
+    // not — FIX-042): the single entry replaces the supervisor's in-memory list as a whole, so a
+    // pause/delete/off switch reaches it on the next sync. When the instance is off the part
+    // stays absent (nothing ever allowed).
     if state.config.previews.enabled {
         pack(HomeSyncKind::Previews, preview_entries, &mut parts);
     }

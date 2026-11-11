@@ -298,6 +298,12 @@ pub async fn patch_org(
     orgs::update(&mut *tx, org_id, name.as_deref(), slug, settings.as_ref())
         .await
         .map_err(|e| conflict_code(e, &[(ORG_SLUG_CONSTRAINT, "slug_taken")]))?;
+    // (P4-PRV-1, C-549, FIX-042) The next home sync must carry the (possibly empty) `previews`
+    // part so a running sandbox's share list follows the switch at once: bump every agent of
+    // the org (the `bump_org` pattern) inside the same transaction.
+    if previews_ev.is_some() {
+        aurora_db::repo::skills::bump_org(&mut tx, org_id).await?;
+    }
     let out = orgs::get(&mut *tx, org_id, user)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
