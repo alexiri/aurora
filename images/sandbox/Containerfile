@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 FROM ${SANDBOX_BASE_IMAGE} AS os
 # `postgresql` is the psql client: `psql service=<name>` is how agents use database connections
 # (P2-DBL-2; the supervisor writes the libpq service, password and CA files).
-RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common postgresql \
+RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common postgresql rpm \
     && useradd --uid 1000 --user-group --home-dir /workspace --no-create-home --shell /bin/bash agent \
     && mkdir -p /workspace /run/aurora /opt/aurora \
     && chown 1000:1000 /workspace \
