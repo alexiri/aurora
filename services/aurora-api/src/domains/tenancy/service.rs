@@ -11,7 +11,7 @@ use aurora_db::repo::agents::{self, AgentRow, NewDefaultAgent};
 use aurora_db::repo::members::{self, MemberRow};
 use aurora_db::repo::orgs::{self, OrgRow};
 use aurora_db::repo::workspaces::{self, WorkspaceRow};
-use aurora_db::repo::{notify_auth_revoked, policy};
+use aurora_db::repo::{notify_auth_revoked, policy, scim};
 use aurora_db::{PgPool, conflict_code};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -406,6 +406,18 @@ pub async fn patch_member(
         req.status.map(MemberStatus::as_str),
     )
     .await?;
+    // (FIX-037) A human status change of a SCIM-linked member reconciles the link in the same
+    // transaction (04 §SCIM, D-135(f)): suspension → link `suspended` with
+    // `suspended_by_scim = false` (a human suspension is never lifted by the IdP), manual
+    // reactivation → link `active` again — the admission gate and the Directory badge keep
+    // telling the truth. Only a real transition writes (a redundant suspend must not steal a
+    // SCIM-made flag); the repo refuses `removed` rows, keeping a tombstone untouched.
+    if let Some(st) = req.status
+        && st.as_str() != cur.status
+        && let Some(link) = scim::user_link(&mut *tx, org_id, target).await?
+    {
+        scim::set_user_state(&mut tx, org_id, link.id, st.as_str(), false).await?;
+    }
     // A role change (owner/admin → member) can also end `can_use`, which ends speaker binding
     // (RFE-005).
     if req.status.is_some_and(|s| s.as_str() != cur.status)
@@ -462,6 +474,14 @@ pub async fn remove_member(
         reassign_org_member(&mut tx, actor, org_id, target, to).await?;
     }
     members::remove(&mut tx, org_id, target).await?;
+    // (FIX-037) A human removal of a SCIM-linked member tombstones the link in the same
+    // transaction (04 §SCIM, D-135(f)): `state = removed` (with `removed_at`, flag false) so
+    // JIT, invitations and sign-in re-admission are refused exactly as for a SCIM-side
+    // delete. `set_user_state` refuses an already-`removed` row, keeping the tombstone
+    // (and its `removed_at`) untouched.
+    if let Some(link) = scim::user_link(&mut *tx, org_id, target).await? {
+        scim::set_user_state(&mut tx, org_id, link.id, "removed", false).await?;
+    }
     notify_auth_revoked(&mut *tx, "user", target).await?;
     crate::audit::commit_critical(tx, ev).await?;
     Ok(())

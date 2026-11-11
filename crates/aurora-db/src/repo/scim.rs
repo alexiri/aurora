@@ -417,7 +417,10 @@ pub async fn update_user(
 }
 
 /// `active` ⇄ `suspended` on the link. `by_scim` records whether SCIM made the membership
-/// `suspended` (only then may SCIM reactivate it, 04 §SCIM). Returns the updated row.
+/// `suspended` (only then may SCIM reactivate it, 04 §SCIM). A target state of `removed`
+/// (the human offboarding reconciliation, FIX-037) tombstones the row like
+/// [`remove_user`]: `removed_at` is stamped and the write refuses an already-`removed` row.
+/// Returns the updated row.
 pub async fn set_user_state(
     conn: &mut PgConnection,
     org: Uuid,
@@ -426,7 +429,8 @@ pub async fn set_user_state(
     by_scim: bool,
 ) -> Result<Option<UserRow>, DbError> {
     sqlx::query(
-        "UPDATE scim_users SET state = $3, suspended_by_scim = $4, updated_at = now() \
+        "UPDATE scim_users SET state = $3, suspended_by_scim = $4, removed_at = \
+             CASE WHEN $3 = 'removed' THEN now() ELSE NULL END, updated_at = now() \
          WHERE org_id = $1 AND id = $2 AND state <> 'removed'",
     )
     .bind(org)
