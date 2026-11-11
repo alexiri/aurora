@@ -7,6 +7,7 @@
 
 use crate::scim_common::*;
 use aurora_core::token;
+use chrono::{DateTime, Utc};
 use http::Method;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -25,6 +26,215 @@ async fn deactivate(fx: &ScimFx, id: &str) -> (u16, Value) {
         )
         .await;
     (s.as_u16(), v)
+}
+
+#[tokio::test]
+async fn put_to_tombstoned_email_then_post_sequence() {
+    // FIX-040 (amended): provision → DELETE → PUT another link to the freed e-mail →
+    // deterministic 409 uniqueness (the tombstone pins the e-mail's `user_id` under
+    // `UNIQUE (org_id, user_id)`; PUT cannot revive, only POST does) → POST → 201 revival
+    // reusing the original link row id. No 500 anywhere in the sequence.
+    let fx = ScimFx::new().await;
+    let a = fx.provision_ok("u@x.io").await;
+    let aid = a["id"].as_str().unwrap().to_owned();
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{USERS}/{aid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    // Link B (a different global user).
+    let b = fx.provision_ok("v@x.io").await;
+    let bid = b["id"].as_str().unwrap().to_owned();
+    // PUT link B onto the tombstoned e-mail: 409 uniqueness, deterministic.
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{bid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": "u@x.io",
+                "name": {"givenName": "V", "familyName": "Two"},
+            })),
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_scim_error(409, &v);
+    assert_eq!(scim_type(&v), Some("uniqueness"), "{v}");
+    // Nothing was written: link B keeps its e-mail, the tombstone is intact.
+    let b_row: (String, String) =
+        sqlx::query_as("SELECT user_name, state FROM scim_users WHERE org_id = $1 AND id = $2")
+            .bind(fx.org)
+            .bind(bid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(b_row, ("v@x.io".into(), "active".into()), "B unchanged");
+    let a_row: (String, String) =
+        sqlx::query_as("SELECT user_name, state FROM scim_users WHERE org_id = $1 AND id = $2")
+            .bind(fx.org)
+            .bind(aid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(a_row.1, "removed", "the tombstone is untouched");
+    // POST the e-mail: the revival (FIX-035) reuses the original row.
+    let v2 = fx.provision_ok("u@x.io").await;
+    assert_eq!(v2["id"], a["id"], "the tombstone's row id is reused");
+    // The final PUT of B to its own name stays clean (uniqueness for live links intact).
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{bid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": "v@x.io",
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+}
+
+#[tokio::test]
+async fn suspend_cancels_pending_invitations() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("sus-inv@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    // A pending invitation addressed to the member's e-mail.
+    sqlx::query(
+        "INSERT INTO invitations (id, org_id, email, role, token_hash, invited_by, status, created_at, updated_at)
+         VALUES ($1, $2, 'sus-inv@x.io', 'member', $3, NULL, 'pending', now(), now())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(fx.org)
+    .bind(&token::hash("inv-sus")[..])
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    // Suspend (the deprovisioning matrix names the invitation row for both columns).
+    let (s, v) = deactivate(&fx, &sid).await;
+    assert_eq!(s, 200, "{v}");
+    let inv: String = sqlx::query_scalar(
+        "SELECT status FROM invitations WHERE org_id = $1 AND email = 'sus-inv@x.io'",
+    )
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(inv, "cancelled", "suspend cancels pending invitations");
+}
+
+#[tokio::test]
+async fn post_after_delete_revives_the_link() {
+    let fx = ScimFx::new().await;
+    // Seat cap 2: owner + one member. The revival must be seat-capped like a provision.
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || '{\"max_members\": 2}'::jsonb WHERE id = $1",
+    )
+    .bind(fx.org)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    let u = fx
+        .provision("revive@x.io", json!({"externalId": "idp-1"}))
+        .await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let user = fx.aurora_user(&sid).await;
+    let created: DateTime<Utc> =
+        sqlx::query_scalar("SELECT created_at FROM scim_users WHERE id = $1")
+            .bind(sid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    // DELETE the link (tombstone).
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    let removed_at: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT removed_at FROM scim_users WHERE id = $1")
+            .bind(sid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert!(removed_at.is_some(), "tombstoned");
+    // POST the same e-mail again: 201, the same link row id, membership re-created.
+    let v2 = fx
+        .provision(
+            "revive@x.io",
+            json!({"externalId": "idp-2", "displayName": "Revived"}),
+        )
+        .await;
+    assert_eq!(v2["id"], u["id"], "the link row id is reused");
+    let (state, ext): (String, Option<String>) =
+        sqlx::query_as("SELECT state, external_id FROM scim_users WHERE id = $1")
+            .bind(sid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(state, "active");
+    assert_eq!(ext.as_deref(), Some("idp-2"), "externalId refreshed");
+    let (removed_at, created2): (Option<DateTime<Utc>>, DateTime<Utc>) =
+        sqlx::query_as("SELECT removed_at, created_at FROM scim_users WHERE id = $1")
+            .bind(sid.parse::<Uuid>().unwrap())
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(removed_at, None, "the tombstone is cleared");
+    assert_eq!(created2, created, "the row is the same one");
+    let st: String =
+        sqlx::query_scalar("SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(st, "active", "membership re-created");
+    // Seat-capped like a fresh provision: with the cap full again, the revival itself is
+    // 403 member_limit_reached and the tombstone is untouched.
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || '{\"max_members\": 1}'::jsonb WHERE id = $1",
+    )
+    .bind(fx.org)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            USERS,
+            Some(json!({"userName": "revive@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    assert!(
+        v["detail"].as_str().unwrap().contains("member_limit"),
+        "{v}"
+    );
+    let state: String = sqlx::query_scalar("SELECT state FROM scim_users WHERE id = $1")
+        .bind(sid.parse::<Uuid>().unwrap())
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(state, "removed", "a capped revival leaves the tombstone");
+    // Room again: the revival works once more (the row is still the original).
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || '{\"max_members\": 2}'::jsonb WHERE id = $1",
+    )
+    .bind(fx.org)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    let v3 = fx.provision_ok("revive@x.io").await;
+    assert_eq!(v3["id"], u["id"], "the row survives a capped refusal");
+    // The global `users` row was never duplicated.
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE email = 'revive@x.io'")
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
 }
 
 #[tokio::test]

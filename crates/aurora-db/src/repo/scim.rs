@@ -438,6 +438,46 @@ pub async fn set_user_state(
     user_by_id(&mut *conn, org, id).await
 }
 
+/// Revive a tombstoned link (`POST /Users` of a removed user, C-474 "re-provisions"): the
+/// row keeps its id and its `user_id` — `UNIQUE (org_id, user_id)` is never re-inserted —
+/// and the attributes plus state are overwritten in place (`removed_at` cleared). Guarded
+/// on `state = 'removed'` so only a genuine tombstone is revived; returns the row, or
+/// `None` when the link is not a removed one (the caller then creates fresh).
+#[allow(clippy::too_many_arguments)]
+pub async fn revive_user(
+    conn: &mut PgConnection,
+    org: Uuid,
+    id: Uuid,
+    user_id: Uuid,
+    external_id: Option<&str>,
+    user_name: &str,
+    display_name: Option<&str>,
+    given_name: Option<&str>,
+    family_name: Option<&str>,
+    state: &str,
+    by_scim: bool,
+) -> Result<Option<UserRow>, DbError> {
+    sqlx::query(
+        "UPDATE scim_users SET user_id = $3, external_id = $4, user_name = $5, \
+             display_name = $6, given_name = $7, family_name = $8, state = $9, \
+             suspended_by_scim = $10, removed_at = NULL, updated_at = now() \
+         WHERE org_id = $1 AND id = $2 AND state = 'removed'",
+    )
+    .bind(org)
+    .bind(id)
+    .bind(user_id)
+    .bind(external_id)
+    .bind(user_name)
+    .bind(display_name)
+    .bind(given_name)
+    .bind(family_name)
+    .bind(state)
+    .bind(by_scim)
+    .execute(&mut *conn)
+    .await?;
+    user_by_id(&mut *conn, org, id).await
+}
+
 /// Tombstone (`DELETE /Users/{id}`): the row stays so JIT and invitations cannot re-admit the
 /// person into this org (04 §OIDC note). Returns the row *before* the change (the actor may
 /// need the previous state), or `None` when unknown/foreign.
