@@ -3,7 +3,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { useCallback, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useCallback, useId, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
@@ -77,63 +77,138 @@ function NavItem({
   );
 }
 
-function ContextSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: string }) {
+/**
+ * FIX-027: one sidebar select control (an uppercase caption above a one-line menu trigger).
+ * The caption is the control's label (`aria-labelledby` names both caption and value, so the
+ * accessible name keeps the visible value — WCAG 2.5.3); there is no aria-label.
+ */
+function SidebarSelect({
+  caption,
+  placeholder,
+  value,
+  avatar,
+  indent,
+  testId,
+  children,
+}: {
+  caption: string;
+  /** Shown when nothing is the current scope. */
+  placeholder: string;
+  /** The current scope's name, or undefined for the placeholder look. */
+  value?: string;
+  avatar?: { name: string; tintKey?: string };
+  /** The workspace control sits inside its organization (FIX-027). */
+  indent?: boolean;
+  testId: string;
+  children: ReactNode;
+}) {
+  const id = useId();
+  return (
+    <div data-testid={testId} className={cn("space-y-1.5", indent && "pl-8")}>
+      <p id={`${id}-caption`} className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+        {caption}
+      </p>
+      <Menu>
+        <MenuTrigger asChild>
+          <button
+            type="button"
+            aria-labelledby={`${id}-caption ${id}-value`}
+            className="flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5 text-left hover:bg-subtle"
+          >
+            {avatar ? <Avatar name={avatar.name} tintKey={avatar.tintKey} size={28} className="rounded-md" /> : null}
+            <span
+              id={`${id}-value`}
+              className="min-w-0 flex-1 truncate text-sm font-semibold text-ink"
+            >
+              {value ?? placeholder}
+            </span>
+            <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
+          </button>
+        </MenuTrigger>
+        <MenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">{children}</MenuContent>
+      </Menu>
+    </div>
+  );
+}
+
+/** FIX-027: organizations on every page; instance admins reach the admin area only from here. */
+function OrgSelector({ orgSlug, pathname }: { orgSlug?: string; pathname: string }) {
+  const me = useMe();
   const orgs = useOrgs();
   const resolved = useResolve(orgSlug);
-  const workspaces = useWorkspaces(resolved.data?.org.id);
+  const isAdmin = me.data?.user.is_instance_admin === true;
+  const inAdmin = pathname.startsWith("/admin");
   const org = orgs.data?.items.find((o) => o.slug === orgSlug);
-  const ws = workspaces.data?.items.find((w) => w.slug === wsSlug);
-  const orgName = org?.name ?? orgSlug;
-  const wsName = ws?.name ?? wsSlug;
+  // /v1/resolve also names an org the person has no membership row for (an admin visiting it).
+  const orgName = org?.name ?? resolved.data?.org.name ?? orgSlug;
   return (
-    <Menu>
-      <MenuTrigger asChild>
-        <button
-          type="button"
-          // No aria-label: the name comes from the visible text (WCAG 2.5.3 Label in Name; the avatar
-          // initial is visible text, so any other label fails axe's label-content-name-mismatch).
-          className="flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5 text-left hover:bg-subtle"
-        >
-          <Avatar name={orgName ?? "?"} tintKey={orgSlug} size={28} className="rounded-md" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-semibold text-ink">{orgName ?? "Select organization"}</span>
-            <span className="block truncate text-xs text-muted">{wsName ?? (orgSlug ? "All workspaces" : "No workspace")}</span>
-          </span>
-          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
-        </button>
-      </MenuTrigger>
-      <MenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">
-        <MenuLabel>Organizations</MenuLabel>
-        {orgs.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
-        {orgs.isError ? <MenuItem disabled>Could not load organizations</MenuItem> : null}
-        {orgs.data?.items.map((o) => (
-          <MenuItem key={o.id} asChild>
-            <Link href={`/o/${o.slug}`} className={cn(o.slug === orgSlug && "font-semibold")}>
-              {o.name}
+    <SidebarSelect
+      caption="Organization"
+      placeholder={inAdmin ? "All organizations" : "Select organization"}
+      value={orgName}
+      avatar={{ name: orgName ?? "?", tintKey: orgSlug }}
+      testId="org-selector"
+    >
+      <MenuLabel>Organizations</MenuLabel>
+      {orgs.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
+      {orgs.isError ? <MenuItem disabled>Could not load organizations</MenuItem> : null}
+      {orgs.data?.items.map((o) => (
+        <MenuItem key={o.id} asChild>
+          <Link href={`/o/${o.slug}`} className={cn(o.slug === orgSlug && "font-semibold")}>
+            {o.name}
+          </Link>
+        </MenuItem>
+      ))}
+      {isAdmin ? (
+        <>
+          <MenuSeparator />
+          <MenuItem asChild>
+            <Link href="/admin" data-active={inAdmin ? "true" : undefined} className={cn(inAdmin && "font-semibold")}>
+              <ShieldIcon className="mr-2 inline size-4 text-muted" />
+              All organizations
             </Link>
           </MenuItem>
-        ))}
-        {orgSlug ? (
-          <>
-            <MenuSeparator />
-            <MenuLabel>Workspaces</MenuLabel>
-            {workspaces.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
-            {workspaces.isError ? <MenuItem disabled>Could not load workspaces</MenuItem> : null}
-            {workspaces.data?.items.length === 0 ? <MenuItem disabled>No workspaces</MenuItem> : null}
-            {workspaces.data?.items.map((w) => (
-              <MenuItem key={w.id} asChild>
-                <Link href={`/o/${orgSlug}/w/${w.slug}`} className={cn(w.slug === wsSlug && "font-semibold")}>
-                  {w.name}
-                </Link>
-              </MenuItem>
-            ))}
-            <MenuItem asChild>
-              <Link href={`/o/${orgSlug}`}>All workspaces…</Link>
-            </MenuItem>
-          </>
-        ) : null}
-      </MenuContent>
-    </Menu>
+        </>
+      ) : null}
+    </SidebarSelect>
+  );
+}
+
+/** FIX-027: the current organization's workspaces — rendered only where an organization is active. */
+function WorkspaceSelector({ orgSlug, wsSlug, pathname }: { orgSlug: string; wsSlug?: string; pathname: string }) {
+  const resolved = useResolve(orgSlug);
+  const workspaces = useWorkspaces(resolved.data?.org.id);
+  const ws = workspaces.data?.items.find((w) => w.slug === wsSlug);
+  const atRoot = !pathname.startsWith(`/o/${orgSlug}/w/`);
+  return (
+    <SidebarSelect
+      caption="Workspace"
+      placeholder={atRoot ? "All workspaces" : (wsSlug ?? "?")}
+      value={atRoot ? "All workspaces" : ws?.name}
+      indent
+      testId="workspace-selector"
+    >
+      <MenuLabel>Workspaces</MenuLabel>
+      {workspaces.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
+      {workspaces.isError ? <MenuItem disabled>Could not load workspaces</MenuItem> : null}
+      {workspaces.data?.items.length === 0 ? <MenuItem disabled>No workspaces</MenuItem> : null}
+      {workspaces.data?.items.map((w) => (
+        <MenuItem key={w.id} asChild>
+          <Link href={`/o/${orgSlug}/w/${w.slug}`} className={cn(w.slug === wsSlug && "font-semibold")}>
+            {w.name}
+          </Link>
+        </MenuItem>
+      ))}
+      <MenuItem asChild>
+        <Link
+          href={`/o/${orgSlug}`}
+          data-active={atRoot ? "true" : undefined}
+          className={cn(atRoot && "font-semibold")}
+        >
+          All workspaces…
+        </Link>
+      </MenuItem>
+    </SidebarSelect>
   );
 }
 
@@ -160,7 +235,7 @@ function UserMenu() {
         <button
           type="button"
           className="flex min-h-11 w-full items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left hover:bg-subtle"
-          // No aria-label: the name comes from the visible text (WCAG 2.5.3, see the context switcher).
+          // No aria-label: the name comes from the visible text (WCAG 2.5.3, see the sidebar selects).
         >
           <Avatar name={name ?? "?"} tintKey={me.data?.user.email} size={28} />
           <span className="min-w-0 flex-1">
@@ -175,11 +250,7 @@ function UserMenu() {
         <MenuItem asChild>
           <Link href="/account">Account</Link>
         </MenuItem>
-        {me.data?.user.is_instance_admin ? (
-          <MenuItem asChild>
-            <Link href="/admin/users">Admin</Link>
-          </MenuItem>
-        ) : null}
+        {/* FIX-027: no Admin item here — instance admins use the sidebar's organization selector ("All organizations"). */}
         <MenuItem onSelect={onTour}>Show me around</MenuItem>
         <MenuItem onSelect={() => void onLogout()}>Sign out</MenuItem>
       </MenuContent>
@@ -236,19 +307,13 @@ function PendingPill({ wsId }: { wsId: string }) {
 
 export function WorkspaceNav({
   base,
-  orgSlug,
   wsId,
   pathname,
 }: {
   base: string;
-  orgSlug: string;
   wsId: string | undefined;
   pathname: string;
 }) {
-  const resolved = useResolve(orgSlug);
-  const org = useOrg(resolved.data?.org.id);
-  const role = org.data?.my_role;
-  const admin = role === "owner" || role === "admin";
   // Phase 2, RFE-012: the approvals page exists only for `can_approve` users.
   const canApprove = useCanApprove(wsId);
   const item = (href: string, label: string, icon: IconType, active: boolean, badge?: ReactNode) => (
@@ -266,7 +331,7 @@ export function WorkspaceNav({
           ? item(`${base}/approvals`, "Approvals", CheckCircleIcon, pathname.startsWith(`${base}/approvals`), <PendingPill wsId={wsId} />)
           : null}
         {item(`${base}/activity`, "Activity", ActivityIcon, pathname.startsWith(`${base}/activity`))}
-        {admin ? item(`/o/${orgSlug}/members`, "Members", UsersIcon, false) : null}
+        {/* FIX-027: no Members item — it jumped to the org's members view. Workspace people live in Settings › Access. */}
         {item(`${base}/settings`, "Settings", SettingsIcon, pathname.startsWith(`${base}/settings`))}
       </ul>
     </nav>
@@ -321,19 +386,6 @@ function AdminNavList({ pathname }: { pathname: string }) {
   );
 }
 
-/** FIX-026: instance admins reach the admin pages from every page, not only the account menu. */
-export function InstanceAdminLink({ pathname }: { pathname: string }) {
-  const me = useMe();
-  if (!me.data?.user.is_instance_admin || pathname.startsWith("/admin")) return null;
-  return (
-    <nav aria-label="Instance administration">
-      <ul>
-        <NavItem href="/admin/users" label="Instance admin" icon={ShieldIcon} active={false} />
-      </ul>
-    </nav>
-  );
-}
-
 function SidebarContent({
   orgSlug,
   wsSlug,
@@ -351,16 +403,14 @@ function SidebarContent({
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
         <AuroraLogo className="h-[38px] w-auto" />
       </Link>
-      {orgSlug ? (
-        <ContextSwitcher orgSlug={orgSlug} wsSlug={wsSlug} />
-      ) : (
-        <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
-          {pathname.startsWith("/admin") ? "Instance admin" : pathname.startsWith("/account") ? "Account" : ""}
-        </p>
-      )}
+      {/* FIX-027: two stacked selects on every page — organization, then (only with an active
+          organization) its workspaces. "All organizations" in the first one is the single path
+          to the admin area; the account menu and the FIX-026 sidebar link are gone. */}
+      <OrgSelector orgSlug={orgSlug} pathname={pathname} />
+      {orgSlug ? <WorkspaceSelector orgSlug={orgSlug} wsSlug={wsSlug} pathname={pathname} /> : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {base ? (
-          <WorkspaceNav base={base} orgSlug={orgSlug!} wsId={wsId} pathname={pathname} />
+          <WorkspaceNav base={base} wsId={wsId} pathname={pathname} />
         ) : orgSlug ? (
           <OrgNav orgSlug={orgSlug} pathname={pathname} />
         ) : pathname.startsWith("/admin") ? (
@@ -370,7 +420,6 @@ function SidebarContent({
         ) : null}
       </div>
       <div className="space-y-2 border-t border-line pt-3">
-        <InstanceAdminLink pathname={pathname} />
         <ThemeSwitch />
         <UserMenu />
       </div>

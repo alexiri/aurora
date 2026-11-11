@@ -125,13 +125,14 @@ describe("workspace nav", () => {
       "GET /v1/resolve": () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" } }),
       "GET /v1/orgs/o1": () => json(200, org(role)),
     });
-    wrap(<WorkspaceNav base="/o/acme/w/main" orgSlug="acme" wsId={undefined} pathname="/o/acme/w/main" />);
+    wrap(<WorkspaceNav base="/o/acme/w/main" wsId={undefined} pathname="/o/acme/w/main" />);
   }
-  it("links Members for admins", async () => {
+  it("has no Members item — workspace people live in Settings › Access (FIX-027)", async () => {
     navWith("admin");
-    expect(await screen.findByRole("link", { name: "Members" })).toHaveAttribute("href", "/o/acme/members");
+    await screen.findByRole("link", { name: "Settings" });
+    expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
   });
-  it("hides Members for plain members", async () => {
+  it("has no Members item for plain members either", async () => {
     navWith("member");
     await screen.findByRole("link", { name: "Agents" });
     await new Promise((r) => setTimeout(r, 50));

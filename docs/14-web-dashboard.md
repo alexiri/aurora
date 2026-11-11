@@ -158,14 +158,26 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 
 **Shell.**
 - A left **sidebar** replaces the top header and context nav. It holds the
-  horizontal Aurora logo (`AuroraLogo`); one **context switcher** showing org and workspace (a menu
-  lists organizations, then the current org's workspaces and "All
-  workspaces…"); the nav for the current context (workspace, organization,
-  account or instance admin) with a 16 px stroke icon per item; the **theme
-  switch**; and the **account menu** at the bottom (name, role, Account, Admin
-  for instance admins, Sign out).
+  horizontal Aurora logo (`AuroraLogo`); two stacked **context selectors**
+  (FIX-027): the **Organization** select (caption above a one-line control with
+  org avatar, name and chevron) listing the person's organizations and — for
+  instance admins only — a separated **"All organizations"** entry to `/admin`;
+  and, below it and indented, the **Workspace** select for the active
+  organization's workspaces with a pinned **"All workspaces…"** entry, rendered
+  only where an organization is active (never on `/admin/*` or `/account/*`).
+  On `/admin/*` the organization trigger reads "All organizations"; on
+  `/account/*` it shows the "Select organization" placeholder. The selectors
+  are the only path to the admin area: the account menu has no Admin item and
+  there is no separate sidebar link (FIX-026's is superseded). Below them the
+  nav for the current context (workspace, organization, account or instance
+  admin) with a 16 px stroke icon per item; the **theme switch**; and the
+  **account menu** at the bottom (name, role, Account, Sign out).
 - The active item uses `subtle` background, 600 weight and an `accent` icon,
   and sets `aria-current="page"`.
+- The workspace nav has no **Members** item (FIX-027): it linked to the
+  organization's members view, silently switching context. Workspace people
+  are managed in Settings › Access; the organization's Members page stays in
+  the org nav.
 - The Approvals item shows the pending count as a `pending` pill. It appears
   only where RFE-012 allows the approvals page.
 - The nav lists only real destinations. There are no "coming soon"
@@ -725,7 +737,9 @@ again" and "Show the getting-started guide again".
   (request / tunnel).
 - **Settings** — name, timezone, memory language (owners), (phase 2, RFE-025) **BYO posture** (tighten-only, shows the inherited value and its level), access bindings (phase 2,
   RFE-012: roles Owner / Approver / Member with a one-line explanation of each;
-  invitation dialogs offer Member or Approver per workspace),
+  invitation dialogs offer Member or Approver per workspace; FIX-027: this
+  **Access** section is where workspace people are managed — the workspace nav
+  has no Members item jumping to the org's list),
   workspace API keys, danger zone. (phase 4, P4-GRP-1) The **Access** section (`GET …/access?expand=groups`,
   `can_own`) gets a second list, **Groups**: bound groups with their role (the same Owner / Approver /
   Member selector and explanations), an "Add group" picker over the org's groups (names and member counts), and
@@ -862,7 +876,8 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
 
 - **"Show me around"** (offered at the end of Welcome, replayable from the account
   menu): 6–8 coach marks over the real navigation (Agents, Chat, Credentials, Policy,
-  Approvals, Activity, Members, Settings). Each has one or two sentences on what lives
+  Approvals, Activity, Members, Settings — the members stop only where the org nav
+  shows it, since the workspace nav has none, FIX-027). Each has one or two sentences on what lives
   there and when you need it. Keyboard-operable (Next, Back, Esc), focus-managed,
   respects reduced motion, and on 390 px opens the navigation drawer as it goes.
 - **Empty states teach**: every empty list touched by the journey (LLM keys, Secrets,
