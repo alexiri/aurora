@@ -359,6 +359,7 @@ pub async fn create_user(
     let existing = members::get(&mut *tx, org.org_id, user_id)
         .await
         .map_err(db)?;
+    let mut flush: Vec<(Uuid, Uuid)> = Vec::new();
     match &existing {
         None => {
             ensure_seat(&mut tx, org.org_id).await?;
@@ -379,8 +380,29 @@ pub async fn create_user(
             }
         }
         Some(m) => {
-            // Adopted member: SCIM may suspend it (recorded as `suspended_by_scim`).
-            let _ = m;
+            // Adopted member: `active: false` means the same thing as on the fresh path —
+            // an active membership is suspended through the full C-474 path (the effects
+            // run inside this transaction and audited with `via = "scim"`); an already
+            // suspended one stays untouched (a human suspension SCIM must not claim).
+            if !active && m.status == "active" {
+                deprovision::suspend_membership(
+                    &mut tx,
+                    org.org_id,
+                    user_id,
+                    &service::actor(&caller.token.name),
+                )
+                .await
+                .map_err(scim_of_api)?;
+                flush = deprovision::abort_turns(&mut tx, org.org_id, user_id)
+                    .await
+                    .map_err(scim_of_api)?;
+                deprovision::revoke_org_keys(&mut tx, org.org_id, user_id)
+                    .await
+                    .map_err(scim_of_api)?;
+                deprovision::revoke_sessions_if_last(&mut tx, user_id)
+                    .await
+                    .map_err(scim_of_api)?;
+            }
         }
     }
     let row = repo::insert_user(
@@ -417,6 +439,9 @@ pub async fn create_user(
     crate::audit::commit_critical(tx, &ev)
         .await
         .map_err(|_| audit_unavailable())?;
+    for (c, t) in flush {
+        lifecycle::flush_deltas(state, c, t).await;
+    }
     // The membership change invalidates like any other (gateway identities + streams).
     let mut conn = state.pool.acquire().await.map_err(sq)?;
     groups::notify_member_changed(&mut conn, org.org_id, user_id)
