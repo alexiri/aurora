@@ -1,0 +1,43 @@
+# AUDIT-004: Phase 4 exit verification from scratch
+
+## Goal
+Produce the evidence for the phase-4 exit, as defined in `docs/PROGRESS.md` §Phase exit criteria → "Phase 4 (AUDIT-004)". Run everything from a clean state on **one commit** (master HEAD when the lane starts — by then every phase-4 task, incl. P4-PRV-1/P4-PRV-2/P4-TERM, is merged) and record the exact results. Use the shape of `docs/audit/phase3-exit.md`: verdict, environment, results table, per-step notes, deviations, fixes, open findings, leftovers.
+
+This task **verifies**; it does not develop. Report every failure. A fix is made only if it is trivial and clearly correct, and then it is listed. Anything bigger becomes a finding, and the coordinator turns it into a fix task.
+
+## Known deviations, owner-accepted (carry over from AUDIT-003 where still true)
+- **CI**: if GitHub Actions cannot run the audited commit, run **every CI command locally** on the audited commit and record it as a deviation, not a failure.
+- **Performance**: **do not run `scripts/perf/*`** — the coordinator runs them outside this lane (P4-CNT left an explicit open item: gateway hot path + `COUNTER_TIMEOUT` 50 ms under load). Record "run by the coordinator" and leave the row for them.
+- **SCIM conformance client**: the criterion says "against a conformance client if built". If none exists in-repo (`scripts/`), record "not exercised — no conformance client built; IdP replay suites (entra/okta/keycloak) are the evidence" as a deviation/open finding, do not build one.
+
+## Steps (record command, exit code, summary line, counts, duration for each)
+1. **Clean build** (fresh worktree `target/`): `cargo build --workspace --all-targets` (time it), `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo deny check`, `bash scripts/plugins/deny-hooks.sh`, `bash scripts/guards/run-all.sh`.
+2. **Unit and service tests:** `cargo test --workspace --no-fail-fast --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted -- --test-threads=8`. Record totals per crate. `sqlx::test` needs `DATABASE_URL` (the aurora-dev-pg container at 127.0.0.1:55432; use a scratch database name, never aurora-dev's `aurora` database for writes you don't own — create/drop your own). Known flake to watch: `plugins_upgrade::major_without_impact_activates_automatically_with_an_audit_row` fails under load and passes standalone; if it fails, rerun standalone and record both.
+3. **Vault (exit criterion, unchanged from phase 3):** `AURORA_TEST_VAULT=1 cargo test -p aurora-secrets`, plus the `secrets migrate` round trip. Name the podman objects `audit4-`.
+4. **Web:** `pnpm -C web install --frozen-lockfile`, `typecheck`, `lint`, `test`, `build`; Playwright `stage4-routes`, `stage4-axe`, `onboarding`, `fix-027-selectors`, `shell-theme`, `stage2-narrow`, `smoke`, `chat-v2` (self-hosted, `AURORA_E2E_WEB_PORT=4100`; `first-run` and `no-default-model` need the kind stack — run them in step 7's kind part or record as kind-only).
+5. **Contracts and data:** OpenAPI drift test (`UPDATE_OPENAPI` unset); `scripts/extract-schema.py --check`; permission matrix 0 inconclusive; every phase-4 C-number (`docs/API_CONTRACTS.md` — the phase-4 blocks run from C-400 through C-589; derive the exact list per task from `docs/PROGRESS.md` §Phase 4 rows) has an implementation: sample each block and list any you can't find. `docs/03 §Planned changes` holds no phase-4 rows (the phase-4 tables must be real `###` sections; `created_at`/`updated_at` implicit). Migration list on the audited commit is strictly sequential and applies clean on an empty database (scratch DB, `sqlx migrate run`, count rows).
+6. **SEC invariants (the core of this audit):** derive from `docs/PROGRESS.md` §Phase 4 the set of tasks with status `done` at the audited commit; for each, find its SEC rows in `docs/17` (phase 4: SEC-62..SEC-80 among SEC-60..) and confirm every cited test ran and passed in steps 2–7, and that the invariant is `proven`. List any row whose test was not executed or that maps to a task moved to phase 5. Pay particular attention to the exit-criterion items: **SEC-71/SEC-73 (groups + SCIM deprovisioning), SEC-72 (SCIM surface), SEC-74/75/76 (RFE-011b parking + push), SEC-78 (IdP role claims), SEC-80 (port previews, P4-PRV-1/2)** and the audit-row-in-same-transaction invariants.
+7. **New services (exit criterion):** `aurora-terminator` and `aurora-relay` are in `deploy/helm/aurora` (values, workloads, Services, NetworkPolicy default-deny posture) and in `scripts/e2e/kind.sh` e2e: `bash scripts/e2e/kind.sh --fresh` and `--release-images`, then the terminator/relay scenarios they define. Record exactly what the NetworkPolicy allows and blocks for each new service.
+8. **E2E suites**, each run separately and never concurrently (`gateway.sh` takes a host-wide lock `/tmp/aurora-e2e-gateway.lock`):
+   - `bash scripts/e2e/m1.sh`; `bash scripts/e2e/gateway.sh`;
+   - `AURORA_TEST_PODMAN=1 bash scripts/e2e/hosted.sh`, plus once with `AURORA_E2EH_FULL_IMAGE=1` (sandbox-start retry, start log, previews start-demand scenarios land here);
+   - `AURORA_TEST_PODMAN=1 bash scripts/e2e/channels.sh`; `bash scripts/conformance.sh` and `--mattermost`; `bash scripts/e2e/mattermost.sh`;
+   - `AURORA_TEST_PODMAN=1 AURORA_TEST_LLM=1 bash scripts/e2e/llm.sh`;
+   - `UPGRADE_STRICT=1 UPGRADE_BASE=<the commit recorded in docs/audit/phase3-exit.md> bash scripts/e2e/upgrade.sh` (upgrade path across the whole phase-4 migration range — verify the base commit first; if the phase-3 exit file names a different anchor, use it and say so);
+   - kind part: `deploy/dev/kind-dev.sh up --llm-mock` on a fresh cluster, then `scripts/e2e/first-run.sh`, **twice**.
+9. **Phase-4 suites of `docs/18`:** for each, name the tests that prove it and confirm they ran green in steps 2–8 (incl. the SCIM suites — protocol/auth/scope/link/deprovision/groups/idp_replay, 45 tests; previews non-relay tests; parking/push; terminator).
+10. **Install from scratch:** `docs/operator/install-helm.md` literally on a fresh kind cluster (`aurora-audit4`), **plus the new operator guides**: SCIM provisioning (`docs/operator/scim-provisioning.md` — Entra/Okta/Keycloak sections against the dev IdP or their fixture replays, token rotation, monitoring), the port-previews operations section (`docs/15`) and anything P4-TERM added. Note every doc/reality deviation.
+11. **Spec sweep and docs:** `grep -rn "(phase 4" docs/*.md` (excluding `80`, PROGRESS, FEATURES): each rule implemented or explicitly deferred; say how you sampled. Operator docs exist for SCIM, previews (non-relay parts), terminator, and every phase-4 feature. Every phase-4 row of `docs/FEATURES.md` is `done` with evidence or owner-deferred. Dependabot: check `.github/dependabot.yml` (grouped PRs config) exists and record whether its first run produced grouped PRs (observable on GitHub CI; if not observable from the lane, record "owner/CI to confirm").
+
+## Constraints
+- **Owns:** `docs/audit/phase4-exit.md` (new), trivial listed fixes, nothing else. Do not edit PROGRESS or FEATURES (coordinator).
+- Kind clusters `aurora-audit4*` only; the e2e scripts' own fixed names are fine when nothing else uses them: check `kind get clusters` and `podman ps` before each. Podman objects you create directly: prefix `audit4-`. **Never touch the aurora-dev cluster, the aurora-dev-pg container's `aurora` database contents, or port 4000.**
+- Disk: `df -h /home` before each image-heavy step; stop and report below 50 GB. Take `/tmp/aurora-e2e-gateway.lock` for `gateway.sh`/`hosted.sh`-class runs (the scripts do it; don't run two e2e suites at once).
+- Run every command in the foreground with `timeout`; for long runs log to a file and poll it in the foreground until it exits. Never end your turn while a command is running.
+- Change files only with the Edit/Write tools; never python, sed, awk, perl, `cat >>` or heredocs to create or modify files.
+- `bash scripts/fixtures/build.sh` before connect tests (gitignored `plugins/fixtures/dist`).
+- Never touch `/home/alex/agent-platform/aurora` (owner's checkout). No `scripts/perf/*`. Do not push or merge.
+- Delete everything you created at the end (clusters, podman objects, your `target/`). List any leftovers.
+
+## Deliverable
+`docs/audit/phase4-exit.md`: verdict, environment, a results table for every step (command, exit code, counts, duration), per-step notes, deviations (CI, perf by coordinator, SCIM conformance client, whatever else arises), fixes made, open findings (each a candidate fix task), the SEC-row execution check, leftovers. Commit on your branch with prefix `AUDIT-004:`; don't push or merge.
