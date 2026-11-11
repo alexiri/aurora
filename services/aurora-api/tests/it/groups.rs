@@ -1137,31 +1137,80 @@ async fn access_notification_ends_the_removed_users_long_poll() {
         .await;
     assert_eq!((s, v["items"].as_array().map(Vec::len)), (200, Some(0)));
     let h = &f.h;
-    let uri = "/v1/approvals/pending?wait=20";
-    let cookie = f.plain.cookie.clone();
-    let poll = async {
-        let t = tokio::time::Instant::now();
-        let (s, _, v) = h
-            .send(Method::GET, uri, &[("cookie", cookie.as_str())], None)
-            .await;
-        (s.as_u16(), v, t.elapsed())
+    // (FIX-047) The removal used to fire on a blind 300 ms sleep racing the handler's
+    // subscribe → watch → read path: under sibling-lane load the access ping could land
+    // before the long-poll subscribed, the poll rode its whole 20 s deadline and the
+    // `took < 10 s` assert failed. The handshake is now ordered and level-triggered:
+    // wait (deadline-bounded, scoped to this user) for the `approval_watchers` row the
+    // parked poll's `watch()` writes, remove the member, then re-apply the access ping
+    // until the poll ends — a ping sent before the subscription is simply not received,
+    // exactly like a NOTIFY racing a replica's listener (re)connect.
+    let poll = {
+        let app = h.app.clone();
+        let cookie = f.plain.cookie.clone();
+        tokio::spawn(async move {
+            let began = tokio::time::Instant::now();
+            let req = Request::builder()
+                .method(Method::GET)
+                .uri("/v1/approvals/pending?wait=20")
+                .header("cookie", cookie.as_str())
+                .body(Body::empty())
+                .unwrap();
+            let (parts, body) = app.oneshot(req).await.unwrap().into_parts();
+            let bytes = body.collect().await.unwrap().to_bytes();
+            let v = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            (parts.status.as_u16(), v, began, tokio::time::Instant::now())
+        })
     };
-    let kick = async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        sqlx::query("DELETE FROM group_members WHERE user_id = $1")
-            .bind(f.plain.id)
-            .execute(h.pool())
-            .await
-            .unwrap();
-        h.state
-            .session_cache
-            .invalidate(&json!({"kind": "access", "id": f.plain.id, "org_id": f.org}));
-    };
-    let ((s, v, took), ()) = tokio::join!(poll, kick);
+    // The poll is parked once its watcher heartbeat is on disk (notify::watch writes it
+    // synchronously before the first read).
+    let parked_since = tokio::time::Instant::now();
+    loop {
+        let parked: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM approval_watchers WHERE user_id = $1")
+                .bind(f.plain.id)
+                .fetch_one(h.pool())
+                .await
+                .unwrap();
+        if parked > 0 {
+            break;
+        }
+        assert!(
+            parked_since.elapsed() < Duration::from_secs(10),
+            "the long-poll never parked (no approval_watchers row)"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let kicked = tokio::time::Instant::now();
+    sqlx::query("DELETE FROM group_members WHERE user_id = $1")
+        .bind(f.plain.id)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    // what the aurora_auth_revoked listener does on NOTIFY; re-applied until the poll
+    // ends so the ping cannot be lost to the subscribe race above.
+    let kick = json!({"kind": "access", "id": f.plain.id, "org_id": f.org});
+    loop {
+        h.state.session_cache.invalidate(&kick);
+        if poll.is_finished() {
+            break;
+        }
+        assert!(
+            kicked.elapsed() < Duration::from_secs(10),
+            "the removal notification never ended the long-poll"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let (s, v, began, ended) = poll.await.unwrap();
     assert_eq!(s, 200);
     assert_eq!(v["items"].as_array().unwrap().len(), 0);
     assert!(
-        took < Duration::from_secs(10),
-        "returned at once, not after the wait: {took:?}"
+        ended >= kicked,
+        "the poll ended before the removal fired: {ended:?} < {kicked:?}"
+    );
+    assert!(
+        ended - began < Duration::from_secs(10),
+        "the poll rode its deadline instead of ending on the notification: {:?}",
+        ended - began
     );
 }
