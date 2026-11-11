@@ -937,17 +937,43 @@ async fn apply_update(
     .await
     .map_err(db)?
     .ok_or_else(ScimError::not_found)?;
-    // `active` drives deprovisioning; owners are never mutated (403).
-    let member = members::get(&mut *tx, org.org_id, row.user_id)
+    // `active` drives deprovisioning; owners are never mutated (403). A global user with no
+    // membership in this org (provisioned, invited or JIT'd in another org — the state this
+    // code creates itself when the new e-mail is free here but taken globally) gains a fresh
+    // member seat instead of answering 500 (FIX-036): the same `ensure_seat` + insert the
+    // new-global-user arm runs. An existing membership is adopted as it is.
+    let want_active = u.active.map(|a| a.0).unwrap_or(row.state == "active");
+    let mut added_member = false;
+    let member = match members::get(&mut *tx, org.org_id, row.user_id)
         .await
         .map_err(db)?
-        .ok_or_else(ScimError::internal)?;
+    {
+        Some(m) => m,
+        None => {
+            ensure_seat(&mut tx, org.org_id).await?;
+            members::insert(&mut *tx, org.org_id, row.user_id, "member")
+                .await
+                .map_err(db)?;
+            // `active: false` while the link is already suspended: the deprovision arm below
+            // only fires on a link state change, so the fresh row is suspended in place —
+            // `create_user`'s `active: false` semantics for a fresh membership.
+            if !want_active && row.state == "suspended" {
+                members::update(&mut *tx, org.org_id, row.user_id, None, Some("suspended"))
+                    .await
+                    .map_err(db)?;
+            }
+            added_member = true;
+            members::get(&mut *tx, org.org_id, row.user_id)
+                .await
+                .map_err(db)?
+                .ok_or_else(ScimError::internal)?
+        }
+    };
     if member.role == "owner" && u.active.is_some_and(|a| !a.0) {
         return Err(ScimError::forbidden(
             "Organization owners are managed in Aurora.",
         ));
     }
-    let want_active = u.active.map(|a| a.0).unwrap_or(row.state == "active");
     let mut flush: Vec<(Uuid, Uuid)> = Vec::new();
     if !want_active && row.state != "suspended" {
         // Suspend (deprovisioning matrix, D-135).
@@ -993,10 +1019,29 @@ async fn apply_update(
         .await
         .map_err(scim_of_api)?;
     }
-    // Attribute update + state change + audit rows + invalidations commit atomically.
-    crate::audit::commit_critical_many(
-        tx,
-        &[AuditEvent::new(
+    // Attribute update + state change + audit rows + invalidations commit atomically. An
+    // adopted-from-another-org user contributes a `member.add` row alongside `scim.update`
+    // (the same slice pattern as the delete handler's `member.remove`).
+    let mut evs = Vec::with_capacity(2);
+    if added_member {
+        evs.push(
+            AuditEvent::new(
+                service::actor(&caller.token.name),
+                "member.add",
+                Outcome::Success,
+            )
+            .org(org.org_id)
+            .target("user", row.user_id)
+            .metadata(json!({
+                "via": VIA,
+                "scim_id": id,
+                "role": "member",
+                "status": member.status,
+            })),
+        );
+    }
+    evs.push(
+        AuditEvent::new(
             service::actor(&caller.token.name),
             "scim.update",
             Outcome::Success,
@@ -1008,10 +1053,11 @@ async fn apply_update(
             "change": if want_active && row.state == "suspended" { "reactivated" }
                       else if !want_active && row.state != "suspended" { "suspended" }
                       else { "attributes" },
-        }))],
-    )
-    .await
-    .map_err(|_| audit_unavailable())?;
+        })),
+    );
+    crate::audit::commit_critical_many(tx, &evs)
+        .await
+        .map_err(|_| audit_unavailable())?;
     for (c, t) in flush {
         lifecycle::flush_deltas(state, c, t).await;
     }
