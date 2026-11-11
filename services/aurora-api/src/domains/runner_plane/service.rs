@@ -185,6 +185,22 @@ async fn apply(
             if a == Applied::Applied {
                 // Release the sync lease and wake dispatch (arm 6) now that the home is synced.
                 hosted::clear_sync_lease(&mut tx, r.sandbox_id).await?;
+                // (FIX-041, D-145) A wake→boot loses the start demand: `begin_boot` cleared
+                // `preview_start_requested_at` and a boot outlives `PREVIEW_WAKE_WAIT`, so arm 5
+                // found nothing to claim once the home part was applied. A sandbox still carrying
+                // the wake demand that caused this boot presents a fresh start demand at the
+                // moment it becomes able to start; an ordinary boot (no wake stamp) is untouched.
+                // The arm-5 claim still gates on the applied generation, the share state and the
+                // exclusions (`claim_start_demands`).
+                sqlx::query(
+                    "UPDATE sandboxes SET preview_start_requested_at = now(), updated_at = now() \
+                     WHERE id = $1 AND boot_id = $2 AND preview_wake_at IS NOT NULL",
+                )
+                .bind(r.sandbox_id)
+                .bind(r.boot_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(DbError::from)?;
                 notify_conv_work(&mut tx).await?;
             }
             from_applied(r.report_id, a)
