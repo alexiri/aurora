@@ -40,11 +40,20 @@ fn start_eligible() -> String {
                     OR EXISTS (SELECT 1 FROM turns t
                         WHERE t.agent_id = s.agent_id AND t.role = 'turn' AND t.status = 'queued'
                           AND coalesce(t.revived_at, t.created_at) > s.updated_at))))
-         AND ({ACTIVE_TURN} OR {DUE_SCHEDULE})
+         AND ({ACTIVE_TURN} OR {DUE_SCHEDULE} OR {PREVIEW_DEMAND})
          AND NOT {frozen}
          AND coalesce((SELECT capabilities->'harnesses' FROM runners WHERE id = $1) ? coalesce(a.harness, $3), false)",
         // (phase 2, RFE-006) Due-work arm 3 skips effectively frozen agents.
         frozen = super::freeze::frozen_agent_sql("a.id"),
+        // (P4-PRV-1, D-145) a preview request found the sandbox stopped: the demand
+        // (`preview_wake_at`, set by the relay resolve) is due work for the wake window. The org
+        // must have Port previews on and an active share must exist; a frozen agent never wakes
+        // (the `NOT {frozen}` above already covers it) and the hosted check is `a.kind`.
+        PREVIEW_DEMAND = "EXISTS (SELECT 1 FROM preview_shares ps
+               JOIN organizations po ON po.id = a.org_id
+               WHERE ps.agent_id = s.agent_id AND ps.state = 'active'
+                 AND s.preview_wake_at > now() - make_interval(secs => $6)
+                 AND coalesce((po.settings->'previews_enabled')::bool, false))",
     )
 }
 
@@ -104,6 +113,8 @@ pub struct StopClaim {
 }
 
 /// Arm 2: requested stop/restart, idle park, background cap, and stalled `stopping` re-drives.
+/// `awake_cap_secs` is `PREVIEW_AWAKE_CAP` (the keep-awake reason `preview`'s per-boot bound).
+#[allow(clippy::too_many_arguments)]
 pub async fn claim_stops(
     conn: &mut PgConnection,
     runner: Uuid,
@@ -111,6 +122,7 @@ pub async fn claim_stops(
     idle_secs: f64,
     cap_secs: f64,
     lease_secs: f64,
+    awake_cap_secs: f64,
     limit: i64,
 ) -> Result<Vec<StopClaim>, DbError> {
     let sql = format!(
@@ -122,6 +134,10 @@ pub async fn claim_stops(
                WHEN s.restart_requested_at IS NOT NULL THEN 'restart'
                WHEN s.stop_requested_at IS NOT NULL THEN coalesce(s.stop_reason, 'idle')
                WHEN {ACTIVE_TURN} THEN NULL
+               -- (P4-PRV-1, D-145) keep-awake reason `preview`: stream activity refreshes
+               -- `preview_active_until`; the cap (`preview_awake_since`) bounds a boot, so an
+               -- open WebSocket cannot hold the sandbox awake forever.
+               WHEN {PREVIEW_KEEP} THEN NULL
                WHEN {BACKGROUND} THEN CASE WHEN {ENGAGED_AGE} >= $4 THEN 'cap' END
                WHEN {ENGAGED_AGE} >= $3 THEN 'idle'
              END AS reason
@@ -139,6 +155,12 @@ pub async fn claim_stops(
          RETURNING s.id AS sandbox_id, s.boot_id, p.reason",
         // (phase 2, RFE-006) A frozen agent's sandbox is parked regardless of keep-awake reasons.
         frozen = super::freeze::frozen_agent_sql("s.agent_id"),
+        // (P4-PRV-1) `preview_active_until > now()` (relay heartbeat) and the boot's cap clock:
+        // `preview_awake_since` was set at the boot's first heartbeat and `now() - it` must still
+        // be under `PREVIEW_AWAKE_CAP` ($7).
+        PREVIEW_KEEP = "s.preview_active_until > now() \
+             AND (s.preview_awake_since IS NULL \
+                  OR now() - s.preview_awake_since < make_interval(secs => $7))",
     );
     Ok(sqlx::query_as(&sql)
         .bind(runner)
@@ -147,6 +169,7 @@ pub async fn claim_stops(
         .bind(cap_secs)
         .bind(limit)
         .bind(lease_secs)
+        .bind(awake_cap_secs)
         .fetch_all(conn)
         .await?)
 }
@@ -160,6 +183,7 @@ pub async fn claim_evict(
     ceiling: i64,
     default_harness: &str,
     lease_secs: f64,
+    wake_window_secs: f64,
 ) -> Result<Option<StopClaim>, DbError> {
     let held: i64 = sqlx::query_scalar(&format!(
         "SELECT count(*) FROM sandboxes s WHERE s.runner_id = $1 AND s.state = 'running'
@@ -168,7 +192,9 @@ pub async fn claim_evict(
     .bind(runner)
     .fetch_one(&mut *conn)
     .await?;
-    if held <= ceiling || !pending_start(conn, runner, replica, default_harness).await? {
+    if held <= ceiling
+        || !pending_start(conn, runner, replica, default_harness, wake_window_secs).await?
+    {
         return Ok(None);
     }
     Ok(sqlx::query_as(&format!(
@@ -194,6 +220,7 @@ pub async fn pending_start(
     runner: Uuid,
     replica: Uuid,
     default_harness: &str,
+    wake_window_secs: f64,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM sandboxes s JOIN agents a ON a.id = s.agent_id
@@ -203,6 +230,7 @@ pub async fn pending_start(
     .bind(runner)
     .bind(replica)
     .bind(default_harness)
+    .bind(wake_window_secs)
     .fetch_one(conn)
     .await?)
 }
@@ -249,6 +277,7 @@ pub async fn claim_starts(
     default_harness: &str,
     limit: i64,
     lease_secs: f64,
+    wake_window_secs: f64,
 ) -> Result<Vec<StartClaim>, DbError> {
     let sql = format!(
         "WITH cand AS (SELECT s.id FROM sandboxes s JOIN agents a ON a.id = s.agent_id
@@ -267,6 +296,7 @@ pub async fn claim_starts(
         .bind(default_harness)
         .bind(limit)
         .bind(lease_secs)
+        .bind(wake_window_secs)
         .fetch_all(conn)
         .await?)
 }
@@ -318,6 +348,8 @@ pub async fn begin_boot(
              resource_profile = $5::jsonb,
              start_attempt_at = now(), start_phase = 'claimed', start_detail = NULL,
              start_events = '[]'::jsonb, start_progress_at = NULL, running_at = NULL,
+             -- (P4-PRV-1) every new boot restarts the preview keep-awake cap clock.
+             preview_awake_since = NULL, preview_start_requested_at = NULL,
              updated_at = now()
          WHERE id = $1",
     )

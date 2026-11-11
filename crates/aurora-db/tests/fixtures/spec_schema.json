@@ -590,6 +590,7 @@
     ],
     "preview_shares": [
       "agent_id",
+      "created_by_label",
       "created_by_user_id",
       "cwd",
       "id",

@@ -25,6 +25,8 @@ CREATE TABLE preview_shares (
     wake_attempts         jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_by_user_id    uuid REFERENCES users (id) ON DELETE SET NULL,
     created_by_label      text,
+    -- Written at most once a minute per share (relay heartbeat, P4-PRV-2).
+    last_accessed_at      timestamptz,
     created_at            timestamptz NOT NULL DEFAULT now(),
     updated_at            timestamptz NOT NULL DEFAULT now(),
     -- At most one share per (agent, port); labels are globally unique and never reused.

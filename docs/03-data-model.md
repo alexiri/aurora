@@ -1541,7 +1541,8 @@ The gateway role has no access to any of these tables. Rows of revoked or expire
 | last_start_exit_code | int null; last_start_tail text null (≤ 4 KiB, sanitized, secrets redacted like transcripts) | for the dashboard (churn columns) |
 | start_attempts | jsonb not null default `[]` | timestamps of the attempts inside `PREVIEW_START_WINDOW` (≤ 3) |
 | wake_attempts | jsonb not null default `[]` | timestamps of the wakes inside the hour (≤ `PREVIEW_WAKES_PER_SHARE_HOUR`) |
-| created_by_user_id | uuid null FK→users (set null) | label denormalized (`created_by_label`) |
+| created_by_user_id | uuid null FK→users (set null) | |
+| created_by_label | text null | the creating user's label, denormalized (kept when the user row is deleted) |
 | last_accessed_at | timestamptz null | written at most once a minute per share (relay heartbeat) |
 | index | unique `(label)`; unique `(agent_id, port)`; `(org_id)`; `(workspace_id)` | |
 

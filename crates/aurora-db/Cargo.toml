@@ -22,6 +22,7 @@ aurora-core = { workspace = true, features = ["axum"] }
 aurora-counters = { workspace = true, features = ["redis"] }
 aurora-config = { workspace = true }
 chrono = { workspace = true }
+aws-lc-rs = { workspace = true }
 
 [[bench]]
 name = "delta_bus_perf"
