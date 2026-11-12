@@ -490,3 +490,13 @@ times out 5 s → 4502): harmless. Limits: `TERMINALS_PER_SANDBOX` 2,
 stored; the supervisor's PTY posture (environment minus every `AURORA_*`
 variable and the boot document, agent uid, `/workspace`, `TIOCSWINSZ` resize)
 is `12 §Terminal`, the wake/keep-awake semantics `11 §Web terminal`.
+
+**Leg 1 framing, browser → PTY (FIX-054)**: the dashboard sends terminal
+input — keystrokes and pastes — as **Binary** frames, UTF-8 encoded, at most
+`TERMINAL_CHUNK` (16 KiB) per frame (a paste longer than one chunk is sent as
+several ordered frames); the PTY leg reads PTY bytes from Binary frames only,
+so a Text keystroke would be silently dropped. The **only** legal Text frame
+browser → runner is the `pty.resize` control (`{"kind":"pty.resize",
+"pty_id":0,...}` — the runner stamps the leg's real id); any other Text is
+ignored, never parsed as bytes (C-619). In the other direction the PTY's
+output rides Binary frames end to end.

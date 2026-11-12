@@ -177,6 +177,9 @@ pub struct PtyEngine {
     uid: Option<u32>,
     /// The shell's working directory (`/workspace` in the image; a parameter for the tests).
     cwd: std::path::PathBuf,
+    /// This supervisor's own executable: the PTY shell is reached through a re-exec of it
+    /// (`crate::pty_exec`; `std::env::current_exe()` in production).
+    bootstrap: std::path::PathBuf,
     live: HashMap<u32, Live>,
     /// Recent unsequenced-frame violations (`16 §W19` on `16 §W18`): at 4 the channel closes
     /// with 4400.
@@ -188,12 +191,16 @@ impl PtyEngine {
     /// `enabled` is the boot document's `terminal` capability; `uid` is the agent user the
     /// process manager uses (effective only when the supervisor itself is root). `cwd` is the
     /// shell's working directory (`/workspace` in the image; a parameter so the tests can
-    /// point the PTY at a real directory).
+    /// point the PTY at a real directory). `bootstrap` is this supervisor's own executable
+    /// (`std::env::current_exe()` in production): the PTY shell is reached through a
+    /// re-exec of it (`crate::pty_exec`; the tests pass the built binary instead — the
+    /// test process is not the supervisor).
     pub fn spawn(
         ends: channel::PtyEnds,
         enabled: bool,
         uid: Option<u32>,
         cwd: std::path::PathBuf,
+        bootstrap: std::path::PathBuf,
     ) -> Arc<PtyHandle> {
         let channel::PtyEnds {
             sender,
@@ -213,6 +220,7 @@ impl PtyEngine {
             enabled,
             uid,
             cwd,
+            bootstrap,
             live: HashMap::new(),
             violations: 0,
         };
@@ -333,7 +341,14 @@ impl PtyEngine {
             self.refuse(o.pty_id, PtyRefuseReason::Limit).await;
             return;
         }
-        let pty = match PtySession::spawn(&self.shell, self.uid, &self.cwd, o.cols, o.rows) {
+        let pty = match PtySession::spawn(
+            &self.shell,
+            self.uid,
+            &self.cwd,
+            &self.bootstrap,
+            o.cols,
+            o.rows,
+        ) {
             Ok(p) => p,
             Err(e) => {
                 // The failure is the OS's, not the session's content: log the error kind only.
@@ -459,10 +474,18 @@ impl PtySession {
     /// process group, agent uid when the supervisor is root, the given working directory
     /// (`/workspace` in the image), environment
     /// minus every `AURORA_*` variable and minus the boot document ([`crate::spawn`]).
+    ///
+    /// The child is a **bootstrap re-exec of this supervisor** (`pty_exec::SUBCOMMAND`,
+    /// FIX-054): a shell spawned directly has no controlling terminal — std/tokio cannot
+    /// `setsid`+`TIOCSCTTY` pre-exec without `unsafe` (`pre_exec`), and `#![forbid(unsafe_code)]`
+    /// holds — so bash's `tcsetpgrp` fails (`cannot set terminal process group`/`no job
+    /// control`). The bootstrap makes its own session, takes the slave as its controlling
+    /// terminal and execs the shell in-process, so the shell *is* the session leader.
     fn spawn(
         shell: &str,
         uid: Option<u32>,
         cwd: &std::path::Path,
+        bootstrap: &std::path::Path,
         cols: u16,
         rows: u16,
     ) -> std::io::Result<Self> {
@@ -478,31 +501,36 @@ impl PtySession {
             .open(&name)?;
         // Seed `TIOCSWINSZ` before the shell starts so nothing reads a 0×0 window.
         winsize(&master, cols, rows);
-        // The child posture: the container environment minus the boot document and every
-        // `AURORA_*` variable (`spawn::child_env`, then an explicit `AURORA_*` sweep —
-        // `12 §Terminal` is stricter than the process manager's own filter: no supervisor
-        // handle, no `AURORA_*` anything), `TERM` for a sane shell, cwd `/workspace`, own
-        // process group, agent uid when root.
+        // The bootstrap posture (12 §Terminal): the container environment minus the boot
+        // document and every `AURORA_*` variable (`spawn::child_env`, then an explicit
+        // `AURORA_*` sweep — `12 §Terminal` is stricter than the process manager's own
+        // filter: no supervisor handle, no `AURORA_*` anything), `TERM` for a sane shell,
+        // cwd `/workspace`, agent uid when root. std applies environment, cwd and uid/gid
+        // pre-exec, so the bootstrap starts with exactly the posture the shell must have.
         let extra = [
             ("TERM", "xterm-256color".to_owned()),
             ("COLORTERM", "truecolor".to_owned()),
         ];
-        let mut cmd = crate::spawn::tokio_command(shell, extra);
+        let mut cmd = crate::spawn::tokio_command(bootstrap, extra);
         for (k, _) in std::env::vars_os() {
             if k.to_str().is_some_and(|k| k.starts_with("AURORA_")) {
                 cmd.env_remove(&k);
             }
         }
-        cmd.stdin(std::process::Stdio::from(slave.try_clone()?))
+        cmd.arg(crate::pty_exec::SUBCOMMAND)
+            .arg(shell)
+            .stdin(std::process::Stdio::from(slave.try_clone()?))
             .stdout(std::process::Stdio::from(slave.try_clone()?))
             .stderr(std::process::Stdio::from(slave))
-            .current_dir(cwd)
-            .process_group(0);
+            .current_dir(cwd);
         if let Some(uid) = uid
             && rustix::process::getuid().is_root()
         {
             cmd.uid(uid).gid(uid);
         }
+        // No `process_group(0)`: the bootstrap must *not* be a group leader, or `setsid`
+        // would fail `EPERM` (it makes its own session — which subsumes the shell's own
+        // process group).
         let child = cmd.spawn()?;
         // The master fd is used through `AsyncFd` (poll-based, safe code): nonblocking reads
         // return `EAGAIN` when the shell has not produced output, which `AsyncFd` waits for.

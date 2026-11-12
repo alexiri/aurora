@@ -4,7 +4,9 @@
 // API's same-origin WebSocket (`GET /v1/agents/{agent}/terminal`, session cookie). The tab
 // exists only for hosted agents while the instance's `terminal.enabled` is on; the pane
 // renders to the DOM (native selection, browser find, screen-reader support), IME included.
-// Bytes flow opaquely both ways; the one control the dashboard sends is `pty.resize`
+// Bytes flow opaquely both ways — input as UTF-8 Binary frames (≤ 16 KiB each; Text frames
+// are the `pty.resize` control only, FIX-054); the one control the dashboard sends is
+// `pty.resize`
 // (`{"kind":"pty.resize","pty_id":0,...}` — the browser cannot know the leg's allocated
 // `pty_id`). Reconnects back off and stay visible; end states (frozen, refused, lost) render
 // as notices, never a silent close. wterm never touches the clipboard itself: an application's
@@ -23,6 +25,29 @@ import { useSandbox } from "@/lib/api/conversations";
 // `application/wasm`; the CSP's `'wasm-unsafe-eval'` in script-src is what lets it compile —
 // SEC-87: it grants no script evaluation).
 const WASM_URL = "/ghostty-vt-0.5.10.wasm";
+
+/**
+ * Keystroke framing (FIX-054, `16 §W19`): terminal input rides **Binary** frames, UTF-8
+ * encoded. wterm's `onData` hands us a string, and `WebSocket.send(string)` would send a
+ * Text frame — the runner's terminal leg treats every Text frame except the `pty.resize`
+ * control as a no-op (C-619: bytes are never parsed as text), so a Text keystroke is
+ * silently dropped and the shell never sees it.
+ */
+const encoder = new TextEncoder();
+/**
+ * `TERMINAL_CHUNK` (`crates/aurora-core/src/limits.rs`): the runner closes the leg on any
+ * Binary frame larger than this, so input — a clipboard paste arrives as one `onData`
+ * string, however long — is sent as several ordered frames of at most one chunk each.
+ */
+const TERMINAL_CHUNK = 16 * 1024;
+
+/** Sends terminal input as UTF-8 Binary frames, chunked to `TERMINAL_CHUNK`, in order. */
+function sendInput(ws: WebSocket, data: string): void {
+  const bytes = encoder.encode(data);
+  for (let offset = 0; offset < bytes.length; offset += TERMINAL_CHUNK) {
+    ws.send(bytes.subarray(offset, offset + TERMINAL_CHUNK));
+  }
+}
 
 /** Close codes the browser sees (`16 §W19`, the W18 table): the only end-state signal. */
 const CLOSE_COPY: Record<number, string> = {
@@ -274,7 +299,7 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
         aria-label="Agent terminal"
         onData={(data) => {
           if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(data);
+            sendInput(wsRef.current, data);
           }
         }}
         onResize={onResize}
