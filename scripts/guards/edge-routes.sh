@@ -88,13 +88,15 @@ fi
 # Enabled: the wildcard host `*.<domain>` must be the relay and only the relay; the dashboard
 # host must still route / to web. A preview domain on the relay with previews disabled (or the
 # reverse) must fail to render at all (the chart's own fail guard), so just render both edges.
+# (FIX-056) Single-switch form: relay.enabled mirrors config.previews.enabled, so the guard
+# renders with the top-level switch only.
 check_render "helm Ingress with previews" \
-  --set relay.enabled=true --set relay.domain=previews.guard.invalid --set config.previews.enabled=true
+  --set relay.enabled=true --set relay.domain=previews.guard.invalid
 check_render "helm HTTPRoute with previews" \
   --set ingress.enabled=false --set gatewayApi.enabled=true \
-  --set relay.enabled=true --set relay.domain=previews.guard.invalid --set config.previews.enabled=true
+  --set relay.enabled=true --set relay.domain=previews.guard.invalid
 helm template guard deploy/helm/aurora \
-  --set relay.enabled=true --set relay.domain=previews.guard.invalid --set config.previews.enabled=true \
+  --set relay.enabled=true --set relay.domain=previews.guard.invalid \
   | python3 -I -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
@@ -128,6 +130,6 @@ if not dash_web:
 print("edge-routes: previews wildcard ok (relay only, dashboard untouched)")
 '
 # Enabled without a domain must fail to render (the chart guards partial setups).
-if helm template guard deploy/helm/aurora --set relay.enabled=true --set config.previews.enabled=true >/dev/null 2>&1; then
+if helm template guard deploy/helm/aurora --set relay.enabled=true >/dev/null 2>&1; then
   fail "relay.enabled without relay.domain rendered (a preview domain is required)"
 fi
