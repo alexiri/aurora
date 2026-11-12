@@ -27,6 +27,42 @@ per protocol with strict (non-hyper) oracles, run the gateway against real
 strict front doors in CI, and codify the rule the code must live by. Not a
 claim of compliance — a harness that fails the moment the wire drifts.
 
+## Environment tiers (VEL-002, owner order 2026-11-12: the local dev loop must not slow down)
+
+Two tiers, by cost — decided by the rule "cheap enough to gate every local
+run stays local; everything that starts a container is CI-only":
+
+- **Tier 1 — everywhere (local + CI), in-process, no containers.** The
+  raw-h2/raw-h1 strict oracles, exact header sets, framing/SSE/upgrade
+  shapes, response stripping and the Host-synthesis assumption test, all in
+  `services/aurora-gateway/tests/it/proxy.rs` (single test binary per
+  I-34; plain tokio + the `h2` crate already in the tree). These run under
+  the ordinary `cargo test -p aurora-gateway --test it` that `just test` /
+  `just test-nextest` already execute — **they must stay local**: they are
+  the regression gate, and a CI-only regression gate lets the bug come back
+  in a local-only change. Budget: the whole addition adds **< 5 s** to a
+  local it-run (they are socket + handshake tests on loopback; measured in
+  the completion report; if it exceeds, move non-essential cases to tier 2,
+  never the FIX-052 core assertions).
+- **Tier 2 — CI-only.** The real front doors: pinned nginx and haproxy
+  containers in front of the mock upstream, and the hosted-harness smoke
+  through the full chain. Implemented in the `tests/e2e-gateway` crate —
+  which every local entry point already excludes (`justfile:56`
+  `test_excludes`, CI's rust-test/doctests archives, docs/18) and only the
+  serial CI job `e2e-gateway` runs. Pattern: `scripts/e2e/gateway.sh` starts
+  the front-door containers (pinned `@sha256:` images, like
+  `scripts/e2e/llm.sh:25`) and exports `AURORA_E2E_FRONTDOOR`; the new
+  `tests/e2e-gateway/tests/frontdoor.rs` skips gracefully when the variable
+  is unset — print `SKIPPED: …` and return, exactly like
+  `AURORA_E2E_DB_TARGET` (`tests/e2e-gateway/tests/database.rs:53-54`). So
+  even a direct local `cargo test -p aurora-e2e-gateway` without the
+  environment runs nothing extra. CI job wall-clock budget: +2–3 min (image
+  pull dominates); no new workflow job.
+
+Local-loop guarantee (VEL-002): `just test` / `just test-nextest` / `just dev`
+wall-clock and CPU are unchanged by TEST-021 except the tier-1 budget above;
+no front-door container is ever started outside the e2e script.
+
 ## Scope
 
 ### In scope
@@ -48,6 +84,9 @@ claim of compliance — a harness that fails the moment the wire drifts.
   defaults (http2 enabled); covered implicitly by the matrix's client-side
   checks only if trivial, else out of scope with a note.
 - Fuzzing/property testing (a possible follow-up; this suite is exact-shape).
+- Any local-run cost beyond the tier-1 budget above (VEL-002): front-door
+  containers, image pulls and the hosted smoke never run outside CI's serial
+  e2e job.
 
 ## Requirements
 
@@ -72,13 +111,17 @@ claim of compliance — a harness that fails the moment the wire drifts.
    headers (`connection`, `keep-alive`, `transfer-encoding` name-lists) are
    stripped toward the client on both h1 and h2 client connections;
    `proxy-authenticate` never leaks on non-407 responses.
-4. **Real front doors in e2e** (`scripts/e2e/gateway.sh` tier or a new
-   scenario file): nginx (pinned image) as `aigw`-like front door — `http2`
-   on, litellm or the existing mock upstream behind it — with the gateway in
-   front; a hosted-harness smoke must get a 2xx through the whole chain. This
-   is the production topology regression test. Add haproxy as a second peer
+4. **Real front doors in e2e (tier 2, CI-only)**: `scripts/e2e/gateway.sh`
+   gains a front-door stage — nginx (pinned image) with `http2` on in front
+   of the existing mock upstream, gateway in front of it — exporting
+   `AURORA_E2E_FRONTDOOR=<base-url>`; the new
+   `tests/e2e-gateway/tests/frontdoor.rs` runs a hosted-harness smoke that
+   must get a 2xx through the whole chain and skips gracefully when the
+   variable is unset (never run, never fail, never slow locally). This is
+   the production topology regression test. Add haproxy as a second peer
    profile (different strictness quirks, notably h1 keep-alive semantics) if
-   it costs < ~20 lines of config.
+   it costs < ~20 lines of config. No new CI workflow job — the existing
+   serial `e2e-gateway` job runs the script.
 5. **The assumption test.** hyper-util's h1 `Host` synthesis (value and
    default-port dropping, `legacy/client.rs` `set_host`) is load-bearing since
    FIX-052. Pin it: a test with a non-default-port upstream asserting
@@ -98,12 +141,20 @@ claim of compliance — a harness that fails the moment the wire drifts.
       a negative check during development, makes the suite fail — record the
       probe in the completion report).
 - [ ] Framing/SSE/upgrade cases green on both upstream protocols.
-- [ ] e2e nginx front-door scenario green in the serial e2e job
-      (`e2e-gateway` CI job); haproxy profile green if added.
+- [ ] **VEL-002 honored, measured**: a timed `cargo test -p aurora-gateway
+      --test it` before/after the tier-1 additions recorded in the completion
+      report, delta < 5 s; `just test`/`just test-nextest` start no container
+      (grep the script for tier-2 machinery — none reachable without
+      `AURORA_E2E_FRONTDOOR`).
+- [ ] e2e nginx front-door scenario green in the serial `e2e-gateway` CI job;
+      with the variable unset (e.g. plain local `cargo test -p
+      aurora-e2e-gateway`) the front-door test prints SKIPPED and passes;
+      haproxy profile green if added.
 - [ ] Non-default-port `Host` synthesis test green.
 - [ ] `cargo test -p aurora-gateway --test it` and the e2e suite green; clippy
       `-D warnings`; fmt.
-- [ ] `docs/06` rule sentence merged; PROGRESS/FEATURES updated.
+- [ ] `docs/06` rule sentence merged; `docs/18-testing.md` layers table gains
+      the front-door row (CI-only); PROGRESS/FEATURES updated.
 
 ## Constraints
 
@@ -121,10 +172,16 @@ claim of compliance — a harness that fails the moment the wire drifts.
 ## Verification
 
 ```sh
+# tier 1 (local dev loop — unchanged commands, new assertions included):
 cargo test -p aurora-gateway --test it proxy::
-cargo test -p aurora-e2e-gateway -- --test-threads=1   # incl. nginx scenario
-bash scripts/e2e/gateway.sh
 cargo clippy -p aurora-gateway --all-targets -- -D warnings
+
+# tier 2 (CI serial job; also runnable deliberately, starts containers):
+AURORA_E2E_FRONTDOOR=... bash scripts/e2e/gateway.sh   # via scripts/e2e/gateway.sh
+cargo test -p aurora-e2e-gateway -- --test-threads=1 frontdoor::
+
+# local guarantee check (VEL-002): must print SKIPPED, not start containers:
+cargo test -p aurora-e2e-gateway --test frontdoor
 ```
 
 ## Dependencies
@@ -135,6 +192,9 @@ cargo clippy -p aurora-gateway --all-targets -- -D warnings
   haproxy, envoy, CERN's `aigw.cern.ch`); a basis for future protocol work
   (e.g. if inbound h2 on the MITM listener is ever wanted, the oracle pattern
   exists).
+- Constraint honored: VEL-002 (owner, 2026-11-12) — no new local-run cost
+  beyond the tier-1 < 5 s budget; containerized front doors are CI-only via
+  the existing `tests/e2e-gateway` exclusion + env-gating pattern.
 
 ## Suggested agent/model and reason
 

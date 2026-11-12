@@ -766,6 +766,17 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 ## Velocity: fast local commands (VTL-001)
 
+**VEL-002 (owner, 2026-11-12): the local dev loop must not slow down.** New
+test tiers must respect the environment split the repo already has: in-process
+tests belong in the crates' `tests/it` binaries and run locally; anything that
+starts a container or binds fixed host addresses belongs in the excluded e2e
+crates (`tests/e2e-gateway`, `tests/e2e-hosted`) and runs in CI's serial jobs,
+env-gated so a bare local invocation skips gracefully
+(`AURORA_E2E_DB_TARGET` pattern). When a spec adds tests, it names the tier
+and the measured wall-clock delta for `just test`. Applied by TEST-021
+(gateway wire conformance: tier-1 oracles < 5 s local; nginx/haproxy
+front-door containers CI-only).
+
 The developer-loop wins, in the order they matter (measured numbers in
 `docs/ops/build-performance.md`; this host is 16 cores shared with worker
 lanes, so absolute times vary):
