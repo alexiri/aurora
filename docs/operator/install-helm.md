@@ -714,3 +714,9 @@ Then register a runner ([runners.md](runners.md#add-a-runner)).
   `-migrate` NetworkPolicy runs its migrate hook before that policy exists, so it can hang
   (seen on kind). Apply the new NetworkPolicies first (`helm template ... -s templates/networkpolicy.yaml | kubectl apply -f -`), then upgrade.
 - The kind test runs a single node with `runtimeClass` unset, so gVisor and Kata are not covered.
+- The `helm upgrade` path (hooks included) is exercised on kind by the e2e's two value-only
+  upgrade legs (`scripts/e2e/kind.sh`, OPS-024: `web.replicas` 1 → 2 → 1 with the hooks running
+  under the previous release's policies), and the render is checked by
+  `scripts/guards/hook-policies.sh` (every API-using pre-upgrade hook job must be admitted by a
+  hook-rendered NetworkPolicy, plus the CiliumNetworkPolicy with `networkPolicy.cilium.enabled`).
+  The paragraph above is about releases predating the `-migrate` policy; it still applies to them.

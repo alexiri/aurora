@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # OPS-011: Kubernetes e2e on a local kind cluster (rootless podman provider).
 #
-#   scripts/e2e/kind.sh [--keep] [--fresh] [--skip-build] [--release-images] [-- <cargo test filter/args>]
+#   scripts/e2e/kind.sh [--keep] [--fresh] [--skip-build] [--release-images] [--no-upgrade-legs] [-- <cargo test filter/args>]
 #
 #   --keep        leave the cluster (and the Helm release) in place when done
 #   --fresh       delete the cluster aurora-e2e first (default: reuse it, reinstall the release)
@@ -21,6 +21,12 @@
 #
 # Everything created is named aurora-e2e*: cluster `aurora-e2e`, images `localhost/aurora-e2e/*`,
 # namespaces `aurora` and `aurora-sandboxes`, probe namespace `aurora-e2e-npcheck`.
+#
+# OPS-024: after the test phase, two `helm upgrade` legs (value-only: `web.replicas` 1 -> 2 -> 1)
+# prove the hook path on an existing release: on upgrade the pre-install,pre-upgrade hooks (the
+# `secrets` job, its RBAC and its hook-rendered NetworkPolicy/CiliumNetworkPolicy) run under the
+# previous release's default-deny policies, exactly the production condition of the 2026-11-11
+# incident. `AURORA_E2E_UPGRADE_LEGS=0` skips the legs (fresh-install flow only).
 #
 # Environment overrides (unset = the values above, so the script behaves as before). Use them to run
 # next to another lane's cluster without touching its cluster, images or ports:
@@ -53,6 +59,7 @@ HELM_OVERRIDES=(--set "image.registry=$REGISTRY" --set "config.runner.image=$REG
 LOGDIR="$ROOT/target/kind-logs"
 WORK="$ROOT/target/kind"
 KEEP=0; FRESH=0; SKIP_BUILD="${SKIP_IMAGE_BUILD:-0}"; RELEASE_IMAGES="${AURORA_E2E_RELEASE_IMAGES:-0}"
+UPGRADE_LEGS="${AURORA_E2E_UPGRADE_LEGS:-1}"
 CARGO_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -60,6 +67,7 @@ while [ $# -gt 0 ]; do
     --fresh) FRESH=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
     --release-images) RELEASE_IMAGES=1 ;;
+    --no-upgrade-legs) UPGRADE_LEGS=0 ;;
     --) shift; CARGO_ARGS=("$@"); break ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -257,4 +265,50 @@ AURORA_KIND_PG_POD="$FULL-postgres-0" \
   timeout 1500 cargo test -p aurora-e2e-hosted --test k8s -- --test-threads=1 --nocapture "${CARGO_ARGS[@]}"
 STATUS=$?
 if [ "$STATUS" -eq 0 ]; then log "kind e2e PASSED"; else log "kind e2e FAILED (rc=$STATUS)"; fi
-exit "$STATUS"
+[ "$STATUS" -eq 0 ] || exit "$STATUS"
+
+# ---- 6. Helm upgrade legs (OPS-024) ---------------------------------------------------------------
+# Value-only `helm upgrade` legs on the release the tests just ran against: the hooks run before
+# any regular resource under the policies the previous release left in place, so a hook that
+# cannot reach what it needs (the 2026-11-11 incident: unlabeled hook pod, no allow policy,
+# `kubectl` hung) times out here instead of in production. The images are already loaded; each
+# leg adds ~1–2 minutes. `AURORA_E2E_UPGRADE_LEGS=0` (or --no-upgrade-legs) keeps the old
+# fresh-install-only flow.
+upgrade_leg() {
+  local label="$1" replicas="$2"
+  log "helm upgrade leg: $label (web.replicas=$replicas)"
+  if ! timeout 300 helm --kube-context "$CTX" upgrade "$RELEASE" deploy/helm/aurora -n "$NS" \
+      -f deploy/kind/values-e2e.yaml "${HELM_OVERRIDES[@]}" --set "web.replicas=$replicas" \
+      --wait --timeout 4m; then
+    echo "helm upgrade leg '$label' FAILED:" >&2
+    echo "  hook jobs/pods (look for the hook timeout: BackoffLimitExceeded, hangs in kubectl):" >&2
+    k -n "$NS" get jobs,pods -l "job-name=$FULL-secrets" -o wide >&2 || true
+    echo "  hook pod logs:" >&2
+    for p in $(k -n "$NS" get pods -l "job-name=$FULL-secrets" -o name 2>/dev/null); do
+      k -n "$NS" logs "$p" --all-containers --tail=100 >&2 || true
+    done
+    echo "  networkpolicies in $NS:" >&2
+    k -n "$NS" get networkpolicy -o name >&2 || true
+    return 1
+  fi
+  local st
+  st=$(helm --kube-context "$CTX" status "$RELEASE" -n "$NS" -o json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["info"]["status"])')
+  [ "$st" = "deployed" ] || { echo "helm upgrade leg '$label': release status is $st, expected deployed" >&2; return 1; }
+  k -n "$NS" rollout status "deploy/$FULL-web" --timeout=120s >/dev/null \
+    || { echo "helm upgrade leg '$label': $FULL-web did not roll (replicas=$replicas)" >&2; return 1; }
+  local ready
+  ready=$(k -n "$NS" get "deploy/$FULL-web" -o jsonpath='{.status.readyReplicas}')
+  [ "$ready" = "$replicas" ] || { echo "helm upgrade leg '$label': $FULL-web has $ready ready replicas, expected $replicas" >&2; return 1; }
+  log "helm upgrade leg '$label' ok: release status $st, web replicas=$replicas Ready"
+}
+if [ "$UPGRADE_LEGS" = "1" ]; then
+  # A leg failure sets STATUS so the EXIT trap collects the cluster logs (collect_logs), like a
+  # test failure would.
+  upgrade_leg "scale up" 2 || { STATUS=1; log "kind e2e FAILED (helm upgrade leg 'scale up')"; exit 1; }
+  upgrade_leg "scale back" 1 || { STATUS=1; log "kind e2e FAILED (helm upgrade leg 'scale back')"; exit 1; }
+else
+  log "skipping the helm upgrade legs (AURORA_E2E_UPGRADE_LEGS=0)"
+fi
+
+log "kind e2e PASSED (incl. helm upgrade legs)"
+exit 0

@@ -770,7 +770,12 @@ done when its tests exist, pass in CI, and the security invariants it touches
 3. Build images (multi-arch on main; amd64 on PRs).
 4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on the host-process stack (phase 1, OPS-017: was compose; `m1.sh --kind` runs it against the kind dev stack).
 5. Architecture guards.
-6. Nightly: Kubernetes e2e on kind, live suites, performance.
+6. Nightly: Kubernetes e2e on kind, live suites, performance. The kind run
+   (`scripts/e2e/kind.sh`) ends with two value-only `helm upgrade` legs
+   (OPS-024: `web.replicas` 1 → 2 → 1 against the installed release), which prove
+   the pre-upgrade hook path — hooks run under the previous release's policies,
+   so a hook that cannot reach what it needs fails there instead of timing out
+   in production (see docs/operator/upgrades.md §Rehearse the upgrade).
 
 **Implementation (OPS-019, `.github/workflows/ci.yml`).** `rust-build` compiles once and publishes a
 `cargo nextest archive` (all workspace tests except the e2e crates, plus the fixture packages);
