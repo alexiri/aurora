@@ -1059,6 +1059,24 @@ Rule: `04 §OIDC role claims`, `06 §Credential authentication`, `05` (`/v1/admi
 
 - C-630 **Owner-integrity floor and observability** (FIX-050): (a) after the OIDC claim sync's org step, an organization an org-role mapping of the signing-in provider touched that ends the sign-in transaction with **no active owner** gets its syncing user promoted to `owner` — claim-derived `idp_role`/`idp_source` retained (C-514 read-only semantics unchanged), audited `member.update` (`actor_kind = service`, `actor_label = idp:<provider>`, `metadata { via: "idp_sync", reason: "ownerless_org", claim_value }`, security-critical class of C-517), inside the sign-in transaction; a suspended or absent membership of the syncing user is never promoted (logged and skipped); the existing last-owner guard protects the floor and the sync's demotion arm dissolves it once the claim grants a real owner. (b) `GET /v1/admin/overview` (IA) gains `ownerless_orgs: [{ slug, members, created_at }] | null` (additive optional; organizations with zero active owners, oldest first); the Admin dashboard warns with the remediation sentence. (c) Every CONNECT-stage auth refusal (407 classes and 403 `frozen` before lane dispatch) logs `connect_auth_refused` with `reason ∈ unknown|revoked|expired|no_active_owner|frozen|store_unavailable`, the credential kind when known and the source address — never token material or its hash — and increments `aurora_gateway_connect_refused_total{reason}`; the refusal answers themselves are byte-unchanged (`Proxy-Authenticate: Basic realm="aurora"`, C-517 audit classes untouched).
 
+### FIX-052 (upstream hop Host/`:authority`, D-166)
+
+Rule: `06 §Per-request pipeline` step 13; decision D-166. Reserved numbers
+C-631..C-633. No API wire change (gateway-internal transport semantics).
+
+- C-631 **The upstream hop is RFC 9113-clean** (FIX-052): the gateway never
+  sends a `Host` header on a relayed request — HTTP/2 hops carry `:authority`
+  only (RFC 9113 §8.3.1: a client MUST NOT send `host` alongside `:authority`;
+  nginx rejects the pair with a bare 400 before the app sees it), HTTP/1.1
+  hops get their `Host` synthesized from the request URI by hyper-util (value
+  and default-port handling unchanged from the previous manual insert). A
+  plain-tunnel (open lane) hop is byte-transparent and unaffected. An
+  injection recipe or named injection header targeting `host` is refused at
+  snapshot/app load with a config error naming the app/connection (it cannot
+  work on h2 upstreams). Contract kept honest by a raw-h2 upstream it-test
+  asserting the absence of `host` and the presence of `:authority`, beside an
+  h1 test asserting a synthesized `Host`.
+
 ### Phase 4 — P4-GRP-1 (directory groups, D-130, D-131, D-156, SEC-71)
 
 Rule: `04 §Groups`, `04 §IdP-linked groups`, `03 §groups, §group_members, §group_workspace_access`, `05 §Groups`, `06 §Credential authentication`, `07 §Rule anatomy`, `17` SEC-71. Reserved numbers C-460..C-469.
