@@ -157,15 +157,18 @@ impl Rig {
 }
 
 /// `pty.open` with the given id; asserts `pty.opened` and returns the announced window.
-/// A `pty.refused{reason: "error"}` is the OS refusing the spawn (e.g. `EAGAIN` from fork
-/// under parallel load — nextest runs every test in its own process and CI runners have a
-/// tight pids cgroup); that is transient pressure, not a posture failure, so the open is
-/// retried with a short backoff (the FIX-055 playbook). Any other refusal is asserted
-/// through — only `error` can be transient (`limit`/`disabled` are deterministic).
+/// A `pty.refused{reason: "error"}` is the OS refusing the spawn (fork/pty pressure —
+/// nextest runs every test in its own process and CI runners get resource-starved
+/// mid-shard); that is transient pressure, not a posture failure, so the open is retried
+/// with exponential backoff (~25 s total). Any other refusal is asserted through — only
+/// `error` can be transient (`limit`/`disabled` are deterministic). If the window
+/// exhausts, two direct probes (a raw `openpt` and a bare fork of the bootstrap) name the
+/// real errno in the panic, so one failing CI run identifies the resource.
 async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
-    for attempt in 0..6u32 {
-        if attempt > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    const BACKOFF_MS: [u64; 8] = [100, 200, 400, 800, 1600, 3200, 6400, 12800];
+    for wait in std::iter::once(0u64).chain(BACKOFF_MS) {
+        if wait > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
         }
         rig.frame(RunnerToSupervisor::PtyOpen(
             aurora_protocol::runner::PtyOpen {
@@ -188,7 +191,26 @@ async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
         assert_eq!(opened["body"]["pty_id"], pty_id);
         return opened["body"]["window"].as_u64().unwrap();
     }
-    panic!("pty {pty_id}: spawn still refused after 6 attempts (persistent resource pressure)");
+    // Diagnostics: reproduce the two operations the spawn performs and surface their
+    // exact errors — the engine's `pty.refused{error}` deliberately carries no errno.
+    let openpt =
+        rustix::pty::openpt(rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY)
+            .map(|_| "openpt ok".to_owned())
+            .unwrap_err();
+    let fork = match aurora_supervisor::spawn::command(
+        bootstrap_exe(),
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .arg("no-such-subcommand")
+    .output()
+    {
+        Ok(_) => "fork ok".to_owned(),
+        Err(e) => format!("fork failed: {e}"),
+    };
+    panic!(
+        "pty {pty_id}: spawn refused after 8 attempts (~25 s). Probes: openpt → {openpt:?}; \
+         bootstrap fork → {fork}"
+    );
 }
 
 /// The echo round trip (W19 on W18's credit machinery): runner bytes reach the shell, the
