@@ -261,7 +261,27 @@ async fn share_list_is_memory_only_and_start_runs_agent_env() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    // `running` in the supervisor's process list is not listener readiness: the app can bind
+    // its loopback listener a beat later, so a single-shot connect loses that race on CI
+    // (FIX-049). Retry the connect until a deadline instead.
+    let mut stream = None;
+    let mut last = None;
+    let bind_deadline = tokio::time::Instant::now() + T;
+    while tokio::time::Instant::now() < bind_deadline {
+        match TcpStream::connect(("127.0.0.1", port)).await {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                last = Some(e);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(e) => panic!("unexpected error connecting to the preview on {port}: {e}"),
+        }
+    }
+    let mut stream = stream
+        .unwrap_or_else(|| panic!("preview on {port} never bound its listener in 10s: {last:?}"));
     stream
         .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
         .await
