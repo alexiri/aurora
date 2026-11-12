@@ -21,6 +21,7 @@ import { useOrgs, useWorkspaces } from "@/lib/api/queries";
 import { landingPath } from "@/lib/nav/landing";
 import { cn } from "@/lib/utils";
 
+import { OwnerlessBanner } from "./ownerless-banner";
 import { PlacementView } from "./placement-view";
 
 type Tone = "accent" | "pending" | "neutral";
@@ -275,6 +276,7 @@ export function SetupView() {
       />
       {setup.isPending ? <Loading /> : null}
       {setup.isError ? <ErrorState error={setup.error} onRetry={() => setup.refetch()} /> : null}
+      <OwnerlessBanner />
       {setup.data ? (
         <>
           {!setup.data.placement_saved ? (

@@ -204,6 +204,7 @@ impl Proxy {
     async fn authenticate(
         &self,
         headers: &HeaderMap,
+        client: std::net::IpAddr,
     ) -> Result<(Arc<RequestIdentity>, Lane), ApiError> {
         // (RFE-014, `down`) No snapshot loaded or draining: new connections are refused first,
         // whatever the credential.
@@ -214,27 +215,49 @@ impl Proxy {
             });
         }
         let Some((lane, token)) = parse_proxy_authorization(headers) else {
+            connect_refused(client, "unknown", None);
             return Err(guidance::proxy_auth_required());
         };
         match self.resolver.resolve(&token).await {
             Ok(Some(id)) => Ok((Arc::new(id), lane)),
-            Ok(None) => Err(guidance::proxy_auth_required()),
+            // (FIX-050, C-630) A credential that is present but unusable (revoked, expired
+            // non-agent kind, organization without an active owner) is answered exactly like an
+            // unknown one, and classified in the log and the metric. `Ok(None)` stays the
+            // unclassified `unknown`.
+            Ok(None) => {
+                connect_refused(client, "unknown", None);
+                Err(guidance::proxy_auth_required())
+            }
+            Err(e @ crate::auth::ResolveError::Refused { .. }) => {
+                connect_refused(client, e.reason(), e.credential_kind());
+                Err(guidance::proxy_auth_required())
+            }
             Err(crate::auth::ResolveError::Expired) => {
                 metrics::counter!("aurora_gateway_agent_token_expired_total").increment(1);
+                connect_refused(client, "expired", Some("agent"));
                 Err(guidance::agent_token_expired())
             }
             Err(crate::auth::ResolveError::Frozen { level }) => {
                 metrics::counter!("aurora_gateway_frozen_refused_total").increment(1);
+                connect_refused(client, "frozen", None);
                 Err(guidance::frozen(level))
             }
             // (RFE-014) The gateway cannot tell an invalid token from an unreadable store: 503,
             // never 407.
-            Err(crate::auth::ResolveError::DatabaseUnavailable) => {
-                Err(guidance::gateway_degraded("database_unavailable"))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "credential resolution failed");
-                Err(guidance::credential_store_unavailable())
+            Err(
+                e @ (crate::auth::ResolveError::DatabaseUnavailable
+                | crate::auth::ResolveError::Unavailable(_)),
+            ) => {
+                connect_refused(client, "store_unavailable", None);
+                match e {
+                    crate::auth::ResolveError::DatabaseUnavailable => {
+                        Err(guidance::gateway_degraded("database_unavailable"))
+                    }
+                    _ => {
+                        tracing::warn!(error = %e, "credential resolution failed");
+                        Err(guidance::credential_store_unavailable())
+                    }
+                }
             }
         }
     }
@@ -427,4 +450,18 @@ fn dial_error(e: &DialError) -> ApiError {
         DialError::Resolution(_) => guidance::resolution_failed(),
         DialError::Connect(_) => guidance::bad_gateway(),
     }
+}
+
+/// (FIX-050, C-630) One warn line and one metric per CONNECT-stage authentication refusal
+/// (`unknown | revoked | expired | no_active_owner | frozen | store_unavailable`), with the
+/// reason class, the credential kind when known and the source address — never the token, a
+/// prefix or its hash. The answer itself is the caller's, unchanged.
+fn connect_refused(client: std::net::IpAddr, reason: &'static str, kind: Option<&'static str>) {
+    metrics::counter!("aurora_gateway_connect_refused_total", "reason" => reason).increment(1);
+    tracing::warn!(
+        reason,
+        kind = kind.unwrap_or(""),
+        source = %client,
+        "connect_auth_refused"
+    );
 }

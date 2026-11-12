@@ -144,3 +144,28 @@ pub async fn get_by_slug<'e, E: PgExecutor<'e>>(
             .await?,
     )
 }
+
+/// (FIX-050, C-630) Organizations with zero active owners, oldest first: the gateway refuses
+/// every credential of such an org (06 §Credential authentication). `members` counts the
+/// org's active members of any role (the people whose credentials are refused). One query;
+/// the API's admin role may read `org_members`.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OwnerlessRow {
+    pub slug: String,
+    pub members: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn list_ownerless<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<OwnerlessRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT o.slug, count(m.user_id) AS members, o.created_at
+         FROM organizations o
+         LEFT JOIN org_members m
+           ON m.org_id = o.id AND m.status = 'active'
+         GROUP BY o.id, o.slug, o.created_at
+         HAVING count(m.user_id) FILTER (WHERE m.role = 'owner') = 0
+         ORDER BY o.created_at, o.slug",
+    )
+    .fetch_all(exec)
+    .await?)
+}

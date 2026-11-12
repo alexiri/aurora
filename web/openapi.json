@@ -22110,6 +22110,13 @@
           "counters": {
             "$ref": "#/components/schemas/CountersInfo",
             "description": "(phase 4, P4-CNT, C-402) the rate-limit counter backend of this API replica."
+          },
+          "ownerless_orgs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerlessOrg"
+            },
+            "description": "(FIX-050, C-630) Organizations with zero active owners, oldest first. The gateway\nrefuses every credential of such an org (407 at CONNECT auth); repair per the Admin\nbanner or the operator docs. `None`-absent on responses serialised before this field."
           }
         }
       },
@@ -30215,6 +30222,29 @@
           "skill_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "OwnerlessOrg": {
+        "type": "object",
+        "description": "(FIX-050, C-630) One ownerless organization of the admin overview.",
+        "required": [
+          "slug",
+          "members",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "members": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active members (any role) the org has — every one of their credentials is refused."
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },

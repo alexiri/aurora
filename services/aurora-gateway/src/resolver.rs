@@ -39,7 +39,11 @@ struct Entry {
 #[derive(Default)]
 struct Inner {
     entries: HashMap<Hash, Entry>,
-    negative: HashMap<Hash, Instant>,
+    /// (FIX-050, C-630) Refusals, answered without a database read for `NEGATIVE_TTL`: the
+    /// `None` kind of entry is a plain unknown token; `Some` carries the classified refusal
+    /// (`revoked`, `expired`, `no_active_owner`) replayed as a `Refused` error. Cleared by
+    /// every invalidation like the other negative answers.
+    negative: HashMap<Hash, (Instant, Option<Refusal>)>,
     /// (RFE-006) Credentials of frozen agents, answered 403 `frozen` without a database read for
     /// `NEGATIVE_TTL`; cleared by every invalidation (an unfreeze notifies).
     frozen: HashMap<Hash, (Instant, &'static str)>,
@@ -165,10 +169,20 @@ pub struct IdentityCache {
 
 enum Lookup {
     Hit(Arc<RequestIdentity>),
-    Denied,
+    /// A cached negative answer: `Some` = a classified refusal (FIX-050), `None` = a plain
+    /// unknown token.
+    Denied(Option<Refusal>),
     Frozen(&'static str),
     Expired,
     Miss(u64),
+}
+
+/// (FIX-050, C-630) A refusal the repository classified, cached with the negative TTL and
+/// replayed as [`ResolveError::Refused`]. Never any token material: the hash is the cache key.
+#[derive(Clone, Copy, Debug)]
+struct Refusal {
+    reason: &'static str,
+    kind: Option<&'static str>,
 }
 
 impl IdentityCache {
@@ -201,9 +215,9 @@ impl IdentityCache {
             }
             g.expired.remove(h);
         }
-        if let Some(until) = g.negative.get(h) {
-            if *until > now {
-                return Lookup::Denied;
+        if let Some((until, refused)) = g.negative.get(h).copied() {
+            if until > now {
+                return Lookup::Denied(refused);
             }
             g.negative.remove(h);
         }
@@ -285,9 +299,24 @@ impl IdentityCache {
                 if g.negative.len() >= MAX_NEGATIVE {
                     g.negative.clear();
                 }
-                g.negative.insert(h, Instant::now() + self.negative_ttl);
+                g.negative
+                    .insert(h, (Instant::now() + self.negative_ttl, None));
             }
         }
+    }
+
+    /// (FIX-050, C-630) Caches a classified refusal with the negative TTL; the reason is
+    /// replayed at the next lookups within that window (and so logged, not re-read).
+    fn store_refused(&self, h: Hash, r: Refusal, gen_seen: u64) {
+        let Ok(mut g) = self.inner.lock() else { return };
+        if g.generation != gen_seen {
+            return; // an invalidation raced this read; do not cache it
+        }
+        if g.negative.len() >= MAX_NEGATIVE {
+            g.negative.clear();
+        }
+        g.negative
+            .insert(h, (Instant::now() + self.negative_ttl, Some(r)));
     }
 
     pub fn len(&self) -> usize {
@@ -417,15 +446,47 @@ impl DbCredentialResolver {
             .await
             .map_err(unavailable)?
         else {
-            return Ok(None);
+            // (FIX-050, C-630) Nothing was found under the full identity conditions: classify
+            // why (a revoked row, or a live row of an organization without an active owner —
+            // the owner-integrity incident), so the refusal is observable. One extra read on
+            // the miss path only, cached with the negative entry's TTL.
+            return match repo::find_refused_credential(&self.pool, hash)
+                .await
+                .map_err(|e| {
+                    // A classification failure must not turn a plain 407 into a 503: the
+                    // credential stays refused, as `unknown`.
+                    tracing::debug!(error = %e, "refusal classification failed");
+                }) {
+                Ok(Some(row)) => {
+                    let kind = static_kind(&row.kind);
+                    // Token-level facts outrank the org-level owner state: a revoked row says
+                    // `revoked`, an expired row `expired`, whatever the owner state.
+                    let reason = if row.revoked {
+                        "revoked"
+                    } else if row.expired {
+                        "expired"
+                    } else if row.has_owner {
+                        // Live, not revoked, not expired, an owner exists: only an unusable
+                        // row remains; answered like an unknown credential.
+                        "unknown"
+                    } else {
+                        "no_active_owner"
+                    };
+                    Err(ResolveError::Refused { reason, kind })
+                }
+                _ => Ok(None),
+            };
         };
         // (RFE-013) Past `expires_at`: an agent token says so (407 `agent_token_expired`); the
-        // other kinds are simply refused, as before.
+        // other kinds are refused like an unknown credential, now classified (FIX-050).
         if row.expires_in_secs.is_some_and(|s| s <= 0.0) {
             return if row.kind == "agent" {
                 Err(ResolveError::Expired)
             } else {
-                Ok(None)
+                Err(ResolveError::Refused {
+                    reason: "expired",
+                    kind: static_kind(&row.kind),
+                })
             };
         }
         self.identity(row).await
@@ -560,6 +621,26 @@ impl DbCredentialResolver {
     }
 }
 
+/// The credential kind as a `'static` label, when it is one of the known ones (never token
+/// material: the string is one of `agent` | `boot` | `context` or nothing).
+fn static_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "agent" => Some("agent"),
+        "boot" => Some("boot"),
+        "context" => Some("context"),
+        _ => None,
+    }
+}
+
+/// Rebuilds the cached form of a refusal (the reason must be one of the classified ones).
+fn refusal_of(reason: &'static str, kind: Option<&'static str>) -> Option<Refusal> {
+    matches!(
+        reason,
+        "revoked" | "expired" | "no_active_owner" | "unknown"
+    )
+    .then_some(Refusal { reason, kind })
+}
+
 fn has_aurora_prefix(token: &str) -> bool {
     ["aug_", "aub_", "auc_"]
         .iter()
@@ -580,7 +661,13 @@ impl CredentialResolver for DbCredentialResolver {
                 }
                 return Ok(Some((*i).clone()));
             }
-            Lookup::Denied => return Ok(None),
+            Lookup::Denied(Some(r)) => {
+                return Err(ResolveError::Refused {
+                    reason: r.reason,
+                    kind: r.kind,
+                });
+            }
+            Lookup::Denied(None) => return Ok(None),
             Lookup::Expired => return Err(ResolveError::Expired),
             Lookup::Frozen(level) => return Err(ResolveError::Frozen { level }),
             Lookup::Miss(_) => {}
@@ -595,7 +682,13 @@ impl CredentialResolver for DbCredentialResolver {
         let _flight = self.flights.enter(&hash).await;
         let gen_seen = match self.cache.lookup(&hash) {
             Lookup::Hit(i) => return Ok(Some((*i).clone())),
-            Lookup::Denied => return Ok(None),
+            Lookup::Denied(Some(r)) => {
+                return Err(ResolveError::Refused {
+                    reason: r.reason,
+                    kind: r.kind,
+                });
+            }
+            Lookup::Denied(None) => return Ok(None),
             Lookup::Expired => return Err(ResolveError::Expired),
             Lookup::Frozen(level) => return Err(ResolveError::Frozen { level }),
             Lookup::Miss(g) => g,
@@ -611,6 +704,14 @@ impl CredentialResolver for DbCredentialResolver {
             Err(ResolveError::Expired) => {
                 self.cache.store_expired(hash, gen_seen);
                 return Err(ResolveError::Expired);
+            }
+            Err(e @ ResolveError::Refused { .. }) => {
+                if let ResolveError::Refused { reason, kind } = &e
+                    && let Some(r) = refusal_of(reason, *kind)
+                {
+                    self.cache.store_refused(hash, r, gen_seen);
+                }
+                return Err(e);
             }
             other => other?,
         };

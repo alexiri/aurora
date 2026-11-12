@@ -4330,6 +4330,12 @@ export interface components {
             connector_hosts: components["schemas"]["ConnectorHostInfo"][];
             /** @description (phase 4, P4-CNT, C-402) the rate-limit counter backend of this API replica. */
             counters: components["schemas"]["CountersInfo"];
+            /**
+             * @description (FIX-050, C-630) Organizations with zero active owners, oldest first. The gateway
+             *     refuses every credential of such an org (407 at CONNECT auth); repair per the Admin
+             *     banner or the operator docs. `None`-absent on responses serialised before this field.
+             */
+            ownerless_orgs?: components["schemas"]["OwnerlessOrg"][];
         };
         /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
         AdminStorage: {
@@ -6826,6 +6832,17 @@ export interface components {
             agent: components["schemas"]["AgentRef"];
             /** Format: uuid */
             skill_id: string;
+        };
+        /** @description (FIX-050, C-630) One ownerless organization of the admin overview. */
+        OwnerlessOrg: {
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: int64
+             * @description Active members (any role) the org has — every one of their credentials is refused.
+             */
+            members: number;
+            slug: string;
         };
         Page_ActionApproval: {
             items: {

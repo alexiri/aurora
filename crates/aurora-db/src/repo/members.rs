@@ -124,6 +124,22 @@ pub async fn lock_active_owners(conn: &mut PgConnection, org: Uuid) -> Result<Ve
     .await?)
 }
 
+/// Whether `org` has at least one active owner (FIX-050, D-165, C-630): the gateway's
+/// credential lookup requires one, so an org without one silently breaks every credential
+/// it has. Read without locks (a caller that then writes re-checks under
+/// [`lock_active_owners`]' `FOR UPDATE` or relies on the sign-in transaction's own locks).
+pub async fn org_has_active_owner<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members WHERE org_id = $1 AND role = 'owner' AND status = 'active')",
+    )
+    .bind(org)
+    .fetch_one(exec)
+    .await?)
+}
+
 pub async fn update<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,

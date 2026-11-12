@@ -787,6 +787,10 @@ workspaces and sends nothing until saved. The sign-in page shows "This instance 
 set up — try again shortly" for `?error=instance_setup_pending`. (phase 4, P4-IDP-1, D-139) **Identity** (read-only): per OIDC provider the role
 claim path and the mapping table from the Helm values, and per user (Users page) the last
 synced claim values and what they granted. (phase 4, P4-ONB-2) **Setup** (`§Onboarding`).
+(FIX-050, C-630) an ownerless-organization warning banner (`GET /v1/admin/overview`'s
+`ownerless_orgs`): when an organization has no active owner, the banner names it with its member
+count and the remediation — restore an owner in the dashboard or run the repair UPDATE in the
+operator docs — because the gateway refuses every credential of such an organization.
 
 #### Admin: connectors (phase 4, P4-MCON, `13 §3.1`)
 The Connectors page lists every connector as a card: icon and name, **Managed** or
