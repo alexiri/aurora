@@ -179,8 +179,7 @@ async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
         let opened = rig.next_frame().await;
         if opened["kind"] == "pty.refused" {
             assert_eq!(
-                opened["body"]["reason"],
-                "error",
+                opened["body"]["reason"], "error",
                 "pty {pty_id}: non-transient refusal: {opened}"
             );
             continue;
