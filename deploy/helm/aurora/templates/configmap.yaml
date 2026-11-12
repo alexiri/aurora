@@ -14,12 +14,33 @@
 {{- with .Values.image.registry }}{{ $sandboxImage = printf "%s/aurora-sandbox:%s" (trimSuffix "/" .) (default $.Chart.AppVersion $.Values.image.tag) }}{{ end -}}
 {{- $sandboxImage := default $sandboxImage .Values.runner.sandboxImage -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "image" (default $sandboxImage ($cfg.runner).image) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
+{{- /* (P4-PRV-2) the runner's relay-facing stream listener: opened when previews are on.
+      The value is an address (like `ops_bind`); the port is the fixed 4108. The stream
+      listener is in-cluster plaintext, so the runner advertises itself by the headless
+      Service name and registers `stream_tls: false` (the default): the API hands the relay
+      `ws://<advertised_host>:4108` (`16 §W18`). */ -}}
+{{- if .Values.relay.enabled }}{{- $_ := set $cfg.runner "stream_bind" "0.0.0.0" -}}{{- $_ := set $cfg.runner "advertised_host" (printf "%s-runner" $full) -}}{{- end -}}
 {{- $_ := set $cfg "connector_host" (merge (dict "api_url" (printf "http://%s-api:4101" $full) "test_types" (.Values.connectorHost.testTypes | default false)) (default (dict) $cfg.connector_host)) -}}
 {{- /* (P4-GRP-2) SCIM: the rate limit is chart-owned; `enabled` itself comes from [scim] in
       the operator's config (the chart comment points there) — the edge route follows
       `scim.enabled` below. */ -}}
 {{- $_ := set $cfg "scim" (merge (dict "rate_per_minute" .Values.scim.ratePerMinute) (default (dict) $cfg.scim)) -}}
 {{- if .Values.scim.enabled }}{{ $_ := set (default (dict) $cfg).scim "enabled" true }}{{ end -}}
+{{- /* (P4-PRV-2) port previews: [previews] master switch + [relay] service config. Both are
+      rendered from the operator-facing `relay.*` values (`relay.enabled` IS
+      `previews.enabled`); the fail guard below refuses a partial setup. */ -}}
+{{- if or .Values.relay.enabled (get (default (dict) $cfg.previews) "enabled") }}
+{{- if ne (default false .Values.relay.enabled) (default false (get (default (dict) $cfg.previews) "enabled")) }}{{ fail "relay.enabled and config.previews.enabled must agree: set both (relay.enabled + config.previews.enabled) or neither" }}{{ end -}}
+{{- end -}}
+{{- if .Values.relay.enabled }}
+{{- if not .Values.relay.domain }}{{ fail "relay.domain is required when relay.enabled (the preview DNS suffix, e.g. preview.example.org)" }}{{ end -}}
+{{- $pv := default (dict) $cfg.previews -}}
+{{- $_ := set $pv "enabled" true -}}
+{{- $_ := set $pv "domain" .Values.relay.domain -}}
+{{- $_ := set $cfg "previews" $pv -}}
+{{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) -}}
+{{- $_ := set $cfg "relay" (merge $rl (default (dict) $cfg.relay)) -}}
+{{- end -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}

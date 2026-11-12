@@ -22,6 +22,7 @@ members = [
   "services/aurora-api",
   "services/aurora-gateway",
   "services/aurora-hookhost",
+  "services/aurora-relay",
   "services/aurora-runner",
   "services/aurora-supervisor",
   "services/aurora-cli",

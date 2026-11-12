@@ -173,3 +173,17 @@ pub async fn reauth_age_secs<'e, E: PgExecutor<'e>>(
     .await?;
     Ok(age.flatten())
 }
+
+/// The session's absolute expiry (the preview credential is capped by it, docs/04
+/// §Preview access step 3); `None` when the session is gone.
+pub async fn expires_of<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id = $1")
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
+}

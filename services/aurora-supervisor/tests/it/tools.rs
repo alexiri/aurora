@@ -99,6 +99,7 @@ async fn bridge_supervisor_runner_round_trip() {
         cfg,
         ChannelSender::from_mpsc(out_tx),
         Arc::new(aurora_supervisor::fake::FakeHarness),
+        aurora_supervisor::streams::StreamsHandle::noop(),
     );
     tokio::spawn(sup.run(in_rx));
     next_matching(&mut out_rx, |m| matches!(m, SupervisorToRunner::Ready(_))).await;

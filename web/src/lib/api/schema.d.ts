@@ -469,6 +469,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/relays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Relay replicas seen by the API (instance administrators, P4-PRV-2, `05 §Planes`). */
+        get: operations["adminListRelays"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/runners": {
         parameters: {
             query?: never;
@@ -8495,6 +8512,19 @@ export interface components {
             /** @description A session reset was queued. */
             session_reset: boolean;
         };
+        RelayReplicaList: {
+            replicas: components["schemas"]["RelayReplicaView"][];
+        };
+        /** @description One relay replica seen by the API (P4-PRV-2). */
+        RelayReplicaView: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            /** Format: int32 */
+            streams_open: number;
+            version: string;
+        };
         Replica: {
             advertised_host: string;
             /** Format: uuid */
@@ -11035,6 +11065,33 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListRelays: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelayReplicaList"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

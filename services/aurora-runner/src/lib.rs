@@ -13,5 +13,6 @@ pub mod hub;
 pub mod reconcile;
 pub mod reporter;
 pub mod runner;
+pub mod stream_listener;
 
 pub use runner::{Runner, RunnerSettings};

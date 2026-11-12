@@ -405,6 +405,106 @@
       ],
       "type": "object"
     },
+    "StreamClose": {
+      "description": "A stream ended. Outside the seq/ack lineage; byte counts are informational (metrics only).",
+      "properties": {
+        "bytes_in": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes_out": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/StreamCloseReason"
+        },
+        "stream_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stream_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "StreamCloseReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "StreamCredit": {
+      "description": "Credit returned after bytes were written onward; a sender stops at zero unacknowledged\nbytes. Control frames are never blocked by data.",
+      "properties": {
+        "bytes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stream_id",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "StreamOpened": {
+      "description": "The supervisor accepted a stream; `window` is its own credit window.",
+      "properties": {
+        "stream_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stream_id",
+        "window"
+      ],
+      "type": "object"
+    },
+    "StreamRefuseReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "StreamRefused": {
+      "description": "The supervisor refused a stream (`16 §W18`): the port is not in its share list\n(`not_shared`), the loopback connect failed or timed out (`refused`/`timeout`) or a\n`PREVIEW_STREAMS_PER_SANDBOX` limit hit (`limit`).",
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/StreamRefuseReason"
+        },
+        "stream_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stream_id",
+        "reason"
+      ],
+      "type": "object"
+    },
     "SupervisorReady": {
       "properties": {
         "harness": {
@@ -801,6 +901,62 @@
         },
         "kind": {
           "const": "file.commit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/StreamOpened"
+        },
+        "kind": {
+          "const": "stream.opened"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/StreamRefused"
+        },
+        "kind": {
+          "const": "stream.refused"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/StreamCredit"
+        },
+        "kind": {
+          "const": "stream.credit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/StreamClose"
+        },
+        "kind": {
+          "const": "stream.close"
         }
       },
       "required": [

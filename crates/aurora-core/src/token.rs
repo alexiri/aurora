@@ -41,10 +41,16 @@ pub enum TokenPrefix {
     ConnectorHost,
     /// SCIM provisioning token (P4-GRP-2).
     Scim,
+    /// Relay anchor token (P4-PRV-2).
+    Relay,
+    /// Preview session cookie value (P4-PRV-2).
+    PreviewSession,
+    /// Preview stream grant (P4-PRV-2).
+    PreviewStream,
 }
 
 impl TokenPrefix {
-    pub const ALL: [TokenPrefix; 14] = [
+    pub const ALL: [TokenPrefix; 17] = [
         Self::Gateway,
         Self::Boot,
         Self::Context,
@@ -59,6 +65,9 @@ impl TokenPrefix {
         Self::Supervisor,
         Self::ConnectorHost,
         Self::Scim,
+        Self::Relay,
+        Self::PreviewSession,
+        Self::PreviewStream,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -77,6 +86,9 @@ impl TokenPrefix {
             Self::Supervisor => "aup_",
             Self::ConnectorHost => "auh_",
             Self::Scim => "aud_",
+            Self::Relay => "aul_",
+            Self::PreviewSession => "auv_",
+            Self::PreviewStream => "aux_",
         }
     }
 }

@@ -21,8 +21,8 @@ const SIZES: Record<number, string> = {
   72: "size-[72px] text-3xl",
 };
 
-/** Stable hash so one agent keeps one tint. */
-function tintFor(key: string) {
+/** Stable hash so one agent keeps one tint. (Also used by the sidebar selects' initial chip.) */
+export function tintFor(key: string) {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
   return TINTS[h % TINTS.length];

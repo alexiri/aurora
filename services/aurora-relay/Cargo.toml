@@ -1,0 +1,49 @@
+[package]
+name = "aurora-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Aurora preview relay: serves preview hostnames and tunnels byte streams to runners (docs/15 §Port previews, P4-PRV-2)."
+
+[lints]
+workspace = true
+
+[lib]
+name = "aurora_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aurora-relay"
+path = "src/main.rs"
+
+[dependencies]
+aurora-core = { workspace = true, features = ["service"] }
+aurora-config = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+futures = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+metrics = { workspace = true }
+percent-encoding = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["full"] }
+hyper-util = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true }

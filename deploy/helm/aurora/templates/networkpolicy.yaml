@@ -46,6 +46,9 @@ spec:
         {{- if .Values.connectorHost.enabled }}
         {{- include "aurora.peer" (dict "root" . "c" "connector-host") | nindent 8 }}
         {{- end }}
+        {{- if .Values.relay.enabled }}
+        {{- include "aurora.peer" (dict "root" . "c" "relay") | nindent 8 }}
+        {{- end }}
       ports: [{protocol: TCP, port: 4101}]
     - from:
         {{- include "aurora.peer" (dict "root" . "c" "hookhost") | nindent 8 }}
@@ -164,6 +167,11 @@ spec:
     - from:
         - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $sb }}}}
       ports: [{protocol: TCP, port: 4105}]
+    {{- if .Values.relay.enabled }}
+    - from:
+        {{- include "aurora.peer" (dict "root" . "c" "relay") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4108}]
+    {{- end }}
   egress:
     - to:
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
@@ -198,6 +206,32 @@ spec:
             - {port: {{ . | quote }}, protocol: TCP}
             {{- end }}
 {{- end }}
+{{- end }}
+{{- if .Values.relay.enabled }}
+---
+# (P4-PRV-2, docs/15 §Port previews) Relay: previews HTTP/WebSocket on 4112 from the edge,
+# registration/resolve/streams/grants to api:4101, leg-1 WebSocket streams to runner:4108,
+# DNS (the allow-dns policy) and external egress (nothing else).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-relay, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "relay") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $np.edgeNamespaceSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: 4112}]
+  egress:
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4101}]
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "runner") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4108}]
+    {{- include "aurora.external" . | nindent 4 }}
 {{- end }}
 {{- range .Values.connectors }}
 ---
@@ -251,6 +285,7 @@ spec:
 {{- $edge := list (dict "c" "api" "port" 4101) (dict "c" "web" "port" 4100) }}
 {{- if .Values.devIdp.enabled }}{{- $edge = append $edge (dict "c" "dev-idp" "port" 4107) }}{{- end }}
 {{- if .Values.connectorHost.enabled }}{{- $edge = append $edge (dict "c" "connector-host" "port" 4110) }}{{- end }}
+{{- if .Values.relay.enabled }}{{- $edge = append $edge (dict "c" "relay" "port" 4112) }}{{- end }}
 {{- range .Values.connectors }}
 {{- if and .callbackIngress .callbackIngress.enabled }}{{- $edge = append $edge (dict "c" (printf "connector-%s" .id) "port" (default 4190 .callbackPort)) }}{{- end }}
 {{- end }}

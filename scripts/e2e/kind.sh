@@ -36,6 +36,13 @@
 #   AURORA_KIND_PORT       host port forwarded to the API (default 14101)
 #   AURORA_E2E_IDP_PORT    host port forwarded to the dev IdP, also its issuer URL (default 4107)
 #   AURORA_KIND_HOST_OPS_PORT  host port forwarded to the connector host's ops port (default 14192)
+#   AURORA_E2E_PREVIEWS_DOMAIN  (P4-PRV-2) unset (default): stock run, no relay. Set to a DNS
+#                          suffix (e.g. previews.e2e.aurora.dev): installs with relay.enabled=true
+#                          + config.previews.enabled (that domain), builds/loads the relay image
+#                          and port-forwards the relay edge; the k6 preview round-trip scenario
+#                          (tests/e2e-hosted/tests/k8s.rs) runs instead of skipping. The suffix
+#                          is synthetic (nothing resolves it): the tests speak directly to the
+#                          port-forwarded relay with an explicit Host header.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -56,6 +63,12 @@ export AURORA_KIND_HOST_OPS_PORT="${AURORA_KIND_HOST_OPS_PORT:-14192}"
 # values above (identical to the file's own when the AURORA_E2E_* variables are unset).
 HELM_OVERRIDES=(--set "image.registry=$REGISTRY" --set "config.runner.image=$REGISTRY/aurora-sandbox:$TAG" \
   --set "devIdp.issuer=http://localhost:$IDP_PORT")
+# (P4-PRV-2) previews on: the chart's fail-guard needs relay.enabled and config.previews.enabled
+# to agree; relay.domain is the preview DNS suffix (config.previews.domain).
+PREVIEWS_DOMAIN="${AURORA_E2E_PREVIEWS_DOMAIN:-}"
+if [ -n "$PREVIEWS_DOMAIN" ]; then
+  HELM_OVERRIDES+=(--set relay.enabled=true --set "relay.domain=$PREVIEWS_DOMAIN" --set config.previews.enabled=true)
+fi
 LOGDIR="$ROOT/target/kind-logs"
 WORK="$ROOT/target/kind"
 KEEP=0; FRESH=0; SKIP_BUILD="${SKIP_IMAGE_BUILD:-0}"; RELEASE_IMAGES="${AURORA_E2E_RELEASE_IMAGES:-0}"
@@ -95,6 +108,7 @@ collect_logs() {
 cleanup() {
   [ -n "$PF_PID" ] && kill "$PF_PID" >/dev/null 2>&1
   [ -n "${IDP_PF_PID:-}" ] && kill "$IDP_PF_PID" >/dev/null 2>&1
+  [ -n "${RELAY_PF_PID:-}" ] && kill "$RELAY_PF_PID" >/dev/null 2>&1
   if [ "$STATUS" -ne 0 ] && kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then collect_logs; fi
   if [ "$KEEP" -eq 0 ]; then
     log "tearing down cluster $CLUSTER (use --keep to skip)"
@@ -170,9 +184,13 @@ dev_rust_images() (
   e2e_reg=$REGISTRY; e2e_tag=$TAG
   AURORA_DEV_SOURCED=1 . deploy/dev/kind-dev.sh
   REG=$e2e_reg; TAG=$e2e_tag; WORK="$ROOT/target/kind/dev"   # own sha bookkeeping: not the dev cluster's
+  # (P4-PRV-2) previews on: the relay service binary joins the package set and gets a thin image.
+  [ -n "${PREVIEWS_DOMAIN:-}" ] && RUST_SVCS+=(relay)
   CHANGED_SVCS=()
   build_rust || exit 1
-  for s in api gateway hookhost runner connector-host; do
+  THINS=(api gateway hookhost runner connector-host)
+  [ -n "${PREVIEWS_DOMAIN:-}" ] && THINS+=(relay)
+  for s in "${THINS[@]}"; do
     thin_image "$s" || exit 1
     [ -f "$WORK/bin/$s.sha.pending" ] && mv -f "$WORK/bin/$s.sha.pending" "$WORK/bin/$s.sha"
     podman image exists "$REG/aurora-$s:$TAG" || { echo "thin image for $s missing" >&2; exit 1; }
@@ -180,9 +198,13 @@ dev_rust_images() (
   exit 0
 )
 IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-dev-idp)
+# (P4-PRV-2) the relay image only exists when the release installs one (previews on).
+[ -n "$PREVIEWS_DOMAIN" ] && IMAGES+=(aurora-relay)
 if [ "$SKIP_BUILD" != "1" ]; then
   if [ "$RELEASE_IMAGES" = "1" ]; then
-    for t in api gateway hookhost runner connector-host; do
+    TARGETS=(api gateway hookhost runner connector-host)
+    [ -n "$PREVIEWS_DOMAIN" ] && TARGETS+=(relay)
+    for t in "${TARGETS[@]}"; do
       log "building aurora-$t (release Containerfile)"
       podman build -q -f images/services/Containerfile --target "$t" -t "$REGISTRY/aurora-$t:$TAG" . >/dev/null || exit 1
     done
@@ -256,7 +278,29 @@ for _ in $(seq 30); do
 done
 curl -fsS "http://localhost:$IDP_PORT/.well-known/openid-configuration" >/dev/null || { echo "dev IdP not reachable via port-forward" >&2; exit 1; }
 
+# (P4-PRV-2) previews on: forward the relay's edge too. The preview DNS suffix is synthetic
+# (nothing resolves it), so the tests address the relay directly with an explicit Host header.
+if [ -n "$PREVIEWS_DOMAIN" ]; then
+  RELAY_PORT="${AURORA_E2E_RELAY_PORT:-14102}"
+  log "port-forward svc/$FULL-relay -> 127.0.0.1:$RELAY_PORT"
+  k -n "$NS" port-forward "svc/$FULL-relay" "$RELAY_PORT:4112" >"$WORK/port-forward-relay.log" 2>&1 &
+  RELAY_PF_PID=$!
+  for _ in $(seq 60); do
+    # Any HTTP answer (even the 404 for a never-created label) proves the edge is listening.
+    curl -s -m 3 -o /dev/null -H "Host: x.$PREVIEWS_DOMAIN" "http://127.0.0.1:$RELAY_PORT/" >/dev/null 2>&1 && break
+    kill -0 "$RELAY_PF_PID" 2>/dev/null || { cat "$WORK/port-forward-relay.log" >&2; exit 1; }
+    sleep 1
+  done
+  curl -s -m 3 -o /dev/null -H "Host: x.$PREVIEWS_DOMAIN" "http://127.0.0.1:$RELAY_PORT/" || { echo "relay not reachable via port-forward" >&2; exit 1; }
+fi
+
 log "running tests/e2e-hosted/tests/k8s.rs"
+# (P4-PRV-2) previews on: the relay edge base and the synthetic suffix for the k6 round trip
+# (an env-assignment prefix cannot be built with ${VAR:+...} — it would expand as a command).
+if [ -n "$PREVIEWS_DOMAIN" ]; then
+  export AURORA_KIND_PREVIEWS_DOMAIN="$PREVIEWS_DOMAIN"
+  export AURORA_KIND_RELAY_URL="http://127.0.0.1:$RELAY_PORT"
+fi
 AURORA_TEST_KIND=1 \
 AURORA_KIND_API="http://127.0.0.1:$LOCAL_PORT" \
 AURORA_KIND_ORIGIN="http://localhost:4100" \

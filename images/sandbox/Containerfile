@@ -34,7 +34,9 @@ RUN rm -f rust-toolchain.toml
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo build --release --locked -p aurora-supervisor \
-    && mkdir /out && cp target/release/aurora-supervisor /out/
+        && mkdir /out \
+        && cp target/release/aurora-supervisor /out/ \
+        && cp target/release/preview-echo /out/
 
 # ---- OS: AlmaLinux 10 with the unprivileged `agent` user and an empty /workspace
 FROM ${SANDBOX_BASE_IMAGE} AS os
@@ -108,6 +110,8 @@ RUN case ",${SANDBOX_HARNESSES}," in *,codex,*) \
    && rm -rf /tmp/codex-dl \
    && test "$(/opt/aurora/harness/codex/codex --version)" = "codex-cli ${CODEX_VERSION}" ;; esac
 COPY --from=supervisor-builder /out/aurora-supervisor /usr/local/bin/aurora-supervisor
+# (P4-PRV-2) preview round-trip e2e: a share's start command may run `preview-echo <port>`.
+COPY --from=supervisor-builder /out/preview-echo /usr/local/bin/preview-echo
 USER 1000:1000
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/aurora-supervisor", "run"]
@@ -115,6 +119,8 @@ ENTRYPOINT ["/usr/local/bin/aurora-supervisor", "run"]
 # ---- sandbox-min: OS + supervisor only (e2e)
 FROM os AS sandbox-min
 COPY --from=supervisor-builder /out/aurora-supervisor /usr/local/bin/aurora-supervisor
+# (P4-PRV-2) preview round-trip e2e: the share's start command runs `preview-echo <port>`.
+COPY --from=supervisor-builder /out/preview-echo /usr/local/bin/preview-echo
 USER 1000:1000
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/aurora-supervisor", "run"]

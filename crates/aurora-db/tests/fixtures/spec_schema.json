@@ -589,6 +589,10 @@
       "require_approval",
       "targets"
     ],
+    "preview_grant_uses": [
+      "expires_at",
+      "jti"
+    ],
     "preview_labels": [
       "label"
     ],
@@ -611,6 +615,16 @@
       "visibility",
       "wake_attempts",
       "workspace_id"
+    ],
+    "preview_stream_grants": [
+      "boot_id",
+      "consumed_at",
+      "expires_at",
+      "port",
+      "sandbox_id",
+      "session_hash",
+      "share_id",
+      "token_hash"
     ],
     "processes": [
       "agent_id",
@@ -660,6 +674,17 @@
       "contract",
       "id",
       "snapshot"
+    ],
+    "relay_replicas": [
+      "id",
+      "last_seen_at",
+      "streams_open",
+      "token_id",
+      "version"
+    ],
+    "relay_tokens": [
+      "id",
+      "token_hash"
     ],
     "request_log": [
       "agent_id",

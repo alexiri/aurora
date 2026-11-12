@@ -15,6 +15,7 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-gateway` | `aurora-gateway` |
 | `aurora-hookhost` | `aurora-hookhost` |
 | `aurora-runner` | `aurora-runner` |
+| `aurora-relay` | `aurora-relay` (phase 4, P4-PRV-2, deployed only when previews are enabled) |
 | `aurora-web` | Next.js standalone build |
 | `aurora-connector-fake` | test/dev only |
 | `aurora-connector-mattermost` | phase 1 |
@@ -23,14 +24,14 @@ One OCI image per component, all tagged with the Aurora version
 (phase 1, OPS-023) **Dev images** (`localhost/aurora-dev/*`, `localhost/aurora-e2e/*`) are built from a debug-profile binary in the kind builder container into thin distroless images, for local kind runs only; they are never pushed, and the released images above come only from `images/services/Containerfile` (release profile, sccache-accelerated, `docs/ops/build-performance.md`).
 
 (phase 1, OPS-020) **Registry and tags.** CI builds and publishes every image to
-`ghcr.io/alexiri/aurora-<name>` (`api`, `gateway`, `hookhost`, `runner`, `web`,
+`ghcr.io/alexiri/aurora-<name>` (`api`, `gateway`, `hookhost`, `runner`, `relay`, `web`,
 `connector-fake`, `connector-mattermost`, `sandbox`, `sandbox-min`) with `GITHUB_TOKEN`, only after the
 lint, test, e2e, web and guard jobs of the same workflow run are green. Pushes to `master` and `v*` tags
 publish; pull requests build without pushing. Tags: `sha-<short>` (every publish), `master` (moving),
 `<version>` and `<major>.<minor>` from a `vX.Y.Z` git tag, and `latest` only for the newest
 non-prerelease semver tag. Images carry OCI labels (source, revision, version, license
 `GPL-3.0-or-later`) plus SBOM and max-mode provenance attestations. The Helm chart defaults to
-`image.registry: ghcr.io/alexiri` with the chart `appVersion` as tag. The six service images are copies of a
+`image.registry: ghcr.io/alexiri` with the chart `appVersion` as tag. The seven service images are copies of a
 single compile of the workspace (`images/services/Containerfile`, cargo-chef dependency layer, lld).
 `aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor). (phase 4, P4-HAR) The
 sandbox image installs the pinned Claude Code and Codex runtimes by default; build with
@@ -96,7 +97,7 @@ one new entry without activating it.
 | `relay.api_url` | `http://127.0.0.1:4101` | relay | (phase 4, P4-PRV-2) the API it registers with; the anchor token comes from `AURORA_RELAY_TOKEN` (`aul_`) |
 | `relay.listen` / `relay.ops_port` | `0.0.0.0:4112` / `4193` | relay | (phase 4, P4-PRV-2) edge-facing HTTP / health and metrics |
 | `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two |
-| `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`; the relay then verifies against `relay.runner_ca_file`) |
+| `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`). The runner registers the `stream_tls` capability; the API derives the endpoint scheme it hands the relay from it (`ws://` off, `wss://` on, `16 §W18`) — the relay verifies the presented certificate against its own trust configuration |
 | `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled |
 | `terminal.awake_cap_secs` | 14400 | api | (phase 4, P4-TERM) `TERMINAL_AWAKE_CAP`, at most `hosted.background_cap_secs` |
 | `terminal.wake_window_secs` / `terminal.wake_wait_secs` | 60 / 45 | api | (phase 4, P4-TERM) the wake-demand window on open / how long the WebSocket upgrade may wait for a waking sandbox |

@@ -14,8 +14,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use aurora_protocol::common::SecretString;
+use aurora_protocol::runner::ChannelRef;
 use aurora_protocol::supervisor::{
-    ACK_INTERVAL, MAX_FRAME, MAX_UNACKED_BYTES, PING_INTERVAL, SILENCE_TIMEOUT, SessionProof,
+    ACK_INTERVAL, MAX_FRAME, MAX_UNACKED_BYTES, PING_INTERVAL, RunnerToSupervisor, SILENCE_TIMEOUT,
+    SessionProof,
 };
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -65,7 +67,17 @@ pub(crate) struct Upload {
 
 struct Conn {
     id: u64,
-    tx: mpsc::UnboundedSender<String>,
+    tx: mpsc::UnboundedSender<ConnMsg>,
+}
+
+/// One message on the current W6 connection: a sequenced replay-buffered text frame, or
+/// (P4-PRV-2, W18) unsequenced preview-stream traffic.
+pub(crate) enum ConnMsg {
+    Text(String),
+    /// `stream.*` frame with `seq: 0` (never buffered, never acked).
+    StreamFrame(String),
+    /// Binary data `[0x01][stream_id BE][payload]`.
+    StreamData(Vec<u8>),
 }
 
 #[derive(Default)]
@@ -93,7 +105,7 @@ pub(crate) struct Session {
 pub(crate) struct Attached {
     pub conn_id: u64,
     pub resume_from: u64,
-    pub rx: mpsc::UnboundedReceiver<String>,
+    pub rx: mpsc::UnboundedReceiver<ConnMsg>,
 }
 
 impl Session {
@@ -157,9 +169,35 @@ impl Session {
         st.unacked_bytes += text.len();
         st.unacked.push_back((seq, text.clone()));
         if let Some(c) = &st.conn {
-            let _ = c.tx.send(text);
+            let _ = c.tx.send(ConnMsg::Text(text));
         }
         Ok(())
+    }
+
+    /// (P4-PRV-2, W18) One unsequenced `stream.*` frame: `seq: 0, ack: 0`, never buffered for
+    /// replay, never acked, never back-pressured by the replay buffer. Fails while
+    /// disconnected (streams die with the channel anyway).
+    pub(crate) fn push_stream_frame(&self, frame_text: String) -> Result<(), HubError> {
+        let st = self.lock();
+        match &st.conn {
+            Some(c) => {
+                c.tx.send(ConnMsg::StreamFrame(frame_text))
+                    .map_err(|_| HubError::NotConnected)
+            }
+            None => Err(HubError::NotConnected),
+        }
+    }
+
+    /// (P4-PRV-2, W18) One binary data message to the supervisor.
+    pub(crate) fn push_stream_data(&self, data: Vec<u8>) -> Result<(), HubError> {
+        let st = self.lock();
+        match &st.conn {
+            Some(c) => {
+                c.tx.send(ConnMsg::StreamData(data))
+                    .map_err(|_| HubError::NotConnected)
+            }
+            None => Err(HubError::NotConnected),
+        }
     }
 
     /// Unsequenced `ack` frame when something is unacknowledged.
@@ -177,7 +215,7 @@ impl Session {
         let mut st = self.lock();
         let (tx, rx) = mpsc::unbounded_channel();
         for (_, text) in &st.unacked {
-            let _ = tx.send(text.clone());
+            let _ = tx.send(ConnMsg::Text(text.clone()));
         }
         st.next_conn += 1;
         let conn_id = st.next_conn;
@@ -215,6 +253,41 @@ pub(crate) struct Shared {
     events_rx: Mutex<Option<mpsc::Receiver<HubEvent>>>,
     /// Bounds concurrent plane calls (tool/memory/upload).
     pub plane: Semaphore,
+    /// (P4-PRV-2, W18) The relay-facing stream listener, when opened; supervisors' stream
+    /// traffic is routed here.
+    pub streams: streams_cell::StreamsCell,
+    /// (P4-PRV-2, W18) Set by the runner when the API reported `previews.enabled` at
+    /// registration: the stream listener's port opens only then.
+    previews_on: watch::Sender<bool>,
+}
+
+/// Late-bound [`StreamListener`] reference (the listener needs the `ChannelServer`, the
+/// server needs the listener; a plain lock avoids a dependency cycle). Set once at startup,
+/// before the runner loop opens the port.
+pub(crate) mod streams_cell {
+    use std::sync::{Arc, Mutex};
+
+    pub(crate) struct StreamsCell(
+        Mutex<Option<Arc<super::super::stream_listener::StreamListener>>>,
+    );
+
+    impl StreamsCell {
+        pub(crate) fn empty() -> Self {
+            Self(Mutex::new(None))
+        }
+        pub(crate) fn set(&self, l: Arc<super::super::stream_listener::StreamListener>) {
+            *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(l);
+        }
+        pub(crate) fn get(&self) -> Option<Arc<super::super::stream_listener::StreamListener>> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        }
+    }
 }
 
 impl Shared {
@@ -239,6 +312,31 @@ impl Shared {
 
     pub(crate) fn api_watch(&self) -> watch::Receiver<Option<Arc<ApiClient>>> {
         self.api.subscribe()
+    }
+
+    /// (P4-PRV-2, W18) Routes one unsequenced `stream.*` frame to the stream listener.
+    pub(crate) async fn stream_frame(
+        &self,
+        sandbox: Uuid,
+        boot: Uuid,
+        frame: aurora_protocol::supervisor::SupervisorToRunner,
+    ) {
+        if let Some(l) = self.streams.get() {
+            l.on_supervisor_frame(sandbox, boot, frame).await;
+        }
+    }
+
+    /// (P4-PRV-2, W18) Routes one binary data message to the stream listener.
+    pub(crate) async fn stream_data(
+        &self,
+        sandbox: Uuid,
+        boot: Uuid,
+        stream_id: u32,
+        payload: Vec<u8>,
+    ) {
+        if let Some(l) = self.streams.get() {
+            l.supervisor_data(sandbox, boot, stream_id, payload).await;
+        }
     }
 
     /// Session for `(sandbox, boot)`. A different boot of the same sandbox replaces the old
@@ -297,9 +395,51 @@ impl Shared {
 pub struct ChannelServer(Arc<Shared>);
 
 impl ChannelServer {
+    /// (P4-PRV-2, W18) The API client when attached (`attach_api`); the stream listener uses it
+    /// for the advisory `preview-streams/closed` accounting call.
+    pub fn api(&self) -> Option<Arc<ApiClient>> {
+        self.0.api()
+    }
+
+    /// (P4-PRV-2, W18) Installs the stream listener; the channel pump routes supervisors'
+    /// stream traffic to it. Called once at startup.
+    pub fn set_streams(&self, l: Arc<crate::stream_listener::StreamListener>) {
+        self.0.streams.set(l);
+    }
+
+    /// (P4-PRV-2, W18) The installed stream listener, if any.
+    pub fn streams(&self) -> Option<Arc<crate::stream_listener::StreamListener>> {
+        self.0.streams.get()
+    }
+
+    /// (P4-PRV-2, W18) Watch of the API client: the stream listener's serve loop ends when
+    /// the runner's API client is dropped (shutdown).
+    pub fn api_watch(&self) -> watch::Receiver<Option<Arc<ApiClient>>> {
+        self.0.api_watch()
+    }
+
+    /// (P4-PRV-2, W18) Flip when the API reported `previews.enabled` at registration; the
+    /// stream listener's port opens only then. Never un-flipped (a running process keeps the
+    /// listener; the next registration re-decides).
+    pub fn set_previews_enabled(&self, on: bool) {
+        let _ = self.0.previews_on.send_replace(on);
+    }
+
+    /// (P4-PRV-2, W18) Waits until `set_previews_enabled(true)` (or `stop`), then returns.
+    /// Used by the stream listener's serve loop to keep the port dark otherwise.
+    pub async fn previews_wait(&self, stop: &mut watch::Receiver<bool>) {
+        let mut on = self.0.previews_on.subscribe();
+        let mut stop = stop.clone();
+        tokio::select! {
+            _ = on.wait_for(|v| *v) => {}
+            _ = stop.wait_for(|v| *v) => {}
+        }
+    }
+
     pub fn new(settings: ChannelSettings) -> Self {
         let (events, rx) = mpsc::channel(256);
         let (api, _) = watch::channel(None);
+        let (previews_on, _) = watch::channel(false);
         Self(Arc::new(Shared {
             settings,
             api,
@@ -308,6 +448,8 @@ impl ChannelServer {
             events,
             events_rx: Mutex::new(Some(rx)),
             plane: Semaphore::new(64),
+            streams: streams_cell::StreamsCell::empty(),
+            previews_on,
         }))
     }
 
@@ -329,6 +471,53 @@ impl ChannelServer {
             }
         }
     }
+
+    /// (P4-PRV-2, W17) True when this runner holds the live supervisor channel of that
+    /// `(sandbox, boot)` — the stream listener's `404 not_here` check.
+    pub fn holds_channel(&self, r: &ChannelRef) -> bool {
+        self.0
+            .sessions()
+            .get(&r.sandbox_id)
+            .is_some_and(|s| s.boot_id == r.boot_id && s.is_connected())
+    }
+
+    /// (P4-PRV-2, W18) Sends one unsequenced `stream.*` frame on that boot's channel.
+    pub async fn send_stream_frame(
+        &self,
+        r: &ChannelRef,
+        frame: RunnerToSupervisor,
+    ) -> Result<(), HubError> {
+        let text = encode_stream_frame(frame).ok_or(HubError::TooLarge)?;
+        self.0
+            .sessions()
+            .get(&r.sandbox_id)
+            .ok_or(HubError::NotConnected)?
+            .push_stream_frame(text)
+    }
+
+    /// (P4-PRV-2, W18) Sends one binary data message on that boot's channel.
+    pub async fn send_stream_data(&self, r: &ChannelRef, data: Vec<u8>) -> Result<(), HubError> {
+        self.0
+            .sessions()
+            .get(&r.sandbox_id)
+            .ok_or(HubError::NotConnected)?
+            .push_stream_data(data)
+    }
+}
+
+/// Encodes an unsequenced `stream.*` frame (`seq: 0, ack: 0`, `16 §W18`).
+fn encode_stream_frame(msg: RunnerToSupervisor) -> Option<String> {
+    use aurora_protocol::common::Validate as _;
+    use aurora_protocol::supervisor::Frame as WireFrame;
+    let frame = WireFrame {
+        seq: 0,
+        ack: 0,
+        msg,
+    };
+    if frame.validate().is_err() {
+        return None;
+    }
+    serde_json::to_string(&frame).ok()
 }
 
 #[async_trait]
@@ -353,6 +542,10 @@ impl ChannelHub for ChannelServer {
 
     fn attach_api(&self, api: Arc<ApiClient>) {
         self.0.api.send_replace(Some(api));
+    }
+
+    fn set_previews_enabled(&self, on: bool) {
+        ChannelServer::set_previews_enabled(self, on);
     }
 }
 

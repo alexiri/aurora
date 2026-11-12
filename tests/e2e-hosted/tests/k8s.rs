@@ -10,6 +10,7 @@
 mod common;
 
 use common::Api;
+use reqwest::Method;
 use serde_json::{Value, json};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -440,9 +441,422 @@ async fn k4_sec02_sec09_probes_from_sandbox_pod() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// P4-MCON-2 (docs/18 §Managed connectors, E2E): a managed `fake` connector, added through the
-// admin API, run by the chart's connector host.
+// P4-PRV-2 (docs/18 §Port previews, E2E): a preview round trip through the deployed relay —
+// share with a start command, the supervisor's on-demand `preview.start`, the grant exchange,
+// HTTP and WebSocket through the stream listener :4108. Only runs when kind.sh exported
+// AURORA_KIND_RELAY_URL (AURORA_E2E_PREVIEWS_DOMAIN); the port-forwarded relay is addressed
+// with an explicit Host header (the suffix is synthetic, nothing resolves it).
 // ---------------------------------------------------------------------------------------------
+
+/// Relay edge base (http://127.0.0.1:<port>) and the preview DNS suffix; None = stock run.
+fn previews_target() -> Option<(String, String)> {
+    match (
+        std::env::var("AURORA_KIND_RELAY_URL"),
+        std::env::var("AURORA_KIND_PREVIEWS_DOMAIN"),
+    ) {
+        (Ok(u), Ok(d)) if !u.is_empty() && !d.is_empty() => Some((u, d)),
+        _ => {
+            eprintln!(
+                "skipped: AURORA_KIND_RELAY_URL/AURORA_KIND_PREVIEWS_DOMAIN not set (previews off)"
+            );
+            None
+        }
+    }
+}
+
+/// One raw request to the port-forwarded relay edge with an explicit `Host`; returns
+/// (status, headers, body-bytes).
+async fn relay_get(
+    base: &str,
+    host: &str,
+    path: &str,
+    extra: &[(&str, &str)],
+) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    let mut tcp = tokio::net::TcpStream::connect(
+        base.trim_start_matches("http://")
+            .split_once(':')
+            .map(|(h, p)| (h.to_owned(), p.parse::<u16>().unwrap()))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut req = format!("GET {path} HTTP/1.1\r\nhost: {host}\r\nconnection: close\r\n");
+    for (k, v) in extra {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    req.push_str("\r\n");
+    tokio::io::AsyncWriteExt::write_all(&mut tcp, req.as_bytes())
+        .await
+        .unwrap();
+    let mut raw = Vec::new();
+    let _ = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::io::AsyncReadExt::read_to_end(&mut tcp, &mut raw),
+    )
+    .await
+    .unwrap();
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .unwrap_or(raw.len());
+    let text = String::from_utf8_lossy(&raw[..split]);
+    let mut lines = text.split("\r\n");
+    let status: u16 = lines
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            Some((k.trim().to_ascii_lowercase(), v.trim().to_owned()))
+        })
+        .collect();
+    (status, headers, raw[split + 4..].to_vec())
+}
+
+#[tokio::test]
+async fn k6_preview_round_trip_http_and_websocket() {
+    let Some((relay_base, domain)) = previews_target() else {
+        return;
+    };
+    let api = connect().await;
+    // A first turn boots Daneel's sandbox; the share below needs a running sandbox for the
+    // on-demand `preview.start` (a parked one would also wake, but don't race the park).
+    say_and_finish(&api, &api.direct().await, "[[say: k6 boot]]").await;
+
+    // The org switch for previews (the instance switch is chart-level; this one is per org).
+    let (s, v) = api
+        .patch(
+            &format!("/v1/orgs/{}", api.org),
+            json!({"settings": {"previews_enabled": true}}),
+        )
+        .await;
+    assert_eq!(s, 200, "enable previews on the org: {v}");
+
+    // The share on Daneel (running sandbox): port 3000 and the on-demand start command.
+    let (s, share) = api
+        .post(
+            &format!("/v1/agents/{}/previews", api.daneel),
+            // `cwd: "."` = /workspace (exists in the sandbox image); a subdir like `app` would
+            // make the spawn fail (no such directory) and the share would stay not_listening.
+            json!({"port": 3000, "start_command": "preview-echo 3000", "cwd": "."}),
+        )
+        .await;
+    assert_eq!(s, 201, "create share: {v}");
+    let label = share["label"].as_str().unwrap().to_owned();
+    let share_id = share["id"].as_str().unwrap().to_owned();
+    let host = format!("{label}.{domain}");
+    eprintln!("[k6] share {share_id} label {label} host {host}");
+
+    // Start the app (C-544): wakes the sandbox if parked and makes arm 5 enqueue the
+    // supervisor's on-demand `preview.start`; management `create` never starts anything.
+    let (s, v) = api
+        .post(&format!("/v1/previews/{share_id}/start"), json!({}))
+        .await;
+    assert_eq!(s, 202, "start share: {v}");
+
+    // Wait for the derived `listening` status (arm 5's `preview.start` + the supervisor's
+    // in-sandbox exec, the home part applies within a tick).
+    let end = Instant::now() + Duration::from_secs(120);
+    loop {
+        let (s, v) = api.get(&format!("/v1/previews/{share_id}")).await;
+        assert_eq!(s, 200, "{v}");
+        let status = v["status"].as_str().unwrap_or_default().to_owned();
+        if status == "listening" {
+            break;
+        }
+        assert!(
+            Instant::now() < end,
+            "share never reached `listening` (last: {status}): {v}\n{}",
+            all_pods()
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    eprintln!("[k6] share listening");
+
+    // ---- leg-1 reachability diagnostics ----------------------------------------------------
+    // A 504 ("The sandbox timed out.") is the relay's 10 s dial budget to the runner's stream
+    // listener. Reproduce the relay→runner path from a throwaway pod with the relay's exact
+    // labels (the NetworkPolicy peer match): probe the stream port through the Service and
+    // the pod IP, plus an api:4101 positive control. CONNECT = the path is open (the app is
+    // at fault), REFUSED = closed port, HANG (rc=1/124) = dropped SYN (a policy drop).
+    {
+        let comp =
+            |c: &str| format!("app.kubernetes.io/instance=aurora,app.kubernetes.io/component={c}");
+        let ns = env("AURORA_KIND_NS");
+        // The relay policy's podSelector.matchLabels is all three labels (name+instance+
+        // component) — the probe pod must carry the exact set or the policy does not select
+        // it and the probe proves nothing.
+        let (rc, out) = kubectl(&[
+            "-n",
+            &ns,
+            "run",
+            "k6-probe",
+            "--labels",
+            "app.kubernetes.io/name=aurora,app.kubernetes.io/instance=aurora,app.kubernetes.io/component=relay",
+            "--image",
+            "registry.k8s.io/e2e-test-images/agnhost:2.53",
+            "--command",
+            "--",
+            "sh",
+            "-c",
+            "sleep 60",
+            "-o",
+            "name",
+        ]);
+        if rc == 0 && out.trim().starts_with("pod/") {
+            let _ = kubectl(&[
+                "-n",
+                &ns,
+                "wait",
+                "--for=condition=Ready",
+                "pod/k6-probe",
+                "--timeout=60s",
+            ]);
+            for (name, host, port) in [
+                ("runner svc :4108", "aurora-runner".to_owned(), 4108),
+                ("runner pod :4108", pod_ip(&ns, &comp("runner")), 4108),
+                ("api svc :4101 (control)", "aurora-api".to_owned(), 4101),
+            ] {
+                // `curl http://…` completes the TCP connect for any answer (even a protocol
+                // error: rc 0/8/56); refused is rc 7, a dropped SYN times out with rc 28.
+                let (_, out) = kubectl(&[
+                    "-n",
+                    &ns,
+                    "exec",
+                    "pod/k6-probe",
+                    "--",
+                    "sh",
+                    "-c",
+                    &format!(
+                        "curl -s -m 4 -o /dev/null http://{host}:{port}/v1/preview-stream; echo rc=$?"
+                    ),
+                ]);
+                let rc = out.trim().trim_start_matches("rc=").to_owned();
+                let verdict = match rc.as_str() {
+                    "7" => "REFUSED (closed port)",
+                    "28" => "HANG (dropped SYN / policy)",
+                    _ => "CONNECT",
+                };
+                eprintln!("[k6] relay-path probe {name}: {verdict} (rc={rc})");
+            }
+            let _ = kubectl(&["-n", &ns, "delete", "pod/k6-probe", "--wait=false"]);
+        } else {
+            eprintln!("[k6] relay-path probe pod could not be created: {out}");
+        }
+    }
+
+    // ---- the grant exchange --------------------------------------------------------------
+    // Top-level navigation without a credential: the relay's login redirect sets the state
+    // cookie and points at the dashboard's authorize.
+    let (status, headers, _) = relay_get(&relay_base, &host, "/", &[]).await;
+    assert_eq!(status, 302, "expected the login redirect");
+    let pstate = headers
+        .iter()
+        .find(|(k, v)| k == "set-cookie" && v.starts_with("__Host-aurora_pstate="))
+        .map(|(_, v)| v.split(';').next().unwrap().to_owned())
+        .unwrap_or_else(|| panic!("no pstate cookie: {headers:?}"));
+    let loc = headers
+        .iter()
+        .find(|(k, _)| k == "location")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    assert!(
+        loc.contains("/v1/previews/authorize?host="),
+        "authorize redirect: {loc}"
+    );
+    let nonce = loc
+        .split("state=")
+        .nth(1)
+        .unwrap_or_default()
+        .split('&')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(!nonce.is_empty(), "no state nonce in {loc}");
+
+    // The dashboard's authorize (with the session cookie): a 302 to the preview host's
+    // `/_aurora/grant?g=…`.
+    let (status, headers, _) = api
+        .no_redirect(
+            Method::GET,
+            &format!("/v1/previews/authorize?host={label}&state={nonce}"),
+        )
+        .await;
+    assert_eq!(status, 302, "authorize must redirect");
+    let loc = headers
+        .iter()
+        .find(|(k, _)| k == "location")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    let grant_prefix = format!("https://{host}/_aurora/grant?g=");
+    assert!(loc.starts_with(&grant_prefix), "authorize location: {loc}");
+    let grant = loc[grant_prefix.len()..].to_owned();
+
+    // Redeem through the relay edge with the pstate cookie: the preview session cookie.
+    let (status, headers, body) = relay_get(
+        &relay_base,
+        &host,
+        &format!("/_aurora/grant?g={grant}"),
+        &[("cookie", &pstate)],
+    )
+    .await;
+    assert_eq!(
+        status,
+        302,
+        "grant redeem: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let preview_cookie = headers
+        .iter()
+        .find(|(k, v)| k == "set-cookie" && v.starts_with("__Host-aurora_preview="))
+        .map(|(_, v)| v.split(';').next().unwrap().to_owned())
+        .unwrap_or_else(|| panic!("no preview cookie: {headers:?}"));
+
+    // ---- the HTTP round trip --------------------------------------------------------------
+    // A plain GET reaches `preview-echo` inside the sandbox through :4112 → runner :4108 →
+    // the supervisor's stream engine → 127.0.0.1:3000. A POST with a body echoes through too.
+    for (path, body_text) in [("/", ""), ("/hello?x=1", "round-trip")] {
+        let mut tcp = tokio::net::TcpStream::connect(
+            relay_base
+                .trim_start_matches("http://")
+                .split_once(':')
+                .map(|(h, p)| (h.to_owned(), p.parse::<u16>().unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let req = format!(
+            "GET {path} HTTP/1.1\r\nhost: {host}\r\nconnection: close\r\ncookie: {preview_cookie}\r\ncontent-length: {}\r\n\r\n{body_text}",
+            body_text.len()
+        );
+        tokio::io::AsyncWriteExt::write_all(&mut tcp, req.as_bytes())
+            .await
+            .unwrap();
+        let mut raw = Vec::new();
+        let _ = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::io::AsyncReadExt::read_to_end(&mut tcp, &mut raw),
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(
+            text.starts_with("HTTP/1.1 200 OK\r\n"),
+            "round trip {path}: {text}"
+        );
+        let want_path = format!(r#""path":"{path}""#);
+        assert!(
+            text.contains(&want_path) && text.contains(body_text),
+            "echo missing in {path}: {text}"
+        );
+        // Header hygiene through the real stack: the app never sees the Aurora cookie.
+        assert!(
+            !text.contains("__Host-aurora_preview"),
+            "preview cookie leaked to the app: {text}"
+        );
+    }
+    eprintln!("[k6] http round trip ok");
+
+    // ---- the WebSocket round trip ----------------------------------------------------------
+    // The browser handshake (Origin = the preview's own) → 101 → unmasked app echo frames.
+    let (status, _, body) = ws_round_trip(&relay_base, &host, &preview_cookie).await;
+    assert_eq!(status, 101, "ws upgrade: {body}");
+    eprintln!("[k6] websocket round trip ok");
+
+    // Fetch Metadata: a same-site fetch subrequest is refused before the app.
+    let (status, _, _) = relay_get(
+        &relay_base,
+        &host,
+        "/",
+        &[("cookie", &preview_cookie), ("sec-fetch-site", "same-site")],
+    )
+    .await;
+    assert_eq!(status, 403, "same-site fetch must be refused");
+
+    // Clean up: the share row goes away; the sandbox idles out as usual.
+    let (s, v) = api.delete(&format!("/v1/previews/{share_id}")).await;
+    assert_eq!(s, 204, "{v}");
+}
+
+/// A browser-style WebSocket round trip against the relay edge: raw TCP, a masked handshake,
+/// then a masked text frame whose unmasked echo comes back from the app.
+async fn ws_round_trip(
+    base: &str,
+    host: &str,
+    cookie: &str,
+) -> (u16, Vec<(String, String)>, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let addr = base
+        .trim_start_matches("http://")
+        .split_once(':')
+        .map(|(h, p)| (h.to_owned(), p.parse::<u16>().unwrap()))
+        .unwrap();
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = format!(
+        "GET /ws HTTP/1.1\r\nhost: {host}\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\norigin: https://{host}\r\ncookie: {cookie}\r\n\r\n"
+    );
+    tcp.write_all(req.as_bytes()).await.unwrap();
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        if tcp.read_exact(&mut byte).await.is_err() {
+            break;
+        }
+        head.push(byte[0]);
+        if head.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let head_text = String::from_utf8_lossy(&head).to_string();
+    let status: u16 = head_text
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let headers: Vec<(String, String)> = head_text
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            Some((k.trim().to_ascii_lowercase(), v.trim().to_owned()))
+        })
+        .collect();
+    if status != 101 {
+        // Read the error page for diagnostics.
+        let mut rest = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(5), tcp.read_to_end(&mut rest)).await;
+        return (status, headers, String::from_utf8_lossy(&rest).to_string());
+    }
+    // Masked text frame "ws-echo" (mask 01020304), then the unmasked echo.
+    let mask = [1u8, 2, 3, 4];
+    let payload: Vec<u8> = b"ws-echo"
+        .iter()
+        .enumerate()
+        .map(|(i, b)| b ^ mask[i % 4])
+        .collect();
+    let mut frame = vec![0x81u8, 0x80 | payload.len() as u8];
+    frame.extend_from_slice(&mask);
+    frame.extend_from_slice(&payload);
+    tcp.write_all(&frame).await.unwrap();
+    let mut buf = vec![0u8; 1024];
+    let n = tokio::time::timeout(Duration::from_secs(15), tcp.read(&mut buf))
+        .await
+        .unwrap_or(Ok(0))
+        .unwrap_or(0);
+    let echoed = n > 2 && buf[0] == 0x81 && &buf[2..2 + (buf[1] & 0x7f) as usize] == b"ws-echo";
+    let _ = tcp.write_all(&[0x88, 0x00]).await; // close
+    assert!(
+        echoed,
+        "no ws echo from the app ({} bytes: {:?})",
+        n,
+        &buf[..n.min(32)]
+    );
+    (status, headers, String::new())
+}
 
 /// `kubectl port-forward` to the connector host's ops port (it has no Service: the test control
 /// API `/test/…` is for tests only and is enabled by `connectorHost.testTypes`).

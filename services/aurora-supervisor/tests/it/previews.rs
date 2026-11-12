@@ -120,7 +120,12 @@ async fn start(home: &TempDir) -> (TcpListener, Conn) {
     sc.process.uid = None;
     sc.process.debounce = Duration::from_millis(100);
     sc.tools.socket = Some(home.path().join("tools.sock"));
-    let sup = Supervisor::new(sc, chan.sender, std::sync::Arc::new(FakeHarness));
+    let sup = Supervisor::new(
+        sc,
+        chan.sender,
+        std::sync::Arc::new(FakeHarness),
+        aurora_supervisor::streams::StreamsHandle::noop(),
+    );
     tokio::spawn(sup.run(chan.inbound));
     tokio::spawn(async move {
         let _ = chan.task.await;
@@ -344,4 +349,62 @@ fn preview_start_frame_is_port_only() {
     let v =
         serde_json::to_value(aurora_protocol::runner::PreviewStartFrame { port: 8080 }).unwrap();
     assert_eq!(v, json!({"port": 8080}), "{v}");
+}
+
+/// (P4-PRV-2) Port discovery: the supervisor scans loopback listeners and reports
+/// `ports.state { ports }` on change (`11 §Port discovery`, `16 §W5`) — the first report
+/// fires immediately after boot, without waiting a tick, so the API derives a share's
+/// `listening` status from the current boot's ports.
+#[tokio::test]
+async fn ports_state_reports_loopback_listeners_on_change() {
+    let home = TempDir::new();
+    let (listener, mut c) = start(&home).await;
+
+    // A port the supervisor is not itself listening on becomes part of the first report.
+    let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = app.local_addr().unwrap().port();
+    let mut seen: Vec<u16> = Vec::new();
+    let deadline = tokio::time::Instant::now() + T;
+    'outer: while tokio::time::Instant::now() < deadline {
+        let v = timeout(T, c.next()).await.expect("no frame");
+        if v["kind"] == "ports.state"
+            && let Some(ports) = v["body"]["ports"].as_array()
+        {
+            seen = ports
+                .iter()
+                .filter_map(|p| p.as_u64())
+                .map(|p| p as u16)
+                .collect();
+            break 'outer;
+        }
+    }
+    assert!(
+        seen.contains(&port),
+        "ports.state {seen:?} misses the bound {port}"
+    );
+    assert!(!seen.contains(&0), "port 0 is never reported: {seen:?}");
+
+    // No change → no re-send; change → re-send.
+    let quiet = std::time::Instant::now();
+    while quiet.elapsed() < Duration::from_millis(700) {
+        let left = 700_u64.saturating_sub(quiet.elapsed().as_millis() as u64);
+        match timeout(Duration::from_millis(left), c.next()).await {
+            Err(_) => break,
+            Ok(v) => assert_ne!(v["kind"], "ports.state", "re-sent without a change: {v}"),
+        }
+    }
+    drop(app);
+    let deadline = tokio::time::Instant::now() + T;
+    while tokio::time::Instant::now() < deadline {
+        let v = timeout(T, c.next()).await.expect("no frame");
+        if v["kind"] == "ports.state" {
+            let ports = v["body"]["ports"].as_array().unwrap();
+            assert!(
+                !ports.iter().any(|p| p.as_u64() == Some(u64::from(port))),
+                "closed port still reported: {ports:?}"
+            );
+            break;
+        }
+    }
+    drop(listener);
 }

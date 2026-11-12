@@ -20,7 +20,18 @@ spec:
     - hosts: [{{ $host | quote }}]
       secretName: {{ .Values.ingress.tls.secretName }}
   {{- end }}
+  {{- /* (P4-PRV-2) with relay.enabled a wildcard rule "*.<domain>" -> relay:4112 is added:
+        every preview label is served by the relay (uniform 404 for unknown ones); the
+        dashboard host below stays untouched. Wildcard TLS is the operator's ingress config. */}}
   rules:
+    {{- if .Values.relay.enabled }}
+    - host: {{ printf "*.%s" .Values.relay.domain | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: {{ $full }}-relay, port: {number: 4112}}}
+    {{- end }}
     - host: {{ $host | quote }}
       http:
         paths:
@@ -59,8 +70,22 @@ spec:
   {{- with .Values.gatewayApi.parentRefs }}
   parentRefs: {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- if .Values.relay.enabled }}
+  hostnames: {{ toJson (concat (default (list $host) .Values.gatewayApi.hostnames) (list (printf "*.%s" .Values.relay.domain))) }}
+  {{- else }}
   hostnames: {{ toJson (default (list $host) .Values.gatewayApi.hostnames) }}
+  {{- end }}
+  {{- /* rules: with relay.enabled a hostname-scoped wildcard rule for the previews domain is prepended. */}}
   rules:
+    {{- if .Values.relay.enabled }}
+    - hostnames: [{{ printf "*.%s" .Values.relay.domain | quote }}]
+      matches:
+        - path: {type: PathPrefix, value: /}
+      timeouts:
+        request: {{ .Values.gatewayApi.requestTimeout }}
+      backendRefs:
+        - {name: {{ $full }}-relay, port: 4112}
+    {{- end }}
     {{- if .Values.scim.enabled }}
     # (P4-GRP-2) SCIM provisioning, see the Ingress above.
     - matches:

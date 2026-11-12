@@ -90,7 +90,8 @@ test.describe("sidebar selectors (FIX-027)", () => {
     const drawer = page.getByRole("dialog");
     const drawerBox = await drawer.boundingBox();
     expect(drawerBox!.x + drawerBox!.width, "drawer flush with the right edge").toBeCloseTo(390, 0);
-    await expect(drawer.getByTestId("org-selector").getByRole("button", { name: "Organization Acme Labs" })).toBeVisible();
+    // The name keeps the visible value and the avatar's initial (WCAG 2.5.3): "Organization A Acme Labs".
+    await expect(drawer.getByTestId("org-selector").getByRole("button", { name: "Organization A Acme Labs" })).toBeVisible();
     await expect(drawer.getByTestId("workspace-selector").getByRole("button", { name: "Workspace Main workspace" })).toBeVisible();
   });
 });

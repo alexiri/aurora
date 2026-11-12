@@ -1,5 +1,8 @@
 //! CSRF defence for cookie-authenticated unsafe requests (docs/04 §Sessions, SEC-22).
 //! Requests carrying `Authorization: Bearer` are exempt (key auth never reads cookies).
+//! While previews are enabled (P4-PRV-2, `04 §Preview access` rule 5) a cookie-authenticated
+//! request with `Sec-Fetch-Site: same-site|cross-site` that is not a top-level `GET` navigation
+//! is refused 403 `csrf_rejected` — a preview origin can never act with the dashboard session.
 
 use crate::app::AppState;
 use crate::http::auth::{SESSION_COOKIE, cookie_value};
@@ -30,16 +33,44 @@ fn is_unsafe(m: &Method) -> bool {
     )
 }
 
+/// The Fetch-Metadata check (`04 §Preview access` rule 5, SEC-81): while previews are on,
+/// a cookie-bearing request whose `Sec-Fetch-Site` is `same-site` or `cross-site` is refused
+/// unless it is a top-level `GET` navigation (`Sec-Fetch-Mode: navigate` from a top-level
+/// document — `Sec-Fetch-Dest: document`, no `Sec-Fetch-User` requirement). Requests without
+/// the header (old browsers, curl) are not refused by this rule; the Origin check above and
+/// SameSite=Lax still apply.
+fn fetch_metadata_ok(headers: &http::HeaderMap, method: &Method) -> bool {
+    let site = headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !matches!(site, "same-site" | "cross-site") {
+        return true;
+    }
+    // A top-level navigation is a GET (the middleware only calls here for unsafe methods, so
+    // any unsafe same-site/cross-site request is refused; a safe one passes the method gate).
+    let mode = headers
+        .get("sec-fetch-mode")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let dest = headers
+        .get("sec-fetch-dest")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    *method == Method::GET && mode == "navigate" && dest == "document"
+}
+
 pub async fn middleware(State(state): State<AppState>, req: Request, next: Next) -> Response {
     // Only `/v1/**` reads the session cookie (the SCIM plane ignores cookies and `Origin`
     // entirely, 04 §SCIM: a cookie-only request there is answered by its own 401). The
     // plane's paths live under `/scim/v2`; everything else (test routes, ops) keeps the
     // check so the middleware is path-scoped, not method-scoped.
-    if (req.uri().path().starts_with("/v1/") || !req.uri().path().starts_with("/scim/"))
+    let cookie_req = (req.uri().path().starts_with("/v1/")
+        || !req.uri().path().starts_with("/scim/"))
         && is_unsafe(req.method())
         && !req.headers().contains_key(header::AUTHORIZATION)
-        && cookie_value(req.headers(), SESSION_COOKIE).is_some()
-    {
+        && cookie_value(req.headers(), SESSION_COOKIE).is_some();
+    if cookie_req {
         let ok = req
             .headers()
             .get(header::ORIGIN)
@@ -54,6 +85,20 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
             )
             .into_response();
         }
+    }
+    // (P4-PRV-2) The Fetch-Metadata rule applies to every method while previews are on.
+    if state.config.previews.enabled
+        && (req.uri().path().starts_with("/v1/") || !req.uri().path().starts_with("/scim/"))
+        && !req.headers().contains_key(header::AUTHORIZATION)
+        && cookie_value(req.headers(), SESSION_COOKIE).is_some()
+        && !fetch_metadata_ok(req.headers(), req.method())
+    {
+        return ApiError::new(
+            http::StatusCode::FORBIDDEN,
+            "csrf_rejected",
+            "Cross-site request rejected.",
+        )
+        .into_response();
     }
     next.run(req).await
 }
@@ -78,5 +123,48 @@ mod tests {
         // method table pinned.
         assert!(is_unsafe(&http::Method::POST));
         assert!(!is_unsafe(&http::Method::GET));
+    }
+
+    #[test]
+    fn fetch_metadata_matrix() {
+        let h = |site: &str, mode: &str, dest: &str| {
+            let mut m = http::HeaderMap::new();
+            m.insert("sec-fetch-site", site.parse().unwrap());
+            m.insert("sec-fetch-mode", mode.parse().unwrap());
+            m.insert("sec-fetch-dest", dest.parse().unwrap());
+            m
+        };
+        // Navigations pass; every other same-site/cross-site mode is refused.
+        assert!(fetch_metadata_ok(
+            &h("same-site", "navigate", "document"),
+            &Method::GET
+        ));
+        assert!(fetch_metadata_ok(
+            &h("cross-site", "navigate", "document"),
+            &Method::GET
+        ));
+        assert!(!fetch_metadata_ok(
+            &h("same-site", "cors", "empty"),
+            &Method::POST
+        ));
+        assert!(!fetch_metadata_ok(
+            &h("cross-site", "cors", "empty"),
+            &Method::GET
+        ));
+        assert!(!fetch_metadata_ok(
+            &h("same-site", "no-cors", "script"),
+            &Method::GET
+        ));
+        assert!(!fetch_metadata_ok(
+            &h("same-site", "navigate", "iframe"),
+            &Method::GET
+        ));
+        // `same-origin` is the dashboard itself; the Origin check governs it, not this rule.
+        assert!(fetch_metadata_ok(
+            &h("same-origin", "cors", "empty"),
+            &Method::POST
+        ));
+        // No header at all: the rule does not fire (SameSite and the Origin check apply).
+        assert!(fetch_metadata_ok(&http::HeaderMap::new(), &Method::POST));
     }
 }

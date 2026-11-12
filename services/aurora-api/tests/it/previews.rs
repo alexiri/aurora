@@ -52,7 +52,7 @@ impl Rig {
     }
 
     /// The org switch on (the rig's default after `org_off`).
-    async fn org_on(&self) {
+    pub(crate) async fn org_on(&self) {
         sqlx::query(
             "UPDATE organizations SET settings = coalesce(settings,'{}'::jsonb) || '{\"previews_enabled\": true}'::jsonb WHERE id = $1",
         )
@@ -62,7 +62,7 @@ impl Rig {
         .unwrap();
     }
 
-    async fn call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
+    pub(crate) async fn call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
         let (s, _, v) = self
             .h
             .send(

@@ -324,7 +324,7 @@ jobs:
       matrix:
         # `api` and `connector-host` are built by images-api / images-api-pr below (they ship
         # artifacts signed with the project key: built-in packages, connector manifests).
-        image: [gateway, hookhost, runner, connector-fake, connector-mattermost]
+        image: [gateway, hookhost, runner, relay, connector-fake, connector-mattermost]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - &images-prep

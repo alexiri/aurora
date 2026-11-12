@@ -2,7 +2,7 @@
 //!
 //! Modules: [`inbox`] (inbound attachments), [`outbound`] (`send_file`), [`tools`] (tools socket), [`mcp_bridge`], [`process`] (process manager), [`boot`] (boot document, non-dumpable, files), [`channel`] (W6 client with
 //! sequenced/acked frames and reconnect), [`proxy`] (loopback credential-adding forwarders),
-//! [`harness`] (vendor-neutral adapter traits), [`fake`] (scripted adapter), [`supervisor`]
+//! [`streams`] (preview byte streams, `16 §W18`), [`harness`] (vendor-neutral adapter traits), [`fake`] (scripted adapter), [`supervisor`]
 //! (turn execution), [`logging`].
 #![forbid(unsafe_code)]
 
@@ -20,8 +20,10 @@ pub mod mcp_bridge;
 pub mod outbound;
 pub mod pg;
 pub mod pgrelay;
+pub mod ports;
 pub mod process;
 pub mod proxy;
 pub mod spawn;
+pub mod streams;
 pub mod supervisor;
 pub mod tools;

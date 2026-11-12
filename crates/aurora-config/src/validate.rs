@@ -44,6 +44,7 @@ pub enum Service {
     Hookhost,
     Runner,
     Connector,
+    Relay,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +176,8 @@ pub struct ApiConfig {
     pub bootstrap_connector_tokens: Vec<(String, Redacted<String>)>,
     /// (P4-MCON) `auh_…`: the connector host anchor token, upserted at start.
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
+    /// (P4-PRV-2, D-146) `aul_…`: the relay's anchor token, upserted at start.
+    pub bootstrap_relay_token: Option<Redacted<String>>,
     pub auth: AuthSection,
     pub signup_mode: SignupMode,
     pub org_creation: OrgCreation,
@@ -349,6 +352,24 @@ pub struct ConnectorHostConfig {
     pub telemetry: TelemetrySection,
 }
 
+/// The preview relay (`aurora-relay`, P4-PRV-2, D-146).
+#[derive(Debug, Clone)]
+pub struct RelayConfig {
+    /// `aul_…` anchor token (also upserted API-side via `AURORA_BOOTSTRAP_RELAY_TOKEN`).
+    pub token: Redacted<String>,
+    pub api_url: String,
+    pub listen: String,
+    pub ops_port: u16,
+    /// The preview DNS suffix; must equal the API's `previews.domain` (the relay refuses to
+    /// serve on mismatch after registering).
+    pub previews_domain: String,
+    pub max_streams: u32,
+    pub max_streams_per_user: u32,
+    pub request_body_max_bytes: usize,
+    pub tls: TlsSection,
+    pub telemetry: TelemetrySection,
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceConfig {
     Api(Box<ApiConfig>),
@@ -356,6 +377,7 @@ pub enum ServiceConfig {
     Hookhost(Box<HookhostConfig>),
     Runner(Box<RunnerConfig>),
     Connector(Box<ConnectorConfig>),
+    Relay(Box<RelayConfig>),
 }
 
 impl RawConfig {
@@ -367,6 +389,7 @@ impl RawConfig {
             Service::Hookhost => ServiceConfig::Hookhost(Box::new(self.hookhost_config()?)),
             Service::Runner => ServiceConfig::Runner(Box::new(self.runner_config()?)),
             Service::Connector => ServiceConfig::Connector(Box::new(self.connector_config()?)),
+            Service::Relay => ServiceConfig::Relay(Box::new(self.relay_config()?)),
         })
     }
 
@@ -422,6 +445,9 @@ impl RawConfig {
         }
         if let Some(t) = &s.bootstrap_connector_host_token {
             token_prefix(&mut c, "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN", t, "auh_");
+        }
+        if let Some(t) = &s.bootstrap_relay_token {
+            token_prefix(&mut c, "AURORA_BOOTSTRAP_RELAY_TOKEN", t, "aul_");
         }
         let bootstrap_connector_tokens =
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
@@ -569,6 +595,7 @@ impl RawConfig {
             bootstrap_runner_token: s.bootstrap_runner_token.clone(),
             bootstrap_connector_tokens,
             bootstrap_connector_host_token: s.bootstrap_connector_host_token.clone(),
+            bootstrap_relay_token: s.bootstrap_relay_token.clone(),
             auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),
@@ -894,6 +921,68 @@ impl RawConfig {
             listen: h.listen.clone(),
             ops_port: h.ops_port,
             test_types: h.test_types,
+            tls: self.tls.clone(),
+            telemetry: self.telemetry.clone(),
+        })
+    }
+
+    /// (P4-PRV-2) The relay validates its own slice; the domain check mirrors the API's
+    /// `check_previews` (non-empty, lower case, no wildcard), the rest is shape only.
+    pub fn relay_config(&self) -> Result<RelayConfig> {
+        let mut c = Ctx::default();
+        let token = match &self.env_secrets.relay_token {
+            Some(t) => {
+                token_prefix(&mut c, "AURORA_RELAY_TOKEN", t, "aul_");
+                Some(t.clone())
+            }
+            None => {
+                c.err("AURORA_RELAY_TOKEN", "required");
+                None
+            }
+        };
+        let r = &self.relay;
+        if !(r.api_url.starts_with("http://") || r.api_url.starts_with("https://")) {
+            c.err("relay.api_url", "must be an http(s) URL");
+        }
+        if r.listen
+            .rsplit_once(':')
+            .is_none_or(|(_, p)| p.parse::<u16>().is_err())
+        {
+            c.err("relay.listen", "must be host:port");
+        }
+        let domain = match r.previews_domain.as_deref() {
+            Some(d) if !d.is_empty() => {
+                let d = d.to_ascii_lowercase();
+                if d.starts_with('*') || d.starts_with('.') || d.contains("..") {
+                    c.err(
+                        "relay.previews_domain",
+                        "must be a bare domain, not a wildcard",
+                    );
+                }
+                if d.split('.').any(|l| l.is_empty()) {
+                    c.err("relay.previews_domain", "invalid domain");
+                }
+                d
+            }
+            _ => {
+                c.err(
+                    "relay.previews_domain",
+                    "required (the API's previews.domain)",
+                );
+                String::new()
+            }
+        };
+        check_common(&mut c, &self.tls, &self.telemetry);
+        c.finish()?;
+        Ok(RelayConfig {
+            token: token.unwrap_or_default(),
+            api_url: r.api_url.trim_end_matches('/').to_owned(),
+            listen: r.listen.clone(),
+            ops_port: r.ops_port,
+            previews_domain: domain,
+            max_streams: r.max_streams,
+            max_streams_per_user: r.max_streams_per_user,
+            request_body_max_bytes: r.request_body_max_bytes,
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })

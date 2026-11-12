@@ -12,6 +12,9 @@
 {{- if and .Values.connectorHost.enabled .Values.api.bootstrap.connectorHostToken }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_CONNECTOR_HOST_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
+{{- if .Values.relay.enabled }}
+{{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RELAY_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RELAY_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
+{{- end }}
 {{ include "aurora.workload" (dict "root" . "name" "api" "spec" .Values.api "caCert" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
 ---
 {{ include "aurora.workload" (dict "root" . "name" "hookhost" "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET") "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "http" "port" 4104))) }}
@@ -46,7 +49,13 @@ metadata:
   name: {{ $full }}-runner
   labels: {{- include "aurora.labels" . | nindent 4 }}
 ---
-{{ include "aurora.workload" (dict "root" . "name" "runner" "spec" .Values.runner "serviceAccount" (printf "%s-runner" $full) "image" (include "aurora.image" (dict "root" . "name" "aurora-runner")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RUNNER_SESSION_KEY" "AURORA_RUNNER_TOKEN"))) "ports" (list (dict "name" "http" "port" 4105))) }}
+{{ include "aurora.workload" (dict "root" . "name" "runner" "spec" .Values.runner "serviceAccount" (printf "%s-runner" $full) "image" (include "aurora.image" (dict "root" . "name" "aurora-runner")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RUNNER_SESSION_KEY" "AURORA_RUNNER_TOKEN"))) "ports" (list (dict "name" "http" "port" 4105) (dict "name" "streams" "port" 4108))) }}
+{{- end }}
+{{- if .Values.relay.enabled }}
+---
+{{/* port-previews relay (P4-PRV-2): edge 4112 (Service, wildcard-routed by routing.yaml),
+     ops 4193 (health/metrics, no Service). The relay token is the AURORA_RELAY_TOKEN secret. */}}
+{{ include "aurora.workload" (dict "root" . "name" "relay" "spec" .Values.relay "image" (include "aurora.image" (dict "root" . "name" "aurora-relay")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RELAY_TOKEN"))) "ports" (list (dict "name" "edge" "port" 4112) (dict "name" "ops" "port" 4193 "skipService" true))) }}
 {{- end }}
 {{- if .Values.connectorHost.enabled }}
 ---

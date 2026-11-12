@@ -130,8 +130,9 @@ describe("organization selector", () => {
 
   it("the visible caption labels the control (WCAG 2.5.3)", async () => {
     world("/o/acme/w/main/agents", { org: "acme", ws: "main" });
-    // The value resolves from /v1/orgs (slug fallback until then).
-    await waitFor(() => expect(screen.getByRole("button", { name: "Organization Acme Labs" })).toBeInTheDocument());
+    // The value resolves from /v1/orgs (slug fallback until then). The name includes the
+    // avatar's initial, so it contains every visible token of the trigger.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Organization A Acme Labs" })).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Workspace Main workspace" })).toBeInTheDocument();
   });
 });

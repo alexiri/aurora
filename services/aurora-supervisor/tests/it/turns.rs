@@ -142,7 +142,12 @@ async fn start_with(
     sc.progress_interval = Duration::from_millis(100);
     let dir = crate::common::TempDir::new().keep();
     sc.working_dir = dir.clone();
-    let mut sup = Supervisor::new(sc, chan.sender, Arc::new(FakeHarness));
+    let mut sup = Supervisor::new(
+        sc,
+        chan.sender,
+        Arc::new(FakeHarness),
+        aurora_supervisor::streams::StreamsHandle::noop(),
+    );
     if let Some(l) = lookup {
         sup = sup.purge_lookup(l);
     }

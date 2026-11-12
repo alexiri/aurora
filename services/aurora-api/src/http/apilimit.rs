@@ -101,6 +101,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
 }
 
 /// Whether the machine planes / ops endpoints / webhook ingress apply their own limits.
+/// `/v1/relay/*` is not exempt but has its own class (a caller is always a relay replica).
 pub fn exempt(path: &str) -> bool {
     let p = path.trim_end_matches('/');
     matches!(p, "/healthz" | "/readyz" | "/metrics")
@@ -108,6 +109,11 @@ pub fn exempt(path: &str) -> bool {
         || path.starts_with("/v1/runner/")
         || path.starts_with("/v1/connector/")
         || path.starts_with("/v1/hooks/")
+}
+
+/// Whether this is a relay-plane request (its own per-replica class, no org bucket).
+fn is_relay(path: &str) -> bool {
+    path.starts_with("/v1/relay/") || path.starts_with("/v1/runner/preview-streams/")
 }
 
 /// Whether a request is an SSE connection or a long-poll (counts against the stream cap).
@@ -138,6 +144,13 @@ pub struct Spec {
 }
 
 impl Spec {
+    pub const fn per_sec(limit: u32, burst: u32) -> Self {
+        Self {
+            burst,
+            limit,
+            per_secs: 1,
+        }
+    }
     pub const fn per_min(limit: u32, burst: u32) -> Self {
         Self {
             burst,
@@ -158,6 +171,8 @@ impl Spec {
     pub fn per_name(&self) -> &'static str {
         if self.per_secs >= 3600 {
             "hour"
+        } else if self.per_secs <= 1 {
+            "second"
         } else {
             "minute"
         }
@@ -183,6 +198,7 @@ pub struct Limits {
     pub simulate: Spec,
     pub search: Spec,
     pub export: Spec,
+    pub preview: Spec,
     pub org: Spec,
     pub unauth_get: Spec,
     pub rejected_bearer: Spec,
@@ -219,6 +235,7 @@ impl Limits {
             simulate: class("simulate", Spec::per_min(20, 5)),
             search: class("search", Spec::per_min(30, 10)),
             export: class("export", Spec::per_hour(6, 2)),
+            preview: Spec::per_sec(c.preview_per_second, c.preview_burst).scaled(m),
             org: Spec::per_min(c.org_per_minute, org_burst).scaled(m),
             unauth_get: Spec::per_min(UNAUTH_GET_PER_MIN, UNAUTH_GET_PER_MIN).scaled(m),
             rejected_bearer: Spec::per_min(REJECTED_BEARER_PER_MIN, REJECTED_BEARER_PER_MIN)
@@ -640,7 +657,7 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
         }
         Who::Principal(pid, caller) => {
             let stream = is_stream(&method, &path, req.uri().query());
-            let guard = if stream {
+            let guard = if stream && !is_relay(&path) {
                 match limiter.acquire_stream(&pid) {
                     Some(g) => Some(g),
                     None => {
@@ -657,6 +674,22 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
                 None
             };
             let class = classify(&method, &path);
+            // (P4-PRV-2) Relay-plane traffic: the caller is a relay replica, not a management
+            // principal. It charges the preview class only — no general bucket, no org bucket,
+            // no shared management counters (`16 §W17`).
+            if is_relay(&path) {
+                let charges = [Charge {
+                    key: format!("{pid}|preview"),
+                    spec: limits.preview,
+                    scope: "class",
+                    class: "preview",
+                }];
+                if let Err(r) = limiter.take(&charges) {
+                    record(&r);
+                    return r.into_response();
+                }
+                return next.run(req).await;
+            }
             let mut charges = vec![Charge {
                 key: format!("{pid}|general"),
                 spec: limits.general,
@@ -811,6 +844,16 @@ mod tests {
         }
         assert!(!exempt("/v1/agents"));
         assert!(!exempt("/v1/hookshot"));
+        // (P4-PRV-2) the relay plane is not exempt but has its own class.
+        assert!(is_relay("/v1/relay/resolve"));
+        assert!(is_relay("/v1/runner/preview-streams/open"));
+        assert!(!is_relay("/v1/runner/work"));
+        assert!(!is_relay("/v1/relayx"));
+        let l = limits();
+        assert_eq!(
+            (l.preview.limit, l.preview.burst, l.preview.per_secs),
+            (aurora_core::limits::PREVIEW_API_RATE, 200, 1)
+        );
         assert!(is_stream(&Method::GET, "/v1/conversations/x/stream", None));
         assert!(is_stream(&Method::GET, "/v1/approvals/stream", None));
         assert!(is_stream(

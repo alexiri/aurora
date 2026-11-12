@@ -152,13 +152,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &doc.runner_url,
         doc.bootstrap_token.clone(),
     ));
+    let streams = aurora_supervisor::streams::Streams::spawn(chan.streams);
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
     cfg.pg = Some(aurora_supervisor::pgrelay::RELAY_PORT);
     cfg.tools.socket = Some(PathBuf::from(aurora_supervisor::tools::DEFAULT_SOCKET));
     if let Ok(exe) = std::env::current_exe() {
         cfg.mcp_bridge_command = vec![exe.display().to_string(), "mcp-bridge".to_owned()];
     }
-    let sup = Supervisor::new(cfg, chan.sender, adapter);
+    let sup = Supervisor::new(cfg, chan.sender, adapter, (*streams).clone());
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         () = sup.run(chan.inbound) => Ok(()),

@@ -32,6 +32,9 @@ bash scripts/guards/dev-gateway-address.sh
 echo "== no-conflict-markers"
 bash scripts/guards/no-conflict-markers.sh
 
+echo "== sandbox-network (SEC-09: sandboxes reach gateway:4102 + runner:4105 only, previews never widen it)"
+bash scripts/guards/sandbox-network.sh
+
 echo "== no-deployment-defaults (RFE-019: neutral brief, public digest-pinned sandbox base)"
 bash scripts/guards/no-deployment-defaults.sh
 

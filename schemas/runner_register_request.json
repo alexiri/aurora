@@ -108,8 +108,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "previews": {
+          "description": "(phase 4, P4-PRV-2, D-147) The runner opened the relay-facing stream listener :4108 and\nspeaks the W18 stream frames; the API places no preview share on a runner without it.\nAbsent (false) from older runners.",
+          "type": "boolean"
+        },
         "resources": {
           "$ref": "#/$defs/ResourceRanges"
+        },
+        "stream_tls": {
+          "description": "(P4-PRV-2, `16 §W18`) The stream listener speaks TLS (`runner.stream_tls`): the API\ndials `wss://` instead of `ws://` in the runner endpoint it gives the relay. Absent\n(false) from older runners — matches the default off in-cluster.",
+          "type": "boolean"
         }
       },
       "required": [

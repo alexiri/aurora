@@ -963,6 +963,67 @@ fn connector_host_config_defaults_token_and_overrides() {
 }
 
 #[test]
+fn relay_config_defaults_token_domain_and_overrides() {
+    let toml = format!("{BASE}\n[relay]\npreviews_domain = \"preview.example.org\"\n");
+    let c = load_with(&toml, &[("AURORA_RELAY_TOKEN", "aul_abc123")])
+        .unwrap()
+        .relay_config()
+        .unwrap();
+    assert_eq!(c.api_url, "http://127.0.0.1:4101");
+    assert_eq!(c.listen, "0.0.0.0:4112");
+    assert_eq!(c.ops_port, 4193);
+    assert_eq!(c.max_streams, 2048);
+    assert_eq!(c.max_streams_per_user, 64);
+    assert_eq!(c.previews_domain, "preview.example.org");
+    assert_eq!(c.token.expose(), "aul_abc123");
+    let c = load_with(
+        &format!(
+            "{BASE}\n[relay]\napi_url = \"http://aurora-api:4101/\"\nlisten = \"0.0.0.0:5112\"\nops_port = 4300\nmax_streams = 8\npreviews_domain = \"Preview.Example.ORG\"\n"
+        ),
+        &[("AURORA_RELAY_TOKEN", "aul_abc123")],
+    )
+    .unwrap()
+    .relay_config()
+    .unwrap();
+    assert_eq!(c.api_url, "http://aurora-api:4101");
+    assert_eq!(c.listen, "0.0.0.0:5112");
+    assert_eq!(c.ops_port, 4300);
+    assert_eq!(c.max_streams, 8);
+    // The domain is lower-cased (the relay compares it with the API's own value).
+    assert_eq!(c.previews_domain, "preview.example.org");
+    // The token is required, `aul_`-prefixed, and never rendered.
+    let e = load_with(&toml, &[]).unwrap().relay_config().unwrap_err();
+    assert!(e.has_key("AURORA_RELAY_TOKEN"), "{e}");
+    let e = load_with(&toml, &[("AURORA_RELAY_TOKEN", "aur_abc")])
+        .unwrap()
+        .relay_config()
+        .unwrap_err();
+    assert!(e.has_key("AURORA_RELAY_TOKEN"), "{e}");
+    let e = load_with(BASE, &[("AURORA_RELAY_TOKEN", "aul_abc123")])
+        .unwrap()
+        .relay_config()
+        .unwrap_err();
+    assert!(e.has_key("relay.previews_domain"), "{e}");
+    let e = load_with(
+        &format!("{BASE}\n[relay]\npreviews_domain = \"*.example.org\"\n"),
+        &[("AURORA_RELAY_TOKEN", "aul_abc123")],
+    )
+    .unwrap()
+    .relay_config()
+    .unwrap_err();
+    assert!(e.has_key("relay.previews_domain"), "{e}");
+    assert!(!format!("{c:?}").contains("aul_abc123"));
+    // The API-side bootstrap secret is a distinct variable with the same prefix rule.
+    let raw = load_with(BASE, &[("AURORA_BOOTSTRAP_RELAY_TOKEN", "aul_x2")]).unwrap();
+    assert!(raw.api_config().unwrap().bootstrap_relay_token.is_some());
+    let e = load_with(BASE, &[("AURORA_BOOTSTRAP_RELAY_TOKEN", "aur_x")])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(e.has_key("AURORA_BOOTSTRAP_RELAY_TOKEN"), "{e}");
+}
+
+#[test]
 fn bootstrap_connector_tokens_are_validated_and_resolved() {
     let ok = load_with(
         BASE,

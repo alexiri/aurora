@@ -254,6 +254,25 @@ connectorHost:
   tolerations: []
   extraEnv: []
 
+# Port-previews relay (P4-PRV-2, D-146, docs/15 §Port previews): serves `<label>.<previews
+# domain>` HTTP/WebSocket previews through leg-1 WebSocket streams to the runner (4108).
+# Deployed only when `previews.enabled` (the wildcard Ingress/HTTPRoute is part of it); while
+# previews are off, nothing here is rendered and the API answers 404 previews_disabled.
+relay:
+  enabled: false          # mirrors config.previews.enabled; both must agree (the guard checks)
+  replicas: 1
+  resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+  # The preview DNS suffix (must equal config.previews.domain; the relay refuses a mismatch
+  # after registering). Required when relay.enabled.
+  domain: ""
+  # Edge limits ([relay] request_body_max_bytes / max_streams*).
+  request_body_max_bytes: 33554432   # 32 MiB
+  max_streams: 2048
+  max_streams_per_user: 64
+
 # Plugin packages (`*.aurora-plugin`) for the api pods (docs/15 §Production). The api scans
 # `plugins.dir` at startup and every 60 s. The chart never writes to the packages.
 plugins:

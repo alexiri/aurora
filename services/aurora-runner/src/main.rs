@@ -15,6 +15,8 @@ use aurora_runner::{Runner, RunnerSettings};
 const SERVICE: &str = "aurora-runner";
 const OPS_PORT: u16 = 4106;
 const CHANNEL_PORT: u16 = 4105;
+/// Relay-facing stream listener (P4-PRV-2, D-147, `16 §W18`).
+const STREAM_PORT: u16 = 4108;
 
 #[derive(Parser)]
 #[command(
@@ -69,6 +71,14 @@ async fn serve(cfg: &RunnerConfig) -> std::io::Result<()> {
     if let Some(w) = aurora_config::bind_overlap_warning(&cfg.server.bind, &cfg.ops_bind) {
         tracing::warn!(channel_bind = %cfg.server.bind, ops_bind = %cfg.ops_bind, "{w}");
     }
+    let stream_bind = cfg
+        .runner
+        .stream_bind
+        .clone()
+        .unwrap_or_else(|| cfg.server.bind.clone());
+    if let Some(w) = aurora_config::bind_overlap_warning(&cfg.server.bind, &stream_bind) {
+        tracing::warn!(channel_bind = %cfg.server.bind, stream_bind = %stream_bind, "{w}");
+    }
     let listener = service::bind(cfg.ops_bind.as_str(), OPS_PORT).await?;
 
     // Supervisor channel (W6) on the sandbox-facing port.
@@ -79,16 +89,86 @@ async fn serve(cfg: &RunnerConfig) -> std::io::Result<()> {
         let (hub, stop) = (hub.clone(), stop_rx.clone());
         async move { hub.serve(channel_listener, stop).await }
     });
-    let runner = Runner::new(RunnerSettings::from_config(cfg), backend, Arc::new(hub));
-    let task = tokio::spawn(runner.run(stop_rx));
+    let runner = Runner::new(
+        RunnerSettings::from_config(cfg),
+        backend,
+        Arc::new(hub.clone()),
+    );
+    let task = tokio::spawn(runner.run(stop_rx.clone()));
+
+    // Relay-facing stream listener (:4108, P4-PRV-2/D-147): bound eagerly, but the accept
+    // loop starts only when the runner registers and the API reports `previews.enabled`
+    // (`config.previews`); otherwise nothing is served and the port stays dark.
+    let streams = aurora_runner::stream_listener::StreamListener::new(hub.clone());
+    hub.set_streams(streams.clone());
+    let stream_tls = match (
+        &cfg.runner.stream_tls.cert_file,
+        &cfg.runner.stream_tls.key_file,
+    ) {
+        (Some(c), Some(k)) => match load_tls_acceptor(c, k) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                tracing::warn!(error = %e, "stream TLS disabled: certificate could not be loaded");
+                None
+            }
+        },
+        (None, None) => None,
+        _ => {
+            tracing::warn!("stream TLS disabled: cert_file and key_file must both be set");
+            None
+        }
+    };
+    let stream_task = tokio::spawn({
+        let (hub, bind, stop, tls) = (
+            hub.clone(),
+            stream_bind.clone(),
+            stop_rx.clone(),
+            stream_tls,
+        );
+        let api_rx = hub.api_watch();
+        async move {
+            match service::bind(bind.as_str(), STREAM_PORT).await {
+                Ok(l) => {
+                    aurora_runner::stream_listener::serve(l, streams, api_rx, tls, stop).await;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "stream listener bind failed; previews disabled");
+                }
+            }
+        }
+    });
 
     let served = service::serve_all(vec![(listener, app)]).await;
     let _ = stop_tx.send(true);
     let _ = channel_task.await;
+    let _ = stream_task.await;
     match task.await {
         Ok(Ok(())) | Ok(Err(RunnerError::Shutdown)) => {}
         Ok(Err(e)) => return Err(std::io::Error::other(e)),
         Err(e) => return Err(std::io::Error::other(e)),
     }
     served
+}
+
+/// Loads the stream listener's TLS certificate chain (`runner.stream_tls`, `16 §W18`).
+fn load_tls_acceptor(cert_file: &str, key_file: &str) -> Result<tokio_rustls::TlsAcceptor, String> {
+    use rustls::pki_types::pem::PemObject as _;
+    let chain = rustls::pki_types::CertificateDer::pem_file_iter(cert_file)
+        .map_err(|e| format!("read {cert_file}: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("parse {cert_file}: {e}"))?;
+    if chain.is_empty() {
+        return Err(format!("{cert_file}: no certificates"));
+    }
+    let key = rustls::pki_types::PrivateKeyDer::from_pem_file(key_file)
+        .map_err(|e| format!("read {key_file}: {e}"))?;
+    let server = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|e| e.to_string())?
+    .with_no_client_auth()
+    .with_single_cert(chain, key)
+    .map_err(|e| e.to_string())?;
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server)))
 }
