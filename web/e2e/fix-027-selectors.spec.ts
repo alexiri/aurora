@@ -69,6 +69,18 @@ test.describe("sidebar selectors (FIX-027)", () => {
       await expect(page).toHaveURL(/\/o\/acme$/);
     });
 
+    // FIX-048: "All organizations" links /admin, which had no route and 404'd. It redirects to the
+    // sidebar's first admin entry, Setup (docs/14:758's Overview page is unimplemented).
+    test(`selecting All organizations lands on Admin setup, not a 404 (${scheme})`, async ({ page }) => {
+      await open(page, "/o/acme/w/main/agents", scheme);
+      await page.getByTestId("org-selector").getByRole("button").click();
+      await page.getByRole("menuitem", { name: "All organizations" }).click();
+      await expect(page).toHaveURL(/\/admin\/setup$/);
+      // The Setup page, not the in-app 404 view ("404 · This page could not be found.").
+      await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
+      await expect(page.getByText("This page could not be found.")).toHaveCount(0);
+    });
+
     test(`account: placeholder trigger, workspace selector absent (${scheme})`, async ({ page }) => {
       await open(page, "/account", scheme);
       await expect(page.getByTestId("org-selector").getByRole("button", { name: "Organization Select organization" })).toBeVisible();
