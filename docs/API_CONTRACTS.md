@@ -1049,6 +1049,24 @@ Rule: `14` (Terminal tab), `11 §Web terminal`, `12 §Terminal`, `16 §W19` (on 
 - C-624 **Security posture** (SEC-87, `17`): the terminal is a dashboard origin surface — no relay, no previews domain, no cross-origin anything; the session cookie never reaches the runner or supervisor (the API mints and redeems the grant); the browser can name neither sandbox nor boot (they come from the URL path, the binding from the API); a stolen grant opens only its bound sandbox's terminal and only within 30 s; terminal bytes are never logged, stored or request-log-rowed anywhere (only byte totals in metrics); freeze/pause/disable semantics close sessions within `TERMINAL_AUTH_CACHE` 15 s (mirroring preview revocation); the sandbox gains no new network path (the terminal is API-initiated; the supervisor dials nothing).
 - C-625 **Tests** (`18 §Web terminal`): API auth matrix and grant single-use/TTL; runner redemption extension (`kind: "terminal"`, unknown kind refused by an older runner); supervisor PTY (env minus `AURORA_*`, uid, resize, window bounds, limit refusals, W6 reconnect cleanup, echo round trip); byte-transparency and the no-logging rule (secret-grep over a run with secrets typed into the terminal); web gating/resize/reconnect; kind e2e round trip (open, `echo`, output asserted, freeze closes, parked wakes).
 
+### FIX-052 (upstream hop Host/`:authority`, D-166)
+
+Rule: `06 §Per-request pipeline` step 13; decision D-166. Reserved numbers
+C-631..C-633. No API wire change (gateway-internal transport semantics).
+
+- C-631 **The upstream hop is RFC 9113-clean** (FIX-052): the gateway never
+  sends a `Host` header on a relayed request — HTTP/2 hops carry `:authority`
+  only (RFC 9113 §8.3.1: a client MUST NOT send `host` alongside `:authority`;
+  nginx rejects the pair with a bare 400 before the app sees it), HTTP/1.1
+  hops get their `Host` synthesized from the request URI by hyper-util (value
+  and default-port handling unchanged from the previous manual insert). A
+  plain-tunnel (open lane) hop is byte-transparent and unaffected. An
+  injection recipe or named injection header targeting `host` is refused at
+  snapshot/app load with a config error naming the app/connection (it cannot
+  work on h2 upstreams). Contract kept honest by a raw-h2 upstream it-test
+  asserting the absence of `host` and the presence of `:authority`, beside an
+  h1 test asserting a synthesized `Host`.
+
 ### Phase 4 — P4-GRP-1 (directory groups, D-130, D-131, D-156, SEC-71)
 
 Rule: `04 §Groups`, `04 §IdP-linked groups`, `03 §groups, §group_members, §group_workspace_access`, `05 §Groups`, `06 §Credential authentication`, `07 §Rule anatomy`, `17` SEC-71. Reserved numbers C-460..C-469.

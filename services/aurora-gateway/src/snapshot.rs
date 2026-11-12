@@ -90,6 +90,15 @@ fn validate(s: &Snapshot) -> Result<(), String> {
             {
                 return Err(format!("invalid path_regex on `{}`", h.host));
             }
+            if let Inject::Header { name, .. } = i
+                && name.eq_ignore_ascii_case("host")
+            {
+                return Err(format!(
+                    "app `{}` on `{}`: host override is not supported; the upstream Host is \
+                     the endpoint address (HTTP/2 carries only `:authority`)",
+                    h.app_id, h.host
+                ));
+            }
         }
     }
     // `{instance}` entries belong to apps that declare `instances` (D-74).
@@ -103,6 +112,15 @@ fn validate(s: &Snapshot) -> Result<(), String> {
             {
                 return Err(format!(
                     "invalid path_regex on instance host of `{}`",
+                    h.app_id
+                ));
+            }
+            if let Inject::Header { name, .. } = i
+                && name.eq_ignore_ascii_case("host")
+            {
+                return Err(format!(
+                    "app `{}` (instance host): host override is not supported; the upstream \
+                     Host is the endpoint address (HTTP/2 carries only `:authority`)",
                     h.app_id
                 ));
             }

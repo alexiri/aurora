@@ -938,6 +938,53 @@ async fn snapshot_loads_refuses_unknown_and_swaps_on_notify() {
     let _ = tx.send(true);
 }
 
+/// (FIX-052, D-166, C-631) A snapshot whose `inject` targets `host` is refused
+/// at load time, naming the app and host; the previously loaded snapshot stays.
+#[tokio::test]
+async fn snapshot_load_refuses_host_header_injection() {
+    let db = aurora_testkit::TestDb::new().await;
+    let pool = db.pool();
+    let store = SnapshotStore::new();
+    put_snapshot(
+        pool,
+        "h-ok",
+        "now() - interval '2 minutes'",
+        &one_app(json!([])),
+    )
+    .await;
+    assert!(store.refresh(pool).await.unwrap());
+
+    // `Host` (any casing) in a manifest inject on the regular host: refused.
+    for name in ["Host", "HOST"] {
+        let bad = one_app(json!([{"header": {"name": name, "value": "evil"}}]));
+        put_snapshot(pool, &format!("h-{name}"), "now()", &bad).await;
+        let err = store.refresh(pool).await.unwrap_err().to_string();
+        assert!(
+            err.contains("host override is not supported")
+                && err.contains("app `demo`")
+                && err.contains("127.0.0.1"),
+            "error must name the app and host: {err}"
+        );
+        assert_eq!(&*store.current().unwrap().hash, "h-ok", "previous kept");
+    }
+
+    // The same refusal for an instance-host inject (`{instance}` entries of an
+    // app that declares `instances`).
+    let mut bad = one_app(json!([]));
+    bad["apps"][0]["instances"] = json!({"label": "Demo", "default_host": "127.0.0.1"});
+    let mut ih = bad["hosts"][0].clone();
+    ih["host"] = json!("{instance}");
+    ih["inject"] = json!([{"header": {"name": "host", "value": "evil"}}]);
+    bad["instance_hosts"] = json!([ih]);
+    put_snapshot(pool, "h-inst", "now()", &bad).await;
+    let err = store.refresh(pool).await.unwrap_err().to_string();
+    assert!(
+        err.contains("host override is not supported") && err.contains("app `demo`"),
+        "instance-host inject refused, naming the app: {err}"
+    );
+    assert_eq!(&*store.current().unwrap().hash, "h-ok", "previous kept");
+}
+
 // ---- D-74 / SEC-04 / SEC-59: self-hosted app instances -------------------------------------
 //
 // The test upstream listens on 127.0.0.1. The static (default) host of the instance-bound app is

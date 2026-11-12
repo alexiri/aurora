@@ -50,6 +50,7 @@ http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+h2 = "0.4"
 lru = { workspace = true }
 percent-encoding = { workspace = true }
 rcgen = { workspace = true, features = ["x509-parser"] }
