@@ -72,6 +72,10 @@ test-nextest *args:
 build-fast:
     cargo build --profile {{profile}} -p aurora-api -p aurora-gateway -p aurora-hookhost -p aurora-runner
 
+# Fast local pre-commit gate (VEL-002): fmt + clippy + tests for what changed, web checks when web/ changed. NOT a merge gate — CI runs the full suite. Extra args pass through, e.g. `just quick -- --all`.
+quick *args:
+    bash scripts/dev/quick-gate.sh {{args}}
+
 # Print target/ sizes, podman images/volumes by prefix, kind clusters and free disk.
 disk-report *dirs:
     bash scripts/dev/disk-report.sh {{dirs}}

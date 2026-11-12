@@ -38,4 +38,11 @@ bash scripts/guards/sandbox-network.sh
 echo "== no-deployment-defaults (RFE-019: neutral brief, public digest-pinned sandbox base)"
 bash scripts/guards/no-deployment-defaults.sh
 
+echo "== quick-gate syntax (VEL-002; shellcheck when installed, else bash -n)"
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck scripts/dev/quick-gate.sh
+else
+  bash -n scripts/dev/quick-gate.sh
+fi
+
 echo "== all guards passed"

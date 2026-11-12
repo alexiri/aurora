@@ -809,6 +809,58 @@ lanes, so absolute times vary):
    with `AURORA_E2E_WORKERS`; `AURORA_E2E_RETRIES=0` for a strict no-retry
    run.
 
+5. **Pre-commit, run the quick gate, not the suite** (VEL-002). Since the
+   full suite became CI's job, the local pre-commit loop is
+   `bash scripts/dev/quick-gate.sh` (`just quick`): fmt, clippy and tests
+   for the crates the change touches, plus web typecheck and the related
+   vitest files, in minutes instead of the ~1¾ h a cold full local suite
+   takes. See §[Quick gate (local loops)](#quick-gate-local-loops-vel-002) —
+   a development-loop tool, not a merge gate; `--all` still runs the old
+   full pre-commit suite when wanted.
+
+## Quick gate (local loops) (VEL-002)
+
+`bash scripts/dev/quick-gate.sh` is the fast pre-commit loop for the owner:
+it detects which crates a change touches (working tree + index + untracked
+files vs HEAD; on a clean lane, the commits since the merge-base with
+`origin/master`), prints a plan, and runs only what that scope needs —
+`cargo fmt --all --check`, `cargo clippy -p <crate> --all-targets
+--all-features -- -D warnings` and `cargo test -p <crate>` per affected crate,
+plus `npx tsc --noEmit` and `npx vitest` for `web/` changes. Workspace-wide
+files (`Cargo.lock`, toolchain, lint config) widen clippy and tests to the
+whole workspace minus the e2e crates; a data-model change adds the schema
+guard. No mapped scope at all (a docs-only change, or a clean tree on
+master) still runs a core set — clippy on `aurora-db` and `aurora-protocol`
+— so the gate never silently does nothing. Selectors: `--all` (the old full
+pre-commit suite: workspace clippy, all non-e2e cargo tests, web lint +
+typecheck + full vitest, architecture guards), `--clippy-only`,
+`--tests-only`, `--web`; `AURORA_QUICK_GATE_VERBOSE=1` lists every changed
+file before running. Tests and clippy find Postgres through the repo
+convention (I-05: `.env`, else the environment, else the documented
+aurora-dev-pg URL); sqlx::test uses scratch databases only. Every cargo
+command runs from the repo root (no `--manifest-path`), so
+`.cargo/config.toml` — the lld linker and the sccache rustc-wrapper — stays
+in effect, and heavy commands run under `nice -10` with a load gate for the
+shared host. This vitest is 4.x, where `related` is a subcommand
+(`vitest related <files>`), not a `--related` flag; changed test files run
+directly. When the test scope includes `aurora-api` (or the whole workspace)
+and `plugins/fixtures/dist/` is absent — it is gitignored; CI builds it with
+`scripts/fixtures/build.sh` before its test shards — the gate builds it once
+first, so the `connect::` tests do not fail on a missing package. Measured on
+the 16-core dev host (VEL-002, 2026-11-12): a single-crate change ≈ 80 s warm
+/ 4 s when already compiled, a web change ≈ 75 s, `--all` ≈ 102 min on a cold
+tree (the target is ≤ 3 min for a single-crate change; `--all` is the escape
+hatch, not the loop).
+
+**What the quick gate is NOT.** The quick gate is a development loop tool;
+it is not a merge gate — CI runs the full suite on every push; never cite a
+quick-gate pass as a merge-gate pass. It is additive: it runs a subset of
+CI's checks and weakens, skips or masks none of them. Full-suite-is-CI's-job
+is the discipline: local loops optimize for the 1–3 minute
+catch-your-own-breakage feedback the quick gate gives; the workspace-wide
+suite (and the e2e and Playwright live suites, which the quick gate never
+runs) is what a push hands to CI.
+
 ## CI pipeline
 
 1. `fmt`, `clippy -D warnings`, `cargo deny` (licenses, advisories), pnpm lint
