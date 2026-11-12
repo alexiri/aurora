@@ -15,8 +15,8 @@ Counted from the task tables below. The coordinator updates this table at every 
 | 2 | 52 | 51 | 1 (FIX-017: owner real-cluster install) | 0 | 0 | 0 | §Phase 2: remaining tasks |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | §Phase 3 tasks (**phase 3 closed 2026-11-10**: AUDIT-003 + its follow-ups) |
 | 4 | 31 | 23 | 1 (AUDIT-004, after P4-TERM) | 0 | 1 (P4-TERM, gates cleared — merge now) | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks (six items moved to phase 5 by the owner, 2026-11-09, D-138) |
-| 5 | 15 | 0 | 0 | 3 (FIX-049, FIX-050, FIX-052, specs written) | 12 (OPS-021, P5-SLACK, P4-S3, P4-LLM, P4-011B, P4-SSH-1, P4-SSH-2, P4-EVAL, P5-ASRC, P5-CERN-ADDONS, OPS-024, FIX-045) | 1 (OPS-022 deferred) | §Phase 5 tasks |
-| **All** | **242** | **206** | **5** | **6** | **15** | **8** | |
+| 5 | 16 | 0 | 0 | 4 (FIX-049, FIX-050, FIX-052, TEST-021, specs written) | 12 (OPS-021, P5-SLACK, P4-S3, P4-LLM, P4-011B, P4-SSH-1, P4-SSH-2, P4-EVAL, P5-ASRC, P5-CERN-ADDONS, OPS-024, FIX-045) | 1 (OPS-022 deferred) | §Phase 5 tasks |
+| **All** | **243** | **206** | **5** | **7** | **16** | **8** | |
 
 **Phase 2 build work is complete (48/48, 2026-11-09).** AUDIT-002 (`docs/audit/phase2-exit.md`) found every runnable check green; its defect (F-1 → FIX-014) and doc findings (F-2..F-7) are closed. Not evidenced, pending the owner: the real-cluster Helm install and project-key signing (no cluster; CI-only key), and GitHub CI itself (replaced by local runs, owner-accepted). **Phase 3 started 2026-11-09** on the owner's "go on, don't stop". The open questions went to the coordinator's recommendations: the real-cluster install and real-key signing stay recorded as known gaps; chat v2 gets a compact header (P2-UI-5b); both sides of the chat render as Markdown (owner, 2026-11-09); image visibility waits for CI to return. CI on GitHub is not running (see §Blockers), so local verification is the merge gate.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -97,6 +97,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FE-023 | Agents list/create, agent page, BYO Connect | Next.js | done | BE-032 | Sonnet | 44 vitest; m1 e2e green |
 | FE-021/022/024 | Policy editor + access tab; approvals page; governance pages | Next.js | done (72 vitest; build; m1 e2e green) | BE-033/030/034 | Sonnet | |
 | TEST-020 | Gateway SEC-37 + origin write-back tests | Rust test | done | GW-005 | haiku→Opus fix | 2 tests |
+| TEST-021 | Gateway RFC-conformance suite: strict (non-hyper) raw-h2/h1 oracles assert the exact relayed header sets, framing/SSE/upgrade shapes, real nginx (+haproxy) front doors in e2e, and the hyper-util Host-synthesis assumption (born from FIX-052: every oracle was lenient hyper and e2e ran litellm without a front door, so an RFC-forbidden `host`+`:authority` pair shipped) | Rust test + e2e | spec written (coordinator, 2026-11-12) | FIX-052 | — | `docs/tasks/TEST-021.md` |
 | REG-003 | Snapshot compiler, claims, diff, index | Rust | done | REG-002 | Sonnet | 11 tests; I-18 |
 | GW-010 | Gateway apps: snapshot, candidates, mechanisms | Rust | done | REG-003 | Sonnet | tests/apps.rs 10; SigV4 vector (I-19) |
 | GW-011 | Token refresh/mint, reauth, stale retry, GW-010 follow-ups | Rust | done (refresh/CAS/mint tests; I-20) | GW-010 | Sonnet | |
