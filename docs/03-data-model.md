@@ -1565,6 +1565,15 @@ The gateway database role gets nothing on this table. Backfilled from `preview_s
 migration that adds it (every existing label is already spent).
 
 ### `preview_sessions` (port preview access, phase 4, P4-PRV-2, D-146, SEC-81)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| token_hash | bytea unique not null | SHA-256 of the `auv_` value; the value is returned once to the relay and never stored |
+| display_prefix | text not null | first 12 characters, for support |
+| share_id | uuid FK→preview_shares (cascade) | the one share (hostname) the credential is valid for |
+| user_id | uuid FK→users (cascade) | |
+| session_id | uuid FK→sessions (cascade) | the dashboard session that authorized it: signing out or revoking it deletes this row |
+| last_seen_at, expires_at | timestamptz | `expires_at = created_at + PREVIEW_SESSION_TTL` (capped by the dashboard session's own absolute expiry); `last_seen_at` is advanced at most once a minute; idle past `PREVIEW_SESSION_IDLE` is dead |
 
 ### `preview_grant_uses` (single-use ledger of authorization grants, phase 4, P4-PRV-2, D-146)
 | Column | Type | Notes |
