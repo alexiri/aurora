@@ -59,6 +59,11 @@ pub async fn register(
             orphan_grace_secs: limits::ORPHAN_GRACE.as_secs() as u32,
             idle_stop_secs: s.config.hosted.idle_stop_secs as u32,
             previews: s.config.previews.enabled,
+            // (P4-TERM, C-623) The runner opens :4108 for terminal grants and speaks the
+            // W19 `pty.*` frames only when the operator enabled the terminal — and only if
+            // this runner advertised the capability (an older runner binary must not be
+            // told to open the port).
+            terminal: s.config.terminal.enabled && req.capabilities.terminal,
         },
     })
 }

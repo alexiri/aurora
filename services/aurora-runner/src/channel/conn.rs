@@ -226,10 +226,17 @@ async fn run(
                     }
                     // (P4-PRV-2, W18) `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`:
                     // preview-stream data from the supervisor, routed to the listener.
+                    // (P4-TERM, W19) `[0x02][pty_id: u32 BE][payload ≤ TERMINAL_CHUNK]`:
+                    // terminal data from the supervisor, routed to the same listener.
                     Some(Ok(Message::Binary(b))) => match decode_stream_data(&b) {
-                        Ok((stream_id, payload)) => {
+                        Ok(DataFrame::Stream(stream_id, payload)) => {
                             shared
                                 .stream_data(session.sandbox_id, session.boot_id, stream_id, payload)
+                                .await;
+                        }
+                        Ok(DataFrame::Terminal(pty_id, payload)) => {
+                            shared
+                                .terminal_data(session.sandbox_id, session.boot_id, pty_id, payload)
                                 .await;
                         }
                         Err(why) => {
@@ -295,12 +302,18 @@ struct Raw {
 }
 
 /// (P4-PRV-2, W18) Binary data framing: `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`.
-/// Tag `0x02` is terminal data (P4-TERM, not this task); anything else is unknown.
-fn decode_stream_data(b: &[u8]) -> Result<(u32, Vec<u8>), &'static str> {
+/// (P4-TERM, W19) `[0x02][pty_id: u32 BE][payload ≤ TERMINAL_CHUNK]` rides the same channel
+/// beside it; anything else is unknown.
+enum DataFrame {
+    Stream(u32, Vec<u8>),
+    Terminal(u32, Vec<u8>),
+}
+
+fn decode_stream_data(b: &[u8]) -> Result<DataFrame, &'static str> {
     let Some((&tag, rest)) = b.split_first() else {
         return Err("empty binary message");
     };
-    if tag != 0x01 {
+    if tag != 0x01 && tag != 0x02 {
         return Err("unknown binary tag");
     }
     if rest.len() < 4 {
@@ -308,18 +321,30 @@ fn decode_stream_data(b: &[u8]) -> Result<(u32, Vec<u8>), &'static str> {
     }
     let id = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
     let payload = rest[4..].to_vec();
-    if payload.len() > aurora_core::limits::PREVIEW_CHUNK {
-        return Err("stream data payload too large");
+    match tag {
+        // Both tags share the chunk bound (TERMINAL_CHUNK == PREVIEW_CHUNK == 16 KiB).
+        0x01 => {
+            if payload.len() > aurora_core::limits::PREVIEW_CHUNK {
+                return Err("stream data payload too large");
+            }
+            Ok(DataFrame::Stream(id, payload))
+        }
+        _ => {
+            if payload.len() > aurora_core::limits::TERMINAL_CHUNK {
+                return Err("terminal data payload too large");
+            }
+            Ok(DataFrame::Terminal(id, payload))
+        }
     }
-    Ok((id, payload))
 }
 
 /// Apply one frame at most once. `Err(code)` closes the connection.
 async fn on_text(shared: &Arc<Shared>, session: &Arc<Session>, text: &str) -> Result<(), u16> {
     let raw: Raw = serde_json::from_str(text).map_err(|_| CLOSE_BAD_DATA)?;
-    // (P4-PRV-2, W18) Unsequenced `stream.*` frames bypass the seq/ack lineage entirely:
-    // they are never acked, never replayed, and routed straight to the stream listener.
-    if raw.seq == 0 && raw.kind.starts_with("stream.") {
+    // (P4-PRV-2, W18; P4-TERM, W19) Unsequenced `stream.*`/`pty.*` frames bypass the seq/ack
+    // lineage entirely: they are never acked, never replayed, and routed straight to the
+    // stream listener (which owns both the preview and the terminal legs).
+    if raw.seq == 0 && (raw.kind.starts_with("stream.") || raw.kind.starts_with("pty.")) {
         match serde_json::from_str::<WireFrame<SupervisorToRunner>>(text) {
             Ok(f) => match f.validate() {
                 Ok(()) => {
@@ -336,8 +361,7 @@ async fn on_text(shared: &Arc<Shared>, session: &Arc<Session>, text: &str) -> Re
             }
         }
         return Ok(());
-    }
-    session.on_ack(raw.ack);
+    }    session.on_ack(raw.ack);
     if raw.kind == "ack" {
         return Ok(());
     }

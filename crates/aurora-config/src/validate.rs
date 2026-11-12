@@ -331,6 +331,9 @@ pub struct RunnerConfig {
     pub orphan_reap: OrphanReap,
     pub held_awake_ceiling: u32,
     pub runner: RunnerSection,
+    /// (P4-TERM, C-623) validated `[terminal]`: the master switch decides whether this
+    /// runner advertises the `terminal` capability at registration.
+    pub terminal: TerminalSection,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
 }
@@ -882,6 +885,7 @@ impl RawConfig {
                 .held_awake_ceiling
                 .unwrap_or_else(|| r.max_sandboxes.saturating_sub(1).max(1)),
             runner: r.clone(),
+            terminal: self.terminal.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })

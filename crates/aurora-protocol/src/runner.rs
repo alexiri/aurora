@@ -699,7 +699,7 @@ pub struct PreviewStreamOpenResponse {
     /// Present for a port grant, absent for a terminal grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share_id: Option<Uuid>,
-    /// The credit window of each direction (`PREVIEW_STREAM_WINDOW`).
+    /// The credit window of each direction (`PREVIEW_STREAM_WINDOW` / `TERMINAL_STREAM_WINDOW`).
     pub window: u32,
     /// Idle timeout of the leg-1 stream (`PREVIEW_IDLE_TIMEOUT` / the WS one after upgrade).
     pub idle_secs: u32,
