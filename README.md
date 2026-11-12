@@ -115,7 +115,10 @@ with that e-mail.
 - [Dev stack on kind](docs/operator/install-kind-dev.md): profiles, fast iteration, tests against the stack,
   troubleshooting.
 - [Development environments](docs/ops/dev-environments.md): why kind replaced compose, with measurements.
-- `just --list` shows every recipe, including `just test` for the workspace tests.
+- `just --list` shows every recipe, including `just test` for the workspace tests and
+  `just quick` for the fast pre-commit gate (VEL-002: fmt + clippy + tests for what
+  changed, in 1–3 min on a quiet box — a development-loop tool, not a merge gate;
+  [docs/18 §Quick gate](docs/18-testing.md)).
 
 ## License
 
