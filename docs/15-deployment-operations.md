@@ -98,7 +98,7 @@ one new entry without activating it.
 | `relay.listen` / `relay.ops_port` | `0.0.0.0:4112` / `4193` | relay | (phase 4, P4-PRV-2) edge-facing HTTP / health and metrics |
 | `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two |
 | `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`). The runner registers the `stream_tls` capability; the API derives the endpoint scheme it hands the relay from it (`ws://` off, `wss://` on, `16 §W18`) — the relay verifies the presented certificate against its own trust configuration |
-| `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled |
+| `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled. Helm: the chart value `terminal.enabled` is the single switch — it mirrors `config.terminal.enabled` (FIX-053), so `helm upgrade --set terminal.enabled=true` wires everything; set the config key only to agree explicitly, never alone |
 | `terminal.awake_cap_secs` | 14400 | api | (phase 4, P4-TERM) `TERMINAL_AWAKE_CAP`, at most `hosted.background_cap_secs` |
 | `terminal.wake_window_secs` / `terminal.wake_wait_secs` | 60 / 45 | api | (phase 4, P4-TERM) the wake-demand window on open / how long the WebSocket upgrade may wait for a waking sandbox |
 | `previews.shares_per_agent`, `previews.shares_per_org` | 10, 200 | api | (phase 4, P4-PRV-1) lower only (`02 §Limits`) |
@@ -465,6 +465,11 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   "newest contract wins" (`09 §9`).
 - Order: migrate → api → hookhost → gateway → runner → web → connectors.
   Gateways and runners of the previous version keep working during the roll.
+- (phase 4, P4-TERM, FIX-053) Turning the web terminal on in an existing
+  deployment is a single-switch upgrade: `helm upgrade … --set
+  terminal.enabled=true` (the chart value mirrors `config.terminal.enabled`
+  and renders the runner :4108 listener and NetworkPolicy flows with it;
+  `docs/23 §NetworkPolicy`).
 - Running sandboxes keep their image until their next boot; the dashboard shows
   "restart to update" when an agent's boot image differs from the runner's.
 - (phase 1, RFE-002) Upgrading to phase 1 requires restarting running sandboxes; the

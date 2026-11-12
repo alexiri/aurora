@@ -14,6 +14,24 @@
 {{- with .Values.image.registry }}{{ $sandboxImage = printf "%s/aurora-sandbox:%s" (trimSuffix "/" .) (default $.Chart.AppVersion $.Values.image.tag) }}{{ end -}}
 {{- $sandboxImage := default $sandboxImage .Values.runner.sandboxImage -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "image" (default $sandboxImage ($cfg.runner).image) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
+{{- /* (P4-TERM, FIX-053) the web terminal: `terminal.enabled` (top-level) is the single
+      operator switch and MIRRORS `config.terminal.enabled` (D-159 semantics, as
+      `config.runner.image` is derived): with the config side not explicitly set it renders
+      FROM the top-level value, so flipping one key wires the whole feature. The guard fails
+      only on real disagreement: both keys set and unequal, or `config.terminal.enabled=true`
+      alone — the top-level switch does the chart-level work (the runner :4108 stream listener
+      below, the NetworkPolicy api→runner:4108 flows) that the config value alone never
+      renders, so config-only-true is refused with an actionable message instead of silently
+      half-wiring a route the NetworkPolicy blocks. The limits ride [terminal] unchanged.
+      (Must precede the stream-listener block: its `$terminal` reads the mirrored value.) */ -}}
+{{- $tm := default (dict) $cfg.terminal -}}
+{{- if hasKey $tm "enabled" }}
+{{- if and .Values.terminal.enabled (not (get $tm "enabled")) }}{{ fail "terminal.enabled (top-level) mirrors config.terminal.enabled and they disagree; set only terminal.enabled, or make both equal" }}{{ end -}}
+{{- if and (not .Values.terminal.enabled) (get $tm "enabled") }}{{ fail "config.terminal.enabled=true alone does not turn the terminal on: set the top-level terminal.enabled — config.terminal.enabled alone leaves the chart's runner :4108 listener and NetworkPolicy wiring off" }}{{ end -}}
+{{- else }}
+{{- $_ := set $tm "enabled" .Values.terminal.enabled -}}
+{{- $_ := set $cfg "terminal" $tm -}}
+{{- end -}}
 {{- /* (P4-PRV-2, P4-TERM) the runner's relay/API-facing stream listener: opened when previews
       or the web terminal is on (the runner registers the `terminal` capability and redeems
       `kind: "terminal"` grants on the same listener, `16 §W19`). The value is an address
@@ -43,14 +61,6 @@
 {{- $_ := set $cfg "previews" $pv -}}
 {{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) -}}
 {{- $_ := set $cfg "relay" (merge $rl (default (dict) $cfg.relay)) -}}
-{{- end -}}
-{{- /* (P4-TERM) the web terminal: `terminal.enabled` IS `config.terminal.enabled` (the
-      guard refuses a partial setup, as previews). The limits ride [terminal] unchanged. */ -}}
-{{- if or .Values.terminal.enabled (get (default (dict) $cfg.terminal) "enabled") }}
-{{- if ne (default false .Values.terminal.enabled) (default false (get (default (dict) $cfg.terminal) "enabled")) }}{{ fail "terminal.enabled and config.terminal.enabled must agree: set both (terminal.enabled + config.terminal.enabled) or neither" }}{{ end -}}
-{{- $tm := default (dict) $cfg.terminal -}}
-{{- $_ := set $tm "enabled" true -}}
-{{- $_ := set $cfg "terminal" $tm -}}
 {{- end -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}
