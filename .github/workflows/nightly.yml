@@ -94,9 +94,16 @@ jobs:
   mattermost-conformance:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      # VTL-001: the job compiles the connector on the runner; give it the shared sccache (workflow env sets
+      # the backend). The conformance suite's cargo build runs in scripts/conformance.sh.
+      SCCACHE_GHA_ENABLED: "true"
+      ACTIONS_CACHE_KEY_PREFIX: "sccache-"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: sccache (GitHub Actions cache backend, VTL-001)
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - name: The runner's own PostgreSQL service must not hold 5432 (the Mattermost image brings its own)
         run: |
           sudo systemctl stop postgresql 2>/dev/null || true
