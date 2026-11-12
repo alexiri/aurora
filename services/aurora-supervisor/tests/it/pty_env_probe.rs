@@ -157,20 +157,39 @@ impl Rig {
 }
 
 /// `pty.open` with the given id; asserts `pty.opened` and returns the announced window.
+/// A `pty.refused{reason: "error"}` is the OS refusing the spawn (e.g. `EAGAIN` from fork
+/// under parallel load — nextest runs every test in its own process and CI runners have a
+/// tight pids cgroup); that is transient pressure, not a posture failure, so the open is
+/// retried with a short backoff (the FIX-055 playbook). Any other refusal is asserted
+/// through — only `error` can be transient (`limit`/`disabled` are deterministic).
 async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
-    rig.frame(RunnerToSupervisor::PtyOpen(
-        aurora_protocol::runner::PtyOpen {
-            pty_id,
-            window: 131_072,
-            cols: 80,
-            rows: 24,
-        },
-    ))
-    .await;
-    let opened = rig.next_frame().await;
-    assert_eq!(opened["kind"], "pty.opened", "{opened}");
-    assert_eq!(opened["body"]["pty_id"], pty_id);
-    opened["body"]["window"].as_u64().unwrap()
+    for attempt in 0..6u32 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        rig.frame(RunnerToSupervisor::PtyOpen(
+            aurora_protocol::runner::PtyOpen {
+                pty_id,
+                window: 131_072,
+                cols: 80,
+                rows: 24,
+            },
+        ))
+        .await;
+        let opened = rig.next_frame().await;
+        if opened["kind"] == "pty.refused" {
+            assert_eq!(
+                opened["body"]["reason"],
+                "error",
+                "pty {pty_id}: non-transient refusal: {opened}"
+            );
+            continue;
+        }
+        assert_eq!(opened["kind"], "pty.opened", "{opened}");
+        assert_eq!(opened["body"]["pty_id"], pty_id);
+        return opened["body"]["window"].as_u64().unwrap();
+    }
+    panic!("pty {pty_id}: spawn still refused after 6 attempts (persistent resource pressure)");
 }
 
 /// The echo round trip (W19 on W18's credit machinery): runner bytes reach the shell, the
