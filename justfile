@@ -80,6 +80,14 @@ disk-report *dirs:
 clean-lane worktree *flags:
     bash scripts/dev/clean-lane.sh {{flags}} {{worktree}}
 
+# Force-remove leftover aurora-testkit-* Postgres containers (leaked by test runs whose
+# --rm never fired because the process was killed). Only testkit fallback containers
+# carry this name prefix, never the shared dev DB — but a container is "live" until its
+# whole test run ends (each test process caches its URL), so run this when no test run
+# that lacks AURORA_TEST_DATABASE_URL/.env is in progress.
+clean-testkit:
+    podman ps -a -q --filter name='^aurora-testkit-' | xargs -r podman rm -f -t 1
+
 # Drop build artefacts not used for DAYS days (cargo-sweep), else document-and-stop. Never touches other worktrees.
 clean-stale days="14":
     #!/usr/bin/env bash

@@ -3,7 +3,9 @@
 //! - [`TestDb`]: a uniquely named, migrated Postgres database per instance.
 //!   Server resolution: `AURORA_TEST_DATABASE_URL`, then `DATABASE_URL`
 //!   (process env, then repo-root `.env`). If neither is set, a podman
-//!   `postgres:16` container is started once per process as a fallback.
+//!   `postgres:16` container is started once per process as a fallback;
+//!   leftovers of crashed or killed runs older than an hour are reaped
+//!   before a new one starts.
 //! - [`MockUpstream`]: wiremock-backed HTTP upstream. `wiremock` is re-exported.
 #![forbid(unsafe_code)]
 
@@ -276,6 +278,7 @@ async fn start_container() -> anyhow::Result<String> {
          starting a podman postgres:16 container. Set {TEST_DB_ENV} to use an \
          existing server instead."
     );
+    reap_stale_containers().await;
     let name = format!("aurora-testkit-{}", uuid::Uuid::now_v7().simple());
     let run = tokio::process::Command::new("podman")
         .args([
@@ -325,6 +328,56 @@ async fn start_container() -> anyhow::Result<String> {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     bail!("postgres container {name} did not become ready")
+}
+
+/// Age after which an `aurora-testkit-*` container counts as a leftover: a
+/// running test target never holds a container longer than this (nextest
+/// kills a test at 10 minutes), and tests start their container at process
+/// start, so anything older belongs to a crashed or killed run.
+const CONTAINER_STALE_AFTER: Duration = Duration::from_secs(3600);
+
+/// Best-effort: remove leftover `aurora-testkit-*` containers older than
+/// [`CONTAINER_STALE_AFTER`]. These are created with `--rm`, which only takes
+/// effect when the container *stops* — so a test run that crashes or is killed
+/// (SIGKILL, `just clean-lane`'s process sweep, laptop suspend) leaks its
+/// container, and one leaks per test process. Reaped by every fresh fallback
+/// start; the youngest possible legitimate container (this process's own
+/// predecessor) is out of the window. Never touches other containers
+/// (`aurora-dev-pg`, e2e anchors, …).
+async fn reap_stale_containers() {
+    const PREFIX: &str = "^aurora-testkit-";
+    // `until=Nm` matches containers created before now-N; it applies to
+    // running containers too (podman 5/6), which is the case that matters.
+    let list = tokio::process::Command::new("podman")
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            &format!("name={PREFIX}"),
+            "--filter",
+            &format!("until={}m", CONTAINER_STALE_AFTER.as_secs() / 60),
+            "--format",
+            "{{.ID}}",
+        ])
+        .output()
+        .await;
+    let Ok(list) = list else {
+        return; // no podman; start_container's own error will report that
+    };
+    for id in String::from_utf8_lossy(&list.stdout).lines() {
+        let id = id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if tokio::process::Command::new("podman")
+            .args(["rm", "-f", "-t", "1", id])
+            .output()
+            .await
+            .is_ok_and(|o| o.status.success())
+        {
+            eprintln!("aurora-testkit: reaped stale container {id}");
+        }
+    }
 }
 
 /// Mock HTTP upstream backed by `wiremock::MockServer`.
