@@ -278,8 +278,24 @@ impl Sender {
 async fn mitm(env: &Env, target: SocketAddr, h2: bool) -> Sender {
     let (head, s) = connect_raw(env.proxy, Some("agent:aug_good"), &target.to_string()).await;
     assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    mitm_after_connect(&env.gw_ca_pem, s, target, h2).await
+}
+
+/// MITM tunnel with an explicit trust anchor (a gateway other than `env`'s).
+async fn mitm_tls(gw_ca_pem: &str, proxy: SocketAddr, target: SocketAddr, h2: bool) -> Sender {
+    let (head, s) = connect_raw(proxy, Some("agent:aug_good"), &target.to_string()).await;
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    mitm_after_connect(gw_ca_pem, s, target, h2).await
+}
+
+async fn mitm_after_connect(
+    gw_ca_pem: &str,
+    s: TlsStream<TcpStream>,
+    target: SocketAddr,
+    h2: bool,
+) -> Sender {
     let alpn: &[&[u8]] = if h2 { &[b"h2"] } else { &[b"http/1.1"] };
-    let tls = tls_client(&env.gw_ca_pem, alpn)
+    let tls = tls_client(gw_ca_pem, alpn)
         .connect(ServerName::IpAddress(target.ip().into()), s)
         .await
         .unwrap();
@@ -819,4 +835,209 @@ async fn connect_tunnel_carries_inner_tls_over_the_outer_session() {
         )
         .await;
     assert_eq!(resp.status(), 200);
+}
+
+// ---- (FIX-052, D-166, C-631) the upstream hop is RFC 9113-clean ------------
+//
+// The ordinary test upstreams above are hyper servers, which *accept* a `host`
+// header beside `:authority` — that is why the forbidden pair shipped unnoticed.
+// These tests use wire-strict oracles: a raw `h2::server::handshake` upstream
+// (asserting exactly what reached the wire) and, for h1, the reflected header
+// set of the existing handler.
+
+/// A raw HTTP/2 server (rust `h2` behind the same TlsAcceptor, NOT hyper):
+/// answers the first request with `200` "ok" and reports what reached the wire
+/// (method, path, `:authority`, every regular header, body) on the returned
+/// receiver once the request has been fully consumed. Errors are reported on
+/// the same channel (no panics in the spawned task).
+async fn raw_h2_oracle(
+    cfg: Arc<rustls::ServerConfig>,
+) -> (SocketAddr, tokio::sync::oneshot::Receiver<String>) {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel::<String>();
+    tokio::spawn(async move {
+        let mut seen_tx = Some(seen_tx);
+        let out = async {
+            let acc = TlsAcceptor::from(cfg);
+            let (s, _) = l.accept().await.map_err(|e| format!("accept: {e}"))?;
+            let tls = acc.accept(s).await.map_err(|e| format!("tls: {e}"))?;
+            assert_eq!(tls.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
+            // The raw h2 server takes the TLS stream directly (tokio IO traits).
+            let mut conn = h2::server::handshake(tls)
+                .await
+                .map_err(|e| format!("h2 handshake: {e}"))?;
+            let (req, mut respond) = match conn.accept().await {
+                Some(Ok(x)) => x,
+                Some(Err(e)) => return Err(format!("h2 accept: {e}")),
+                None => return Err("h2 accept: connection ended".to_owned()),
+            };
+            let (parts, mut body) = req.into_parts();
+            let mut seen = format!(
+                "method={}\npath={}\nauthority={}\n",
+                parts.method,
+                parts.uri.path(),
+                parts
+                    .uri
+                    .authority()
+                    .map(|a| a.to_string())
+                    .unwrap_or_default(),
+            );
+            for (k, v) in &parts.headers {
+                seen.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
+            }
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.map_err(|e| format!("body: {e}"))?;
+                let _ = body.flow_control().release_capacity(chunk.len());
+                seen.push_str(&format!("body={}\n", String::from_utf8_lossy(&chunk)));
+            }
+            let resp = Response::builder().status(200).body(()).unwrap();
+            let mut send = respond
+                .send_response(resp, false)
+                .map_err(|e| format!("send_response: {e}"))?;
+            let _ = send.send_data(Bytes::from_static(b"ok\n"), true);
+            let _ = seen_tx.take().unwrap().send(seen);
+            // h2 is driven by polling the connection: keep it polled so the
+            // response frames flush and the client reads them (until it goes
+            // away or the guard expires).
+            let guard = tokio::time::sleep(Duration::from_secs(5));
+            tokio::pin!(guard);
+            loop {
+                tokio::select! {
+                    _ = &mut guard => break,
+                    r = conn.accept() => match r {
+                        Some(Ok(_)) => {}
+                        _ => break,
+                    },
+                }
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        if let Err(e) = out
+            && let Some(tx) = seen_tx.take()
+        {
+            let _ = tx.send(format!("ORACLE-ERROR: {e}"));
+        }
+    });
+    (addr, seen_rx)
+}
+
+/// POST relayed over TLS+ALPN h2 must reach the upstream as RFC 9113 §8.3.1
+/// requires: `:authority` present, **no `host` header**, method/path/body intact.
+#[tokio::test]
+async fn h2_upstream_sees_authority_and_never_a_host_header() {
+    // A dedicated raw-h2 upstream with its own CA; the gateway must trust it.
+    let up_ca = ca::generate("up-h2").unwrap();
+    let up = Ca::from_pem(&up_ca.cert_pem, &up_ca.key_pem).unwrap();
+    let cfg = up.server_config("127.0.0.1").unwrap();
+    let (target, seen) = raw_h2_oracle(cfg).await;
+    // A gateway whose `extra_ca_pem` covers the h2 oracle's CA.
+    let gw = ca::generate("gw-h2").unwrap();
+    let gw_ca = Arc::new(Ca::from_pem(&gw.cert_pem, &gw.key_pem).unwrap());
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = l.local_addr().unwrap();
+    let allow = vec!["127.0.0.0/8".to_owned()];
+    let guard = Arc::new(Guard::new(&allow, vec![proxy]).unwrap());
+    let tls = ProxyTls::from_ca_with(
+        gw_ca.clone(),
+        vec!["127.0.0.1".into(), "localhost".into()],
+        Duration::from_secs(3600),
+        Duration::from_secs(7200),
+    )
+    .unwrap();
+    crate::common::trust_anchor(proxy, &gw.cert_pem);
+    let p = Proxy::new(ProxyParts {
+        ca: gw_ca,
+        tls: tls.clone(),
+        resolver: Arc::new(StaticResolver),
+        handler: Arc::new(PassThrough),
+        guard,
+        header_timeout: Duration::from_secs(10),
+        extra_ca_pem: Some(up_ca.cert_pem.clone().into_bytes()),
+        egress_proxy: None,
+    })
+    .unwrap();
+    tokio::spawn(p.run(l, std::future::pending()));
+
+    // POST through the gateway; the inner leg negotiates h2 (h2-only ALPN).
+    let mut c = mitm_tls(&gw.cert_pem, proxy, target, true).await;
+    let (st, _, resp_body) = text(
+        c.send(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri(format!("https://{target}/v1/messages"))
+                .header("host", target.to_string())
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from_static(br#"{"model":"m"}"#)))
+                .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(st, 200, "{resp_body}");
+
+    let seen = seen.await.unwrap();
+    // `:authority` is the endpoint address (with the explicit default port, as
+    // the gateway builds its URIs).
+    assert!(
+        seen.contains(&format!("authority={target}\n")),
+        ":authority must carry the endpoint address: {seen}"
+    );
+    // No `host` header beside it (RFC 9113 §8.3.1) — the FIX-052 regression.
+    assert!(
+        !seen.to_lowercase().contains("\nhost:"),
+        "no host header may reach an h2 upstream: {seen}"
+    );
+    assert!(seen.starts_with("method=POST\n"), "{seen}");
+    assert!(seen.contains("path=/v1/messages\n"), "{seen}");
+    assert!(
+        seen.contains(&format!(
+            "body={}\n",
+            String::from_utf8_lossy(br#"{"model":"m"}"#)
+        )),
+        "body intact: {seen}"
+    );
+    assert!(
+        seen.to_lowercase()
+            .contains("content-type: application/json\n"),
+        "regular headers relayed: {seen}"
+    );
+}
+
+/// Plain-HTTP (h1) relay: `Host` **is** present (synthesized by hyper-util from
+/// the request URI), including the non-default-port case (`host:port`). Uses an
+/// absolute-form `http://` request on the proxy listener: the upstream hop is
+/// then genuinely HTTP/1.1 (the TLS upstreams above negotiate h2 — they
+/// advertise `h2` in ALPN).
+#[tokio::test]
+async fn h1_upstream_sees_synthesized_host_with_non_default_port() {
+    let env = start(&["127.0.0.0/8"], Duration::from_secs(10)).await;
+    // The plain-HTTP upstream listens on an ephemeral port (never 80), so the
+    // synthesized Host must carry `host:port`; the handler reflects headers.
+    let h = env.http.to_string();
+    let r = raw(
+        env.proxy,
+        &format!(
+            "GET http://{h}/host HTTP/1.1\r\nHost: {h}\r\nProxy-Authorization: {}\r\nConnection: close\r\n\r\n",
+            basic("agent:aug_good")
+        ),
+    )
+    .await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    assert!(
+        r.contains("version=HTTP/1.1"),
+        "the upstream hop is h1: {r}"
+    );
+    let expected = format!("host: {h}");
+    assert!(
+        r.to_lowercase().contains(&expected),
+        "synthesized Host with explicit port expected, got: {r}"
+    );
+    // Exactly one Host header.
+    assert_eq!(
+        r.to_lowercase().matches("\nhost:").count(),
+        1,
+        "exactly one Host header: {r}"
+    );
 }

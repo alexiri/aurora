@@ -289,8 +289,13 @@ impl Upstream {
         })
     }
 
+    /// Relays the prepared request. No `Host` header is ever set here
+    /// (FIX-052, D-166, C-631): hyper-util synthesizes `Host` on HTTP/1.1 hops
+    /// from the URI (default ports dropped), and an HTTP/2 hop carries
+    /// `:authority` only (RFC 9113 §8.3.1 — a `host` header beside it makes
+    /// strict front doors such as nginx answer 400 before the app sees the
+    /// request).
     pub async fn send(&self, p: PreparedRequest) -> Result<Response<Incoming>, ApiError> {
-        let default_port = p.scheme.default_port();
         let v6 = p.host.contains(':');
         let hostpart = if v6 {
             format!("[{}]", p.host)
@@ -308,19 +313,11 @@ impl Upstream {
             .path_and_query(pq)
             .build()
             .map_err(|_| guidance::ambiguous_path())?;
-        let host_hdr = if p.port == default_port {
-            hostpart
-        } else {
-            format!("{hostpart}:{}", p.port)
-        };
         let mut req = Request::new(p.body);
         *req.method_mut() = p.method;
         *req.uri_mut() = uri;
         *req.version_mut() = http::Version::HTTP_11;
         *req.headers_mut() = p.headers;
-        if let Ok(v) = HeaderValue::from_str(&host_hdr) {
-            req.headers_mut().insert(header::HOST, v);
-        }
         let client = if let Some(up) = p.upgrade {
             req.headers_mut()
                 .insert(header::CONNECTION, HeaderValue::from_static("upgrade"));

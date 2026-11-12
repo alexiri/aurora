@@ -251,6 +251,7 @@ fn to_candidate(r: SecretMetaRow, org: Uuid, llm: &ProviderRegistry) -> Result<S
         let recipe: InjectionRecipe =
             serde_json::from_value(r.injection).map_err(|e| format!("recipe: {e}"))?;
         recipe.validate()?;
+        validate_recipe_injection(&recipe, &r.name)?;
         (SecretKind::Generic, Injection::Recipe(recipe))
     };
     Ok(SecretCand {
@@ -280,6 +281,85 @@ fn to_candidate(r: SecretMetaRow, org: Uuid, llm: &ProviderRegistry) -> Result<S
         provider: r.llm_provider,
         origin: r.origin,
     })
+}
+
+/// (FIX-052, D-166, C-631) A generic secret whose injection targets `host` is
+/// refused at load: the gateway never sends a `Host` header on the upstream hop
+/// (h2 carries `:authority` only, h1 gets its `Host` synthesized from the URI),
+/// so such a recipe could not work on h2 upstreams and would re-introduce the
+/// forbidden pair there. `name` identifies the secret for the config error.
+pub fn validate_recipe_injection(recipe: &InjectionRecipe, name: &str) -> Result<(), String> {
+    if let InjectionRecipe::Header { name: header, .. } = recipe
+        && header.eq_ignore_ascii_case("host")
+    {
+        return Err(format!(
+            "secret `{name}`: host override is not supported; the upstream Host is the \
+             endpoint address (HTTP/2 carries only `:authority`)"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (FIX-052, D-166, C-631) A generic secret whose recipe targets `host` is
+    /// refused, naming the secret; other headers pass.
+    #[test]
+    fn host_header_recipe_is_refused_at_load() {
+        for name in ["host", "Host", "HOST"] {
+            let r = InjectionRecipe::Header {
+                name: name.to_owned(),
+                format: "{value}".into(),
+            };
+            let err = validate_recipe_injection(&r, "evil-secret").unwrap_err();
+            assert!(
+                err.contains("host override is not supported") && err.contains("evil-secret"),
+                "error must name the secret: {err}"
+            );
+        }
+        // A different header is fine (case-insensitive comparison only).
+        let r = InjectionRecipe::Header {
+            name: "X-Host-Region".to_owned(),
+            format: "{value}".into(),
+        };
+        assert!(validate_recipe_injection(&r, "ok").is_ok());
+    }
+
+    /// Through `to_candidate`: a stored recipe targeting `host` fails secret
+    /// resolution with the named error.
+    #[test]
+    fn to_candidate_refuses_host_recipe() {
+        let llm = ProviderRegistry::from_config(&aurora_config::LlmSection::default()).unwrap();
+        let row = SecretMetaRow {
+            id: Uuid::now_v7(),
+            workspace_id: None,
+            name: "evil".into(),
+            kind: "generic".into(),
+            llm_provider: None,
+            llm_auth_mode: None,
+            llm_endpoint_id: None,
+            host_pattern: "%".into(),
+            path_pattern: None,
+            injection: serde_json::json!({
+                "kind": "header", "name": "Host", "format": "{value}"
+            }),
+            value_ref: SecretRef::ext("env", "EVIL", None, "1")
+                .unwrap()
+                .to_string(),
+            value_version: 1,
+            origin: None,
+        };
+        // `recipe.validate()` (secrets crate) already bans `host` at registration;
+        // the gateway's own refusal (`validate_recipe_injection`) is the second
+        // net behind it, so either message proves the load-time refusal.
+        let err = to_candidate(row, Uuid::now_v7(), &llm).unwrap_err();
+        assert!(
+            err.to_lowercase().contains("host"),
+            "load-time refusal for a host recipe: {err}"
+        );
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
