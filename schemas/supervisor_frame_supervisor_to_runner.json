@@ -268,6 +268,106 @@
       "maxLength": 64,
       "type": "string"
     },
+    "PtyClose": {
+      "description": "A PTY session ended. Outside the seq/ack lineage; byte counts are informational (metrics\nonly, never logged).",
+      "properties": {
+        "bytes_in": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes_out": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/PtyCloseReason"
+        }
+      },
+      "required": [
+        "pty_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "PtyCloseReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "PtyCredit": {
+      "description": "Credit returned after bytes were written onward (the W18 shape, per PTY).",
+      "properties": {
+        "bytes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "PtyOpened": {
+      "description": "The supervisor accepted a PTY; `window` is its own credit window.",
+      "properties": {
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id",
+        "window"
+      ],
+      "type": "object"
+    },
+    "PtyRefuseReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "PtyRefused": {
+      "description": "The supervisor refused a PTY (`16 §W19`): the terminal feature is off there (`disabled`),\na `TERMINALS_PER_SANDBOX` limit hit (`limit`) or the spawn failed (`error`).",
+      "properties": {
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/PtyRefuseReason"
+        }
+      },
+      "required": [
+        "pty_id",
+        "reason"
+      ],
+      "type": "object"
+    },
     "SandboxState": {
       "maxLength": 64,
       "type": "string"
@@ -957,6 +1057,62 @@
         },
         "kind": {
           "const": "stream.close"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyOpened"
+        },
+        "kind": {
+          "const": "pty.opened"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyRefused"
+        },
+        "kind": {
+          "const": "pty.refused"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyCredit"
+        },
+        "kind": {
+          "const": "pty.credit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyClose"
+        },
+        "kind": {
+          "const": "pty.close"
         }
       },
       "required": [

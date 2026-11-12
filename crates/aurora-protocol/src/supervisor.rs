@@ -16,10 +16,10 @@ use crate::common::{
 };
 use crate::runner::{
     Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, PreviewStartFrame,
-    ProcessStates, SandboxStatus, SendNowResult, SessionPurge, SessionPurged, SessionRelease,
-    SessionReport, SteerResult, StreamClose, StreamCredit, StreamOpen, StreamOpened, StreamRefused,
-    SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult,
-    WatchFired,
+    ProcessStates, PtyClose, PtyCredit, PtyOpen, PtyOpened, PtyRefused, PtyResize, SandboxStatus,
+    SendNowResult, SessionPurge, SessionPurged, SessionRelease, SessionReport, SteerResult,
+    StreamClose, StreamCredit, StreamOpen, StreamOpened, StreamRefused, SupervisorReady,
+    TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult, WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
@@ -191,6 +191,12 @@ tagged_open! {
         StreamOpen(StreamOpen) = "stream.open",
         StreamCredit(StreamCredit) = "stream.credit",
         StreamClose(StreamClose) = "stream.close",
+        // (phase 4, P4-TERM, D-161, C-619, `16 §W19`) PTY frames beside the stream frames:
+        // the same unsequenced side-channel; an older supervisor ignores them harmlessly.
+        PtyOpen(PtyOpen) = "pty.open",
+        PtyResize(PtyResize) = "pty.resize",
+        PtyCredit(PtyCredit) = "pty.credit",
+        PtyClose(PtyClose) = "pty.close",
         Shutdown(ShutdownBody) = "shutdown",
         Ack(Empty) = "ack",
     }
@@ -226,6 +232,11 @@ tagged_open! {
         StreamRefused(StreamRefused) = "stream.refused",
         StreamCredit(StreamCredit) = "stream.credit",
         StreamClose(StreamClose) = "stream.close",
+        // (phase 4, P4-TERM, D-161, C-619, `16 §W19`) PTY answers beside the stream answers.
+        PtyOpened(PtyOpened) = "pty.opened",
+        PtyRefused(PtyRefused) = "pty.refused",
+        PtyCredit(PtyCredit) = "pty.credit",
+        PtyClose(PtyClose) = "pty.close",
         Ack(Empty) = "ack",
     }
 }
@@ -332,6 +343,10 @@ impl Validate for RunnerToSupervisor {
             Self::StreamOpen(v) => v.validate(),
             Self::StreamCredit(v) => v.validate(),
             Self::StreamClose(v) => check_chars("reason", v.reason.as_str(), 32),
+            Self::PtyOpen(v) => v.validate(),
+            Self::PtyResize(v) => v.validate(),
+            Self::PtyCredit(v) => v.validate(),
+            Self::PtyClose(v) => check_chars("reason", v.reason.as_str(), 32),
             _ => Ok(()),
         }
     }
@@ -354,6 +369,9 @@ impl Validate for SupervisorToRunner {
             Self::StreamRefused(v) => check_chars("reason", v.reason.as_str(), 32),
             Self::StreamClose(v) => check_chars("reason", v.reason.as_str(), 32),
             Self::StreamCredit(v) => v.validate(),
+            Self::PtyRefused(v) => check_chars("reason", v.reason.as_str(), 32),
+            Self::PtyClose(v) => check_chars("reason", v.reason.as_str(), 32),
+            Self::PtyCredit(v) => v.validate(),
             _ => Ok(()),
         }
     }

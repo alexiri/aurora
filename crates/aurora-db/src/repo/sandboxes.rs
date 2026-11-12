@@ -8,7 +8,7 @@
 use crate::DbError;
 use aurora_core::limits;
 use chrono::{DateTime, Utc};
-use sqlx::PgConnection;
+use sqlx::{PgConnection, PgExecutor};
 use uuid::Uuid;
 
 /// An agent has a turn that needs its sandbox awake (active turn or `joining` follow-up).
@@ -41,7 +41,7 @@ fn start_eligible() -> String {
                     OR EXISTS (SELECT 1 FROM turns t
                         WHERE t.agent_id = s.agent_id AND t.role = 'turn' AND t.status = 'queued'
                           AND coalesce(t.revived_at, t.created_at) > s.updated_at))))
-         AND ({ACTIVE_TURN} OR {DUE_SCHEDULE} OR {PREVIEW_DEMAND})
+         AND ({ACTIVE_TURN} OR {DUE_SCHEDULE} OR {PREVIEW_DEMAND} OR {TERMINAL_DEMAND})
          AND NOT {frozen}
          AND coalesce((SELECT capabilities->'harnesses' FROM runners WHERE id = $1) ? coalesce(a.harness, $3), false)",
         // (phase 2, RFE-006) Due-work arm 3 skips effectively frozen agents.
@@ -55,6 +55,10 @@ fn start_eligible() -> String {
                WHERE ps.agent_id = s.agent_id AND ps.state = 'active'
                  AND s.preview_wake_at > now() - make_interval(secs => $6)
                  AND coalesce((po.settings->'previews_enabled')::bool, false))",
+        // (P4-TERM, C-621) a terminal open found the sandbox parked: the demand
+        // (`terminal_wake_at`, set by the API route) is due work for the wake window. Hosted
+        // agents only (the `a.kind` arm above); a frozen agent never wakes.
+        TERMINAL_DEMAND = "s.terminal_wake_at > now() - make_interval(secs => $6)",
     )
 }
 
@@ -114,7 +118,8 @@ pub struct StopClaim {
 }
 
 /// Arm 2: requested stop/restart, idle park, background cap, and stalled `stopping` re-drives.
-/// `awake_cap_secs` is `PREVIEW_AWAKE_CAP` (the keep-awake reason `preview`'s per-boot bound).
+/// `awake_cap_secs` is `PREVIEW_AWAKE_CAP`/`TERMINAL_AWAKE_CAP` (the keep-awake reasons
+/// `preview` and `terminal`'s shared per-boot bound).
 #[allow(clippy::too_many_arguments)]
 pub async fn claim_stops(
     conn: &mut PgConnection,
@@ -138,7 +143,9 @@ pub async fn claim_stops(
                -- (P4-PRV-1, D-145) keep-awake reason `preview`: stream activity refreshes
                -- `preview_active_until`; the cap (`preview_awake_since`) bounds a boot, so an
                -- open WebSocket cannot hold the sandbox awake forever.
-               WHEN {PREVIEW_KEEP} THEN NULL
+               -- (P4-TERM, C-620) keep-awake reason `terminal` in the same shape: byte activity
+               -- refreshes `terminal_active_until`, bounded by the same cap clock per boot.
+               WHEN {PREVIEW_KEEP} OR {TERMINAL_KEEP} THEN NULL
                WHEN {BACKGROUND} THEN CASE WHEN {ENGAGED_AGE} >= $4 THEN 'cap' END
                WHEN {ENGAGED_AGE} >= $3 THEN 'idle'
              END AS reason
@@ -162,6 +169,10 @@ pub async fn claim_stops(
         PREVIEW_KEEP = "s.preview_active_until > now() \
              AND (s.preview_awake_since IS NULL \
                   OR now() - s.preview_awake_since < make_interval(secs => $7))",
+        // (P4-TERM, C-620) the terminal's stamp and cap clock, same bound ($7 = the awake cap).
+        TERMINAL_KEEP = "s.terminal_active_until > now() \
+             AND (s.terminal_awake_since IS NULL \
+                  OR now() - s.terminal_awake_since < make_interval(secs => $7))",
     );
     Ok(sqlx::query_as(&sql)
         .bind(runner)
@@ -238,6 +249,42 @@ pub async fn pending_start(
     .bind(wake_window_secs)
     .fetch_one(conn)
     .await?)
+}
+
+/// (P4-TERM, C-620) The keep-awake stamp of reason `terminal`: the runner sends it while a
+/// terminal session carries bytes. `now() + TERMINAL_AWAKE_GRACE` on each stamp; the cap clock
+/// (`terminal_awake_since`) starts at the boot's first session byte. Never a turn, never an
+/// engagement stamp — the same shape as the relay's `keep_preview_awake`.
+pub async fn keep_terminal_awake<'e, E: PgExecutor<'e>>(
+    exec: E,
+    sandbox: Uuid,
+    grace_secs: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE sandboxes SET terminal_active_until = now() + make_interval(secs => $2), \
+             terminal_awake_since = coalesce(terminal_awake_since, now()), updated_at = now() \
+           WHERE id = $1",
+    )
+    .bind(sandbox)
+    .bind(grace_secs)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// (P4-TERM, C-621) Set the wake demand (`terminal_wake_at`): a terminal open found the
+/// sandbox parked; the start arm treats it as due work for `TERMINAL_WAKE_WINDOW`.
+pub async fn set_terminal_wake<'e, E: PgExecutor<'e>>(
+    exec: E,
+    sandbox: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE sandboxes SET terminal_wake_at = now(), updated_at = now() WHERE id = $1",
+    )
+    .bind(sandbox)
+    .execute(exec)
+    .await?;
+    Ok(())
 }
 
 /// Sandbox rows are created with hosted agents; this heals agents that lack one but need it.
@@ -356,6 +403,8 @@ pub async fn begin_boot(
              start_log = '[]'::jsonb,
              -- (P4-PRV-1) every new boot restarts the preview keep-awake cap clock.
              preview_awake_since = NULL, preview_start_requested_at = NULL,
+             -- (P4-TERM, C-620) and the terminal's.
+             terminal_awake_since = NULL, terminal_active_until = NULL,
              updated_at = now()
          WHERE id = $1",
     )

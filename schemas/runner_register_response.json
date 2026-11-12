@@ -25,6 +25,10 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "terminal": {
+          "description": "(phase 4, P4-TERM, D-161) When true the runner must open the stream listener\n:4108 for terminal grants too and speak the W19 `pty.*` frames. Absent (false)\nfor older runners. The listener opens when **either** flag is set (C-623).",
+          "type": "boolean"
         }
       },
       "required": [
