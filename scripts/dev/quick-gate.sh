@@ -60,7 +60,6 @@ for arg in "$@"; do
     --all)         ALL=1 ;;
     --clippy-only) CLIPPY_ONLY=1 ;;
     --tests-only)  TESTS_ONLY=1 ;;
-    --web)         WEB_ONLY=1 ;;
     -h|--help)     usage; exit 0 ;;
     --web)         WEB_ONLY=1 ;;
     *) echo "quick-gate: unknown flag '$arg'" >&2; usage >&2; exit 2 ;;
