@@ -317,6 +317,18 @@ auth:
    role may enter".
 6. Precedence when the user is new: invitation → role claims → provider `jit` →
    new-user placement (`§New-user placement`). They add up and never subtract.
+7. **Owner-integrity floor** (FIX-050, D-165, C-630): after the sync's org
+   step, an organization that any org-role mapping of the signing-in provider
+   created or touched must not end the sign-in transaction without an active
+   owner. If it would, the syncing user is promoted to `owner` (their
+   claim-derived `idp_role`/`idp_source` stay; audited `member.update` with
+   `reason: "ownerless_org"`). A suspended or absent membership is never
+   promoted. The last-owner rule (4) then protects the floor like any other
+   owner, and once the claim grants a real owner the sync demotes the floor
+   member back to the claim's role. (Found as: org created by a `member`
+   mapping, audit `member.add … "created_org": true`, and every gateway
+   request of the org refused 407 — the gateway's credential lookup requires
+   an active owner, `06 §Credential authentication`.)
 
 **Timeliness.** Claims are read at sign-in, so a role removed in the IdP takes effect
 at the user's next sign-in (bounded by `auth.session_absolute_secs`). For immediate

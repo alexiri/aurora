@@ -135,8 +135,18 @@ unencrypted.
   `gateway_credentials` (cached `GATEWAY_RESOLVE_CACHE_TTL`, invalidated by
   `aurora_gateway_invalidate` scope `credential`/`agent`). (phase 3, RFE-013: an `agent` credential with a maximum age carries `expires_at`; once past it the answer is 407 `proxy_auth_required` with `details.reason = "agent_token_expired"`; the gateway writes `last_used_at` at most once a minute per credential.) Rejected when revoked,
   expired, the agent's workspace/org is gone, or the org has no active owner
-  (org suspended). Context credentials are accepted until
-  `expires_at` (turn end + `CONTEXT_CREDENTIAL_GRACE`).
+  (org suspended; FIX-050: an ownerless org silently breaks every credential
+  of the org — the claim sync's owner-integrity floor, `04 §OIDC role claims`,
+  prevents creating one, and `GET /v1/admin/overview` reports any that exist).
+  Context credentials are accepted until
+  `expires_at` (turn end + `CONTEXT_CREDENTIAL_GRACE`). (FIX-050) Every
+  CONNECT-auth refusal is logged (`connect_auth_refused`, warn) with a reason
+  class — `unknown | revoked | expired | no_active_owner | frozen |
+  store_unavailable` — the credential kind when known and the source address,
+  never token material or its hash, and counted in
+  `aurora_gateway_connect_refused_total{reason}`; the answers themselves are
+  unchanged (no request-log row exists at this stage, so the log line and the
+  metric are the only observability).
 - (phase 2, RFE-006) Also rejected when the agent is **effectively frozen**
   (agent, workspace or org, `04 §Freeze`): 403 `frozen` (`details.level`), not
   407 — the credential is fine, the principal is paused. The frozen flags are part

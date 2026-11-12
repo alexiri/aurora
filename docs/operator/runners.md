@@ -210,6 +210,43 @@ Automatic retries stop after 3 consecutive failures; a new message retries once 
 backoff has passed. `hosted.sandbox_ready_timeout_secs` also bounds a slow image pull —
 raise it (max 1800) if pulls legitimately take minutes.
 
+## Troubleshooting: chat says `ERR_PROXY_TUNNEL` (the proxy refused the tunnel) (FIX-050, D-165)
+
+The harness error means the gateway answered the sandbox's **CONNECT hop with a
+non-2xx**. The gateway's answers at this stage carry an Aurora error body; from
+FIX-050 every refusal is also logged (`connect_auth_refused` with a reason
+class) and counted (`aurora_gateway_connect_refused_total{reason}`) — check
+`kubectl -n <release ns> logs deploy/aurora-gateway --tail=100` first.
+
+| Reason | Meaning | Fix |
+| --- | --- | --- |
+| `no_active_owner` | The credential's **organization has no active owner** — the credential lookup requires one, so *every* CONNECT of *every* credential of the org is refused 407 while message delivery keeps working (the only symptom is the chat error). | Repair with one UPDATE (below); the durable fix is a `role_mappings` entry granting `owner` (`docs/04 §OIDC role claims`). |
+| `unknown` / `revoked` / `expired` | The token did not resolve (stale boot after an upgrade, revoked or expired credential). | Re-send the message (a fresh boot mints fresh credentials); check `gateway_credentials.revoked_at` / `expires_at` if it persists. |
+| `frozen` | The agent (or workspace/org) is paused. | Unfreeze in the dashboard. |
+| `store_unavailable` | The gateway could not reach its database. | Check the gateway's DB (Postgres) and its logs for `state_change`. |
+
+Find and repair an ownerless org (the 2026-11-12 production incident: an org
+claim-created by a member-only IdP mapping — the product floor of FIX-050
+prevents new ones):
+
+```sql
+SELECT o.slug, count(m.user_id) AS owners, o.created_at
+FROM organizations o LEFT JOIN org_members m
+  ON m.org_id = o.id AND m.role = 'owner' AND m.status = 'active'
+GROUP BY o.id, o.slug, o.created_at HAVING count(m.user_id) = 0;
+
+UPDATE org_members SET role='owner', status='active', updated_at=now()
+WHERE org_id = (SELECT id FROM organizations WHERE slug='<slug>')
+  AND user_id = (SELECT id FROM users WHERE email='<admin email>');
+```
+
+The repair takes effect within seconds (the gateway's credential cache is
+positive-60 s / negative-5 s).
+
+Automatic retries stop after 3 consecutive failures; a new message retries once the
+backoff has passed. `hosted.sandbox_ready_timeout_secs` also bounds a slow image pull —
+raise it (max 1800) if pulls legitimately take minutes.
+
 **Retry without deleting the agent** (FIX-029, D-160, C-610): the dashboard's
 **Retry now** (chat error block or Computer tab) calls
 `POST /v1/agents/{agent}/sandbox/retry`, which resets the failure bound and
