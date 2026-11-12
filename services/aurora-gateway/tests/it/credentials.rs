@@ -125,7 +125,12 @@ async fn live(pool: &PgPool) -> (Arc<DbCredentialResolver>, Arc<Hub>) {
 }
 
 async fn resolve(r: &DbCredentialResolver, t: &str) -> Option<RequestIdentity> {
-    r.resolve(t).await.unwrap()
+    // (FIX-050) A classified refusal is answered like an unknown credential.
+    match r.resolve(t).await {
+        Ok(x) => x,
+        Err(aurora_gateway::auth::ResolveError::Refused { .. }) => None,
+        Err(e) => panic!("{e}"),
+    }
 }
 
 #[tokio::test]
@@ -176,8 +181,17 @@ async fn rejections() {
     )
     .await;
     let r = DbCredentialResolver::new(p.clone());
-    assert!(resolve(&r, "aug_revoked").await.is_none());
-    assert!(resolve(&r, "auc_expired").await.is_none());
+    // (FIX-050) A revoked credential is a classified refusal; the answers stay plain 407s.
+    let e = r.resolve("aug_revoked").await.unwrap_err();
+    assert_eq!(e.reason(), "revoked");
+    assert_eq!(e.credential_kind(), Some("agent"));
+    let e = r.resolve("auc_expired").await.unwrap_err();
+    assert_eq!(e.reason(), "expired");
+    assert_eq!(e.credential_kind(), Some("context"));
+    assert!(matches!(
+        e,
+        aurora_gateway::auth::ResolveError::Refused { .. }
+    ));
     assert!(resolve(&r, "auc_fresh").await.is_some());
     // Only owner suspended.
     sqlx::query("UPDATE org_members SET status='suspended' WHERE user_id = $1")
@@ -186,7 +200,8 @@ async fn rejections() {
         .await
         .unwrap();
     let r2 = DbCredentialResolver::new(p.clone());
-    assert!(resolve(&r2, "auc_fresh").await.is_none());
+    let e = r2.resolve("auc_fresh").await.unwrap_err();
+    assert_eq!(e.reason(), "no_active_owner");
     sqlx::query("UPDATE org_members SET status='active' WHERE user_id = $1")
         .bind(w.owner)
         .execute(p)
@@ -205,7 +220,7 @@ async fn rejections() {
 // ---- (phase 3, RFE-013, SEC-53) agent-token expiry and use tracking ----------------------------
 
 /// An expired `aug_` token is `ResolveError::Expired` (407 / 28P01 upstream), an unknown one
-/// `Ok(None)`; expired context and boot credentials stay plain refusals.
+/// `Ok(None)`; expired context and boot credentials are classified `expired` refusals.
 #[tokio::test]
 async fn expired_agent_token_is_distinguished_from_unknown_and_revoked() {
     let db = TestDb::new().await;
@@ -268,12 +283,22 @@ async fn expired_context_boot_unknown_and_revoked_are_plain_refusals() {
         .await
         .unwrap();
     let r = DbCredentialResolver::new(p.clone());
-    for t in ["auc_old", "aub_old", "aug_rev", "aug_nope"] {
+    // (FIX-050) Refusals are classified now; none of these is `agent_token_expired`, and a
+    // plain miss stays `Ok(None)`.
+    for t in ["auc_old", "aub_old", "aug_rev"] {
         assert!(
-            matches!(r.resolve(t).await, Ok(None)),
-            "{t}: unknown / revoked / non-agent expiry is not `agent_token_expired`"
+            r.resolve(t).await.is_err(),
+            "{t}: revoked / non-agent expiry is refused"
+        );
+        assert!(
+            !matches!(
+                r.resolve(t).await,
+                Err(aurora_gateway::auth::ResolveError::Expired)
+            ),
+            "{t}: is not `agent_token_expired`"
         );
     }
+    assert!(r.resolve("aug_nope").await.unwrap().is_none());
 }
 
 /// The identity cache honours `expires_at` without waiting for its 60 s TTL: a token valid for
@@ -314,6 +339,121 @@ async fn cache_honours_expires_at_before_the_ttl_boundary() {
 
 // The outage rules for expiry (503, never `agent_token_expired`, no `last_used_at` write) are
 // tested in `outage.rs`, which owns the process-wide state gauge.
+
+// ---- (FIX-050, C-630) refusal classification ----------------------------------------------------
+
+/// A miss is classified: revoked, expired (a non-agent kind), or the organization has no
+/// active owner (the FIX-050 incident state). The answers keep their cache behaviour, and a
+/// revoked row of an ownerless org says `revoked` (revocation is the stronger fact).
+#[tokio::test]
+async fn refusals_are_classified_revoked_expired_and_no_active_owner() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    // One live agent credential per agent (the invariant), the other kinds beside it.
+    cred(p, w.agent, "aug_live", "agent", "NULL").await;
+    cred(p, w.agent, "aub_rev", "boot", "NULL").await;
+    cred(
+        p,
+        w.agent,
+        "auc_old",
+        "context",
+        "now() - interval '1 second'",
+    )
+    .await;
+    let rev_boot = cred(p, w.agent, "aub_rev2", "boot", "NULL").await;
+    sqlx::query("UPDATE gateway_credentials SET revoked_at = now() WHERE id = $1")
+        .bind(rev_boot)
+        .execute(p)
+        .await
+        .unwrap();
+    // The ownerless-org fixture: suspend every owner (the FIX-050 incident state).
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE org_id = $1 AND role = 'owner'")
+        .bind(w.org)
+        .execute(p)
+        .await
+        .unwrap();
+    // A negative TTL longer than the whole loop: the replay below must come from the cache,
+    // not from a re-read against a closed pool.
+    let r = DbCredentialResolver::with_ttls(
+        p.clone(),
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    );
+    for (t, reason, kind) in [
+        ("aug_live", "no_active_owner", "agent"),
+        ("aub_rev2", "revoked", "boot"),
+        ("auc_old", "expired", "context"),
+        ("aug_nope", "unknown", ""),
+    ] {
+        let e = match r.resolve(t).await {
+            Ok(Some(_)) => panic!("{t} resolved"),
+            Ok(None) => {
+                assert_eq!(reason, "unknown", "{t}");
+                continue;
+            }
+            Err(e) => e,
+        };
+        assert_eq!(e.reason(), reason, "{t}: {e}");
+        assert_eq!(
+            e.credential_kind().unwrap_or(""),
+            kind,
+            "{t}: credential kind"
+        );
+        assert!(
+            matches!(e, aurora_gateway::auth::ResolveError::Refused { .. }),
+            "{t} is a Refused, not an Expired/Frozen: {e:?}"
+        );
+    }
+    // The classification is cached with the negative TTL and replayed without a read.
+    p.close().await;
+    let e = r.resolve("aug_live").await.unwrap_err();
+    assert_eq!(e.reason(), "no_active_owner");
+    assert_eq!(e.credential_kind(), Some("agent"));
+}
+
+/// An owner whose membership returns is served again: the negative cache is cleared by the
+/// invalidation the API sends (`user`/`org` scope on the promotion), not by waiting it out.
+#[tokio::test]
+async fn restoring_an_owner_ends_the_no_active_owner_refusal() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    cred(p, w.agent, "aug_lost", "agent", "NULL").await;
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE org_id = $1 AND role = 'owner'")
+        .bind(w.org)
+        .execute(p)
+        .await
+        .unwrap();
+    let (r, hub) = live(p).await;
+    let e = r.resolve("aug_lost").await.unwrap_err();
+    assert_eq!(e.reason(), "no_active_owner");
+    sqlx::query(
+        "UPDATE org_members SET status = 'active', role = 'owner' WHERE org_id = $1 AND role = 'owner'",
+    )
+    .bind(w.org)
+    .execute(p)
+    .await
+    .unwrap();
+    notify(
+        p,
+        Channel::GatewayInvalidate,
+        &json!({"scope": "org", "id": w.org}),
+    )
+    .await
+    .unwrap();
+    for _ in 0..100 {
+        match r.resolve("aug_lost").await {
+            Ok(Some(_)) => return,
+            Ok(None) => panic!("an owner was restored: not a plain miss"),
+            Err(aurora_gateway::auth::ResolveError::Refused { .. }) => {}
+            Err(e) => panic!("{e}"),
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    hub.flush_all();
+    panic!("the credential stayed refused after the owner was restored");
+}
 
 async fn last_used(p: &PgPool, token: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     sqlx::query_scalar("SELECT last_used_at FROM gateway_credentials WHERE token_hash = $1")

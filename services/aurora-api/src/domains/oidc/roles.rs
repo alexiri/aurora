@@ -217,6 +217,78 @@ async fn ensure_ws(
     Ok(ws.id)
 }
 
+/// (FIX-050, D-165, C-630) The owner-integrity floor: after the sync's org step, an
+/// organization the mappings of this provider touched (the orgs in `org_ids`) that ends the
+/// sign-in transaction with no active owner gets its syncing user promoted to `owner` —
+/// inside the transaction, with the claim-derived columns kept and audited
+/// `member.update { via: "idp_sync", reason: "ownerless_org" }`. A suspended (or absent)
+/// membership of the syncing user is never promoted: logged and skipped, the org stays
+/// ownerless until an active member signs in and the admin overview surfaces it. The
+/// promotion is what `apply_org` wrote for this sign-in (role and value passed in), so the
+/// last-owner guard protects the floor exactly like any other owner.
+async fn promote_to_owner_floor(
+    tx: &mut sqlx::PgConnection,
+    p: &OidcProvider,
+    user: Uuid,
+    org_ids: &BTreeMap<String, Uuid>,
+) -> Result<(), Fail> {
+    for (slug, &org) in org_ids {
+        if members::org_has_active_owner(&mut *tx, org).await? {
+            continue;
+        }
+        let Some(row) = db::org_row(&mut *tx, org, user).await? else {
+            tracing::warn!(
+                org = slug,
+                "ownerless org after sync: the syncing user holds no membership; not promoted"
+            );
+            continue;
+        };
+        if row.status != "active" {
+            tracing::warn!(
+                org = slug,
+                status = row.status,
+                "ownerless org: the syncing user's membership is not active; not promoted"
+            );
+            continue;
+        }
+        // Keep the claim-derived columns (the claim still decides the base role on later
+        // sign-ins; the row stays read-only per C-514) and raise only the effective role.
+        let previous = row.role.clone();
+        let new = RoleRow {
+            role: "owner".to_owned(),
+            status: row.status.clone(),
+            idp_role: row.idp_role.clone(),
+            idp_source: row.idp_source.clone(),
+            base_role: row.base_role.clone(),
+        };
+        db::org_write(&mut *tx, org, user, &new).await?;
+        notify_auth_revoked(&mut *tx, "user", user).await?;
+        let mut meta = json!({
+            "role": "owner",
+            "previous_role": previous,
+            "provider": p.id,
+            "via": "idp_sync",
+            "reason": "ownerless_org"
+        });
+        if let Some(v) = row
+            .idp_source
+            .as_deref()
+            .and_then(|s| s.strip_prefix(&db::source_prefix(&p.id)))
+        {
+            meta["claim_value"] = v.into();
+        }
+        log(
+            tx,
+            AuditEvent::new(actor(p), "member.update", Outcome::Success)
+                .org(org)
+                .target("user", user)
+                .metadata(meta),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Run the sync for `user` in the sign-in transaction. `values` are the validated claim values.
 pub async fn sync(
     tx: &mut sqlx::PgConnection,
@@ -386,6 +458,10 @@ pub async fn sync(
         }
         notify_auth_revoked(&mut *tx, "user", user.id).await?;
     }
+
+    // ---- (FIX-050, D-165, C-630) owner-integrity floor: after creations and removals, no
+    // org the provider's mappings touched may end the transaction without an active owner.
+    promote_to_owner_floor(tx, p, user.id, &org_ids).await?;
 
     if user.default_org_id.is_none()
         && let Some(org) = first_org

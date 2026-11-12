@@ -1980,11 +1980,26 @@ async fn metrics_and_the_state_change_log_line() {
     assert_eq!(get(&g, "/plain").await.status, 200);
     let r = get_as(&g, "aug_unknown", None, "/plain").await;
     assert_eq!(r.status, 503);
+    // (FIX-050, C-630) A CONNECT-auth refusal is counted per reason class: the degraded
+    // refusals above (the absolute-form GET and the CONNECT below, both 503 at CONNECT auth)
+    // say `store_unavailable`.
+    let r = connect_as(&g, "agent:aug_never_seen_metrics").await;
+    assert!(r.starts_with("HTTP/1.1 503"), "{r}");
     for n in 0..8 {
         g.log.record(log_row(&g.w, n));
     }
     tokio::time::sleep(Duration::from_millis(250)).await;
     let text = handle.render();
+    assert!(
+        metric(
+            &text,
+            "aurora_gateway_connect_refused_total",
+            "reason=\"store_unavailable\""
+        )
+        .unwrap()
+            >= 2.0,
+        "{text}"
+    );
     assert_eq!(
         metric(&text, "aurora_gateway_state", "state=\"degraded\""),
         Some(1.0),
@@ -2096,6 +2111,18 @@ async fn metrics_and_the_state_change_log_line() {
         lines.iter().any(|l| l["reason"] == "database_unavailable"),
         "{lines:?}"
     );
+
+    // (FIX-050, C-630) A healthy-store refusal is counted too: the unknown token here is the
+    // `unknown` class, on top of the `store_unavailable` one counted during the outage. The
+    // counter is process-wide and other binaries' tests refuse concurrently: lower bounds only.
+    assert_eq!(get(&g, "/plain").await.status, 200);
+    let r = connect_as(&g, "agent:aug_never_seen_metrics2").await;
+    assert!(r.starts_with("HTTP/1.1 407"), "{r}");
+    assert!(
+        refused_metric(&handle.render(), "unknown").unwrap() >= 1.0,
+        "{}",
+        handle.render()
+    );
 }
 
 async fn notify_all(pool: &PgPool) {
@@ -2103,4 +2130,228 @@ async fn notify_all(pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+// ---- (FIX-050, C-630) CONNECT-stage refusals are observable ---------------------------------------
+
+/// A raw CONNECT to the proxy with a `Proxy-Authorization: Basic user:password` header; the
+/// answer is read to EOF and returned whole (status line, headers, JSON body).
+async fn connect_as(g: &Gw, user_token: &str) -> String {
+    let mut s = crate::common::connect(g.proxy).await;
+    let auth = base64::engine::general_purpose::STANDARD.encode(user_token);
+    s.write_all(
+        format!("CONNECT 127.0.0.1:1 HTTP/1.1\r\nHost: 127.0.0.1:1\r\nProxy-Authorization: Basic {auth}\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(8), s.read_to_end(&mut out)).await;
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The captured warn lines with the message `connect_auth_refused` (the message is the last
+/// field the fmt layer renders, but a `Visit` sees it as a field named `message`).
+fn refused_lines(captured: &Captured) -> Vec<std::collections::HashMap<String, String>> {
+    captured
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|f| {
+            f.get("message")
+                .is_some_and(|e| e == "connect_auth_refused")
+        })
+        .cloned()
+        .collect()
+}
+
+/// The metric must carry the reason class and only the reason class (one label).
+fn refused_metric(text: &str, reason: &str) -> Option<f64> {
+    metric(
+        text,
+        "aurora_gateway_connect_refused_total",
+        &format!("reason=\"{reason}\""),
+    )
+}
+
+/// Warn line per CONNECT-auth refusal class, with the unchanged 407/403 answers and no token
+/// material anywhere in a captured line. (The metric side lives in
+/// `metrics_and_the_state_change_log_line`, the only test of the binary that owns the recorder.)
+#[tokio::test]
+async fn connect_refusals_log_their_reason_class() {
+    // The `connect_auth_refused` callsite must be registered under a dispatcher before the
+    // capturing subscriber below becomes the only one (see the warm-up of
+    // `metrics_and_the_state_change_log_line`): a throwaway gateway registers it with a real
+    // refusal.
+    {
+        let _warm_dispatch = tracing::subscriber::set_default(Capture(Captured::default()));
+        let warm = Health::new(|| true);
+        warm.report_db_error();
+        let warm_gw = start(Opts::default()).await;
+        let _ = connect_as(&warm_gw, "agent:aug_warmup").await;
+    }
+    let captured = Captured::default();
+    let _guard = tracing::subscriber::set_default(Capture(captured.clone()));
+    let _s = SERIAL.read().await;
+    let g = start(Opts::default()).await;
+    let p = g.db.pool();
+
+    // Fixtures, one per class. `unknown` and `frozen`: a token no row has, answered 403 while
+    // the org is frozen (below); `expired`: an expired agent token; `no_active_owner`: a live
+    // row of the ownerless-org fixture; `revoked`: a revoked boot row.
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind) VALUES ($1,$2,$3,'x','X','byo')")
+        .bind(agent)
+        .bind(g.w.org)
+        .bind(g.w.ws)
+        .execute(p)
+        .await
+        .unwrap();
+    let agent2 = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind) VALUES ($1,$2,$3,'y','Y','byo')")
+        .bind(agent2)
+        .bind(g.w.org)
+        .bind(g.w.ws)
+        .execute(p)
+        .await
+        .unwrap();
+    let expired = "aug_exp50";
+    sqlx::query(
+        "INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id, expires_at) \
+         VALUES ($1,'agent',$2,'x',$3, now() - interval '1 minute')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(aurora_core::token::hash(expired).to_vec())
+    .bind(agent2)
+    .execute(p)
+    .await
+    .unwrap();
+    let revoked = "aub_rev50";
+    sqlx::query("INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id) VALUES ($1,'boot',$2,'x',$3)")
+        .bind(Uuid::now_v7())
+        .bind(aurora_core::token::hash(revoked).to_vec())
+        .bind(g.w.agent)
+        .execute(p)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE gateway_credentials SET revoked_at = now() WHERE token_hash = $1")
+        .bind(aurora_core::token::hash(revoked).to_vec())
+        .execute(p)
+        .await
+        .unwrap();
+    let ownerless = "aug_own50";
+    sqlx::query("INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id) VALUES ($1,'agent',$2,'x',$3)")
+        .bind(Uuid::now_v7())
+        .bind(aurora_core::token::hash(ownerless).to_vec())
+        .bind(agent)
+        .execute(p)
+        .await
+        .unwrap();
+
+    // The answers keep their shapes: 407 for the auth classes, 403 for frozen. `frozen` needs a
+    // live row (the freeze rides on the credential's own resolution), so its probe runs first —
+    // before the owners are suspended — and the frozen token is the ownerless fixture's own
+    // live token. The health-check loop waits until the freeze is visible (the identity cache
+    // is short and the org-scope invalidation below clears it; a fresh gateway holds nothing).
+    sqlx::query("UPDATE organizations SET frozen_at = now() WHERE id = $1")
+        .bind(g.w.org)
+        .execute(p)
+        .await
+        .unwrap();
+    let mut frozen_seen = false;
+    for _ in 0..100 {
+        let r = connect_as(&g, &format!("agent:{ownerless}")).await;
+        if r.starts_with("HTTP/1.1 403") {
+            assert!(r.contains("\"frozen\""), "{r}");
+            frozen_seen = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(frozen_seen, "the frozen org never produced a 403");
+    sqlx::query(
+        "UPDATE organizations SET frozen_at = NULL, frozen_reason = NULL, \
+         frozen_authority = NULL, frozen_by_user_id = NULL WHERE id = $1",
+    )
+    .bind(g.w.org)
+    .execute(p)
+    .await
+    .unwrap();
+    aurora_db::bus::notify(
+        p,
+        aurora_db::bus::Channel::GatewayInvalidate,
+        &serde_json::json!({"scope": "org", "id": g.w.org}),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let unknown = connect_as(&g, "agent:aug_never_seen_50").await;
+    assert!(unknown.starts_with("HTTP/1.1 407"), "{unknown}");
+    assert!(unknown.contains("proxy_auth_required"), "{unknown}");
+    assert!(unknown.contains("Basic realm=\"aurora\""), "{unknown}");
+
+    let expired_reply = connect_as(&g, &format!("agent:{expired}")).await;
+    assert!(expired_reply.starts_with("HTTP/1.1 407"), "{expired_reply}");
+    assert!(
+        expired_reply.contains("agent_token_expired"),
+        "{expired_reply}"
+    );
+
+    // The ownerless-org fixture: suspend every owner (the FIX-050 incident state). The same
+    // token that was 403 `frozen` above is now a 407 of the `no_active_owner` class.
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE org_id = $1 AND role = 'owner'")
+        .bind(g.w.org)
+        .execute(p)
+        .await
+        .unwrap();
+    let ownerless_reply = connect_as(&g, &format!("agent:{ownerless}")).await;
+    assert!(
+        ownerless_reply.starts_with("HTTP/1.1 407"),
+        "{ownerless_reply}"
+    );
+    assert!(
+        ownerless_reply.contains("proxy_auth_required"),
+        "{ownerless_reply}"
+    );
+
+    let revoked_reply = connect_as(&g, &format!("open:{revoked}")).await;
+    assert!(revoked_reply.starts_with("HTTP/1.1 407"), "{revoked_reply}");
+
+    // One warn line per refusal, each with the reason class, the credential kind when known
+    // (`unknown` knows none) and the source address.
+    let lines = refused_lines(&captured);
+    let has = |reason: &str, kind: &str| {
+        lines.iter().any(|l| {
+            l.get("reason").map(String::as_str) == Some(reason)
+                && l.get("kind").map(String::as_str) == Some(kind)
+        })
+    };
+    assert!(has("unknown", ""), "{lines:?}");
+    assert!(has("expired", "agent"), "{lines:?}");
+    assert!(has("no_active_owner", "agent"), "{lines:?}");
+    assert!(has("revoked", "boot"), "{lines:?}");
+    // `Frozen` carries no kind in `ResolveError`; the line says `frozen` with an empty kind.
+    assert!(has("frozen", ""), "{lines:?}");
+    for l in &lines {
+        assert!(
+            l.get("source").is_some_and(|s| s.contains("127.0.0.1")),
+            "source address: {l:?}"
+        );
+    }
+    // Never token material: neither the token, nor a prefix of one, nor a hash. `expired` is
+    // also asserted: the frozen token above is the ownerless fixture's own token, already
+    // listed.
+    let text = format!("{lines:?}");
+    for t in [
+        "aug_never_seen_50",
+        expired,
+        revoked,
+        ownerless,
+        TOKEN,
+        "aug_",
+    ] {
+        assert!(!text.contains(t), "token material {t} in a log line");
+    }
 }

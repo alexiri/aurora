@@ -227,6 +227,18 @@ export function useAdminStorage() {
   });
 }
 
+export type AdminOverview = components["schemas"]["AdminOverview"];
+export type OwnerlessOrg = components["schemas"]["OwnerlessOrg"];
+
+/** Instance overview (C-459); FIX-050 reads its `ownerless_orgs` (absent when there are none). */
+export function useAdminOverview() {
+  return useQuery({
+    queryKey: ["admin", "overview"] as const,
+    queryFn: () => unwrap(api.GET("/v1/admin/overview")),
+    retry: false,
+  });
+}
+
 /** Helm-configured role mapping per OIDC provider (P4-IDP-1; instance admins; read-only). */
 export function useAdminIdentity() {
   return useQuery({

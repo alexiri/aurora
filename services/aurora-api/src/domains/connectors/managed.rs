@@ -15,8 +15,8 @@ use crate::audit::{self, AuditActor};
 use aurora_core::token;
 use aurora_core::{ApiError, FieldError, Secret, limits, sanitize};
 use aurora_db::conflict_code;
-use aurora_db::repo::connector_hosts;
 use aurora_db::repo::connectors::{self, ConnectorRow, NewManaged};
+use aurora_db::repo::{connector_hosts, orgs};
 use aurora_protocol::connector::ConnectorManifest;
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
 use chrono::Utc;
@@ -197,6 +197,17 @@ pub async fn overview(s: &AppState) -> Result<AdminOverview, ApiError> {
                     last_seen_at: h.last_seen_at,
                     types,
                 }
+            })
+            .collect(),
+        // (FIX-050, C-630) Ownerless orgs of the instance, oldest first: the state that
+        // silently refuses every gateway credential of an org (06 §Credential authentication).
+        ownerless_orgs: orgs::list_ownerless(&s.pool)
+            .await?
+            .into_iter()
+            .map(|o| OwnerlessOrg {
+                slug: o.slug,
+                members: o.members,
+                created_at: o.created_at,
             })
             .collect(),
     })

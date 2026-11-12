@@ -138,6 +138,20 @@ pub struct AdminOverview {
     pub connector_hosts: Vec<ConnectorHostInfo>,
     /// (phase 4, P4-CNT, C-402) the rate-limit counter backend of this API replica.
     pub counters: CountersInfo,
+    /// (FIX-050, C-630) Organizations with zero active owners, oldest first. The gateway
+    /// refuses every credential of such an org (407 at CONNECT auth); repair per the Admin
+    /// banner or the operator docs. `None`-absent on responses serialised before this field.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ownerless_orgs: Vec<OwnerlessOrg>,
+}
+
+/// (FIX-050, C-630) One ownerless organization of the admin overview.
+#[derive(Serialize, ToSchema)]
+pub struct OwnerlessOrg {
+    pub slug: String,
+    /// Active members (any role) the org has — every one of their credentials is refused.
+    pub members: i64,
+    pub created_at: DateTime<Utc>,
 }
 
 /// `counters` of `GET /v1/admin/overview` (C-402).

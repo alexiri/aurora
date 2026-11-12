@@ -29,7 +29,7 @@ impl Proxy {
         };
         let host = normalize_host(auth.host());
         let port = auth.port_u16().unwrap_or(443);
-        let (identity, lane) = match self.authenticate(req.headers()).await {
+        let (identity, lane) = match self.authenticate(req.headers(), client).await {
             Ok(x) => x,
             Err(e) => return guidance::response(&e),
         };

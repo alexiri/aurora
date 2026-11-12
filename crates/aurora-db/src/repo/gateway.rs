@@ -86,6 +86,40 @@ pub async fn find_credential_identity_incl_expired<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-050, C-630) Classification of a credential row that the identity lookup refused: is it
+/// revoked, is it past `expires_at`, and does its organization have an active owner? `None` = no
+/// such row at all (a plain unknown token). Only reached when
+/// [`find_credential_identity_incl_expired`] found nothing, so a live, non-revoked row of an org
+/// with an active owner never lands here; the expired fact disambiguates an expired token of an
+/// ownerless org (`expired`, the token-level fact, outranks `no_active_owner` — restoring an
+/// owner would not un-expire it).
+#[derive(Debug, sqlx::FromRow)]
+pub struct RefusedCredentialRow {
+    pub kind: String,
+    pub revoked: bool,
+    pub expired: bool,
+    pub has_owner: bool,
+}
+
+pub async fn find_refused_credential<'e, E: PgExecutor<'e>>(
+    exec: E,
+    token_hash: &[u8],
+) -> Result<Option<RefusedCredentialRow>, DbError> {
+    Ok(sqlx::query_as::<_, RefusedCredentialRow>(
+        "SELECT c.kind, (c.revoked_at IS NOT NULL) AS revoked, \
+                (c.expires_at IS NOT NULL AND c.expires_at <= now()) AS expired, \
+                EXISTS (SELECT 1 FROM agents a \
+                        JOIN workspaces w ON w.id = a.workspace_id \
+                        JOIN org_members m ON m.org_id = w.org_id \
+                             AND m.role = 'owner' AND m.status = 'active' \
+                        WHERE a.id = c.agent_id) AS has_owner \
+         FROM gateway_credentials c WHERE c.token_hash = $1",
+    )
+    .bind(token_hash)
+    .fetch_optional(exec)
+    .await?)
+}
+
 /// The same live-credential lookup by credential id (re-evaluation of live BYO tunnels).
 pub async fn find_credential_identity_by_id<'e, E: PgExecutor<'e>>(
     exec: E,

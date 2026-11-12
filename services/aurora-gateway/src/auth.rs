@@ -85,6 +85,47 @@ pub enum ResolveError {
     /// database lane. Other expired kinds stay `Ok(None)`.
     #[error("agent token expired")]
     Expired,
+    /// (FIX-050, C-630) A credential that was found but refused without an identity: `revoked`,
+    /// `expired` (a non-agent kind past its `expires_at`), `no_active_owner` (its organization
+    /// has no active owner, so the lookup requires one) or `unknown` (found but not usable for
+    /// a reason the diagnostic did not classify). Answered like an unknown credential (plain
+    /// 407 / FATAL `28P01`); `kind` is the credential kind when the row named one — never the
+    /// token material or its hash.
+    #[error("credential refused ({reason})")]
+    Refused {
+        reason: &'static str,
+        kind: Option<&'static str>,
+    },
+}
+
+impl ResolveError {
+    /// (FIX-050, C-630) The reason class of a CONNECT-auth refusal
+    /// (`06 §Credential authentication`): `unknown | revoked | expired | no_active_owner |
+    /// frozen | store_unavailable`. An `Ok(None)` from [`CredentialResolver::resolve`] is the
+    /// remaining class, `unknown`, named at the answer site.
+    #[must_use]
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Refused { reason, .. } => reason,
+            Self::Expired => "expired",
+            Self::Frozen { .. } => "frozen",
+            Self::DatabaseUnavailable | Self::Unavailable(_) => "store_unavailable",
+        }
+    }
+
+    /// The credential kind when the refused row named one (`agent` | `boot` | `context`).
+    #[must_use]
+    pub fn credential_kind(&self) -> Option<&'static str> {
+        match self {
+            Self::Refused { kind, .. } => match kind.as_deref() {
+                Some("agent") => Some("agent"),
+                Some("boot") => Some("boot"),
+                Some("context") => Some("context"),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 #[async_trait::async_trait]
