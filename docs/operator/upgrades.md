@@ -68,6 +68,17 @@ as images; the baseline has no schedules API, so the schedule row is seeded with
 plane is at version 1 on both refs, so the N−1 window cannot be exercised end to end yet.
 Defects it finds are printed as `DEFECT` lines (`UPGRADE_STRICT=1` makes them fail the run).
 
+The kind e2e (`scripts/e2e/kind.sh`, OPS-024) rehearses the Helm chart path itself, hooks included:
+after the test scenarios, two value-only `helm upgrade` legs (`web.replicas` 1 → 2 → 1, each
+`--wait --timeout 4m`) run against the installed release, asserting helm exit 0, release status
+`deployed` and the new web pod Ready. On upgrade the `pre-install,pre-upgrade` hooks (the `secrets`
+job, its RBAC and its hook-rendered NetworkPolicy / CiliumNetworkPolicy) run before any regular
+manifest under the previous release's default-deny policies — the exact condition of the
+2026-11-11 production timeouts — so a chart change that breaks a hook's access under those policies
+fails the e2e (with the hook jobs, pod logs and NetworkPolicies in `target/kind-logs/`), not a
+production upgrade. The host-process script above stays the rehearsal for migration ordering and
+the protocol N/N−1 window; `AURORA_E2E_UPGRADE_LEGS=0` skips the legs.
+
 ## Running sandboxes
 
 A running sandbox keeps the image it started with until its next boot (docs/15). The dashboard
