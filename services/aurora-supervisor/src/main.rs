@@ -41,6 +41,14 @@ enum Command {
         #[arg(long, default_value = aurora_supervisor::tools::DEFAULT_SOCKET)]
         socket: PathBuf,
     },
+    /// Hidden: the PTY bootstrap (`12 §Terminal`, FIX-054). The supervisor re-executes
+    /// itself to give a terminal shell a controlling terminal without `unsafe` (setsid +
+    /// TIOCSCTTY, then exec the shell); not an operator command.
+    #[command(hide = true, name = "__pty-exec")]
+    PtyExec {
+        /// The shell to exec (`pty_exec::run`).
+        shell: String,
+    },
 }
 
 #[tokio::main]
@@ -64,6 +72,7 @@ async fn main() -> ExitCode {
             .await;
             ExitCode::SUCCESS
         }
+        Command::PtyExec { shell } => aurora_supervisor::pty_exec::run(&shell),
     }
 }
 
@@ -161,6 +170,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         doc.has_capability("terminal"),
         Some(1000),
         std::path::PathBuf::from("/workspace"),
+        std::env::current_exe().map_err(|e| {
+            tracing::error!(error = %e, "cannot locate this supervisor for the pty bootstrap");
+            e
+        })?,
     );
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
     cfg.pg = Some(aurora_supervisor::pgrelay::RELAY_PORT);

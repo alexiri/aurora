@@ -91,6 +91,26 @@ where
     c
 }
 
+/// Replaces this process with `program` under a fully scrubbed environment (FIX-054): the
+/// PTY bootstrap (`crate::pty`) has already made the session and taken the controlling
+/// terminal and arranges its own stdio, so the shell is exec'd in-process — a spawned
+/// child would inherit the supervisor's session and lose the ctty work. Safe: std's
+/// `CommandExt::exec` performs the `execve` itself; rustix's own `execvp` is a panic stub
+/// (its `not_implemented` module), and `pre_exec` is `unsafe` (forbidden here).
+///
+/// Lives here because [`no_direct_spawn`] allows process creation only in this file, and
+/// `exec` is that primitive. Diverges on success (never returns); on failure the error is
+/// returned (and the bootstrap reports a dead shell). Note `CommandExt::exec` returns the
+/// error itself, not a `Result`, and never returns on success.
+#[allow(clippy::disallowed_methods)]
+pub fn exec(shell: &str, env: Vec<(OsString, OsString)>) -> std::io::Error {
+    use std::os::unix::process::CommandExt as _;
+    std::process::Command::new(shell)
+        .env_clear()
+        .envs(env)
+        .exec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

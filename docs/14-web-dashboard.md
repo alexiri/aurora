@@ -684,7 +684,9 @@ again" and "Show the getting-started guide again".
     ("Reconnecting…"); session end states (frozen, parked, stopped, runner without terminal
     support) render as notices, never silent closes. wterm never touches the clipboard
     automatically: selection copy is the browser's own; an application's OSC 52 write shows a
-    "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). An open session keeps the
+    "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). Keystrokes leave the tab as
+    UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
+    chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),

@@ -1,6 +1,7 @@
 //! (P4-TERM, `16 §W19` on `12 §Terminal`) The supervisor's PTY engine against the real
-//! pump: `pty.open` spawns the image shell in a pseudo-terminal (cwd parameter, own process
-//! group, env minus every `AURORA_*` — the SEC-34 probe reads the PTY's own `environ`),
+//! pump: `pty.open` spawns the image shell in a pseudo-terminal (cwd parameter, own session
+//! and controlling terminal via the `pty_exec` bootstrap — job control works, FIX-054;
+//! env minus every `AURORA_*` — the SEC-34 probe reads the PTY's own `environ`),
 //! `pty.resize` applies `TIOCSWINSZ`, bytes round-trip through the credit machinery under
 //! the window bounds, `pty.refused` answers `disabled`/`limit`, and a connection change
 //! (`PtyIn::Reset`) ends every PTY with `channel_lost` — nothing is resumed. Everything
@@ -25,6 +26,13 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 const T: Duration = Duration::from_secs(10);
+
+/// The bootstrap executable for the rig: the built `aurora-supervisor` binary (the test
+/// process is a libtest binary, not the supervisor — the bootstrap re-exec must be the
+/// real one, which understands `pty_exec::SUBCOMMAND`).
+fn bootstrap_exe() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_aurora-supervisor"))
+}
 
 /// The channel ends a PTY engine runs on, built like `channel::spawn` builds them, plus the
 /// receiving half the test reads the engine's frames/data from.
@@ -51,7 +59,7 @@ fn rig(home: &std::path::Path, enabled: bool) -> Rig {
         inbound: pty_in_rx,
         epoch: epoch_rx,
     };
-    let handle = PtyEngine::spawn(ends, enabled, None, home.to_path_buf());
+    let handle = PtyEngine::spawn(ends, enabled, None, home.to_path_buf(), bootstrap_exe());
     Rig {
         handle,
         pty_tx: pty_in_tx,
@@ -266,6 +274,59 @@ async fn probe_env_assertions() {
     // NUL-separated, so the entry boundary check is exact).
     assert!(env.contains("TERM=xterm-256color"), "{env}");
     assert!(env.split('\0').any(|l| l.starts_with("PATH=")), "{env}");
+}
+
+/// The FIX-054 probe: the shell has a **controlling terminal** — the `pty_exec` bootstrap
+/// made its own session and took the slave as the ctty, so job control works. `tty` prints
+/// a `/dev/pts/N` path; the shell's output carries neither of the owner's two error lines
+/// ("Inappropriate ioctl", "no job control"); `kill -0 $$` round-trips (the reaped-pid
+/// check); `$-` shows `m` (monitor mode: job control enabled); and `sleep 30 &` + `jobs`
+/// lists a real background job (a ctty-less shell cannot run one). The plain echo round
+/// trip at the end keeps the input path covered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pty_shell_has_a_controlling_terminal_and_job_control() {
+    let home = TempDir::new();
+    let mut r = rig(home.path(), true);
+    open(&mut r, 1).await;
+    // The sentinels are spelled in pieces so the PTY's echo of the input cannot match
+    // them — only the shell's own output can (the `pty_env_probe` playbook).
+    r.data(
+        1,
+        b"tty; echo CTTY_\"DONE\"; kill -0 $$ && echo ALIVE_\"OK\"; \
+          echo flags=$-; sleep 30 & jobs; kill %1; echo JOBS_\"OK\"\n",
+    )
+    .await;
+    let out = r.until("JOBS_OK").await;
+    assert!(
+        !out.contains("Inappropriate ioctl"),
+        "the shell still lacks its terminal: {out}"
+    );
+    assert!(
+        !out.contains("no job control"),
+        "job control is dead: {out}"
+    );
+    // `tty` printed a pts path (a substring: the line discipline interleaves the shell's
+    // prompt escape sequences with the answer), not "not a tty".
+    assert!(
+        out.contains("/dev/pts/"),
+        "`tty` did not report a pts: {out}"
+    );
+    assert!(!out.contains("not a tty"), "`tty` failed: {out}");
+    assert!(out.contains("CTTY_DONE"), "the probe never finished: {out}");
+    assert!(out.contains("ALIVE_OK"), "kill -0 $$ failed: {out}");
+    // Monitor mode (`m` in `$-`) is exactly "job control works": bash enables it only
+    // when the ctty is real (`isatty` + successful `tcsetpgrp`).
+    assert!(
+        out.contains("flags=himBH") || out.contains("flags=imBH"),
+        "monitor mode is off, job control is dead: {out}"
+    );
+    assert!(
+        out.contains("JOBS_OK"),
+        "the jobs probe never finished: {out}"
+    );
+    // A plain echo round trip so the input path stays covered in this probe too.
+    r.data(1, b"echo ECHO_\"OK\"\n").await;
+    r.until("ECHO_OK").await;
 }
 
 /// The cwd is the parameter (the image's `/workspace`; here the temp home): `pwd` says so.
