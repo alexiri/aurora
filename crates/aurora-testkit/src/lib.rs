@@ -22,6 +22,7 @@ pub mod git_host;
 pub mod oauth;
 pub mod oidc;
 pub mod responses;
+pub mod template;
 
 pub use wiremock;
 
@@ -57,10 +58,20 @@ impl TestDb {
         let mut admin = PgConnection::connect(&server_url)
             .await
             .context("connecting to test server")?;
-        sqlx::query(&format!("CREATE DATABASE \"{name}\""))
-            .execute(&mut admin)
-            .await
-            .context("creating test database")?;
+        // VEL-003: clone the per-server template (migrated once) at
+        // filesystem speed instead of replaying all migrations per test.
+        // `AURORA_TEST_TEMPLATE_DB=0` reverts to the legacy path below.
+        let migrated = if template::template_enabled() {
+            let template = template::ensure_template(&server_url).await?;
+            template::clone_from_template(&mut admin, template, &name).await?;
+            true
+        } else {
+            sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+                .execute(&mut admin)
+                .await
+                .context("creating test database")?;
+            false
+        };
         admin.close().await.ok();
 
         let url = replace_db_name(&server_url, &name)?;
@@ -69,10 +80,9 @@ impl TestDb {
             .connect(&url)
             .await
             .context("connecting to test database")?;
-        aurora_db::MIGRATOR
-            .run(&pool)
-            .await
-            .context("running migrations")?;
+        if !migrated {
+            template::migrate_pool(&pool).await?;
+        }
         Ok(TestDb {
             server_url,
             name,
@@ -242,7 +252,7 @@ fn read_dotenv() -> anyhow::Result<Vec<(String, String)>> {
 }
 
 /// Replace the database path segment of `base` with `name`, keeping any query.
-fn replace_db_name(base: &str, name: &str) -> anyhow::Result<String> {
+pub(crate) fn replace_db_name(base: &str, name: &str) -> anyhow::Result<String> {
     let (main, query) = match base.split_once('?') {
         Some((m, q)) => (m, Some(q)),
         None => (base, None),
