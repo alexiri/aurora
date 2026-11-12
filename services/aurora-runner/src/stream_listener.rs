@@ -651,8 +651,7 @@ async fn open_and_serve(
             http_close(&mut tcp, CLOSE_REFUSED).await;
             return;
         };
-        let Some(ws) =
-            complete_handshake(tcp, &request, &state, pty_id, terminal, &binding).await
+        let Some(ws) = complete_handshake(tcp, &request, &state, pty_id, terminal, &binding).await
         else {
             return;
         };
@@ -937,12 +936,14 @@ async fn serve_terminal_leg(
                         state.stamp_awake(sandbox).await;
                     }
                     // (P4-TERM, C-619) The one text control the dashboard sends: resize.
-                    // `{"kind":"pty.resize","pty_id":…,"cols":…,"rows":…}`. Anything else is
-                    // ignored (bytes are never parsed as text, never logged).
+                    // `{"kind":"pty.resize","pty_id":0,"cols":…,"rows":…}` — the browser
+                    // cannot know the allocated `pty_id` (one PTY per leg-1 WebSocket), so
+                    // `0` names "this leg's PTY" and the runner stamps its own. Anything
+                    // else is ignored (bytes are never parsed as text, never logged).
                     Some(Ok(Message::Text(t))) => {
                         idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
                         if let Ok(resize) = serde_json::from_str::<PtyResize>(&t)
-                            && resize.pty_id == pty_id
+                            && resize.pty_id == 0
                         {
                             let _ = state
                                 .send_to_supervisor(
@@ -1077,7 +1078,14 @@ async fn serve_terminal_leg(
         _ => PtyCloseReason::Error,
     };
     state
-        .release_pty_as(pty_id, sandbox, boot, close_reason, bytes_from_pty, bytes_to_pty)
+        .release_pty_as(
+            pty_id,
+            sandbox,
+            boot,
+            close_reason,
+            bytes_from_pty,
+            bytes_to_pty,
+        )
         .await;
 }
 

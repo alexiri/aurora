@@ -5,3 +5,4 @@ mod k8s_mock;
 mod podman;
 mod runner;
 mod streams;
+mod terminal_streams;

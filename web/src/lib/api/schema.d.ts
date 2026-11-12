@@ -5734,6 +5734,11 @@ export interface components {
             hosted: boolean;
             /** @description (phase 4, P4-PRV-1) Port previews are configured on this instance. */
             previews: boolean;
+            /**
+             * @description (phase 4, P4-TERM, C-622) The web terminal is enabled on this instance; the Terminal
+             *     tab exists only when this is true.
+             */
+            terminal: boolean;
         };
         Followup: {
             /** Format: date-time */
@@ -8806,6 +8811,11 @@ export interface components {
             started_at?: string | null;
             /** @description unprovisioned | starting | running | stopping | stopped | failed */
             state: string;
+            /**
+             * @description (P4-TERM, C-621) `terminal` is among `keep_awake_reasons` while this is true
+             *     ("Terminal in use"); the Terminal tab's badge.
+             */
+            terminal_in_use: boolean;
         };
         Schedule: {
             /** Format: uuid */

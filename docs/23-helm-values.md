@@ -22,7 +22,7 @@ default. Links go to the section that explains the feature in depth.
    `aurora-api`/`aurora-gateway`/… configuration): every key of
    [15 §Configuration reference](15-deployment-operations.md#configuration-reference-keys-and-defaults)
    can be set here, plus the chart-injected keys listed in §The config block.
-3. **Feature flags** (`vault.*`, `counters.*`, `previews.*`, …) are chart keys
+3. **Feature flags** (`vault.*`, `counters.*`, `previews.*`, `terminal.*`, …) are chart keys
    that additionally render TOML sections or whole workloads. They are listed
    here with their target docs.
 
@@ -220,6 +220,7 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.externalEgress.cidr` / `.except` | CIDR / list | `0.0.0.0/0` / private ranges | external egress (OIDC, SMTP, LLM endpoints, push services) for api/gateway/hookhost/connectors; `except` carves private ranges out (they need explicit rules) | lock egress down |
 | `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; must also be in `gateway.allowed_private`) | private LLM endpoints |
 | `networkPolicy.connectorHostExtraEgress` | raw NP `egress` entries | `[]` | appended to the connector host's policy (a chat platform on a private range) | private Mattermost |
+| `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): renders `config.terminal.enabled = true` (must agree; a guard refuses a partial setup), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) stay `config.terminal.*` keys | the Terminal tab is wanted |
 
 ## Development IdP
 
@@ -263,7 +264,7 @@ implemented in the chart — a brief names them so the chart work lands with the
 feature:
 
 - previews: `previews.enabled`, `previews.domain`, `previews.tls.certManager.issuerRef` / `previews.tls.secretName`, `relay.enabled`, `relay.resources`, `relay.networkPolicy.runnerEgressTo` (P4-PRV-1/2; `15 §Port previews`)
-- web terminal: `terminal.enabled`, `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: config keys, set via `config.terminal.*`)
+- web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: config keys, set via `config.terminal.*`; the switch itself is the chart value `terminal.enabled`, below)
 - SCIM: `scim.enabled`, `scim.allowedEmailDomains`, `scim.ratePerMinute`, `scim.tokenMaxDays` (P4-GRP-2; `15 §SCIM directory sync`)
 - approval park + Web Push: `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)
 - S3 blob store: `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)

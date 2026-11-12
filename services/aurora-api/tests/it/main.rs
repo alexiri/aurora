@@ -85,6 +85,7 @@ mod skill_library;
 mod skills;
 mod sse_revocation;
 mod tenancy;
+mod terminal;
 mod tools;
 mod webhooks;
 

@@ -361,7 +361,8 @@ async fn on_text(shared: &Arc<Shared>, session: &Arc<Session>, text: &str) -> Re
             }
         }
         return Ok(());
-    }    session.on_ack(raw.ack);
+    }
+    session.on_ack(raw.ack);
     if raw.kind == "ack" {
         return Ok(());
     }

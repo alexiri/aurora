@@ -278,12 +278,10 @@ pub async fn set_terminal_wake<'e, E: PgExecutor<'e>>(
     exec: E,
     sandbox: Uuid,
 ) -> Result<(), DbError> {
-    sqlx::query(
-        "UPDATE sandboxes SET terminal_wake_at = now(), updated_at = now() WHERE id = $1",
-    )
-    .bind(sandbox)
-    .execute(exec)
-    .await?;
+    sqlx::query("UPDATE sandboxes SET terminal_wake_at = now(), updated_at = now() WHERE id = $1")
+        .bind(sandbox)
+        .execute(exec)
+        .await?;
     Ok(())
 }
 

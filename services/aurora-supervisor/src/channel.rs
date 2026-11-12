@@ -86,6 +86,11 @@ impl ChannelSender {
 }
 
 impl StreamSender {
+    /// A sender over an existing queue (tests build `PtyEnds`/`StreamEnds` by hand).
+    pub fn from_mpsc(tx: mpsc::Sender<StreamOut>) -> Self {
+        Self(tx)
+    }
+
     pub async fn send(&self, out: StreamOut) -> Result<(), ChannelClosed> {
         self.0.send(out).await.map_err(|_| ChannelClosed)
     }

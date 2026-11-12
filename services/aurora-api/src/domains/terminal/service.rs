@@ -36,8 +36,12 @@ const CLOSE_REFUSED: u16 = 4502;
 const CLOSE_CHANNEL_LOST: u16 = 4503;
 const CLOSE_TIMEOUT: u16 = 4504;
 
-fn terminal_disabled() -> ApiError {
-    ApiError::not_found("This instance has no web terminal.")
+pub(crate) fn terminal_disabled() -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::NOT_FOUND,
+        "terminal_disabled",
+        "This instance has no web terminal.",
+    )
 }
 
 fn terminal_not_supported() -> ApiError {

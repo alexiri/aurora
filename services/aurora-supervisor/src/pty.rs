@@ -175,6 +175,8 @@ pub struct PtyEngine {
     /// The boot document's `terminal` capability (`12 §Terminal`).
     enabled: bool,
     uid: Option<u32>,
+    /// The shell's working directory (`/workspace` in the image; a parameter for the tests).
+    cwd: std::path::PathBuf,
     live: HashMap<u32, Live>,
     /// Recent unsequenced-frame violations (`16 §W19` on `16 §W18`): at 4 the channel closes
     /// with 4400.
@@ -184,8 +186,15 @@ pub struct PtyEngine {
 impl PtyEngine {
     /// Spawns the pump on the channel's terminal ends; returns the supervisor's handle.
     /// `enabled` is the boot document's `terminal` capability; `uid` is the agent user the
-    /// process manager uses (effective only when the supervisor itself is root).
-    pub fn spawn(ends: channel::PtyEnds, enabled: bool, uid: Option<u32>) -> Arc<PtyHandle> {
+    /// process manager uses (effective only when the supervisor itself is root). `cwd` is the
+    /// shell's working directory (`/workspace` in the image; a parameter so the tests can
+    /// point the PTY at a real directory).
+    pub fn spawn(
+        ends: channel::PtyEnds,
+        enabled: bool,
+        uid: Option<u32>,
+        cwd: std::path::PathBuf,
+    ) -> Arc<PtyHandle> {
         let channel::PtyEnds {
             sender,
             inbound,
@@ -203,6 +212,7 @@ impl PtyEngine {
             shell: shell_of(),
             enabled,
             uid,
+            cwd,
             live: HashMap::new(),
             violations: 0,
         };
@@ -323,7 +333,7 @@ impl PtyEngine {
             self.refuse(o.pty_id, PtyRefuseReason::Limit).await;
             return;
         }
-        let pty = match PtySession::spawn(&self.shell, self.uid, o.cols, o.rows) {
+        let pty = match PtySession::spawn(&self.shell, self.uid, &self.cwd, o.cols, o.rows) {
             Ok(p) => p,
             Err(e) => {
                 // The failure is the OS's, not the session's content: log the error kind only.
@@ -446,9 +456,16 @@ struct PtySession {
 impl PtySession {
     /// Spawns the shell under a pseudo-terminal (`12 §Terminal`): `rustix::pty::openpt` +
     /// `grantpt`/`unlockpt`, `ptsname`, then the child with the slave as its stdio, own
-    /// process group, agent uid when the supervisor is root, cwd `/workspace`, environment
+    /// process group, agent uid when the supervisor is root, the given working directory
+    /// (`/workspace` in the image), environment
     /// minus every `AURORA_*` variable and minus the boot document ([`crate::spawn`]).
-    fn spawn(shell: &str, uid: Option<u32>, cols: u16, rows: u16) -> std::io::Result<Self> {
+    fn spawn(
+        shell: &str,
+        uid: Option<u32>,
+        cwd: &std::path::Path,
+        cols: u16,
+        rows: u16,
+    ) -> std::io::Result<Self> {
         let master =
             rustix::pty::openpt(rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY)?;
         rustix::pty::grantpt(&master)?;
@@ -479,7 +496,7 @@ impl PtySession {
         cmd.stdin(std::process::Stdio::from(slave.try_clone()?))
             .stdout(std::process::Stdio::from(slave.try_clone()?))
             .stderr(std::process::Stdio::from(slave))
-            .current_dir("/workspace")
+            .current_dir(cwd)
             .process_group(0);
         if let Some(uid) = uid
             && rustix::process::getuid().is_root()

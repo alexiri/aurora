@@ -45,3 +45,7 @@ print("sandbox-network: %s ok (egress 4102+4105 only)" % label)
 
 check "previews off" --set relay.enabled=false
 check "previews on" --set relay.enabled=true --set relay.domain=previews.guard.invalid --set config.previews.enabled=true
+# (P4-TERM) the web terminal must not widen the sandbox posture either: it dials :4108 from the
+# api (control plane) and serves the PTY inside the sandbox — no new sandbox egress.
+check "terminal on" --set terminal.enabled=true --set config.terminal.enabled=true
+check "terminal+previews on" --set terminal.enabled=true --set config.terminal.enabled=true --set relay.enabled=true --set relay.domain=previews.guard.invalid --set config.previews.enabled=true

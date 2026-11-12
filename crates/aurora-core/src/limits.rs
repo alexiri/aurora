@@ -339,7 +339,6 @@ pub const TERMINAL_AUTH_CACHE: Duration = Duration::from_secs(15);
 /// the `pty.open` round trip to the supervisor (an older supervisor answers nothing → 4502).
 pub const TERMINAL_PTY_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

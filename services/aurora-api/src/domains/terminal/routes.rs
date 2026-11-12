@@ -35,7 +35,7 @@ async fn terminal(
 ) -> Result<Response, ApiError> {
     // 404 `terminal_disabled` while the feature is off (C-616) — before any auth work.
     if !s.config.terminal.enabled {
-        return Err(ApiError::not_found("This instance has no web terminal."));
+        return Err(service::terminal_disabled());
     }
     // Session cookie only: API keys, agent tokens and anonymous callers are refused 401
     // (SEC-87; the `Caller` extractor already refuses agent tokens, this narrows to sessions).

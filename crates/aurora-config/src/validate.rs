@@ -517,7 +517,9 @@ impl RawConfig {
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
         // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
         // `aurora_core::limits`.
-        if self.terminal.awake_cap_secs == 0 || self.terminal.awake_cap_secs > self.hosted.background_cap_secs {
+        if self.terminal.awake_cap_secs == 0
+            || self.terminal.awake_cap_secs > self.hosted.background_cap_secs
+        {
             c.err(
                 "terminal.awake_cap_secs",
                 "must be greater than 0 and at most hosted.background_cap_secs",

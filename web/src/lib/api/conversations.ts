@@ -47,6 +47,8 @@ export interface SandboxView {
   ports: { port: number; protocol: string; shared?: string | null }[];
   // (P4-PRV-1, D-145) `preview` is among `keep_awake_reasons` while this is true.
   preview_in_use?: boolean;
+  // (P4-TERM, C-621) `terminal` is among `keep_awake_reasons` while this is true.
+  terminal_in_use?: boolean;
   restart_to_update: boolean;
 }
 export interface ModelOption {

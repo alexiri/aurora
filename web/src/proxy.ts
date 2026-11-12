@@ -16,7 +16,9 @@ export function proxy(request: NextRequest) {
   const csp = [
     "default-src 'self'",
     "img-src 'self' data:",
-    `script-src 'self' 'nonce-${nonce}'${dev ? " 'unsafe-eval'" : ""}`,
+    // (P4-TERM, SEC-87) `'wasm-unsafe-eval'` lets the Ghostty WASM core compile its module;
+    // it grants no script eval. Still nonce'd; dev adds `'unsafe-eval'` for HMR.
+    `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'${dev ? " 'unsafe-eval'" : ""}`,
     // Dev only: Next injects inline styles for HMR/error overlay.
     `style-src 'self'${dev ? " 'unsafe-inline'" : ` 'nonce-${nonce}'`}`,
     "connect-src 'self'",

@@ -160,6 +160,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         chan.ptys,
         doc.has_capability("terminal"),
         Some(1000),
+        std::path::PathBuf::from("/workspace"),
     );
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
     cfg.pg = Some(aurora_supervisor::pgrelay::RELAY_PORT);
