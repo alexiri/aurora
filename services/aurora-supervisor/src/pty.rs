@@ -554,6 +554,22 @@ impl PtySession {
     }
 }
 
+/// Test diagnostic (`pty_env_probe`): runs the real `PtySession::spawn` steps outside the
+/// engine so a CI failure can name the exact failing operation (ptmx allocation, slave
+/// open, or the bootstrap fork) instead of the engine's errno-free `pty.refused{error}`.
+/// Not used by the supervisor itself; returns the raw `io::Result` (the session is
+/// dropped immediately, closing the master).
+pub fn debug_spawn_session(
+    shell: &str,
+    uid: Option<u32>,
+    cwd: &std::path::Path,
+    bootstrap: &std::path::Path,
+    cols: u16,
+    rows: u16,
+) -> std::io::Result<()> {
+    PtySession::spawn(shell, uid, cwd, bootstrap, cols, rows).map(|_| ())
+}
+
 /// `TIOCSWINSZ` (best effort; a failed resize keeps the old size).
 fn winsize<Fd: std::os::fd::AsFd>(fd: Fd, cols: u16, rows: u16) {
     let _ = rustix::termios::tcsetwinsize(

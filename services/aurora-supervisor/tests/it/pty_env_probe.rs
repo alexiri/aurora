@@ -191,12 +191,27 @@ async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
         assert_eq!(opened["body"]["pty_id"], pty_id);
         return opened["body"]["window"].as_u64().unwrap();
     }
-    // Diagnostics: reproduce the two operations the spawn performs and surface their
-    // exact errors — the engine's `pty.refused{error}` deliberately carries no errno.
-    let openpt =
-        rustix::pty::openpt(rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY)
-            .map(|_| "openpt ok".to_owned())
-            .unwrap_err();
+    // Diagnostics: reproduce the spawn's steps directly and surface their exact errors —
+    // the engine's `pty.refused{error}` deliberately carries no errno. Probe 1: ptmx
+    // allocation. Probe 2: a full `PtySession` spawn against the test's own engine-free
+    // path, printing the io::Error of whichever step actually fails.
+    let openpt = match rustix::pty::openpt(
+        rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY,
+    ) {
+        Ok(_) => "openpt ok".to_owned(),
+        Err(e) => format!("openpt FAILED: {e}"),
+    };
+    let direct = match aurora_supervisor::pty::debug_spawn_session(
+        "/bin/sh",
+        None,
+        &std::env::temp_dir(),
+        &bootstrap_exe(),
+        80,
+        24,
+    ) {
+        Ok(_) => "direct spawn ok".to_owned(),
+        Err(e) => format!("direct spawn FAILED: {e}"),
+    };
     let fork = match aurora_supervisor::spawn::command(
         bootstrap_exe(),
         std::iter::empty::<(&str, &str)>(),
@@ -205,11 +220,10 @@ async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
     .output()
     {
         Ok(_) => "fork ok".to_owned(),
-        Err(e) => format!("fork failed: {e}"),
+        Err(e) => format!("fork FAILED: {e}"),
     };
     panic!(
-        "pty {pty_id}: spawn refused after 8 attempts (~25 s). Probes: openpt → {openpt:?}; \
-         bootstrap fork → {fork}"
+        "pty {pty_id}: spawn refused after 8 attempts (~25 s). Probes: {openpt}; {direct}; {fork}"
     );
 }
 
