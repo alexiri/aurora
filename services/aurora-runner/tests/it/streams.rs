@@ -198,22 +198,31 @@ async fn leg1_handshake_completes_after_stream_open_and_echoes_bytes() {
         "upgrade must complete after stream.open"
     );
 
-    // Relay → supervisor: bytes arrive as binary data frames.
+    // Relay → supervisor: bytes arrive as binary data frames. Keepalive Pings (and stray
+    // Pongs) are legal anywhere on the channel — the runner's conn loop pings from the
+    // moment it is admitted (the interval's first tick is immediate), so one can land
+    // right here under load — and tungstenite auto-pongs on read: skip control frames
+    // and keep waiting. The 5s timeout bounds the WHOLE wait, not each frame.
     relay
         .send(Message::binary(b"ping-through".to_vec()))
         .await
         .unwrap();
-    let d = tokio::time::timeout(Duration::from_secs(5), sup.next())
-        .await
-        .expect("data timed out")
-        .unwrap()
-        .unwrap();
-    let Message::Binary(b) = d else {
-        panic!("expected binary data, got {d:?}");
-    };
-    assert_eq!(&b[0], &0x01);
-    assert_eq!(&b[1..5], &sid.to_be_bytes());
-    assert_eq!(&b[5..], b"ping-through");
+    let d = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match sup.next().await {
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
+                Some(Ok(Message::Binary(b))) => break b,
+                Some(Ok(other)) => panic!("expected binary data, got {other:?}"),
+                Some(Err(e)) => panic!("ws error waiting for data: {e}"),
+                None => panic!("channel closed while waiting for data"),
+            }
+        }
+    })
+    .await
+    .expect("data timed out");
+    assert_eq!(&d[0], &0x01);
+    assert_eq!(&d[1..5], &sid.to_be_bytes());
+    assert_eq!(&d[5..], b"ping-through");
 
     // Supervisor → relay: echo with credit (the runner only forwards credited bytes).
     let mut echo = vec![0x01];
