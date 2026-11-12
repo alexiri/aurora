@@ -222,11 +222,22 @@ async fn terminal_leg_round_trip_tags_0x02_and_stamps_awake() {
 
     // Browser → PTY: binary keystrokes arrive framed `[0x02][pty_id BE][payload]`.
     term.send(Message::binary(b"ls\r".to_vec())).await.unwrap();
-    let d = tokio::time::timeout(Duration::from_secs(5), sup.next())
-        .await
-        .expect("data timed out")
-        .unwrap()
-        .unwrap();
+    // Binary data with the runner's control-frame skip (FIX-051 playbook): keepalive Pings
+    // (Pongs) are legal anywhere on the channel — the channel loop pings from admission, so
+    // one can land right here under load — and tungstenite auto-pongs on read. The 5s
+    // timeout bounds the WHOLE wait, not each frame.
+    let d = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match sup.next().await {
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
+                Some(Ok(other)) => break other,
+                Some(Err(e)) => panic!("ws error awaiting terminal data: {e}"),
+                None => panic!("supervisor stream ended awaiting terminal data"),
+            }
+        }
+    })
+    .await
+    .expect("data timed out");
     let Message::Binary(b) = d else {
         panic!("expected binary data, got {d:?}");
     };
@@ -241,11 +252,19 @@ async fn terminal_leg_round_trip_tags_0x02_and_stamps_awake() {
     ))
     .await
     .unwrap();
-    let rz = tokio::time::timeout(Duration::from_secs(5), sup.next())
-        .await
-        .expect("resize timed out")
-        .unwrap()
-        .unwrap();
+    // Same control-frame skip (FIX-051 playbook) for the resize wait.
+    let rz = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match sup.next().await {
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
+                Some(Ok(other)) => break other,
+                Some(Err(e)) => panic!("ws error awaiting the resize control: {e}"),
+                None => panic!("supervisor stream ended awaiting the resize control"),
+            }
+        }
+    })
+    .await
+    .expect("resize timed out");
     let Message::Text(t) = rz else {
         panic!("expected the resize control, got {rz:?}");
     };
