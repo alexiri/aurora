@@ -125,6 +125,7 @@ async fn start(home: &TempDir) -> (TcpListener, Conn) {
         chan.sender,
         std::sync::Arc::new(FakeHarness),
         aurora_supervisor::streams::StreamsHandle::noop(),
+        aurora_supervisor::pty::PtyHandle::noop(),
     );
     tokio::spawn(sup.run(chan.inbound));
     tokio::spawn(async move {

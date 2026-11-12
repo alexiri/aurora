@@ -147,6 +147,7 @@ async fn start_with(
         chan.sender,
         Arc::new(FakeHarness),
         aurora_supervisor::streams::StreamsHandle::noop(),
+        aurora_supervisor::pty::PtyHandle::noop(),
     );
     if let Some(l) = lookup {
         sup = sup.purge_lookup(l);

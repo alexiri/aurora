@@ -211,26 +211,34 @@ pub async fn app_boot_for(state: &AppState, agent: &AgentRow) -> Result<AppBoot,
 /// (phase 1, RFE-003) The boot capabilities of an agent's sandbox: what the sandbox image
 /// declares (`org.aurora.capabilities`, reported by the runner at registration) ∩ `browser`
 /// unless the effective open-lane posture (strictest of instance, org, workspace) is
-/// `disabled`. The boot credential is minted with the same set.
+/// `disabled`. The boot credential is minted with the same set. (P4-TERM, C-623) `terminal`
+/// rides the same array when the operator enabled the terminal: the supervisor spawns PTYs
+/// only for a boot document that carries it (`12 §Terminal`: `pty.open` → `pty.refused
+/// { disabled }` otherwise).
 pub async fn capabilities_for(
     state: &AppState,
     agent: &AgentRow,
     caps: Option<&RunnerCapabilities>,
 ) -> Result<Vec<String>, ApiError> {
     use aurora_llm::governance::OpenLanePosture;
+    let mut out: Vec<String> = Vec::new();
     let declared: &[String] = caps.map_or(&[], |c| c.image_capabilities.as_slice());
-    if !declared.iter().any(|c| c == "browser") {
-        return Ok(vec![]);
+    if declared.iter().any(|c| c == "browser") {
+        let org = crate::domains::secrets::gov::effective_for(state, agent.org_id).await?;
+        let ws =
+            aurora_db::repo::policy::published_open_lane_posture(&state.pool, agent.workspace_id)
+                .await?;
+        // An unparsable stored posture fails closed.
+        let ws = OpenLanePosture::parse(&ws).unwrap_or(OpenLanePosture::Disabled);
+        // Strictest of org and workspace; only `disabled` removes the capability.
+        if org.open_lane.max(ws) != OpenLanePosture::Disabled {
+            out.push("browser".to_owned());
+        }
     }
-    let org = crate::domains::secrets::gov::effective_for(state, agent.org_id).await?;
-    let ws = aurora_db::repo::policy::published_open_lane_posture(&state.pool, agent.workspace_id)
-        .await?;
-    // An unparsable stored posture fails closed.
-    let ws = OpenLanePosture::parse(&ws).unwrap_or(OpenLanePosture::Disabled);
-    if org.open_lane.max(ws) == OpenLanePosture::Disabled {
-        return Ok(vec![]);
+    if state.config.terminal.enabled {
+        out.push("terminal".to_owned());
     }
-    Ok(vec!["browser".to_owned()])
+    Ok(out)
 }
 
 /// The `gateway` object of the boot document: the supervisor dials `proxy` over TLS and verifies

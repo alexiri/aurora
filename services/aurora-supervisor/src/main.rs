@@ -153,13 +153,27 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         doc.bootstrap_token.clone(),
     ));
     let streams = aurora_supervisor::streams::Streams::spawn(chan.streams);
+    // (P4-TERM, W19/C-623) The terminal PTY engine beside the stream engine: the boot
+    // document's `terminal` capability gates it (the operator's `terminal.enabled` at start
+    // time); the agent uid is the process manager's.
+    let ptys = aurora_supervisor::pty::PtyEngine::spawn(
+        chan.ptys,
+        doc.has_capability("terminal"),
+        Some(1000),
+    );
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
     cfg.pg = Some(aurora_supervisor::pgrelay::RELAY_PORT);
     cfg.tools.socket = Some(PathBuf::from(aurora_supervisor::tools::DEFAULT_SOCKET));
     if let Ok(exe) = std::env::current_exe() {
         cfg.mcp_bridge_command = vec![exe.display().to_string(), "mcp-bridge".to_owned()];
     }
-    let sup = Supervisor::new(cfg, chan.sender, adapter, (*streams).clone());
+    let sup = Supervisor::new(
+        cfg,
+        chan.sender,
+        adapter,
+        (*streams).clone(),
+        (*ptys).clone(),
+    );
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         () = sup.run(chan.inbound) => Ok(()),

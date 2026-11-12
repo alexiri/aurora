@@ -47,5 +47,6 @@ pub mod secrets;
 pub mod skill_libraries;
 pub mod skills;
 pub mod tenancy;
+pub mod terminal;
 pub mod tools;
 pub mod webhooks;
