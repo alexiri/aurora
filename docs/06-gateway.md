@@ -524,7 +524,7 @@ minted.
     it, phase 2). Bodies stream both ways (SSE-safe). Wait for
     response headers at most `UPSTREAM_HEADER_TIMEOUT` → 504
     `upstream_timeout` (never retried). Gateway-internal headers are never
-    sent upstream. (FIX-052, D-166, C-631) The relayed request never carries a
+    sent upstream. (FIX-052, D-166, C-633) The relayed request never carries a
     `Host` header: HTTP/2 hops send `:authority` only (RFC 9113 §8.3.1 — a
     strict front door such as nginx answers the forbidden pair `:authority` +
     `host` with a bare 400 before the application sees it), HTTP/1.1 hops get

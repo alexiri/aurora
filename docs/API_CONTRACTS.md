@@ -1055,16 +1055,15 @@ Rule: `05 §Agents and sandboxes`, `10 §Failure semantics`, `11 §Start readine
 
 ### FIX-050 (ownerless claim-created orgs + CONNECT-auth observability, D-165)
 
-Rule: `04 §OIDC role claims`, `06 §Credential authentication`, `05` (`/v1/admin/overview`), `14` (Admin), `03 §org_members`; decision D-165. Reserved numbers C-630..C-633. One additive optional field on `AdminOverview` (regenerate `openapi.json` on drift); refusal wire shapes unchanged.
+Rule: `04 §OIDC role claims`, `06 §Credential authentication`, `05` (`/v1/admin/overview`), `14` (Admin), `03 §org_members`; decision D-165. Reserved numbers C-630..C-632 (C-633.. renumbered to FIX-052's block, owner order 2026-11-12). One additive optional field on `AdminOverview` (regenerate `openapi.json` on drift); refusal wire shapes unchanged.
 
 - C-630 **Owner-integrity floor and observability** (FIX-050): (a) after the OIDC claim sync's org step, an organization an org-role mapping of the signing-in provider touched that ends the sign-in transaction with **no active owner** gets its syncing user promoted to `owner` — claim-derived `idp_role`/`idp_source` retained (C-514 read-only semantics unchanged), audited `member.update` (`actor_kind = service`, `actor_label = idp:<provider>`, `metadata { via: "idp_sync", reason: "ownerless_org", claim_value }`, security-critical class of C-517), inside the sign-in transaction; a suspended or absent membership of the syncing user is never promoted (logged and skipped); the existing last-owner guard protects the floor and the sync's demotion arm dissolves it once the claim grants a real owner. (b) `GET /v1/admin/overview` (IA) gains `ownerless_orgs: [{ slug, members, created_at }] | null` (additive optional; organizations with zero active owners, oldest first); the Admin dashboard warns with the remediation sentence. (c) Every CONNECT-stage auth refusal (407 classes and 403 `frozen` before lane dispatch) logs `connect_auth_refused` with `reason ∈ unknown|revoked|expired|no_active_owner|frozen|store_unavailable`, the credential kind when known and the source address — never token material or its hash — and increments `aurora_gateway_connect_refused_total{reason}`; the refusal answers themselves are byte-unchanged (`Proxy-Authenticate: Basic realm="aurora"`, C-517 audit classes untouched).
 
 ### FIX-052 (upstream hop Host/`:authority`, D-166)
 
-Rule: `06 §Per-request pipeline` step 13; decision D-166. Reserved numbers
-C-631..C-633. No API wire change (gateway-internal transport semantics).
+Rule: `06 §Per-request pipeline` step 13; decision D-166. Reserved numbers C-633..C-635 (owner order 2026-11-12: C-630..C-632 belong to FIX-050's block, which reserved them first — the two blocks' overlapping reservations were resolved by moving this block up from C-631..C-633). No API wire change (gateway-internal transport semantics).
 
-- C-631 **The upstream hop is RFC 9113-clean** (FIX-052): the gateway never
+- C-633 **The upstream hop is RFC 9113-clean** (FIX-052): the gateway never
   sends a `Host` header on a relayed request — HTTP/2 hops carry `:authority`
   only (RFC 9113 §8.3.1: a client MUST NOT send `host` alongside `:authority`;
   nginx rejects the pair with a bare 400 before the app sees it), HTTP/1.1

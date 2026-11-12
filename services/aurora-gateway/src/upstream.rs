@@ -290,7 +290,7 @@ impl Upstream {
     }
 
     /// Relays the prepared request. No `Host` header is ever set here
-    /// (FIX-052, D-166, C-631): hyper-util synthesizes `Host` on HTTP/1.1 hops
+    /// (FIX-052, D-166, C-633): hyper-util synthesizes `Host` on HTTP/1.1 hops
     /// from the URI (default ports dropped), and an HTTP/2 hop carries
     /// `:authority` only (RFC 9113 §8.3.1 — a `host` header beside it makes
     /// strict front doors such as nginx answer 400 before the app sees the

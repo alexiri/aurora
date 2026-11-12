@@ -837,7 +837,7 @@ async fn connect_tunnel_carries_inner_tls_over_the_outer_session() {
     assert_eq!(resp.status(), 200);
 }
 
-// ---- (FIX-052, D-166, C-631) the upstream hop is RFC 9113-clean ------------
+// ---- (FIX-052, D-166, C-633) the upstream hop is RFC 9113-clean ------------
 //
 // The ordinary test upstreams above are hyper servers, which *accept* a `host`
 // header beside `:authority` — that is why the forbidden pair shipped unnoticed.

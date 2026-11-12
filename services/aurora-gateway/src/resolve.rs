@@ -283,7 +283,7 @@ fn to_candidate(r: SecretMetaRow, org: Uuid, llm: &ProviderRegistry) -> Result<S
     })
 }
 
-/// (FIX-052, D-166, C-631) A generic secret whose injection targets `host` is
+/// (FIX-052, D-166, C-633) A generic secret whose injection targets `host` is
 /// refused at load: the gateway never sends a `Host` header on the upstream hop
 /// (h2 carries `:authority` only, h1 gets its `Host` synthesized from the URI),
 /// so such a recipe could not work on h2 upstreams and would re-introduce the
@@ -304,7 +304,7 @@ pub fn validate_recipe_injection(recipe: &InjectionRecipe, name: &str) -> Result
 mod tests {
     use super::*;
 
-    /// (FIX-052, D-166, C-631) A generic secret whose recipe targets `host` is
+    /// (FIX-052, D-166, C-633) A generic secret whose recipe targets `host` is
     /// refused, naming the secret; other headers pass.
     #[test]
     fn host_header_recipe_is_refused_at_load() {

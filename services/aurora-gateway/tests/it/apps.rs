@@ -938,7 +938,7 @@ async fn snapshot_loads_refuses_unknown_and_swaps_on_notify() {
     let _ = tx.send(true);
 }
 
-/// (FIX-052, D-166, C-631) A snapshot whose `inject` targets `host` is refused
+/// (FIX-052, D-166, C-633) A snapshot whose `inject` targets `host` is refused
 /// at load time, naming the app and host; the previously loaded snapshot stays.
 #[tokio::test]
 async fn snapshot_load_refuses_host_header_injection() {

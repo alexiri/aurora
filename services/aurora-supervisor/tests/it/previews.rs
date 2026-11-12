@@ -264,7 +264,7 @@ async fn share_list_is_memory_only_and_start_runs_agent_env() {
     }
     // `running` in the supervisor's process list is not listener readiness: the app can bind
     // its loopback listener a beat later, so a single-shot connect loses that race on CI
-    // (FIX-049). Retry the connect until a deadline instead.
+    // (FIX-055). Retry the connect until a deadline instead.
     let mut stream = None;
     let mut last = None;
     let bind_deadline = tokio::time::Instant::now() + T;
