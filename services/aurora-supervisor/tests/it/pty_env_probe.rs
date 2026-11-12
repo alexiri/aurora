@@ -31,10 +31,14 @@ const T: Duration = Duration::from_secs(10);
 /// process is a libtest binary, not the supervisor — the bootstrap re-exec must be the
 /// real one, which understands `pty_exec::SUBCOMMAND`).
 fn bootstrap_exe() -> std::path::PathBuf {
-    // Runtime path first (nextest sets `NEXTEST_BIN_EXE_aurora-supervisor` when running from an
-    // archive built elsewhere — CI's shard runners never compile and the compile-time path
-    // points at the build runner's checkout, hence the ENOENT "pty flake"); the compile-time
-    // fallback covers plain `cargo test` (same pattern as aurora-cli's plugin test).
+    // The path comes from nextest's runtime variable when running from an archive built
+    // elsewhere (CI's shard runners never compile), from the re-exec parent's explicit
+    // handoff (`spawn::command` scrubs the environment, so the `sh` in
+    // `pty_environment_has_no_aurora_or_boot_trace` cannot inherit nextest's variables),
+    // and from the compile-time path as the fallback for plain `cargo test`.
+    if let Some(p) = std::env::var_os("PTY_PROBE_BOOTSTRAP") {
+        return std::path::PathBuf::from(p);
+    }
     std::env::var_os("NEXTEST_BIN_EXE_aurora-supervisor")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_BIN_EXE_aurora-supervisor")))
@@ -287,9 +291,10 @@ async fn pty_environment_has_no_aurora_or_boot_trace() {
     let out = aurora_supervisor::spawn::command("sh", std::iter::empty::<(&str, &str)>())
         .args([
             "-c",
-            "AURORA_BOOT=leak-me FOO=aub_leak-me exec \"$0\" --exact pty_env_probe::inner_probe --nocapture",
+            "AURORA_BOOT=leak-me FOO=aub_leak-me PTY_PROBE_BOOTSTRAP=\"$1\" exec \"$0\" --exact pty_env_probe::inner_probe --nocapture",
         ])
         .arg(exe)
+        .arg(bootstrap_exe())
         .output()
         .unwrap();
     assert!(
