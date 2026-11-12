@@ -27,6 +27,8 @@ const REASONS: Record<string, string> = {
   open_session: "An interactive session is open",
   // (P4-PRV-1, D-145) the preview keep-awake reason.
   preview: "Preview in use",
+  // (P4-TERM, C-621) the terminal keep-awake reason.
+  terminal: "Terminal in use",
 };
 export const reasonLabel = (r: string) => REASONS[r] ?? r.replace(/_/g, " ");
 

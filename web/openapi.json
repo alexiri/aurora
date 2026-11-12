@@ -26678,7 +26678,8 @@
         "required": [
           "hosted",
           "channels",
-          "previews"
+          "previews",
+          "terminal"
         ],
         "properties": {
           "channels": {
@@ -26690,6 +26691,10 @@
           "previews": {
             "type": "boolean",
             "description": "(phase 4, P4-PRV-1) Port previews are configured on this instance."
+          },
+          "terminal": {
+            "type": "boolean",
+            "description": "(phase 4, P4-TERM, C-622) The web terminal is enabled on this instance; the Terminal\ntab exists only when this is true."
           }
         }
       },
@@ -36873,6 +36878,7 @@
           "processes",
           "ports",
           "preview_in_use",
+          "terminal_in_use",
           "restart_to_update"
         ],
         "properties": {
@@ -36969,6 +36975,10 @@
           "state": {
             "type": "string",
             "description": "unprovisioned | starting | running | stopping | stopped | failed"
+          },
+          "terminal_in_use": {
+            "type": "boolean",
+            "description": "(P4-TERM, C-621) `terminal` is among `keep_awake_reasons` while this is true\n(\"Terminal in use\"); the Terminal tab's badge."
           }
         }
       },

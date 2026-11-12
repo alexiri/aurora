@@ -30,6 +30,10 @@ pub fn router() -> OpenApiRouter<AppState> {
             "/runner/preview-streams/closed",
             axum::routing::post(preview_stream_closed),
         )
+        .route(
+            "/runner/terminal/keep-awake",
+            axum::routing::post(terminal_keep_awake),
+        )
         .route("/previews/authorize", axum::routing::get(authorize))
 }
 
@@ -99,6 +103,18 @@ async fn preview_stream_closed(
     Json(req): Json<aurora_protocol::runner::PreviewStreamClosedRequest>,
 ) -> Result<Json<RelayOkResponse>, ApiError> {
     crate::domains::runner_plane::preview_streams::closed(&s, &c.runner, req).await?;
+    Ok(Json(RelayOkResponse { ok: true }))
+}
+
+/// (P4-TERM, C-620) The runner's keep-awake stamp while a terminal session carries bytes:
+/// `now() + TERMINAL_AWAKE_GRACE` on `terminal_active_until` (the cap clock is the repo's).
+/// Accounting only; never blocks a session.
+async fn terminal_keep_awake(
+    c: crate::domains::runner_plane::RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<crate::domains::terminal::KeepAwakeRequest>,
+) -> Result<Json<RelayOkResponse>, ApiError> {
+    crate::domains::terminal::keep_awake(&s, &c.runner, req).await?;
     Ok(Json(RelayOkResponse { ok: true }))
 }
 

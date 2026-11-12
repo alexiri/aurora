@@ -67,6 +67,9 @@ pub struct SandboxView {
     /// (P4-PRV-1, D-145) `preview` is among `keep_awake_reasons` while this is true
     /// ("Preview in use").
     pub preview_in_use: bool,
+    /// (P4-TERM, C-621) `terminal` is among `keep_awake_reasons` while this is true
+    /// ("Terminal in use"); the Terminal tab's badge.
+    pub terminal_in_use: bool,
     pub restart_to_update: bool,
 }
 

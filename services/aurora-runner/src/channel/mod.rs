@@ -339,6 +339,19 @@ impl Shared {
         }
     }
 
+    /// (P4-TERM, W19) Routes one terminal data message (tag `0x02`) to the stream listener.
+    pub(crate) async fn terminal_data(
+        &self,
+        sandbox: Uuid,
+        boot: Uuid,
+        pty_id: u32,
+        payload: Vec<u8>,
+    ) {
+        if let Some(l) = self.streams.get() {
+            l.supervisor_terminal(sandbox, boot, pty_id, payload).await;
+        }
+    }
+
     /// Session for `(sandbox, boot)`. A different boot of the same sandbox replaces the old
     /// state when `replace` is set; otherwise `None` (boot currency cannot be established).
     pub(crate) fn session_for(
@@ -502,6 +515,12 @@ impl ChannelServer {
             .get(&r.sandbox_id)
             .ok_or(HubError::NotConnected)?
             .push_stream_data(data)
+    }
+
+    /// (P4-TERM, W19) Sends one binary terminal data message (tag `0x02`) on that boot's
+    /// channel — the same queues as the stream data.
+    pub async fn send_terminal_data(&self, r: &ChannelRef, data: Vec<u8>) -> Result<(), HubError> {
+        self.send_stream_data(r, data).await
     }
 }
 

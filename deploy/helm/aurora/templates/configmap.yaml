@@ -14,12 +14,15 @@
 {{- with .Values.image.registry }}{{ $sandboxImage = printf "%s/aurora-sandbox:%s" (trimSuffix "/" .) (default $.Chart.AppVersion $.Values.image.tag) }}{{ end -}}
 {{- $sandboxImage := default $sandboxImage .Values.runner.sandboxImage -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "image" (default $sandboxImage ($cfg.runner).image) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
-{{- /* (P4-PRV-2) the runner's relay-facing stream listener: opened when previews are on.
-      The value is an address (like `ops_bind`); the port is the fixed 4108. The stream
-      listener is in-cluster plaintext, so the runner advertises itself by the headless
-      Service name and registers `stream_tls: false` (the default): the API hands the relay
-      `ws://<advertised_host>:4108` (`16 §W18`). */ -}}
-{{- if .Values.relay.enabled }}{{- $_ := set $cfg.runner "stream_bind" "0.0.0.0" -}}{{- $_ := set $cfg.runner "advertised_host" (printf "%s-runner" $full) -}}{{- end -}}
+{{- /* (P4-PRV-2, P4-TERM) the runner's relay/API-facing stream listener: opened when previews
+      or the web terminal is on (the runner registers the `terminal` capability and redeems
+      `kind: "terminal"` grants on the same listener, `16 §W19`). The value is an address
+      (like `ops_bind`); the port is the fixed 4108. The stream listener is in-cluster
+      plaintext, so the runner advertises itself by the headless Service name and registers
+      `stream_tls: false` (the default): the API hands the relay/leg-1 dialer
+      `ws://<advertised_host>:4108` (`16 §W18`/`W19`). */ -}}
+{{- $terminal := get (default (dict) $cfg.terminal) "enabled" | default false -}}
+{{- if or .Values.relay.enabled $terminal }}{{- $_ := set $cfg.runner "stream_bind" "0.0.0.0" -}}{{- $_ := set $cfg.runner "advertised_host" (printf "%s-runner" $full) -}}{{- end -}}
 {{- $_ := set $cfg "connector_host" (merge (dict "api_url" (printf "http://%s-api:4101" $full) "test_types" (.Values.connectorHost.testTypes | default false)) (default (dict) $cfg.connector_host)) -}}
 {{- /* (P4-GRP-2) SCIM: the rate limit is chart-owned; `enabled` itself comes from [scim] in
       the operator's config (the chart comment points there) — the edge route follows
@@ -40,6 +43,14 @@
 {{- $_ := set $cfg "previews" $pv -}}
 {{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) -}}
 {{- $_ := set $cfg "relay" (merge $rl (default (dict) $cfg.relay)) -}}
+{{- end -}}
+{{- /* (P4-TERM) the web terminal: `terminal.enabled` IS `config.terminal.enabled` (the
+      guard refuses a partial setup, as previews). The limits ride [terminal] unchanged. */ -}}
+{{- if or .Values.terminal.enabled (get (default (dict) $cfg.terminal) "enabled") }}
+{{- if ne (default false .Values.terminal.enabled) (default false (get (default (dict) $cfg.terminal) "enabled")) }}{{ fail "terminal.enabled and config.terminal.enabled must agree: set both (terminal.enabled + config.terminal.enabled) or neither" }}{{ end -}}
+{{- $tm := default (dict) $cfg.terminal -}}
+{{- $_ := set $tm "enabled" true -}}
+{{- $_ := set $cfg "terminal" $tm -}}
 {{- end -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}

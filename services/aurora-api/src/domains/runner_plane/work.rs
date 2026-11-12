@@ -178,7 +178,9 @@ async fn compute(
             default_harness,
             free.min(ARM_LIMIT),
             start_lease_secs(hosted.sandbox_ready_timeout_secs),
-            limits::PREVIEW_WAKE_WINDOW.as_secs_f64(),
+            // (P4-TERM, C-621) The terminal wake demand shares the preview demand's window
+            // clock (both are 60 s; the API's `terminal_wake_at` is the newer stamp).
+            limits::TERMINAL_WAKE_WINDOW.as_secs_f64(),
         )
         .await?;
         if !claims.is_empty() {

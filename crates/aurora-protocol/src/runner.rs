@@ -190,6 +190,11 @@ pub struct RunnerCapabilities {
     /// (false) from older runners — matches the default off in-cluster.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stream_tls: bool,
+    /// (phase 4, P4-TERM, D-161, C-623) The runner opened :4108 for terminals too and speaks
+    /// the W19 `pty.*` frames (grant redemption `kind: "terminal"`); the API serves no
+    /// terminal route against a runner without it. Absent (false) from older runners.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub terminal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -211,6 +216,11 @@ pub struct RunnerConfig {
     /// older runners, so legacy runners never open the port.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub previews: bool,
+    /// (phase 4, P4-TERM, D-161) When true the runner must open the stream listener
+    /// :4108 for terminal grants too and speak the W19 `pty.*` frames. Absent (false)
+    /// for older runners. The listener opens when **either** flag is set (C-623).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub terminal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -540,6 +550,130 @@ impl Validate for StreamCredit {
     }
 }
 
+// ---------------------------------------------------- terminal PTY frames (W19, P4-TERM, C-619)
+
+/// Max bytes of one binary terminal-data frame payload (`TERMINAL_CHUNK`, docs/16 §W19).
+pub const TERMINAL_CHUNK_MAX: usize = limits::TERMINAL_CHUNK;
+
+/// The runner asks its supervisor to spawn the image shell in a PTY (`16 §W19` leg 2, C-619).
+/// Outside the seq/ack lineage (`seq: 0`); pty ids are allocated by the runner, increasing per
+/// channel connection. `window` is the sender's credit window (`TERMINAL_STREAM_WINDOW`);
+/// `cols`/`rows` seed the PTY's `TIOCSWINSZ`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PtyOpen {
+    pub pty_id: u32,
+    pub window: u32,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// The supervisor accepted a PTY; `window` is its own credit window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PtyOpened {
+    pub pty_id: u32,
+    pub window: u32,
+}
+
+/// The supervisor refused a PTY (`16 §W19`): the terminal feature is off there (`disabled`),
+/// a `TERMINALS_PER_SANDBOX` limit hit (`limit`) or the spawn failed (`error`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PtyRefused {
+    pub pty_id: u32,
+    pub reason: PtyRefuseReason,
+}
+
+open_vocab! {
+    /// Why a supervisor refused a PTY (`16 §W19`).
+    pub enum PtyRefuseReason {
+        Disabled = "disabled",
+        Limit = "limit",
+        Error = "error",
+    }
+}
+
+/// The runner re-sizes a PTY: `TIOCSWINSZ` on the supervisor side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PtyResize {
+    pub pty_id: u32,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// Credit returned after bytes were written onward (the W18 shape, per PTY).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PtyCredit {
+    pub pty_id: u32,
+    pub bytes: u32,
+}
+
+/// A PTY session ended. Outside the seq/ack lineage; byte counts are informational (metrics
+/// only, never logged).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PtyClose {
+    pub pty_id: u32,
+    pub reason: PtyCloseReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_in: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_out: Option<u64>,
+}
+
+open_vocab! {
+    /// Why a PTY session ended (`16 §W19`).
+    pub enum PtyCloseReason {
+        Eof = "eof",
+        /// The shell exited while the leg was open (the child hung up).
+        Hangup = "hangup",
+        Idle = "idle",
+        Lifetime = "lifetime",
+        ChannelLost = "channel_lost",
+        /// A protocol violation (over-window data, unknown id, double open) closed the PTY.
+        Error = "error",
+    }
+}
+
+impl Validate for PtyOpen {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.window == 0 {
+            return Err(ValidationError::Invalid {
+                field: "window",
+                reason: "must be greater than zero",
+            });
+        }
+        if self.cols == 0 || self.rows == 0 {
+            return Err(ValidationError::Invalid {
+                field: "cols/rows",
+                reason: "must be greater than zero",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for PtyResize {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.cols == 0 || self.rows == 0 {
+            return Err(ValidationError::Invalid {
+                field: "cols/rows",
+                reason: "must be greater than zero",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for PtyCredit {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.bytes == 0 {
+            return Err(ValidationError::Invalid {
+                field: "bytes",
+                reason: "must be greater than zero",
+            });
+        }
+        Ok(())
+    }
+}
+
 // ------------------------------------------------ runner plane: preview-stream grants (W17)
 
 /// (phase 4, P4-PRV-2, D-147) `POST /v1/runner/preview-streams/open`: the runner redeems one
@@ -565,7 +699,7 @@ pub struct PreviewStreamOpenResponse {
     /// Present for a port grant, absent for a terminal grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share_id: Option<Uuid>,
-    /// The credit window of each direction (`PREVIEW_STREAM_WINDOW`).
+    /// The credit window of each direction (`PREVIEW_STREAM_WINDOW` / `TERMINAL_STREAM_WINDOW`).
     pub window: u32,
     /// Idle timeout of the leg-1 stream (`PREVIEW_IDLE_TIMEOUT` / the WS one after upgrade).
     pub idle_secs: u32,

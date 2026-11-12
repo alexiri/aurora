@@ -78,7 +78,7 @@ aurora-hookhost = { path = "services/aurora-hookhost" }
 
 # runtime / http
 tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util", "fs", "process"] }
-axum = { version = "0.8", features = ["macros", "multipart"] }
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 tower = { version = "0.5", features = ["util", "timeout", "limit"] }
 tower-http = { version = "0.6", features = ["trace", "request-id", "limit", "timeout", "sensitive-headers"] }
 hyper = { version = "1.8", features = ["full"] }
@@ -141,7 +141,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 base64 = "0.22"
 crc32fast = "1"
 hex = "0.4"
-rustix = { version = "1", default-features = false, features = ["std", "process"] }
+rustix = { version = "1", default-features = false, features = ["std", "process", "pty", "termios", "fs"] }
 
 # observability / errors / cli
 tracing = "0.1"

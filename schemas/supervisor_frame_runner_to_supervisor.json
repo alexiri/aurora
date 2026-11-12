@@ -280,6 +280,126 @@
       ],
       "type": "object"
     },
+    "PtyClose": {
+      "description": "A PTY session ended. Outside the seq/ack lineage; byte counts are informational (metrics\nonly, never logged).",
+      "properties": {
+        "bytes_in": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes_out": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/PtyCloseReason"
+        }
+      },
+      "required": [
+        "pty_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "PtyCloseReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "PtyCredit": {
+      "description": "Credit returned after bytes were written onward (the W18 shape, per PTY).",
+      "properties": {
+        "bytes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "PtyOpen": {
+      "description": "The runner asks its supervisor to spawn the image shell in a PTY (`16 §W19` leg 2, C-619).\nOutside the seq/ack lineage (`seq: 0`); pty ids are allocated by the runner, increasing per\nchannel connection. `window` is the sender's credit window (`TERMINAL_STREAM_WINDOW`);\n`cols`/`rows` seed the PTY's `TIOCSWINSZ`.",
+      "properties": {
+        "cols": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id",
+        "window",
+        "cols",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "PtyResize": {
+      "description": "The runner re-sizes a PTY: `TIOCSWINSZ` on the supervisor side.",
+      "properties": {
+        "cols": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id",
+        "cols",
+        "rows"
+      ],
+      "type": "object"
+    },
     "Recall": {
       "properties": {
         "index": {
@@ -923,6 +1043,62 @@
         },
         "kind": {
           "const": "stream.close"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyOpen"
+        },
+        "kind": {
+          "const": "pty.open"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyResize"
+        },
+        "kind": {
+          "const": "pty.resize"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyCredit"
+        },
+        "kind": {
+          "const": "pty.credit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PtyClose"
+        },
+        "kind": {
+          "const": "pty.close"
         }
       },
       "required": [

@@ -28,10 +28,11 @@ import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
+import { TerminalTab } from "./terminal-tab";
 import { useInstance, useOrg } from "@/lib/api/queries";
 
-type AgentTab = "chat" | "instructions" | "access" | "connect" | "computer" | "previews" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels";
-const AGENT_TABS: readonly AgentTab[] = ["chat", "instructions", "access", "connect", "computer", "previews", "memory", "skills", "schedules", "webhooks", "peers", "channels"];
+type AgentTab = "chat" | "instructions" | "access" | "connect" | "computer" | "previews" | "terminal" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels";
+const AGENT_TABS: readonly AgentTab[] = ["chat", "instructions", "access", "connect", "computer", "previews", "terminal", "memory", "skills", "schedules", "webhooks", "peers", "channels"];
 
 /** Sandbox state of a hosted agent (existing sandbox endpoint); hidden while unknown or on error. */
 function SandboxPill({ agentId }: { agentId: string }) {
@@ -66,6 +67,10 @@ export function AgentPage() {
   const instance = useInstance();
   const orgQ = useOrg(resolved.data?.org.id);
   const previewsEnabled = instance.data?.features.previews === true && orgQ.data?.settings.previews_enabled === true;
+  // (P4-TERM, C-622) The Terminal tab exists only for hosted agents while the instance's
+  // `terminal.enabled` is on. `can_use` is the tab's own authority (the API re-checks it on
+  // every open; a caller without it gets 403/404 there and this tab's notices say so).
+  const terminalEnabled = instance.data?.features.terminal === true;
   // A deep link to a conversation (`?c=<id>`, D-102) opens the Chat tab. `?tab=` selects a tab (C-506: the chat error links use `?tab=access` and `?tab=instructions`); an unknown or
   // unavailable value (a BYO agent has no Chat) falls back to Instructions.
   const [requestedTab, setTab] = useTabParam<AgentTab>(AGENT_TABS, "instructions", {
@@ -93,6 +98,7 @@ export function AgentPage() {
           { id: "peers" as const, label: "Peers" },
           { id: "channels" as const, label: "Channels" },
           ...(previewsEnabled ? [{ id: "previews" as const, label: "Previews" }] : []),
+          ...(terminalEnabled ? [{ id: "terminal" as const, label: "Terminal" }] : []),
         ]),
     { id: "access" as const, label: "Access" },
     ...(byo
@@ -159,6 +165,9 @@ export function AgentPage() {
         ) : null}
         {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
         {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} /> : null}
+        {tab === "terminal" && !byo && terminalEnabled ? (
+          <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} />
+        ) : null}
         {tab === "previews" && !byo ? (
           <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} />
         ) : null}

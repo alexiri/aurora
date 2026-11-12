@@ -303,6 +303,7 @@ async fn rig() -> Rig {
         ChannelSender::from_mpsc(out_tx),
         Arc::new(Recording(seen.clone())),
         aurora_supervisor::streams::StreamsHandle::noop(),
+        aurora_supervisor::pty::PtyHandle::noop(),
     );
     tokio::spawn(sup.run(in_rx));
     let mut rig = Rig {

@@ -212,6 +212,8 @@ pub struct ApiConfig {
     pub scim: ScimConfig,
     /// (phase 4, P4-PRV-1) validated `[previews]` (off means inert; on requires a domain).
     pub previews: PreviewsSection,
+    /// (phase 4, P4-TERM, D-161) validated `[terminal]` (off means every route 404s).
+    pub terminal: TerminalSection,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
@@ -329,6 +331,9 @@ pub struct RunnerConfig {
     pub orphan_reap: OrphanReap,
     pub held_awake_ceiling: u32,
     pub runner: RunnerSection,
+    /// (P4-TERM, C-623) validated `[terminal]`: the master switch decides whether this
+    /// runner advertises the `terminal` capability at registration.
+    pub terminal: TerminalSection,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
 }
@@ -510,6 +515,22 @@ impl RawConfig {
         }
 
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
+        // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
+        // `aurora_core::limits`.
+        if self.terminal.awake_cap_secs == 0
+            || self.terminal.awake_cap_secs > self.hosted.background_cap_secs
+        {
+            c.err(
+                "terminal.awake_cap_secs",
+                "must be greater than 0 and at most hosted.background_cap_secs",
+            );
+        }
+        if self.terminal.wake_window_secs == 0 {
+            c.err("terminal.wake_window_secs", "must be greater than 0");
+        }
+        if self.terminal.wake_wait_secs == 0 {
+            c.err("terminal.wake_wait_secs", "must be greater than 0");
+        }
         if self.plugins.dir.is_empty() {
             c.err("plugins.dir", "must not be empty");
         }
@@ -628,6 +649,7 @@ impl RawConfig {
                 token_max_days: self.scim.token_max_days,
             },
             previews,
+            terminal: self.terminal.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
             attachments: self.attachments.clone(),
@@ -865,6 +887,7 @@ impl RawConfig {
                 .held_awake_ceiling
                 .unwrap_or_else(|| r.max_sandboxes.saturating_sub(1).max(1)),
             runner: r.clone(),
+            terminal: self.terminal.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })

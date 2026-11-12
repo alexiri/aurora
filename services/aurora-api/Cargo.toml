@@ -44,6 +44,7 @@ utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
 uuid = { workspace = true }
 futures = { workspace = true }
+tokio-tungstenite = { workspace = true }
 lettre = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }

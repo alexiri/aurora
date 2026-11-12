@@ -274,6 +274,21 @@ impl ApiClient {
             .await;
     }
 
+    /// (P4-TERM, C-620) The keep-awake stamp of a byte-carrying terminal session: refreshes
+    /// `sandboxes.terminal_active_until` (`now() + TERMINAL_AWAKE_GRACE`, cap clock intact).
+    /// Best effort; the runner sends at most one per grace per sandbox.
+    pub async fn terminal_keep_awake(&self, sandbox: Uuid) {
+        let body = serde_json::json!({ "sandbox_id": sandbox });
+        let _ = self
+            .once::<_, serde_json::Value>(
+                Method::POST,
+                "/runner/terminal/keep-awake",
+                Some(&body),
+                Some(PREVIEW_HTTP_TIMEOUT),
+            )
+            .await;
+    }
+
     /// Single attempt: tool calls are not idempotent.
     pub async fn tool_call(&self, call: &ToolCall) -> Result<ToolResult, ApiError> {
         let t = aurora_core::limits::TOOL_CALL_TIMEOUT + Duration::from_secs(5);

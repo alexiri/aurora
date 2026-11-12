@@ -273,6 +273,17 @@ relay:
   max_streams: 2048
   max_streams_per_user: 64
 
+# Web terminal (P4-TERM, D-161, docs/15 §Web terminal operations): the dashboard's Terminal
+# tab — a wterm pane over the API's same-origin WebSocket (`/v1/agents/{agent}/terminal`),
+# bridged to a PTY in the sandbox through the runner's stream listener :4108 (C-616..C-619).
+# There is no new workload: turning it on (a) renders `config.terminal.enabled = true`,
+# (b) opens the runner's :4108 stream listener beside previews (either switch opens it), and
+# (c) renders the NetworkPolicy flows api -> runner:4108 (leg 1) and, beside previews,
+# relay/api -> runner:4108. While off, the API answers 404 terminal_disabled and nothing
+# about the chart changes.
+terminal:
+  enabled: false          # mirrors config.terminal.enabled; both must agree (the guard checks)
+
 # Plugin packages (`*.aurora-plugin`) for the api pods (docs/15 §Production). The api scans
 # `plugins.dir` at startup and every 60 s. The chart never writes to the packages.
 plugins:

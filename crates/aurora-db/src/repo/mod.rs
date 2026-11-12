@@ -60,6 +60,7 @@ pub mod sessions;
 pub mod skill_libraries;
 pub mod skills;
 pub mod space_bindings;
+pub mod terminal_grants;
 pub mod thread_links;
 pub mod tool_identity;
 pub mod transcript;

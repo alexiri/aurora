@@ -295,7 +295,7 @@ export async function mockApi(
     if (p === "/v1/instance") {
       return json({
         version: "0.1.0", signup_mode: "closed", setup_errors: [],
-        features: { hosted: true, previews: true },
+        features: { hosted: true, previews: true, terminal: true },
         previews: { enabled: true, domain: "previews.example.org" },
         oidc_providers: [{ id: "corp", display_name: "Corporate SSO", groups: true }],
       });

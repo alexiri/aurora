@@ -47,10 +47,12 @@ pub enum TokenPrefix {
     PreviewSession,
     /// Preview stream grant (P4-PRV-2).
     PreviewStream,
+    /// Web-terminal stream grant (P4-TERM, C-618).
+    TerminalStream,
 }
 
 impl TokenPrefix {
-    pub const ALL: [TokenPrefix; 17] = [
+    pub const ALL: [TokenPrefix; 18] = [
         Self::Gateway,
         Self::Boot,
         Self::Context,
@@ -68,6 +70,7 @@ impl TokenPrefix {
         Self::Relay,
         Self::PreviewSession,
         Self::PreviewStream,
+        Self::TerminalStream,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -89,6 +92,7 @@ impl TokenPrefix {
             Self::Relay => "aul_",
             Self::PreviewSession => "auv_",
             Self::PreviewStream => "aux_",
+            Self::TerminalStream => "auy_",
         }
     }
 }

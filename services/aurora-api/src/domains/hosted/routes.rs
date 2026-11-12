@@ -105,6 +105,7 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
             processes: vec![],
             ports: vec![],
             preview_in_use: false,
+            terminal_in_use: false,
             restart_to_update: false,
         });
     };
@@ -122,6 +123,10 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
     }
     if r.armed_watch {
         reasons.push("watch".to_owned());
+    }
+    // (P4-TERM, C-621) Keep-awake reason `terminal`: a session's bytes within the grace.
+    if r.terminal_in_use {
+        reasons.push("terminal".to_owned());
     }
     // The image is whatever the owning runner advertised (`runner.image`).
     let runner_caps = if running {
@@ -217,6 +222,7 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
             })
             .collect(),
         preview_in_use: r.preview_in_use,
+        terminal_in_use: r.terminal_in_use,
         restart_to_update,
     })
 }

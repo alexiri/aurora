@@ -807,7 +807,10 @@
       "start_progress_at",
       "state",
       "stop_reason",
-      "stop_requested_at"
+      "stop_requested_at",
+      "terminal_active_until",
+      "terminal_awake_since",
+      "terminal_wake_at"
     ],
     "schedule_runs": [
       "fired_at",
@@ -972,6 +975,16 @@
       "listen",
       "space_label",
       "space_ref"
+    ],
+    "terminal_stream_grants": [
+      "agent_id",
+      "boot_id",
+      "consumed_at",
+      "expires_at",
+      "grant_hash",
+      "granted_by",
+      "id",
+      "sandbox_id"
     ],
     "thread_links": [
       "agent_id",

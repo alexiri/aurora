@@ -118,6 +118,9 @@ pub struct Supervisor {
     /// (P4-PRV-2, D-147) The preview byte-stream engine (`16 §W18`): the allow-list is this
     /// share list, never the port discovery.
     streams: crate::streams::StreamsHandle,
+    /// (P4-TERM, D-161) The terminal PTY engine (`16 §W19`): gated on the boot document's
+    /// `terminal` capability.
+    ptys: crate::pty::PtyHandle,
     /// (P4-PRV-2) Last reported listening loopback ports (`ports.state`); sent only on change.
     reported_ports: BTreeSet<u16>,
 }
@@ -187,6 +190,7 @@ impl Supervisor {
         out: ChannelSender,
         adapter: Arc<dyn HarnessAdapter>,
         streams: crate::streams::StreamsHandle,
+        ptys: crate::pty::PtyHandle,
     ) -> Self {
         let caps = adapter.capabilities();
         let home = Arc::new(StdMutex::new(HomeCtl {
@@ -229,6 +233,7 @@ impl Supervisor {
             purge_lookup: Arc::new(crate::adapters::adapter_for),
             preview_shares: HashMap::new(),
             streams,
+            ptys,
             reported_ports: BTreeSet::new(),
         }
     }
@@ -393,6 +398,20 @@ impl Supervisor {
             }
             RunnerToSupervisor::StreamClose(c) => {
                 let _ = self.streams.stream_closed(c.stream_id).await;
+            }
+            // (P4-TERM, W19) PTY frames beside the streams; a sequenced one is honoured only
+            // from a test harness, like the stream frames.
+            RunnerToSupervisor::PtyOpen(o) => {
+                let _ = self.ptys.pty_open(o).await;
+            }
+            RunnerToSupervisor::PtyResize(r) => {
+                let _ = self.ptys.resize(r.pty_id, r.cols, r.rows).await;
+            }
+            RunnerToSupervisor::PtyCredit(c) => {
+                let _ = self.ptys.credit(c.pty_id, c.bytes).await;
+            }
+            RunnerToSupervisor::PtyClose(c) => {
+                let _ = self.ptys.pty_closed(c.pty_id).await;
             }
             RunnerToSupervisor::MemoryWriteResult(r) => {
                 if !r.ok

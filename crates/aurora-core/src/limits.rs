@@ -307,6 +307,38 @@ pub const PREVIEW_API_RATE: u32 = 100;
 /// grant redemptions per minute per client address (and per share) at the relay.
 pub const PREVIEW_GRANT_RATE: u32 = 30;
 
+// Web terminal (phase 4, P4-TERM, D-161, SEC-87; docs/02 §Limits, docs/16 §W19,
+// docs/11 §Web terminal).
+/// single-use terminal stream grant (`auy_`, redeemed by the API at the runner).
+pub const TERMINAL_GRANT_TTL: Duration = Duration::from_secs(30);
+/// max bytes of one terminal data chunk (tag `0x02`).
+pub const TERMINAL_CHUNK: usize = 16 * KIB;
+/// credit window per direction per PTY; a chunk never exceeds `TERMINAL_CHUNK`.
+pub const TERMINAL_STREAM_WINDOW: usize = 128 * KIB;
+/// concurrent terminal sessions per sandbox / per agent / per user (per API replica).
+pub const TERMINALS_PER_SANDBOX: u32 = 2;
+pub const TERMINALS_PER_AGENT: u32 = 4;
+pub const TERMINALS_PER_USER: u32 = 2;
+/// idle timeout of an open terminal session (a WebSocket ping counts).
+pub const TERMINAL_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+/// total life of one terminal session.
+pub const TERMINAL_MAX_LIFETIME: Duration = Duration::from_secs(4 * 3600);
+/// each keep-awake stamp of a byte-carrying session refreshes `terminal_active_until` by this much.
+pub const TERMINAL_AWAKE_GRACE: Duration = Duration::from_secs(120);
+/// the keep-awake reason `terminal` ends this long after the boot's first session byte
+/// (`terminal_awake_since`).
+pub const TERMINAL_AWAKE_CAP: Duration = Duration::from_secs(4 * 3600);
+/// a terminal wake demand stays due work for this long (the start arm).
+pub const TERMINAL_WAKE_WINDOW: Duration = Duration::from_secs(60);
+/// how long the WebSocket upgrade may wait for a waking sandbox.
+pub const TERMINAL_WAKE_WAIT: Duration = Duration::from_secs(45);
+/// wakes per agent per hour; beyond it 429.
+pub const TERMINAL_WAKES_PER_AGENT_HOUR: u32 = 12;
+/// revocation cache: freeze/disable closes sessions within this (mirroring previews).
+pub const TERMINAL_AUTH_CACHE: Duration = Duration::from_secs(15);
+/// the `pty.open` round trip to the supervisor (an older supervisor answers nothing → 4502).
+pub const TERMINAL_PTY_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +375,21 @@ mod tests {
         assert_eq!(PREVIEW_REQUEST_BODY_MAX, 104_857_600);
         assert_eq!(PREVIEW_BYTES_PER_SHARE_DAY, 5 * 1024 * 1024 * 1024);
         assert_eq!(PREVIEW_API_RATE, 100);
+        assert_eq!(TERMINAL_GRANT_TTL, Duration::from_secs(30));
+        assert_eq!(TERMINAL_CHUNK, 16_384);
+        assert_eq!(TERMINAL_STREAM_WINDOW, 131_072);
+        assert_eq!(TERMINALS_PER_SANDBOX, 2);
+        assert_eq!(TERMINALS_PER_AGENT, 4);
+        assert_eq!(TERMINALS_PER_USER, 2);
+        assert_eq!(TERMINAL_IDLE_TIMEOUT, Duration::from_secs(600));
+        assert_eq!(TERMINAL_MAX_LIFETIME, Duration::from_secs(14_400));
+        assert_eq!(TERMINAL_AWAKE_GRACE, Duration::from_secs(120));
+        assert_eq!(TERMINAL_AWAKE_CAP, Duration::from_secs(4 * 3600));
+        assert_eq!(TERMINAL_WAKE_WINDOW, Duration::from_secs(60));
+        assert_eq!(TERMINAL_WAKE_WAIT, Duration::from_secs(45));
+        assert_eq!(TERMINAL_WAKES_PER_AGENT_HOUR, 12);
+        assert_eq!(TERMINAL_AUTH_CACHE, Duration::from_secs(15));
+        assert_eq!(TERMINAL_PTY_OPEN_TIMEOUT, Duration::from_secs(5));
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
         const { assert!(CONDITION_BODY_BUFFER <= CONDITION_BODY_BUFFER_MAX) };
     }

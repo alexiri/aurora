@@ -457,6 +457,9 @@ impl Backend for PodmanBackend {
             // (P4-PRV-2, `16 §W18`) Whether the stream listener speaks TLS; set by the runner
             // at registration from `runner.stream_tls` (the API derives the dial scheme).
             stream_tls: false,
+            // (P4-TERM, C-623) Terminals are an operator/api decision, resolved at
+            // registration from the answered `terminal` config flag.
+            terminal: false,
         }
     }
 

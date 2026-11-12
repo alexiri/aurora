@@ -4,6 +4,7 @@
 //! `closed` call is accounting only (bytes are never logged).
 use crate::app::AppState;
 use crate::domains::previews::service as previews;
+use crate::domains::terminal::service as terminal;
 use aurora_core::limits::{
     PREVIEW_STREAM_LIFETIME, PREVIEW_STREAM_WINDOW, PREVIEW_WS_IDLE_TIMEOUT,
 };
@@ -49,17 +50,21 @@ pub fn runner_endpoint_of(advertised_host: &str, tls: bool) -> String {
 
 /// `POST /v1/runner/preview-streams/open`: consume the grant (single use, ≤ 30 s) and return
 /// its binding. 403 `grant_invalid`; 409 `not_current` (boot not current, share paused, agent
-/// frozen, previews off, or the answering runner does not hold the channel).
+/// frozen, previews off, or the answering runner does not hold the channel). A terminal grant
+/// (`kind: "terminal"`, P4-TERM C-617) redeems from `terminal_stream_grants`: the answer
+/// carries no port and no share, only the sandbox/boot binding and the terminal window.
 pub async fn open(
     s: &AppState,
     runner: &runners::RunnerRow,
     req: PreviewStreamOpenRequest,
 ) -> Result<PreviewStreamOpenResponse, ApiError> {
-    previews::ensure_enabled(s)?;
-    // Only `port` is in scope for this task (P4-TERM adds `terminal`).
+    // (P4-TERM, C-617) The kind rides the grant prefix at the runner (`aux_` → port,
+    // `auy_` → terminal); an explicit `kind: "terminal"` from an older-API-shaped client
+    // without the prefix is refused below (its grant cannot be a terminal grant).
     if matches!(req.kind.as_deref(), Some("terminal")) {
-        return Err(grant_invalid());
+        return terminal::open(s, runner, req).await;
     }
+    previews::ensure_enabled(s)?;
     let row = relay_repo::consume_stream_grant(&s.pool, &token::hash(req.grant.expose()))
         .await?
         .ok_or_else(grant_invalid)?;

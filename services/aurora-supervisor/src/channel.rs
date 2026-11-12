@@ -12,6 +12,9 @@
 //! data (`[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`). Stream traffic moves over its
 //! own queues ([`StreamSender`] out, [`StreamEnds`] in); the [`StreamEnds::epoch`] watch bumps
 //! on every connection (re)establishment and every drop: a change ends every stream.
+//! (P4-TERM, `16 §W19`) Terminal PTYs ride the same conventions beside the streams:
+//! `pty.*` text frames and binary data `[0x02][pty_id: u32 BE][payload ≤ TERMINAL_CHUNK]`,
+//! over [`PtyEnds`] with the same epoch semantics — a change ends every PTY too.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -83,6 +86,11 @@ impl ChannelSender {
 }
 
 impl StreamSender {
+    /// A sender over an existing queue (tests build `PtyEnds`/`StreamEnds` by hand).
+    pub fn from_mpsc(tx: mpsc::Sender<StreamOut>) -> Self {
+        Self(tx)
+    }
+
     pub async fn send(&self, out: StreamOut) -> Result<(), ChannelClosed> {
         self.0.send(out).await.map_err(|_| ChannelClosed)
     }
@@ -96,6 +104,8 @@ pub struct Channel {
     pub task: JoinHandle<Result<(), ChannelError>>,
     /// (P4-PRV-2, W18) Preview-stream traffic, outside the seq/ack lineage.
     pub streams: StreamEnds,
+    /// (P4-TERM, W19) Terminal PTY traffic, the same conventions beside the streams.
+    pub ptys: PtyEnds,
 }
 
 pub fn spawn(cfg: ChannelConfig) -> Channel {
@@ -103,7 +113,10 @@ pub fn spawn(cfg: ChannelConfig) -> Channel {
     let (in_tx, in_rx) = mpsc::channel(256);
     let (stream_out_tx, stream_out_rx) = mpsc::channel(1024);
     let (stream_in_tx, stream_in_rx) = mpsc::unbounded_channel();
+    let (pty_out_tx, pty_out_rx) = mpsc::channel(1024);
+    let (pty_in_tx, pty_in_rx) = mpsc::unbounded_channel();
     let (epoch_tx, epoch_rx) = watch::channel(0u64);
+    let (pty_epoch_tx, pty_epoch_rx) = watch::channel(0u64);
     let task = tokio::spawn(run(
         cfg,
         out_rx,
@@ -111,6 +124,9 @@ pub fn spawn(cfg: ChannelConfig) -> Channel {
         stream_out_rx,
         stream_in_tx,
         epoch_tx,
+        pty_out_rx,
+        pty_in_tx,
+        pty_epoch_tx,
     ));
     Channel {
         sender: ChannelSender(out_tx),
@@ -120,6 +136,11 @@ pub fn spawn(cfg: ChannelConfig) -> Channel {
             sender: StreamSender(stream_out_tx),
             inbound: stream_in_rx,
             epoch: epoch_rx,
+        },
+        ptys: PtyEnds {
+            sender: StreamSender(pty_out_tx),
+            inbound: pty_in_rx,
+            epoch: pty_epoch_rx,
         },
     }
 }
@@ -151,6 +172,16 @@ pub struct StreamEnds {
     pub epoch: watch::Receiver<u64>,
 }
 
+/// The receiving side of the terminal-PTY channel, owned by the PTY engine (P4-TERM, W19).
+/// Same shape and epoch semantics as [`StreamEnds`].
+pub struct PtyEnds {
+    pub sender: StreamSender,
+    /// Binary data and `pty.*` frames from the runner (validated, unsequenced).
+    pub inbound: mpsc::UnboundedReceiver<PtyIn>,
+    /// Bumps on every connection established and every drop; a change ends every PTY.
+    pub epoch: watch::Receiver<u64>,
+}
+
 /// One validated, unsequenced stream message from the runner.
 #[derive(Debug)]
 pub enum StreamIn {
@@ -159,6 +190,17 @@ pub enum StreamIn {
     /// Binary data; `stream_id` from the header, payload ≤ `PREVIEW_CHUNK`.
     Data { stream_id: u32, payload: Vec<u8> },
     /// The connection dropped (or a new one was admitted): every stream ends.
+    Reset,
+}
+
+/// One validated, unsequenced terminal message from the runner (P4-TERM, W19).
+#[derive(Debug)]
+pub enum PtyIn {
+    /// A decoded `pty.*` control frame.
+    Frame(RunnerToSupervisor),
+    /// Binary data; `pty_id` from the header, payload ≤ `TERMINAL_CHUNK`.
+    Data { pty_id: u32, payload: Vec<u8> },
+    /// The connection dropped (or a new one was admitted): every PTY ends.
     Reset,
 }
 
@@ -192,6 +234,8 @@ enum Outcome {
     Done,
 }
 
+// (P4-TERM) The pty ends ride beside the stream ends; the params mirror `spawn`'s wiring.
+#[allow(clippy::too_many_arguments)]
 async fn run(
     cfg: ChannelConfig,
     mut out_rx: mpsc::Receiver<SupervisorToRunner>,
@@ -199,6 +243,9 @@ async fn run(
     mut stream_rx: mpsc::Receiver<StreamOut>,
     stream_tx: mpsc::UnboundedSender<StreamIn>,
     epoch_tx: watch::Sender<u64>,
+    mut pty_rx: mpsc::Receiver<StreamOut>,
+    pty_tx: mpsc::UnboundedSender<PtyIn>,
+    pty_epoch_tx: watch::Sender<u64>,
 ) -> Result<(), ChannelError> {
     let mut st = State {
         next_seq: 1,
@@ -214,10 +261,14 @@ async fn run(
             &mut stream_rx,
             &stream_tx,
             &epoch_tx,
+            &mut pty_rx,
+            &pty_tx,
+            &pty_epoch_tx,
         )
         .await;
-        // A connection change ends every stream (`16 §W18`).
+        // A connection change ends every stream and every PTY (`16 §W18`, `16 §W19`).
         let _ = stream_tx.send(StreamIn::Reset);
+        let _ = pty_tx.send(PtyIn::Reset);
         match res {
             Outcome::Done => return Ok(()),
             Outcome::Fatal(e) => return Err(e),
@@ -259,6 +310,7 @@ fn encode(st: &State, seq: u64, msg: SupervisorToRunner) -> Option<String> {
     serde_json::to_string(&frame).ok()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn connection(
     cfg: &ChannelConfig,
     st: &mut State,
@@ -267,6 +319,9 @@ async fn connection(
     stream_rx: &mut mpsc::Receiver<StreamOut>,
     stream_tx: &mpsc::UnboundedSender<StreamIn>,
     epoch_tx: &watch::Sender<u64>,
+    pty_rx: &mut mpsc::Receiver<StreamOut>,
+    pty_tx: &mpsc::UnboundedSender<PtyIn>,
+    pty_epoch_tx: &watch::Sender<u64>,
 ) -> Outcome {
     let no = Outcome::Reconnect {
         was_welcomed: false,
@@ -325,41 +380,57 @@ async fn connection(
     let mut ack_timer = interval(cfg.ack_interval);
     let mut ping_timer = interval(cfg.ping_interval);
     let mut last_rx = Instant::now();
-    // (P4-PRV-2, W18) Stream traffic bumps the epoch when the connection is up.
+    // (P4-PRV-2, W18; P4-TERM, W19) Stream/PTY traffic bumps the epoch when the connection
+    // is up.
     epoch_tx.send_modify(|e| *e += 1);
+    pty_epoch_tx.send_modify(|e| *e += 1);
     loop {
         tokio::select! {
             msg = ws.next() => {
                 last_rx = Instant::now();
                 match msg {
                     Some(Ok(Message::Text(t))) => {
-                        // (P4-PRV-2, W18) `stream.*` frames are outside the seq/ack lineage: they
-                        // carry `seq: 0, ack: 0`, are never acked and never replayed. Routing is
-                        // by the decoded `kind`, not a substring guess.
-                        let is_stream = serde_json::from_str::<serde_json::Value>(t.as_str())
+                        // (P4-PRV-2, W18; P4-TERM, W19) `stream.*`/`pty.*` frames are outside
+                        // the seq/ack lineage: they carry `seq: 0, ack: 0`, are never acked
+                        // and never replayed. Routing is by the decoded `kind`, not a
+                        // substring guess.
+                        let unsequenced = serde_json::from_str::<serde_json::Value>(t.as_str())
                             .ok()
                             .and_then(|v| {
                                 v.get("kind")
                                     .and_then(|k| k.as_str())
-                                    .map(|k| k.starts_with("stream."))
+                                    .map(|k| k.starts_with("stream.") || k.starts_with("pty."))
                             })
                             .unwrap_or(false);
-                        if is_stream {
+                        if unsequenced {
+                            let is_pty = serde_json::from_str::<serde_json::Value>(t.as_str())
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("kind").and_then(|k| k.as_str())
+                                        .map(|k| k.starts_with("pty."))
+                                })
+                                .unwrap_or(false);
                             match serde_json::from_str::<Frame<RunnerToSupervisor>>(t.as_str()) {
                                 Ok(f) if f.seq == 0 => {
                                     if let Err(e) = f.msg.validate() {
-                                        tracing::warn!(error = %e, "invalid stream frame dropped");
+                                        tracing::warn!(error = %e, "invalid unsequenced frame dropped");
+                                    } else if is_pty {
+                                        if pty_tx.send(PtyIn::Frame(f.msg)).is_err() {
+                                            return Outcome::Done;
+                                        }
                                     } else if stream_tx.send(StreamIn::Frame(f.msg)).is_err() {
                                         return Outcome::Done;
                                     }
                                 }
                                 Ok(_) => {
                                     return Outcome::Fatal(ChannelError::Protocol(
-                                        "stream frame outside seq 0",
+                                        "unsequenced frame outside seq 0",
                                     ));
                                 }
                                 Err(_) => {
-                                    return Outcome::Fatal(ChannelError::Protocol("bad stream frame"));
+                                    return Outcome::Fatal(ChannelError::Protocol(
+                                        "bad unsequenced frame",
+                                    ));
                                 }
                             }
                             continue;
@@ -392,10 +463,11 @@ async fn connection(
                         }
                     }
                     Some(Ok(Message::Binary(b))) => {
-                        // (W18) `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`; a bad header
-                        // or oversize payload is a protocol violation.
-                        match decode_stream_binary(&b) {
-                            Ok((id, payload)) => {
+                        // (W18) `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`;
+                        // (P4-TERM, W19) `[0x02][pty_id BE][payload ≤ TERMINAL_CHUNK]`. A bad
+                        // header or oversize payload is dropped (a debug line, never content).
+                        match decode_binary_data(&b) {
+                            Ok(SideData::Stream { id, payload }) => {
                                 if stream_tx
                                     .send(StreamIn::Data {
                                         stream_id: id,
@@ -406,8 +478,19 @@ async fn connection(
                                     return Outcome::Done;
                                 }
                             }
+                            Ok(SideData::Pty { id, payload }) => {
+                                if pty_tx
+                                    .send(PtyIn::Data {
+                                        pty_id: id,
+                                        payload: payload.to_vec(),
+                                    })
+                                    .is_err()
+                                {
+                                    return Outcome::Done;
+                                }
+                            }
                             Err(why) => {
-                                tracing::warn!(why, "bad stream data frame dropped");
+                                tracing::warn!(why, "bad binary data frame dropped");
                             }
                         }
                     }
@@ -460,6 +543,33 @@ async fn connection(
                     }
                 }
             }
+            out = pty_rx.recv() => {
+                // (P4-TERM, W19) Terminal PTY traffic: the same wire shapes, tag `0x02`.
+                match out {
+                    Some(StreamOut::Text(t)) => {
+                        if ws.send(Message::text(t)).await.is_err() { return reconnect(); }
+                    }
+                    Some(StreamOut::Binary(b)) => {
+                        if ws.send(Message::binary(b)).await.is_err() { return reconnect(); }
+                    }
+                    Some(StreamOut::Flush) => {
+                        if ws.flush().await.is_err() { return reconnect(); }
+                    }
+                    Some(StreamOut::Abort) => {
+                        // (W19 on W18) Repeated terminal violations close the channel with 4400.
+                        tracing::warn!("pty protocol violations; closing channel 4400");
+                        let _ = ws.close(Some(CloseFrame {
+                            code: CloseCode::Library(4400),
+                            reason: "pty protocol violation".into(),
+                        })).await;
+                        return reconnect();
+                    }
+                    None => {
+                        // Every PTY sender dropped; keep the control channel alive.
+                        continue;
+                    }
+                }
+            }
             _ = ack_timer.tick() => {
                 if st.last_recv > st.ack_sent && send_ack(&mut ws, st).await.is_err() {
                     return reconnect();
@@ -485,26 +595,41 @@ where
     ws.send(Message::text(text)).await.map_err(|_| ())
 }
 
-// ------------------------------------------------------- preview streams (P4-PRV-2, W18)
+// --------------------------------------------- stream + pty side-channels (W18, W19)
 
-/// Binary data framing: `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]` (`16 §W18`).
-/// `0x02` is terminal data (P4-TERM, not this task); any other tag is unknown.
-fn decode_stream_binary(b: &[u8]) -> Result<(u32, &[u8]), &'static str> {
+/// One decoded binary side-channel message (`16 §W18` tag `0x01`, `16 §W19` tag `0x02`).
+enum SideData<'a> {
+    Stream { id: u32, payload: &'a [u8] },
+    Pty { id: u32, payload: &'a [u8] },
+}
+
+/// Binary data framing: `[tag][id: u32 BE][payload]` — tag `0x01` is stream data
+/// (`16 §W18`, payload ≤ `PREVIEW_CHUNK`), tag `0x02` terminal data (`16 §W19`, payload ≤
+/// `TERMINAL_CHUNK`), any other tag is unknown.
+fn decode_binary_data(b: &[u8]) -> Result<SideData<'_>, &'static str> {
     let Some((&tag, rest)) = b.split_first() else {
-        return Err("empty stream data frame");
+        return Err("empty binary data frame");
     };
-    if tag != 0x01 {
-        return Err("unknown stream data tag");
-    }
     if rest.len() < 4 {
-        return Err("stream data header too short");
+        return Err("binary data header too short");
     }
     let id = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
     let payload = &rest[4..];
-    if payload.len() > aurora_core::limits::PREVIEW_CHUNK {
-        return Err("stream data payload too large");
+    match tag {
+        0x01 => {
+            if payload.len() > aurora_core::limits::PREVIEW_CHUNK {
+                return Err("stream data payload too large");
+            }
+            Ok(SideData::Stream { id, payload })
+        }
+        0x02 => {
+            if payload.len() > aurora_core::limits::TERMINAL_CHUNK {
+                return Err("pty data payload too large");
+            }
+            Ok(SideData::Pty { id, payload })
+        }
+        _ => Err("unknown binary data tag"),
     }
-    Ok((id, payload))
 }
 
 /// Encodes an outgoing unsequenced `stream.*` frame (`seq: 0, ack: 0`).
@@ -518,4 +643,10 @@ pub fn encode_stream_frame(msg: SupervisorToRunner) -> Option<String> {
         return None;
     }
     serde_json::to_string(&frame).ok()
+}
+
+/// (P4-TERM, W19) Encodes an outgoing unsequenced `pty.*` frame (`seq: 0, ack: 0`); the same
+/// frame encoder as [`encode_stream_frame`] — the kinds route by name on the receiving side.
+pub fn encode_pty_frame(msg: SupervisorToRunner) -> Option<String> {
+    encode_stream_frame(msg)
 }

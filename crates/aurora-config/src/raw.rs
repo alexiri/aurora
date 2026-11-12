@@ -91,6 +91,8 @@ pub struct RawConfig {
     pub previews: PreviewsSection,
     /// (phase 4, P4-PRV-2) the `aurora-relay` service.
     pub relay: RelaySection,
+    /// (phase 4, P4-TERM, D-161) the dashboard's web terminal: master switch and clocks.
+    pub terminal: TerminalSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -618,6 +620,35 @@ impl Default for RelaySection {
             max_streams_per_user: 64,
             request_body_max_bytes: 100 * 1024 * 1024,
             previews_domain: None,
+        }
+    }
+}
+
+/// `[terminal]` (phase 4, P4-TERM, D-161; docs/15 §Web terminal operations): the dashboard's
+/// web-terminal surface. The limits themselves live in `aurora_core::limits` (C-623);
+/// `awake_cap_secs` may only be lowered by an operator, like the previews cap.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TerminalSection {
+    /// Master switch: `false` (default) means every terminal route answers 404
+    /// `terminal_disabled`, the runner registers no `terminal` capability and the tab is
+    /// hidden. An interactive path into sandboxes is a deliberate deployment choice.
+    pub enabled: bool,
+    /// `TERMINAL_AWAKE_CAP` in seconds; at most `hosted.background_cap_secs`.
+    pub awake_cap_secs: u64,
+    /// (P4-TERM) `TERMINAL_WAKE_WINDOW` in seconds (60): how long a wake demand stays due work.
+    pub wake_window_secs: u64,
+    /// (P4-TERM) `TERMINAL_WAKE_WAIT` in seconds (45): how long the open may wait for a
+    /// waking sandbox before answering.
+    pub wake_wait_secs: u64,
+}
+impl Default for TerminalSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            awake_cap_secs: 4 * 3600,
+            wake_window_secs: 60,
+            wake_wait_secs: 45,
         }
     }
 }

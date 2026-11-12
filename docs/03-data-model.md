@@ -1117,6 +1117,9 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | preview_start_requested_at | timestamptz null | a request is waiting for the share's port; drives `preview.start` (churn column) (phase 4, P4-PRV-1) |
 | preview_active_until | timestamptz null | `now() + PREVIEW_AWAKE_GRACE` at each relay heartbeat that reports an open or recent stream; keep-awake reason `preview` (phase 4, P4-PRV-1) |
 | preview_awake_since | timestamptz null | first heartbeat of the current boot; the `PREVIEW_AWAKE_CAP` clock; reset at every start claim (phase 4, P4-PRV-1) |
+| terminal_active_until | timestamptz null | `now() + TERMINAL_AWAKE_GRACE` at each runner keep-awake stamp while a terminal session carries bytes; keep-awake reason `terminal` (churn column) (phase 4, P4-TERM, C-620) |
+| terminal_awake_since | timestamptz null | first session byte of the current boot; the `TERMINAL_AWAKE_CAP` clock; reset at every start claim (churn column) (phase 4, P4-TERM, C-620) |
+| terminal_wake_at | timestamptz null | a terminal open found the sandbox parked; the start arm treats it as due work for `TERMINAL_WAKE_WINDOW` (churn column) (phase 4, P4-TERM, C-621) |
 
 `organizations.settings.previews_enabled` (jsonb key, no column): bool, default absent = off
 (`11 §Port previews`). The home-sync desired generation (`12 §Sync protocol`) already moves with
@@ -1621,19 +1624,23 @@ their share, user or dashboard session goes; the `sessions` retention job's dele
 
 Reset by every new boot. A start failure also writes a `sandbox_start_failures` row (below). A retry of a failed start (C-610) clears the failure fields and resets `start_failures`; it never bypasses the ordinary start arm.
 
-#### `terminal_stream_grants` (new table; single-use web-terminal grants, phase 4, P4-TERM, D-161, C-618)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 4 (P4-TERM) |
-| agent_id | uuid not null | the terminal's agent | 4 (P4-TERM) |
-| sandbox_id | uuid not null | the bound sandbox | 4 (P4-TERM) |
-| boot_id | uuid not null | the bound boot (stale boot → redemption refused) | 4 (P4-TERM) |
-| granted_by | uuid not null | the user whose session opened the tab | 4 (P4-TERM) |
-| grant_hash | text not null unique | SHA-256 of the `auy_` grant (the value is never stored) | 4 (P4-TERM) |
-| expires_at | timestamptz not null | `now() + TERMINAL_GRANT_TTL` (30 s) | 4 (P4-TERM) |
-| consumed_at | timestamptz null | set by the single-use compare-and-set at redemption | 4 (P4-TERM) |
-| created_at | timestamptz not null default now() | rows older than 24 h pruned on insert | 4 (P4-TERM) |
-| indexes | `(grant_hash)`, `(expires_at)` | redemption, pruning | 4 (P4-TERM) |
+### `terminal_stream_grants` (single-use web-terminal grants, phase 4, P4-TERM, D-161, SEC-87, C-618)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_id | uuid not null | the terminal's agent; the workspace authority (`can_use`) was checked at mint |
+| sandbox_id | uuid not null | the bound sandbox |
+| boot_id | uuid not null | the bound boot (stale boot → redemption refused) |
+| granted_by | uuid not null | the user whose session opened the tab (the audit actor) |
+| grant_hash | text not null unique | SHA-256 of the `auy_` grant (the value is never stored) |
+| expires_at | timestamptz not null | `now() + TERMINAL_GRANT_TTL` (30 s) |
+| consumed_at | timestamptz null | set by the single-use compare-and-set at redemption |
+| index | unique `(grant_hash)`; `(expires_at)` | redemption, pruning |
+
+No foreign keys (the rows die young, like `preview_stream_grants`); rows pruned after 24 h. The
+grant value never reaches the browser and is never stored; terminal bytes are never stored
+anywhere — the table holds the open's metadata only. The gateway database role gets nothing on
+this table.
 
 #### `sandbox_start_failures` (new table; per-runner start failures for Admin › Runners; phase 4, FIX-025, D-158, C-587)
 | Planned column | Type | Notes | Phase |

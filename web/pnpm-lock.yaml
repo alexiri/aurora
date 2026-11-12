@@ -29,6 +29,12 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.106.1
         version: 5.106.1(@types/react@19.3.0)(react@19.3.1)
+      '@wterm/ghostty':
+        specifier: 0.5.10
+        version: 0.5.10
+      '@wterm/react':
+        specifier: 0.5.10
+        version: 0.5.10(@wterm/dom@0.5.10)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1357,6 +1363,22 @@ packages:
 
   '@vitest/utils@4.1.12':
     resolution: {integrity: sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==}
+
+  '@wterm/core@0.5.10':
+    resolution: {integrity: sha512-kVzgs094y/9z/w2IVaYUd75F+bUFa14cn7uhec0g9QDI1kalh8W7Ft6ckOER478gncsPrf7a9oRf1bAOe3ERgQ==}
+
+  '@wterm/dom@0.5.10':
+    resolution: {integrity: sha512-Tcdig0gqVgqpoWB/i9pp4z3+ZI2Rf5MOeCy3geOuRvGSSXMGgeF6xcA/PD667tCe8Te47ldVeKYsM92uUgijCg==}
+
+  '@wterm/ghostty@0.5.10':
+    resolution: {integrity: sha512-CQMlo/y/9nghQQdvQMigzjurN9j0jpszVZecehL1zEBEQ3T5QYBzcpEtEGfrZlvw/IRYSGZsUadzviNCJRcUiQ==}
+
+  '@wterm/react@0.5.10':
+    resolution: {integrity: sha512-Jfim53j/9mXER+aVzzY0lCzpmpImaSrFYvHqGg6lSOAvibNE/Thd2OWf0iPlS16ei+Zqgd1+xhBVrlkzWeCEXg==}
+    peerDependencies:
+      '@wterm/dom': 0.5.10
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -4147,6 +4169,22 @@ snapshots:
       '@vitest/pretty-format': 4.1.12
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
+
+  '@wterm/core@0.5.10': {}
+
+  '@wterm/dom@0.5.10':
+    dependencies:
+      '@wterm/core': 0.5.10
+
+  '@wterm/ghostty@0.5.10':
+    dependencies:
+      '@wterm/core': 0.5.10
+
+  '@wterm/react@0.5.10(@wterm/dom@0.5.10)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+    dependencies:
+      '@wterm/dom': 0.5.10
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
   acorn-jsx@5.3.2(acorn@8.19.0):
     dependencies:
