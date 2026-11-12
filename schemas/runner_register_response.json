@@ -17,6 +17,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "previews": {
+          "description": "(phase 4, P4-PRV-2, D-147) When true the runner must open the relay-facing\nstream listener :4108 and speak the W18 stream frames. Absent (false) for\nolder runners, so legacy runners never open the port.",
+          "type": "boolean"
+        },
         "reconcile_interval_secs": {
           "format": "uint32",
           "minimum": 0,

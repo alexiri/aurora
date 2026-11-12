@@ -18,16 +18,20 @@ pub enum Purpose {
     /// (phase 4, P4-CNT, D-119) Keyed hash of e-mail addresses and client IPs in shared
     /// rate-limit counter keys (docs/08 §4).
     RatelimitKey,
+    /// (phase 4, P4-PRV-2, D-146) Sealed single-use preview authorization grants
+    /// (docs/04 §Preview access).
+    PreviewGrant,
 }
 
 impl Purpose {
-    pub const ALL: [Purpose; 6] = [
+    pub const ALL: [Purpose; 7] = [
         Purpose::OauthState,
         Purpose::OidcState,
         Purpose::ActionToken,
         Purpose::AvatarKey,
         Purpose::LinkState,
         Purpose::RatelimitKey,
+        Purpose::PreviewGrant,
     ];
 
     pub fn name(self) -> &'static str {
@@ -38,6 +42,7 @@ impl Purpose {
             Purpose::AvatarKey => "avatar-key",
             Purpose::LinkState => "link-state",
             Purpose::RatelimitKey => "ratelimit_key",
+            Purpose::PreviewGrant => "preview-grant",
         }
     }
 
@@ -63,7 +68,7 @@ pub struct DerivedKeys {
 
 struct RingKeys {
     id: String,
-    keys: [Secret<[u8; 32]>; 6],
+    keys: [Secret<[u8; 32]>; 7],
 }
 
 impl std::fmt::Debug for DerivedKeys {
@@ -85,7 +90,7 @@ fn derive(root: &[u8; 32], purpose: Purpose) -> Result<Secret<[u8; 32]>> {
 }
 
 fn derive_all(id: &str, root: &[u8; 32]) -> Result<RingKeys> {
-    let [a, b, c, d, e, f] = Purpose::ALL;
+    let [a, b, c, d, e, f, g] = Purpose::ALL;
     Ok(RingKeys {
         id: id.to_owned(),
         keys: [
@@ -95,6 +100,7 @@ fn derive_all(id: &str, root: &[u8; 32]) -> Result<RingKeys> {
             derive(root, d)?,
             derive(root, e)?,
             derive(root, f)?,
+            derive(root, g)?,
         ],
     })
 }

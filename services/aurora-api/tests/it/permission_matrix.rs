@@ -344,6 +344,7 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/admin/plugins/{id}/enable", G::Inst, false),
     r("POST", "/v1/admin/plugins/{id}/reject", G::Inst, false),
     r("GET", "/v1/admin/registry/snapshot", G::Inst, false),
+    r("GET", "/v1/admin/relays", G::Inst, false),
     r("GET", "/v1/admin/runners", G::Inst, false),
     r("POST", "/v1/admin/runners", G::Inst, false),
     r("DELETE", "/v1/admin/runners/{id}", G::Inst, false),

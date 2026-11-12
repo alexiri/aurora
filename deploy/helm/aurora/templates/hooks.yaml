@@ -79,7 +79,7 @@ spec:
               kubectl get secret "$NAME" >/dev/null 2>&1 || kubectl create secret generic "$NAME"
               # Idempotent: only keys that are absent are written; existing values are never overwritten.
               have() { [ -n "$(kubectl get secret "$NAME" -o "jsonpath={.data.$1}")" ]; }
-              put() { case "$2" in ""|k1:|aur_|aun_|auh_) echo "empty generated value for $1" >&2; exit 1;; esac; have "$1" || kubectl patch secret "$NAME" -p "{\"stringData\":{\"$1\":\"$2\"}}" >/dev/null; }
+              put() { case "$2" in ""|k1:|aur_|aun_|auh_|aul_) echo "empty generated value for $1" >&2; exit 1;; esac; have "$1" || kubectl patch secret "$NAME" -p "{\"stringData\":{\"$1\":\"$2\"}}" >/dev/null; }
               # The hook image (alpine/k8s) has no openssl: read /dev/urandom. A generator that
               # printed nothing would store an empty value, so every put refuses empty values.
               b64() { head -c 32 /dev/urandom | base64 | tr -d '\n'; }
@@ -117,6 +117,9 @@ spec:
               put AURORA_CONNECTOR_TOKEN "aun_$(hex)"
               # P4-MCON: the connector host's anchor token (given to the api as the bootstrap token).
               put AURORA_CONNECTOR_HOST_TOKEN "auh_$(hex)"
+              # P4-PRV-2: the relay's anchor token (aul_…) and the api's bootstrap copy of it.
+              put AURORA_RELAY_TOKEN "aul_$(hex)"
+              put AURORA_BOOTSTRAP_RELAY_TOKEN "aul_$(hex)"
               if [ "$PG_ENABLED" = "true" ]; then
                 put POSTGRES_PASSWORD "$(hex)"
                 pw="$(kubectl get secret "$NAME" -o 'jsonpath={.data.POSTGRES_PASSWORD}' | base64 -d)"

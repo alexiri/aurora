@@ -7,7 +7,8 @@ use std::time::Duration;
 use aurora_protocol::runner::{
     AttachmentUploadMeta, AttachmentUploadResponse, ChannelClaimRequest, ChannelClaimResponse,
     ChannelRef, HDR_BOOT, HDR_CAPTION, HDR_CONVERSATION, HDR_FILENAME, HDR_REPLICA, HDR_SANDBOX,
-    HDR_TURN, MemoryWriteRequest, MemoryWriteResponse, RegisterRequest, RegisterResponse,
+    HDR_TURN, MemoryWriteRequest, MemoryWriteResponse, PreviewStreamClosedRequest,
+    PreviewStreamOpenRequest, PreviewStreamOpenResponse, RegisterRequest, RegisterResponse,
     ReportResult, ReportsRequest, ReportsResponse, SandboxAssignment, SandboxesCheckRequest,
     SandboxesCheckResponse, SandboxesResponse, StraysRequest, WorkRequest, WorkResponse,
 };
@@ -41,6 +42,10 @@ impl ApiError {
         matches!(self, Self::Status { status, .. } if matches!(*status, 401 | 403))
     }
 }
+
+/// (P4-PRV-2, W17) HTTP timeout of the preview-stream plane calls (grant redemption plus the
+/// `stream.open` budget; `16 §W18` connect timeout 10 s).
+const PREVIEW_HTTP_TIMEOUT: Duration = aurora_core::limits::PREVIEW_CONNECT_TIMEOUT;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RetryPolicy {
@@ -238,6 +243,35 @@ impl ApiClient {
     pub async fn channel_release(&self, r: &ChannelRef) -> Result<(), ApiError> {
         let _: serde_json::Value = self.call(Method::POST, "/channel/release", Some(r)).await?;
         Ok(())
+    }
+
+    /// (P4-PRV-2, W17) Redeems one single-use `aux_` stream grant. No retry: the grant is
+    /// single-use and a replay would answer 403.
+    pub async fn preview_stream_open(
+        &self,
+        req: &PreviewStreamOpenRequest,
+    ) -> Result<PreviewStreamOpenResponse, ApiError> {
+        let (r, _) = self
+            .once(
+                Method::POST,
+                "/preview-streams/open",
+                Some(req),
+                Some(PREVIEW_HTTP_TIMEOUT),
+            )
+            .await?;
+        Ok(r)
+    }
+
+    /// (P4-PRV-2, W17) Advisory stream accounting; best effort, never blocks a stream.
+    pub async fn preview_stream_closed(&self, req: &PreviewStreamClosedRequest) {
+        let _ = self
+            .once::<_, serde_json::Value>(
+                Method::POST,
+                "/preview-streams/closed",
+                Some(req),
+                Some(PREVIEW_HTTP_TIMEOUT),
+            )
+            .await;
     }
 
     /// Single attempt: tool calls are not idempotent.

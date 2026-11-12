@@ -798,6 +798,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-relay"
+version = "0.1.0"
+dependencies = [
+ "aurora-config",
+ "aurora-core",
+ "bytes",
+ "clap",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "metrics",
+ "percent-encoding",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "aurora-runner"
 version = "0.1.0"
 dependencies = [
@@ -821,11 +849,13 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "reqwest 0.12.28",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tower",
  "tracing",

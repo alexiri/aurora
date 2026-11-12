@@ -78,7 +78,8 @@ test.describe("sidebar selectors (FIX-027)", () => {
     await page.setViewportSize({ width: 390, height: 800 });
     await page.getByRole("button", { name: "Open menu" }).click();
     const drawer = page.getByRole("dialog");
-    await expect(drawer.getByTestId("org-selector").getByRole("button", { name: "Organization Acme Labs" })).toBeVisible();
+    // The name keeps the visible value and the avatar's initial (WCAG 2.5.3): "Organization A Acme Labs".
+    await expect(drawer.getByTestId("org-selector").getByRole("button", { name: "Organization A Acme Labs" })).toBeVisible();
     await expect(drawer.getByTestId("workspace-selector").getByRole("button", { name: "Workspace Main workspace" })).toBeVisible();
   });
 });

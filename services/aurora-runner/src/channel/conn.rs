@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
 use tokio_tungstenite::{WebSocketStream, accept_async_with_config};
 
-use super::{Session, Shared, plane};
+use super::{ConnMsg, Session, Shared, plane};
 use crate::api::ApiError;
 use crate::hub::{Frame, HubEvent};
 
@@ -65,6 +65,13 @@ pub(super) async fn handle(shared: Arc<Shared>, tcp: TcpStream) {
     } = admitted;
     let attached = session.attach();
     drop(guard);
+    // (P4-PRV-2, W18) A fresh channel epoch: streams opened on a previous connection of this
+    // (sandbox, boot) are already gone; this just notes the new one.
+    if let Some(streams) = shared.streams.get() {
+        streams
+            .channel_epoch(session.sandbox_id, session.boot_id, true)
+            .await;
+    }
     let conn_id = attached.conn_id;
     let welcome = Welcome {
         welcome: WelcomeBody {
@@ -84,6 +91,13 @@ pub(super) async fn handle(shared: Arc<Shared>, tcp: TcpStream) {
     }
     if session.detach(conn_id) {
         tracing::info!(sandbox = %session.sandbox_id, "supervisor channel closed");
+        // (P4-PRV-2, W18) The channel is gone: every stream of this (sandbox, boot) ends
+        // with 4503 (`streams are never resumed`), before the release round-trip.
+        if let Some(streams) = shared.streams.get() {
+            streams
+                .channel_epoch(session.sandbox_id, session.boot_id, false)
+                .await;
+        }
         if let Some(api) = shared.api() {
             let r = ChannelRef {
                 sandbox_id: session.sandbox_id,
@@ -193,7 +207,7 @@ async fn run(
     shared: &Arc<Shared>,
     session: &Arc<Session>,
     ws: &mut Ws,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<ConnMsg>,
 ) {
     let s = &shared.settings;
     let mut ping = interval(s.ping_interval);
@@ -210,17 +224,37 @@ async fn run(
                             return;
                         }
                     }
-                    Some(Ok(Message::Binary(_))) => {
-                        close(ws, 1003).await;
-                        return;
-                    }
+                    // (P4-PRV-2, W18) `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`:
+                    // preview-stream data from the supervisor, routed to the listener.
+                    Some(Ok(Message::Binary(b))) => match decode_stream_data(&b) {
+                        Ok((stream_id, payload)) => {
+                            shared
+                                .stream_data(session.sandbox_id, session.boot_id, stream_id, payload)
+                                .await;
+                        }
+                        Err(why) => {
+                            // Not a stream frame (or broken): a 1003 close would end the whole
+                            // control channel for one bad preview frame; drop and keep going.
+                            tracing::debug!(why, "ignoring non-stream binary message");
+                        }
+                    },
                     Some(Ok(Message::Close(_)) | Err(_)) | None => return,
                     Some(Ok(_)) => {}
                 }
             }
             out = rx.recv() => match out {
-                Some(text) => {
+                Some(ConnMsg::Text(text)) => {
                     if ws.send(Message::text(text)).await.is_err() {
+                        return;
+                    }
+                }
+                Some(ConnMsg::StreamFrame(text)) => {
+                    if ws.send(Message::text(text)).await.is_err() {
+                        return;
+                    }
+                }
+                Some(ConnMsg::StreamData(data)) => {
+                    if ws.send(Message::binary(data)).await.is_err() {
                         return;
                     }
                 }
@@ -260,9 +294,49 @@ struct Raw {
     body: Value,
 }
 
+/// (P4-PRV-2, W18) Binary data framing: `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`.
+/// Tag `0x02` is terminal data (P4-TERM, not this task); anything else is unknown.
+fn decode_stream_data(b: &[u8]) -> Result<(u32, Vec<u8>), &'static str> {
+    let Some((&tag, rest)) = b.split_first() else {
+        return Err("empty binary message");
+    };
+    if tag != 0x01 {
+        return Err("unknown binary tag");
+    }
+    if rest.len() < 4 {
+        return Err("stream data header too short");
+    }
+    let id = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
+    let payload = rest[4..].to_vec();
+    if payload.len() > aurora_core::limits::PREVIEW_CHUNK {
+        return Err("stream data payload too large");
+    }
+    Ok((id, payload))
+}
+
 /// Apply one frame at most once. `Err(code)` closes the connection.
 async fn on_text(shared: &Arc<Shared>, session: &Arc<Session>, text: &str) -> Result<(), u16> {
     let raw: Raw = serde_json::from_str(text).map_err(|_| CLOSE_BAD_DATA)?;
+    // (P4-PRV-2, W18) Unsequenced `stream.*` frames bypass the seq/ack lineage entirely:
+    // they are never acked, never replayed, and routed straight to the stream listener.
+    if raw.seq == 0 && raw.kind.starts_with("stream.") {
+        match serde_json::from_str::<WireFrame<SupervisorToRunner>>(text) {
+            Ok(f) => match f.validate() {
+                Ok(()) => {
+                    shared
+                        .stream_frame(session.sandbox_id, session.boot_id, f.msg)
+                        .await;
+                }
+                Err(e) => {
+                    tracing::warn!(kind = %raw.kind, error = %e, "invalid stream frame dropped");
+                }
+            },
+            Err(e) => {
+                tracing::warn!(kind = %raw.kind, error = %e, "undecodable stream frame dropped");
+            }
+        }
+        return Ok(());
+    }
     session.on_ack(raw.ack);
     if raw.kind == "ack" {
         return Ok(());

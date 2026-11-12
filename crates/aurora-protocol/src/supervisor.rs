@@ -17,8 +17,9 @@ use crate::common::{
 use crate::runner::{
     Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, PreviewStartFrame,
     ProcessStates, SandboxStatus, SendNowResult, SessionPurge, SessionPurged, SessionRelease,
-    SessionReport, SteerResult, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice,
-    TurnRef, TurnResult, WatchFired,
+    SessionReport, SteerResult, StreamClose, StreamCredit, StreamOpen, StreamOpened, StreamRefused,
+    SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult,
+    WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
@@ -185,6 +186,11 @@ tagged_open! {
         // (phase 4, P4-PRV-1, D-145) forwarded `preview.start`: only the port; the supervisor
         // resolves the command from its own share list (`12 §Previews`).
         PreviewStart(PreviewStartFrame) = "preview.start",
+        // (phase 4, P4-PRV-2, D-147, `16 §W18`) byte-stream frames: outside the seq/ack lineage
+        // (sent with `seq: 0`, never buffered for replay, never acknowledged).
+        StreamOpen(StreamOpen) = "stream.open",
+        StreamCredit(StreamCredit) = "stream.credit",
+        StreamClose(StreamClose) = "stream.close",
         Shutdown(ShutdownBody) = "shutdown",
         Ack(Empty) = "ack",
     }
@@ -214,6 +220,12 @@ tagged_open! {
         MemoryWrite(MemoryWrite) = "memory.write",
         FilePart(FilePart) = "file.part",
         FileCommit(FileCommit) = "file.commit",
+        // (phase 4, P4-PRV-2, D-147, `16 §W18`) byte-stream frames: outside the seq/ack lineage
+        // (sent with `seq: 0`, never buffered for replay, never acknowledged).
+        StreamOpened(StreamOpened) = "stream.opened",
+        StreamRefused(StreamRefused) = "stream.refused",
+        StreamCredit(StreamCredit) = "stream.credit",
+        StreamClose(StreamClose) = "stream.close",
         Ack(Empty) = "ack",
     }
 }
@@ -317,6 +329,9 @@ impl Validate for RunnerToSupervisor {
             Self::TurnNotice(v) => check_chars("text", &v.text, limits::TURN_TEXT_MAX),
             Self::HomeSync(v) => v.validate(),
             Self::ToolResult(v) => v.validate(),
+            Self::StreamOpen(v) => v.validate(),
+            Self::StreamCredit(v) => v.validate(),
+            Self::StreamClose(v) => check_chars("reason", v.reason.as_str(), 32),
             _ => Ok(()),
         }
     }
@@ -336,6 +351,9 @@ impl Validate for SupervisorToRunner {
             Self::WatchFired(v) => {
                 check_max("detail", v.detail.len(), crate::runner::MAX_WATCH_DETAIL)
             }
+            Self::StreamRefused(v) => check_chars("reason", v.reason.as_str(), 32),
+            Self::StreamClose(v) => check_chars("reason", v.reason.as_str(), 32),
+            Self::StreamCredit(v) => v.validate(),
             _ => Ok(()),
         }
     }

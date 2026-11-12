@@ -180,6 +180,16 @@ pub struct RunnerCapabilities {
     /// `browser`. Open vocabulary; absent = none (fail closed, also for older runners).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_capabilities: Vec<String>,
+    /// (phase 4, P4-PRV-2, D-147) The runner opened the relay-facing stream listener :4108 and
+    /// speaks the W18 stream frames; the API places no preview share on a runner without it.
+    /// Absent (false) from older runners.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub previews: bool,
+    /// (P4-PRV-2, `16 §W18`) The stream listener speaks TLS (`runner.stream_tls`): the API
+    /// dials `wss://` instead of `ws://` in the runner endpoint it gives the relay. Absent
+    /// (false) from older runners — matches the default off in-cluster.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stream_tls: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -196,6 +206,11 @@ pub struct RunnerConfig {
     pub reconcile_interval_secs: u32,
     pub orphan_grace_secs: u32,
     pub idle_stop_secs: u32,
+    /// (phase 4, P4-PRV-2, D-147) When true the runner must open the relay-facing
+    /// stream listener :4108 and speak the W18 stream frames. Absent (false) for
+    /// older runners, so legacy runners never open the port.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub previews: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -419,6 +434,173 @@ pub struct PreviewStart {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PreviewStartFrame {
     pub port: u16,
+}
+
+// ------------------------------------------------------- preview byte streams (W18)
+
+/// Max bytes of one binary stream-data frame payload (`PREVIEW_CHUNK`, docs/16 §W18).
+pub const PREVIEW_CHUNK_MAX: usize = limits::PREVIEW_CHUNK;
+
+/// The runner asks its supervisor to open a byte stream to a loopback port of the sandbox
+/// (`16 §W18` leg 2). Outside the seq/ack lineage (`seq: 0`); stream ids are allocated by the
+/// runner, increasing per channel connection. `window` is the sender's credit window
+/// (`PREVIEW_STREAM_WINDOW`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamOpen {
+    pub stream_id: u32,
+    pub port: u16,
+    pub window: u32,
+}
+
+/// The supervisor accepted a stream; `window` is its own credit window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamOpened {
+    pub stream_id: u32,
+    pub window: u32,
+}
+
+/// The supervisor refused a stream (`16 §W18`): the port is not in its share list
+/// (`not_shared`), the loopback connect failed or timed out (`refused`/`timeout`) or a
+/// `PREVIEW_STREAMS_PER_SANDBOX` limit hit (`limit`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamRefused {
+    pub stream_id: u32,
+    pub reason: StreamRefuseReason,
+}
+
+open_vocab! {
+    /// Why a supervisor refused a stream (`16 §W18`).
+    pub enum StreamRefuseReason {
+        NotShared = "not_shared",
+        Refused = "refused",
+        Timeout = "timeout",
+        Limit = "limit",
+    }
+}
+
+/// Credit returned after bytes were written onward; a sender stops at zero unacknowledged
+/// bytes. Control frames are never blocked by data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamCredit {
+    pub stream_id: u32,
+    pub bytes: u32,
+}
+
+/// A stream ended. Outside the seq/ack lineage; byte counts are informational (metrics only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamClose {
+    pub stream_id: u32,
+    pub reason: StreamCloseReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_in: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_out: Option<u64>,
+}
+
+open_vocab! {
+    /// Why a stream ended (`16 §W18`).
+    pub enum StreamCloseReason {
+        Eof = "eof",
+        Reset = "reset",
+        Idle = "idle",
+        Lifetime = "lifetime",
+        ChannelLost = "channel_lost",
+        /// A protocol violation (over-window data, unknown id, double open) closed the stream.
+        Error = "error",
+    }
+}
+
+impl Validate for StreamOpen {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.port < 1024 {
+            return Err(ValidationError::Invalid {
+                field: "port",
+                reason: "must be 1024..=65535",
+            });
+        }
+        if self.window == 0 {
+            return Err(ValidationError::Invalid {
+                field: "window",
+                reason: "must be greater than zero",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Validate for StreamCredit {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.bytes == 0 {
+            return Err(ValidationError::Invalid {
+                field: "bytes",
+                reason: "must be greater than zero",
+            });
+        }
+        Ok(())
+    }
+}
+
+// ------------------------------------------------ runner plane: preview-stream grants (W17)
+
+/// (phase 4, P4-PRV-2, D-147) `POST /v1/runner/preview-streams/open`: the runner redeems one
+/// single-use `aux_` grant. `kind` is absent = `"port"`; (P4-TERM, C-617) adds `"terminal"`,
+/// which an older runner refuses and this one answers either kind on the same listener.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewStreamOpenRequest {
+    pub grant: SecretString,
+    /// Absent = `"port"`. `terminal` is answered by runners that know it (P4-TERM).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+/// The binding the runner uses (and never takes from the relay). `port`/`share_id` are absent
+/// for a terminal grant (`16 §W17`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewStreamOpenResponse {
+    pub sandbox_id: Uuid,
+    pub boot_id: Uuid,
+    /// Present for a port grant, absent for a terminal grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// Present for a port grant, absent for a terminal grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_id: Option<Uuid>,
+    /// The credit window of each direction (`PREVIEW_STREAM_WINDOW`).
+    pub window: u32,
+    /// Idle timeout of the leg-1 stream (`PREVIEW_IDLE_TIMEOUT` / the WS one after upgrade).
+    pub idle_secs: u32,
+    /// Total stream lifetime (`PREVIEW_STREAM_LIFETIME`).
+    pub max_lifetime_secs: u32,
+}
+
+impl Validate for PreviewStreamOpenRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        match self.kind.as_deref() {
+            None | Some("port") | Some("terminal") => Ok(()),
+            Some(_) => Err(ValidationError::Invalid {
+                field: "kind",
+                reason: "must be `port` or `terminal`",
+            }),
+        }
+    }
+}
+
+/// (phase 4, P4-PRV-2, D-147) `POST /v1/runner/preview-streams/closed`: advisory stream
+/// accounting; a stream's byte totals never enter the request log or an audit row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewStreamClosedRequest {
+    pub share_id: Uuid,
+    #[serde(default)]
+    pub bytes_to_app: u64,
+    #[serde(default)]
+    pub bytes_from_app: u64,
+    pub reason: String,
+}
+
+impl Validate for PreviewStreamClosedRequest {
+    fn validate(&self) -> Result<(), ValidationError> {
+        check_chars("reason", &self.reason, 64)
+    }
 }
 
 tagged_open! {

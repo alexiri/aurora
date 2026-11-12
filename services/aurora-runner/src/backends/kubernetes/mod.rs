@@ -628,6 +628,11 @@ impl Backend for KubernetesBackend {
             held_awake_ceiling: None,
             defaults: None,
             image_capabilities: vec![],
+            // Set by the runner at registration when the stream listener opened (P4-PRV-2).
+            previews: false,
+            // (P4-PRV-2, `16 §W18`) Whether the stream listener speaks TLS; set by the runner
+            // at registration from `runner.stream_tls` (the API derives the dial scheme).
+            stream_tls: false,
         }
     }
 

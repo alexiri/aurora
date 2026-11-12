@@ -18,6 +18,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(rotate_runner_token))
         .routes(routes!(runner_start_failures))
         .routes(routes!(agent_start_failures))
+        .routes(routes!(list_relays))
 }
 
 /// List runners with replicas and capacity (instance administrators).
@@ -102,4 +103,26 @@ async fn agent_start_failures(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<crate::domains::hosted::dto::AgentStartFailures>, ApiError> {
     Ok(Json(service::agent_start_failures(&s, agent).await?))
+}
+
+/// Relay replicas seen by the API (instance administrators, P4-PRV-2, `05 §Planes`).
+#[utoipa::path(get, path = "/admin/relays", operation_id = "adminListRelays", tag = "admin",
+    responses((status = 200, body = RelayReplicaList), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn list_relays(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<RelayReplicaList>, ApiError> {
+    let replicas = crate::domains::relay::service::list_replicas(&s).await?;
+    Ok(Json(RelayReplicaList {
+        replicas: replicas
+            .into_iter()
+            .map(|r| RelayReplicaView {
+                id: r.id,
+                version: r.version,
+                streams_open: r.streams_open,
+                last_seen_at: r.last_seen_at,
+            })
+            .collect(),
+    }))
 }

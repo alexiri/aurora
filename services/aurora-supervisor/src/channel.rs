@@ -5,6 +5,13 @@
 //! (bounded to 4 MiB; back-pressure beyond that), replays them after a reconnect from the runner's
 //! `resume_from`, applies each incoming `seq` at most once, acks every second, and pings every
 //! 20 s (60 s of silence = dead). `ack` frames are not sequenced (`seq` 0).
+//!
+//! (P4-PRV-2, `16 §W18`) The channel also carries preview byte streams: `stream.*` text frames
+//! are **outside the seq/ack lineage** (`seq: 0, ack: 0`; never buffered for replay, never
+//! acknowledged, never blocked by the replay back-pressure) and binary messages carry stream
+//! data (`[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`). Stream traffic moves over its
+//! own queues ([`StreamSender`] out, [`StreamEnds`] in); the [`StreamEnds::epoch`] watch bumps
+//! on every connection (re)establishment and every drop: a change ends every stream.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -16,10 +23,12 @@ use aurora_protocol::supervisor::{
 };
 use aurora_protocol::version::Plane;
 use futures::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, interval, sleep, sleep_until, timeout};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
@@ -73,23 +82,84 @@ impl ChannelSender {
     }
 }
 
+impl StreamSender {
+    pub async fn send(&self, out: StreamOut) -> Result<(), ChannelClosed> {
+        self.0.send(out).await.map_err(|_| ChannelClosed)
+    }
+}
+
 pub struct Channel {
     pub sender: ChannelSender,
     /// Runner frames, each delivered exactly once and in order (acks are consumed internally).
     pub inbound: mpsc::Receiver<RunnerToSupervisor>,
     /// Ends only on a fatal rejection (4401/4409) or when every sender is dropped.
     pub task: JoinHandle<Result<(), ChannelError>>,
+    /// (P4-PRV-2, W18) Preview-stream traffic, outside the seq/ack lineage.
+    pub streams: StreamEnds,
 }
 
 pub fn spawn(cfg: ChannelConfig) -> Channel {
     let (out_tx, out_rx) = mpsc::channel(256);
     let (in_tx, in_rx) = mpsc::channel(256);
-    let task = tokio::spawn(run(cfg, out_rx, in_tx));
+    let (stream_out_tx, stream_out_rx) = mpsc::channel(1024);
+    let (stream_in_tx, stream_in_rx) = mpsc::unbounded_channel();
+    let (epoch_tx, epoch_rx) = watch::channel(0u64);
+    let task = tokio::spawn(run(
+        cfg,
+        out_rx,
+        in_tx,
+        stream_out_rx,
+        stream_in_tx,
+        epoch_tx,
+    ));
     Channel {
         sender: ChannelSender(out_tx),
         inbound: in_rx,
         task,
+        streams: StreamEnds {
+            sender: StreamSender(stream_out_tx),
+            inbound: stream_in_rx,
+            epoch: epoch_rx,
+        },
     }
+}
+
+/// Sends preview-stream frames to the runner (`16 §W18`): unsequenced, never replayed,
+/// never back-pressured by the replay buffer. `None` frames flush the socket.
+#[derive(Clone)]
+pub struct StreamSender(mpsc::Sender<StreamOut>);
+
+/// One unit of stream traffic to the runner.
+pub enum StreamOut {
+    /// A `stream.*` text frame (already encoded, `seq: 0, ack: 0`).
+    Text(String),
+    /// Binary data `[0x01][stream_id: u32 BE][payload]`.
+    Binary(Vec<u8>),
+    /// Flush pending frames now (before an answer that must not wait for Nagle-ish batching).
+    Flush,
+    /// Repeated stream protocol violations: close the WebSocket with 4400 and reconnect
+    /// (`16 §W18`); every stream ends with the reconnect.
+    Abort,
+}
+
+/// The receiving side of the preview-stream channel, owned by the stream engine.
+pub struct StreamEnds {
+    pub sender: StreamSender,
+    /// Binary data and `stream.*` frames from the runner (validated, unsequenced).
+    pub inbound: mpsc::UnboundedReceiver<StreamIn>,
+    /// Bumps on every connection established and every drop; a change ends every stream.
+    pub epoch: watch::Receiver<u64>,
+}
+
+/// One validated, unsequenced stream message from the runner.
+#[derive(Debug)]
+pub enum StreamIn {
+    /// A decoded `stream.*` control frame.
+    Frame(RunnerToSupervisor),
+    /// Binary data; `stream_id` from the header, payload ≤ `PREVIEW_CHUNK`.
+    Data { stream_id: u32, payload: Vec<u8> },
+    /// The connection dropped (or a new one was admitted): every stream ends.
+    Reset,
 }
 
 #[derive(Default)]
@@ -126,6 +196,9 @@ async fn run(
     cfg: ChannelConfig,
     mut out_rx: mpsc::Receiver<SupervisorToRunner>,
     in_tx: mpsc::Sender<RunnerToSupervisor>,
+    mut stream_rx: mpsc::Receiver<StreamOut>,
+    stream_tx: mpsc::UnboundedSender<StreamIn>,
+    epoch_tx: watch::Sender<u64>,
 ) -> Result<(), ChannelError> {
     let mut st = State {
         next_seq: 1,
@@ -133,7 +206,19 @@ async fn run(
     };
     let mut delay = cfg.backoff_initial;
     loop {
-        match connection(&cfg, &mut st, &mut out_rx, &in_tx).await {
+        let res = connection(
+            &cfg,
+            &mut st,
+            &mut out_rx,
+            &in_tx,
+            &mut stream_rx,
+            &stream_tx,
+            &epoch_tx,
+        )
+        .await;
+        // A connection change ends every stream (`16 §W18`).
+        let _ = stream_tx.send(StreamIn::Reset);
+        match res {
             Outcome::Done => return Ok(()),
             Outcome::Fatal(e) => return Err(e),
             Outcome::Reconnect { was_welcomed } => {
@@ -179,6 +264,9 @@ async fn connection(
     st: &mut State,
     out_rx: &mut mpsc::Receiver<SupervisorToRunner>,
     in_tx: &mpsc::Sender<RunnerToSupervisor>,
+    stream_rx: &mut mpsc::Receiver<StreamOut>,
+    stream_tx: &mpsc::UnboundedSender<StreamIn>,
+    epoch_tx: &watch::Sender<u64>,
 ) -> Outcome {
     let no = Outcome::Reconnect {
         was_welcomed: false,
@@ -237,12 +325,45 @@ async fn connection(
     let mut ack_timer = interval(cfg.ack_interval);
     let mut ping_timer = interval(cfg.ping_interval);
     let mut last_rx = Instant::now();
+    // (P4-PRV-2, W18) Stream traffic bumps the epoch when the connection is up.
+    epoch_tx.send_modify(|e| *e += 1);
     loop {
         tokio::select! {
             msg = ws.next() => {
                 last_rx = Instant::now();
                 match msg {
                     Some(Ok(Message::Text(t))) => {
+                        // (P4-PRV-2, W18) `stream.*` frames are outside the seq/ack lineage: they
+                        // carry `seq: 0, ack: 0`, are never acked and never replayed. Routing is
+                        // by the decoded `kind`, not a substring guess.
+                        let is_stream = serde_json::from_str::<serde_json::Value>(t.as_str())
+                            .ok()
+                            .and_then(|v| {
+                                v.get("kind")
+                                    .and_then(|k| k.as_str())
+                                    .map(|k| k.starts_with("stream."))
+                            })
+                            .unwrap_or(false);
+                        if is_stream {
+                            match serde_json::from_str::<Frame<RunnerToSupervisor>>(t.as_str()) {
+                                Ok(f) if f.seq == 0 => {
+                                    if let Err(e) = f.msg.validate() {
+                                        tracing::warn!(error = %e, "invalid stream frame dropped");
+                                    } else if stream_tx.send(StreamIn::Frame(f.msg)).is_err() {
+                                        return Outcome::Done;
+                                    }
+                                }
+                                Ok(_) => {
+                                    return Outcome::Fatal(ChannelError::Protocol(
+                                        "stream frame outside seq 0",
+                                    ));
+                                }
+                                Err(_) => {
+                                    return Outcome::Fatal(ChannelError::Protocol("bad stream frame"));
+                                }
+                            }
+                            continue;
+                        }
                         let frame = match serde_json::from_str::<Frame<RunnerToSupervisor>>(t.as_str()) {
                             Ok(f) => f,
                             Err(e) => {
@@ -270,6 +391,26 @@ async fn connection(
                             return Outcome::Done;
                         }
                     }
+                    Some(Ok(Message::Binary(b))) => {
+                        // (W18) `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]`; a bad header
+                        // or oversize payload is a protocol violation.
+                        match decode_stream_binary(&b) {
+                            Ok((id, payload)) => {
+                                if stream_tx
+                                    .send(StreamIn::Data {
+                                        stream_id: id,
+                                        payload: payload.to_vec(),
+                                    })
+                                    .is_err()
+                                {
+                                    return Outcome::Done;
+                                }
+                            }
+                            Err(why) => {
+                                tracing::warn!(why, "bad stream data frame dropped");
+                            }
+                        }
+                    }
                     Some(Ok(Message::Ping(_))) => {
                         if ws.flush().await.is_err() { return reconnect(); }
                     }
@@ -292,6 +433,32 @@ async fn connection(
                 st.unacked_bytes += text.len();
                 st.unacked.push_back((seq, text.clone()));
                 if ws.send(Message::text(text)).await.is_err() { return reconnect(); }
+            }
+            out = stream_rx.recv() => {
+                match out {
+                    Some(StreamOut::Text(t)) => {
+                        if ws.send(Message::text(t)).await.is_err() { return reconnect(); }
+                    }
+                    Some(StreamOut::Binary(b)) => {
+                        if ws.send(Message::binary(b)).await.is_err() { return reconnect(); }
+                    }
+                    Some(StreamOut::Flush) => {
+                        if ws.flush().await.is_err() { return reconnect(); }
+                    }
+                    Some(StreamOut::Abort) => {
+                        // (W18) Repeated stream violations close the channel with 4400.
+                        tracing::warn!("stream protocol violations; closing channel 4400");
+                        let _ = ws.close(Some(CloseFrame {
+                            code: CloseCode::Library(4400),
+                            reason: "stream protocol violation".into(),
+                        })).await;
+                        return reconnect();
+                    }
+                    None => {
+                        // Every stream sender dropped; keep the control channel alive.
+                        continue;
+                    }
+                }
             }
             _ = ack_timer.tick() => {
                 if st.last_recv > st.ack_sent && send_ack(&mut ws, st).await.is_err() {
@@ -316,4 +483,39 @@ where
     let text = encode(st, 0, SupervisorToRunner::Ack(Empty {})).ok_or(())?;
     st.ack_sent = st.last_recv;
     ws.send(Message::text(text)).await.map_err(|_| ())
+}
+
+// ------------------------------------------------------- preview streams (P4-PRV-2, W18)
+
+/// Binary data framing: `[0x01][stream_id: u32 BE][payload ≤ PREVIEW_CHUNK]` (`16 §W18`).
+/// `0x02` is terminal data (P4-TERM, not this task); any other tag is unknown.
+fn decode_stream_binary(b: &[u8]) -> Result<(u32, &[u8]), &'static str> {
+    let Some((&tag, rest)) = b.split_first() else {
+        return Err("empty stream data frame");
+    };
+    if tag != 0x01 {
+        return Err("unknown stream data tag");
+    }
+    if rest.len() < 4 {
+        return Err("stream data header too short");
+    }
+    let id = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
+    let payload = &rest[4..];
+    if payload.len() > aurora_core::limits::PREVIEW_CHUNK {
+        return Err("stream data payload too large");
+    }
+    Ok((id, payload))
+}
+
+/// Encodes an outgoing unsequenced `stream.*` frame (`seq: 0, ack: 0`).
+pub fn encode_stream_frame(msg: SupervisorToRunner) -> Option<String> {
+    let frame = Frame {
+        seq: 0,
+        ack: 0,
+        msg,
+    };
+    if frame.validate().is_err() {
+        return None;
+    }
+    serde_json::to_string(&frame).ok()
 }

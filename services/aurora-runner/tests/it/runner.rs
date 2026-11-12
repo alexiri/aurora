@@ -39,6 +39,7 @@ fn fast_retry() -> RetryPolicy {
 
 fn settings(url: &str) -> RunnerSettings {
     RunnerSettings {
+        stream_tls: false,
         held_awake_ceiling: None,
         defaults: Some(aurora_protocol::runner::SandboxDefaults {
             cpu_millis: 1000,
@@ -74,6 +75,7 @@ fn register_response(runner_id: Uuid, interval: u32) -> ResponseTemplate {
             reconcile_interval_secs: interval,
             orphan_grace_secs: 3600,
             idle_stop_secs: 900,
+            previews: false,
         },
     })
 }

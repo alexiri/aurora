@@ -404,8 +404,11 @@ second line of defence), no relay needed. Existing configurations are unchanged.
   workspace, **never** written to the audit log (only `start_command_set` and the first 12 hex
   characters of its SHA-256), and never given to the relay.
 
-**Port discovery.** The supervisor already reports `ports.state { ports: [int] }` (`16 §W5`),
-stored as `sandboxes.listening_ports` (a churn column, reset at every boot). The dashboard's
+**Port discovery.** The supervisor reports `ports.state { ports: [int] }` (`16 §W5`) on its
+10 s harvest tick (first scan at boot), scanning `/proc/net/tcp{,6}` for TCP LISTEN ports on
+loopback-reachable addresses (loopback or wildcard bind), sent only on change, stored as
+`sandboxes.listening_ports` (a churn column, reset at
+every boot). The dashboard's
 "Add share" dialog offers the currently listening ports (from `GET /v1/agents/{a}/sandbox`),
 and a share's `listening` status is `port ∈ listening_ports` of the current boot. Discovery is
 informational only: it never creates a share and the allow-list never contains a port merely
@@ -525,7 +528,9 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   totals in metrics only); the best-effort audit row `agent.terminal.open` records the open
   (agent, workspace), never content (`04 §Audit`).
 - **Listener and capabilities**: the runner opens :4108 when previews **or** the terminal is
-  enabled and registers the matching capabilities (`previews`, `terminal`); the NetworkPolicy
+  enabled and registers the matching capabilities (`previews`, `terminal`, plus `stream_tls`
+  when `runner.stream_tls` is on — the API derives the endpoint scheme it hands the relay
+  from it, `16 §W18`); the NetworkPolicy
   admits :4108 from the relay pods **and** the api pods (only those), `15 §Port previews`.
   An older runner without the `kind` extension refuses terminal grants (the API answers 4502
   — the tab shows "the runner does not support terminals").

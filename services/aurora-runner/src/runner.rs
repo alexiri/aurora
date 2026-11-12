@@ -40,6 +40,10 @@ pub struct RunnerSettings {
     pub defaults: Option<SandboxDefaults>,
     /// `runner.image_harnesses`: for backends that cannot read the image label (Kubernetes).
     pub image_harnesses: Vec<HarnessId>,
+    /// `runner.stream_bind` / `runner.stream_tls` (P4-PRV-2): whether the relay-facing
+    /// stream listener speaks TLS — registered as the `stream_tls` capability so the API
+    /// hands the relay the right scheme (`ws://` vs `wss://`, `16 §W18`).
+    pub stream_tls: bool,
     pub api_url: String,
     pub token: String,
     pub version: String,
@@ -77,6 +81,8 @@ impl RunnerSettings {
                 .unwrap_or_else(|| "aurora-runner".into()),
             orphan_reap: cfg.orphan_reap,
             retry: RetryPolicy::default(),
+            stream_tls: cfg.runner.stream_tls.cert_file.is_some()
+                && cfg.runner.stream_tls.key_file.is_some(),
             executor: ExecutorSettings {
                 max_concurrency: cfg.runner.max_sandboxes.max(1) as usize,
                 image: Some(cfg.runner.image.clone()),
@@ -121,6 +127,8 @@ impl Runner {
         caps.image.clone_from(&self.settings.executor.image);
         caps.held_awake_ceiling = self.settings.held_awake_ceiling;
         caps.defaults = self.settings.defaults;
+        // (P4-PRV-2, `16 §W18`) The API derives the relay's dial scheme from this.
+        caps.stream_tls = self.settings.stream_tls;
         if let Some(image) = &self.settings.executor.image {
             caps.image_capabilities = self.backend.image_capabilities(image).await;
             // (P4-HAR) The registered `harnesses` are what the image contains.
@@ -154,6 +162,9 @@ impl Runner {
         tracing::info!(runner_id = %registered.runner_id, replica_id = %registered.replica_id, "registered");
         self.hub.attach_api(api.clone());
         let cfg = registered.config;
+        // (P4-PRV-2, W18) The API decides whether this runner serves preview byte streams;
+        // the :4108 accept loop unblocks only when this is true.
+        self.hub.set_previews_enabled(cfg.previews);
         let fingerprint = installation_fingerprint(&s.token);
 
         let (sink, reporter_task) = reporter::spawn(api.clone(), shutdown.clone());

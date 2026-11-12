@@ -15,7 +15,7 @@ import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
-import { Avatar } from "./agent-avatar";
+import { Avatar, tintFor } from "./agent-avatar";
 import { AuroraLogo } from "./ui/aurora-logo";
 import {
   ActivityIcon,
@@ -79,8 +79,9 @@ function NavItem({
 
 /**
  * FIX-027: one sidebar select control (an uppercase caption above a one-line menu trigger).
- * The caption is the control's label (`aria-labelledby` names both caption and value, so the
- * accessible name keeps the visible value — WCAG 2.5.3); there is no aria-label.
+ * The caption is the control's label (`aria-labelledby` names the caption, the avatar's
+ * initial and the value, so the accessible name contains every visible token — WCAG 2.5.3);
+ * there is no aria-label.
  */
 function SidebarSelect({
   caption,
@@ -112,10 +113,32 @@ function SidebarSelect({
         <MenuTrigger asChild>
           <button
             type="button"
-            aria-labelledby={`${id}-caption ${id}-value`}
+            // The accessible name names the caption, the avatar's initial and the value, so it
+            // contains every visible token (WCAG 2.5.3, axe `label-content-name-mismatch` —
+            // the initial chip is visible on screen, so the name must include it). The
+            // placeholder state has no name yet: its "?" chip stays out of the name.
+            aria-labelledby={
+              avatar && value !== undefined
+                ? `${id}-caption ${id}-avatar ${id}-value`
+                : `${id}-caption ${id}-value`
+            }
             className="flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5 text-left hover:bg-subtle"
           >
-            {avatar ? <Avatar name={avatar.name} tintKey={avatar.tintKey} size={28} className="rounded-md" /> : null}
+            {avatar && value !== undefined ? (
+              <span
+                id={`${id}-avatar`}
+                className={cn(
+                  "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold uppercase",
+                  tintFor(avatar.tintKey ?? avatar.name),
+                )}
+              >
+                {avatar.name.trim().charAt(0) || "?"}
+              </span>
+            ) : null}
+            {/* The explicit space keeps the chip's initial a separate visible token (JSX
+                would otherwise fuse "A" + "Acme" into "AAcme"); flexbox drops whitespace-only
+                runs, so the visual layout is unchanged. */}
+            {avatar && value !== undefined ? " " : null}
             <span
               id={`${id}-value`}
               className="min-w-0 flex-1 truncate text-sm font-semibold text-ink"

@@ -58,6 +58,7 @@ pub async fn register(
             reconcile_interval_secs: limits::RECONCILE_INTERVAL.as_secs() as u32,
             orphan_grace_secs: limits::ORPHAN_GRACE.as_secs() as u32,
             idle_stop_secs: s.config.hosted.idle_stop_secs as u32,
+            previews: s.config.previews.enabled,
         },
     })
 }

@@ -1551,39 +1551,46 @@ The gateway database role gets nothing on this table (the gateway has no part in
 Deleting the agent, workspace or org deletes the shares (the org delete service removes them in
 dependency order). The `previews` home-sync part is computed from this table (`16 §W5`).
 
-#### `preview_sessions` (new table; phase 4, P4-PRV-2, D-146)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 4 (P4-PRV-2) |
-| token_hash | bytea unique not null | SHA-256 of the `auv_` value; the value is returned once to the relay and never stored | 4 (P4-PRV-2) |
-| display_prefix | text not null | first 12 characters, for support | 4 (P4-PRV-2) |
-| share_id | uuid FK→preview_shares (cascade) | the one share (hostname) the credential is valid for | 4 (P4-PRV-2) |
-| user_id | uuid FK→users (cascade) | | 4 (P4-PRV-2) |
-| session_id | uuid FK→sessions (cascade) | the dashboard session that authorized it: signing out or revoking it deletes this row | 4 (P4-PRV-2) |
-| created_at, last_seen_at, expires_at | timestamptz | `expires_at = created_at + PREVIEW_SESSION_TTL` (capped by the dashboard session's own absolute expiry); `last_seen_at` is advanced at most once a minute; idle past `PREVIEW_SESSION_IDLE` is dead | 4 (P4-PRV-2) |
-| indexes | `(share_id)`, `(session_id)`, `(user_id)`, `(expires_at)` | | 4 (P4-PRV-2) |
+### `preview_sessions` (port preview access, phase 4, P4-PRV-2, D-146, SEC-81)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| token_hash | bytea unique not null | SHA-256 of the `auv_` value; the value is returned once to the relay and never stored |
+| display_prefix | text not null | first 12 characters, for support |
+| share_id | uuid FK→preview_shares (cascade) | the one share (hostname) the credential is valid for |
+| user_id | uuid FK→users (cascade) | |
+| session_id | uuid FK→sessions (cascade) | the dashboard session that authorized it: signing out or revoking it deletes this row |
+| last_seen_at, expires_at | timestamptz | `expires_at = created_at + PREVIEW_SESSION_TTL` (capped by the dashboard session's own absolute expiry); `last_seen_at` is advanced at most once a minute; idle past `PREVIEW_SESSION_IDLE` is dead |
 
-#### `preview_grant_uses` (new table; single-use ledger of authorization grants)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| jti | uuid pk | insert-on-conflict claims a grant exactly once | 4 (P4-PRV-2) |
-| expires_at | timestamptz not null | grant expiry + 60 s; pruned by the preview housekeeping job | 4 (P4-PRV-2) |
+### `preview_grant_uses` (single-use ledger of authorization grants, phase 4, P4-PRV-2, D-146)
+| Column | Type | Notes |
+|---|---|---|
+| jti | uuid pk | insert-on-conflict claims a grant exactly once |
+| expires_at | timestamptz not null | grant expiry + 60 s; pruned by the preview housekeeping job |
 
-#### `preview_stream_grants` (new table; phase 4, P4-PRV-2, D-147)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| token_hash | bytea pk | SHA-256 of the `aux_` grant | 4 (P4-PRV-2) |
-| share_id, sandbox_id, boot_id | uuid | the binding the runner receives; no FK (short-lived) | 4 (P4-PRV-2) |
-| port | int not null | copied from the share at mint time | 4 (P4-PRV-2) |
-| session_hash | bytea not null | the preview session it was minted for (for accounting only) | 4 (P4-PRV-2) |
-| expires_at, consumed_at | timestamptz | ≤ 30 s; `consumed_at` set by one compare-and-set on redemption | 4 (P4-PRV-2) |
+### `preview_stream_grants` (single-use stream grants, phase 4, P4-PRV-2, D-147, SEC-82)
+| Column | Type | Notes |
+|---|---|---|
+| token_hash | bytea pk | SHA-256 of the `aux_` grant |
+| share_id, sandbox_id, boot_id | uuid | the binding the runner receives; no FK (short-lived) |
+| port | int not null | copied from the share at mint time |
+| session_hash | bytea not null | the preview session it was minted for (for accounting only) |
+| expires_at, consumed_at | timestamptz | ≤ 30 s; `consumed_at` set by one compare-and-set on redemption |
 
-#### `relay_tokens`, `relay_replicas` (new tables; phase 4, P4-PRV-2)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| `relay_tokens.id`, `.token_hash` | uuid pk, bytea unique | `aul_`, from `AURORA_BOOTSTRAP_RELAY_TOKEN` (same shape as `connector_host_tokens`) | 4 (P4-PRV-2) |
-| `relay_replicas.id` | uuid pk | the replica id returned by `register` | 4 (P4-PRV-2) |
-| `relay_replicas.version`, `.last_seen_at`, `.streams_open` | text, timestamptz, int | heartbeat (`report`); churn columns; rows older than 24 h pruned | 4 (P4-PRV-2) |
+### `relay_tokens` (relay anchor tokens, phase 4, P4-PRV-2)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| token_hash | bytea unique not null | SHA-256 of the `aul_` value from `AURORA_BOOTSTRAP_RELAY_TOKEN` (same shape as `connector_host_tokens`) |
+
+### `relay_replicas` (registered relay replicas, phase 4, P4-PRV-2)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | the replica id returned by `register` |
+| token_id | uuid FK→relay_tokens (cascade) | the anchor token the replica registered with |
+| version | text not null | the relay's version string (churn) |
+| streams_open | int not null default 0 | heartbeat churn (`POST /v1/relay/report`) |
+| last_seen_at | timestamptz not null | refreshed by the heartbeat; rows older than 24 h pruned |
 
 The gateway role gets nothing on any preview table. Preview sessions are deleted by cascade when
 their share, user or dashboard session goes; the `sessions` retention job's deletes cascade too.

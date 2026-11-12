@@ -150,12 +150,19 @@ pub const COUNTER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 pub const COUNTER_PRUNE_BATCH: i64 = 5_000;
 
 /// Preview housekeeping (docs/05 §Background jobs): clear the stale wake/start stamps of
-/// `sandboxes` past their windows and set the `aurora_preview_shares` gauge (active shares per
-/// org). Idempotent, safe on every replica. The session/grant deletions arrive with P4-PRV-2.
+/// `sandboxes` past their windows, prune expired preview sessions/grants and stale relay
+/// replicas, and set the `aurora_preview_shares` gauge (active shares per org). Idempotent,
+/// safe on every replica (P4-PRV-2).
 pub async fn preview_housekeeping(pool: &PgPool) -> Result<u64, aurora_db::DbError> {
     let cleared = {
         let mut conn = pool.acquire().await.map_err(aurora_db::DbError::from)?;
-        aurora_db::repo::preview_shares::clear_stale_sandbox_stamps(&mut conn).await?
+        let cleared =
+            aurora_db::repo::preview_shares::clear_stale_sandbox_stamps(&mut conn).await?;
+        drop(conn);
+        let pruned = aurora_db::repo::preview_relay::prune_preview_expiries(pool).await?;
+        let replicas = aurora_db::repo::preview_relay::prune_stale_relay_replicas(pool).await?;
+        tracing::debug!(cleared, pruned, replicas, "preview housekeeping");
+        cleared + pruned + replicas
     };
     let orgs: Vec<(uuid::Uuid, String, i64)> = sqlx::query_as(
         "SELECT o.id, o.slug, count(ps.id) FROM organizations o \

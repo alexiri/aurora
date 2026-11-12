@@ -527,7 +527,9 @@ done when its tests exist, pass in CI, and the security invariants it touches
   nothing); `preview.start` for an unknown port, a share without command, an already listening port or
   an empty list is a no-op; a started command runs as the agent user with the container environment (no
   `AURORA_*` variable, no platform credential) as process `preview:<port>`; the frame carries no
-  command text.
+  command text; `ports.state` reports the boot's loopback listeners (unit tests parse
+  `/proc/net/tcp{,6}` rows incl. v6 and junk; an IT proves first-report-at-boot, no re-send
+  without a change and a re-send after the port closes).
 - **Config** (`config` crate): `previews.enabled` without a valid domain refuses to start; domain
   equal to, containing or under the dashboard host, a trusted origin or the gateway host; one label;
   public suffix; upper case; too long.

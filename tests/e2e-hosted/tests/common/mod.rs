@@ -609,6 +609,9 @@ impl Api {
     pub async fn put(&self, p: &str, b: Value) -> (u16, Value) {
         self.call(Method::PUT, p, Some(b)).await
     }
+    pub async fn delete(&self, p: &str) -> (u16, Value) {
+        self.call(Method::DELETE, p, None).await
+    }
 
     /// Raw request with the session cookie (for SSE).
     pub fn raw(&self, p: &str) -> reqwest::RequestBuilder {
@@ -616,6 +619,37 @@ impl Api {
             .get(format!("{}{p}", self.base))
             .header("cookie", &self.cookie)
             .header("origin", &request_origin())
+    }
+
+    /// Raw request with the session cookie and redirects disabled — the preview authorize
+    /// exchange must be judged by its `Location` header (P4-PRV-2, k8s k6). Returns
+    /// (status, headers, body).
+    pub async fn no_redirect(&self, m: Method, path: &str) -> (u16, Vec<(String, String)>, String) {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let resp = client
+            .request(m, format!("{}{path}", self.base))
+            .header("cookie", &self.cookie)
+            .header("origin", &request_origin())
+            .timeout(Duration::from_secs(40))
+            .send()
+            .await
+            .unwrap();
+        let s = resp.status().as_u16();
+        let headers = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_owned(),
+                    v.to_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        let body = resp.text().await.unwrap_or_default();
+        (s, headers, body)
     }
 
     pub async fn ws_secret(&self, body: Value) -> String {

@@ -1,7 +1,7 @@
 //! Supervisor core: turn execution over the channel and a harness adapter
 //! (`docs/12-supervisor-harness.md` §Process model and startup, §Harness interface).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use aurora_protocol::runner::{
-    Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, SendNowOutcome, SendNowResult,
-    SessionPurged, SessionReport, SteerOutcome, SteerResult, SupervisorReady, TurnDeliver,
-    TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
+    Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, PortsState, SendNowOutcome,
+    SendNowResult, SessionPurged, SessionReport, SteerOutcome, SteerResult, SupervisorReady,
+    TurnDeliver, TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use tokio::sync::{Mutex, Notify, mpsc};
@@ -115,6 +115,11 @@ pub struct Supervisor {
     /// memory only (the home is agent-writable), replaced whole on every sync
     /// (`12 §Previews`): `share_id -> (port, start_command, cwd)`.
     preview_shares: HashMap<Uuid, PreviewShareEntry>,
+    /// (P4-PRV-2, D-147) The preview byte-stream engine (`16 §W18`): the allow-list is this
+    /// share list, never the port discovery.
+    streams: crate::streams::StreamsHandle,
+    /// (P4-PRV-2) Last reported listening loopback ports (`ports.state`); sent only on change.
+    reported_ports: BTreeSet<u16>,
 }
 
 /// One share of the in-memory allow-list.
@@ -181,6 +186,7 @@ impl Supervisor {
         cfg: SupervisorConfig,
         out: ChannelSender,
         adapter: Arc<dyn HarnessAdapter>,
+        streams: crate::streams::StreamsHandle,
     ) -> Self {
         let caps = adapter.capabilities();
         let home = Arc::new(StdMutex::new(HomeCtl {
@@ -222,6 +228,8 @@ impl Supervisor {
             pending_purges: Vec::new(),
             purge_lookup: Arc::new(crate::adapters::adapter_for),
             preview_shares: HashMap::new(),
+            streams,
+            reported_ports: BTreeSet::new(),
         }
     }
 
@@ -298,7 +306,13 @@ impl Supervisor {
         harvest_tick.tick().await;
         loop {
             tokio::select! {
-                _ = harvest_tick.tick() => { self.harvest().await; }
+                // (P4-PRV-2) The harvest tick also drives port discovery (`ports.state`): the
+                // first tick fires immediately, so a boot's listeners are reported without
+                // waiting a full interval (`11 §Port discovery`).
+                _ = harvest_tick.tick() => {
+                    self.harvest().await;
+                    self.send_ports().await;
+                }
                 msg = inbound.recv() => {
                     let Some(msg) = msg else { break };
                     if let RunnerToSupervisor::Shutdown(s) = &msg {
@@ -371,6 +385,15 @@ impl Supervisor {
             }
             RunnerToSupervisor::HomeSync(h) => self.home_sync(h).await,
             RunnerToSupervisor::PreviewStart(p) => self.preview_start(p.port).await,
+            // (P4-PRV-2, W18) Stream frames ride the unsequenced side-channel in production;
+            // a sequenced one is still honoured (it can only come from a test harness).
+            RunnerToSupervisor::StreamOpen(o) => self.stream_open(o).await,
+            RunnerToSupervisor::StreamCredit(c) => {
+                let _ = self.streams.credit(c.stream_id, c.bytes).await;
+            }
+            RunnerToSupervisor::StreamClose(c) => {
+                let _ = self.streams.stream_closed(c.stream_id).await;
+            }
             RunnerToSupervisor::MemoryWriteResult(r) => {
                 if !r.ok
                     && let Ok(mut h) = self.home.lock()
@@ -393,6 +416,24 @@ impl Supervisor {
             RunnerToSupervisor::Other(u) => {
                 tracing::warn!(kind = u.kind.as_str(), "unknown frame kind dropped");
             }
+        }
+    }
+
+    /// (P4-PRV-2) Scans `/proc/net/tcp{,6}` for LISTEN loopback ports and reports them via
+    /// `ports.state` only on change (`11 §Port discovery`). Runs on the harvest tick (the
+    /// first fires immediately); `listening_ports` is what the dashboard's "Add share"
+    /// dialog offers and what derives a share's `listening` status. Informational only:
+    /// the stream allow-list is the share list, never this discovery.
+    async fn send_ports(&mut self) {
+        let ports = tokio::task::spawn_blocking(crate::ports::scan)
+            .await
+            .unwrap_or_default();
+        if ports != self.reported_ports {
+            self.reported_ports = ports.clone();
+            self.send(SupervisorToRunner::PortsState(PortsState {
+                ports: ports.into_iter().collect(),
+            }))
+            .await;
         }
     }
 
@@ -505,6 +546,9 @@ impl Supervisor {
                     ))
                 })
                 .collect();
+            // (P4-PRV-2, D-147) The stream allow-list is the share list: replaced as a whole,
+            // streams on ports that left it are closed.
+            self.streams.set_shares(&self.preview_shares);
             tracing::debug!(
                 shares = self.preview_shares.len(),
                 "preview share list applied"
@@ -627,6 +671,13 @@ impl Supervisor {
                 tracing::warn!(%port, error = %e, "preview start command failed");
             }
         }
+    }
+
+    /// (P4-PRV-2, D-147, `16 §W18`) A sequenced `stream.open` (tests / older runners only —
+    /// in production stream frames ride the unsequenced side-channel straight into the engine).
+    /// The engine enforces the share-list allow-list and answers `stream.opened`/`refused`.
+    async fn stream_open(&mut self, o: aurora_protocol::runner::StreamOpen) {
+        let _ = self.streams.stream_open(o).await;
     }
 
     async fn deliver(&mut self, d: TurnDeliver, done_tx: &mpsc::UnboundedSender<Uuid>) {

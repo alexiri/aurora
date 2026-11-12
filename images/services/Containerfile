@@ -69,7 +69,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     with-sccache cargo chef cook --release --locked --recipe-path recipe.json \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
-      -p aurora-runner -p aurora-connector-fake \
+      -p aurora-runner -p aurora-relay -p aurora-connector-fake \
       -p aurora-connector-mattermost -p aurora-connector-host
 COPY . .
 # The repo pins a toolchain + wasm target via rust-toolchain.toml; the image's own stable toolchain
@@ -82,11 +82,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     with-sccache cargo build --release --locked \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
-      -p aurora-runner -p aurora-connector-fake \
+      -p aurora-runner -p aurora-relay -p aurora-connector-fake \
       -p aurora-connector-mattermost -p aurora-connector-host \
     && mkdir /out \
-    && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-fake \
-                 aurora-connector-mattermost aurora-connector-host; do \
+    && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-relay \
+                 aurora-connector-fake aurora-connector-mattermost aurora-connector-host; do \
          cp target/release/$b /out/; done
 
 # Built-in app packages (P2-CAT-0, docs/09 §10): plugins/builtin/<id> -> <id>-<version>.aurora-plugin.
@@ -164,8 +164,18 @@ ENTRYPOINT ["/usr/local/bin/aurora-hookhost"]
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS runner
 COPY --from=builder /out/aurora-runner /usr/local/bin/aurora-runner
-EXPOSE 4106
+# 4105 sandbox channel, 4106 ops, 4108 relay stream listener (P4-PRV-2, opened when previews are on).
+EXPOSE 4105 4106 4108
 ENTRYPOINT ["/usr/local/bin/aurora-runner"]
+
+# The port-previews relay (P4-PRV-2, docs/15 §Port previews): previews HTTP/WebSocket on 4112,
+# health and metrics on 4193.
+#   podman build -f images/services/Containerfile --target relay -t aurora-relay .
+FROM gcr.io/distroless/cc-debian12:nonroot AS relay
+COPY --from=builder /out/aurora-relay /usr/local/bin/aurora-relay
+EXPOSE 4112 4193
+ENTRYPOINT ["/usr/local/bin/aurora-relay"]
+CMD ["serve"]
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS connector-fake
 COPY --from=builder /out/aurora-connector-fake /usr/local/bin/aurora-connector-fake

@@ -44,6 +44,9 @@ pub trait ChannelHub: Send + Sync {
     fn take_events(&self) -> Option<mpsc::Receiver<HubEvent>>;
     /// Called once the runner has registered; hubs that make plane calls use this client.
     fn attach_api(&self, _api: std::sync::Arc<crate::api::ApiClient>) {}
+    /// (P4-PRV-2, W18) Called after registration with `config.previews`: the stream
+    /// listener's :4108 port opens only when the API reports previews enabled.
+    fn set_previews_enabled(&self, _on: bool) {}
 }
 
 /// Hub with no connections (used until RUN-002 lands).

@@ -45,6 +45,20 @@ pub struct RunnerList {
     pub items: Vec<RunnerSummary>,
 }
 
+/// One relay replica seen by the API (P4-PRV-2).
+#[derive(Serialize, ToSchema)]
+pub struct RelayReplicaView {
+    pub id: Uuid,
+    pub version: String,
+    pub streams_open: i32,
+    pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct RelayReplicaList {
+    pub replicas: Vec<RelayReplicaView>,
+}
+
 /// Returned once on provisioning and rotation.
 #[derive(Serialize, ToSchema)]
 pub struct RunnerWithToken {

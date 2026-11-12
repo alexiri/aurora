@@ -2082,6 +2082,42 @@
         ]
       }
     },
+    "/v1/admin/relays": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Relay replicas seen by the API (instance administrators, P4-PRV-2, `05 §Planes`).",
+        "operationId": "adminListRelays",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelayReplicaList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/runners": {
       "get": {
         "tags": [
@@ -36080,6 +36116,47 @@
           "session_reset": {
             "type": "boolean",
             "description": "A session reset was queued."
+          }
+        }
+      },
+      "RelayReplicaList": {
+        "type": "object",
+        "required": [
+          "replicas"
+        ],
+        "properties": {
+          "replicas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelayReplicaView"
+            }
+          }
+        }
+      },
+      "RelayReplicaView": {
+        "type": "object",
+        "description": "One relay replica seen by the API (P4-PRV-2).",
+        "required": [
+          "id",
+          "version",
+          "streams_open",
+          "last_seen_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "streams_open": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "version": {
+            "type": "string"
           }
         }
       },

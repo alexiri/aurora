@@ -370,6 +370,91 @@
       },
       "type": "object"
     },
+    "StreamClose": {
+      "description": "A stream ended. Outside the seq/ack lineage; byte counts are informational (metrics only).",
+      "properties": {
+        "bytes_in": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes_out": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/StreamCloseReason"
+        },
+        "stream_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stream_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "StreamCloseReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "StreamCredit": {
+      "description": "Credit returned after bytes were written onward; a sender stops at zero unacknowledged\nbytes. Control frames are never blocked by data.",
+      "properties": {
+        "bytes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stream_id",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "StreamOpen": {
+      "description": "The runner asks its supervisor to open a byte stream to a loopback port of the sandbox\n(`16 §W18` leg 2). Outside the seq/ack lineage (`seq: 0`); stream ids are allocated by the\nrunner, increasing per channel connection. `window` is the sender's credit window\n(`PREVIEW_STREAM_WINDOW`).",
+      "properties": {
+        "port": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stream_id",
+        "port",
+        "window"
+      ],
+      "type": "object"
+    },
     "TextContent": {
       "properties": {
         "text": {
@@ -796,6 +881,48 @@
         },
         "kind": {
           "const": "preview.start"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/StreamOpen"
+        },
+        "kind": {
+          "const": "stream.open"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/StreamCredit"
+        },
+        "kind": {
+          "const": "stream.credit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/StreamClose"
+        },
+        "kind": {
+          "const": "stream.close"
         }
       },
       "required": [

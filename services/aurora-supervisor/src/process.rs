@@ -99,8 +99,6 @@ struct Proc {
 #[derive(Default)]
 struct Inner {
     procs: BTreeMap<String, Proc>,
-    next_proc: u64,
-    next_watch: u64,
     dirty: BTreeSet<String>,
 }
 
@@ -345,7 +343,7 @@ impl ProcessManager {
         }
         let cwd = resolve_cwd(&self.cfg.working_dir, cwd)?;
         let id = {
-            let mut g = self.lock();
+            let g = self.lock();
             let running = g
                 .procs
                 .values()
@@ -357,8 +355,9 @@ impl ProcessManager {
                     self.cfg.max_running
                 ));
             }
-            g.next_proc += 1;
-            format!("p{}", g.next_proc)
+            // (P4-PRV-2) Supervisor-assigned UUID (`03 §processes`): the API's `process.state`
+            // handler parses the id as a UUID — a `p{n}` string would invalidate the report.
+            Uuid::now_v7().to_string()
         };
         let mut child = shell(&self.cfg, command, &cwd)
             .stdout(Stdio::piped())
@@ -495,8 +494,9 @@ impl ProcessManager {
             _ => return Err("kind must be pattern, silence or exit".into()),
         };
         let mut g = self.lock();
-        g.next_watch += 1;
-        let wid = format!("w{}", g.next_watch);
+        // (P4-PRV-2) Supervisor-assigned UUID (`03 §watches`): the API parses `watch_id` as a
+        // UUID when a `watch.fired` report lands — a `w{n}` string would invalidate the report.
+        let wid = Uuid::now_v7().to_string();
         let p = g.procs.get_mut(id).ok_or("unknown process id")?;
         if p.state != ProcessStatus::Running {
             return Err("process is not running".into());

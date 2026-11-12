@@ -197,13 +197,17 @@ export async function mockApi(
     // P4-ONB-2: onboarding progress (seen, so `/` stays on the workspace), the guide's readiness and the setup wizard.
     if (p === "/v1/me/onboarding") return json({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null });
     if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(readinessReady);
-    // FIX-029 (C-611): the agent's sandbox view with a per-boot start log; the retry and
-    // start-failure routes back the Computer tab's Start log section and Retry now button.
+    // FIX-029 (C-611) + P4-PRV-1: ONE sandbox view — running with port 3000 listening (the
+    // Previews tab's chips, the Computer tab's "Listening ports") and the FIX-029 start-log
+    // fields. Tests that need a different state override this route (`exact`/`patterns` hit
+    // first), e.g. stage4-routes' failed-start notice.
     if (/^\/v1\/agents\/[^/]+\/sandbox$/.test(p)) {
       return json({
-        agent_id: agent.id, state: "stopped", boot_id: null, runner_id: null, image: null, started_at: null,
-        keep_awake_reasons: [], failure_code: null, failure_message: null, start_attempt: null,
-        retryable: false, start_log: [], processes: [], ports: [], restart_to_update: false,
+        agent_id: agent.id, state: "running", boot_id: id(130), runner_id: id(131), image: "aurora-sandbox:latest",
+        started_at: now, keep_awake_reasons: ["preview"], failure_code: null, failure_message: null, start_attempt: null,
+        retryable: false, start_log: [], processes: [],
+        ports: [{ port: 3000, protocol: "tcp", shared: previewShares[0].hostname }],
+        restart_to_update: false, preview_in_use: true,
       });
     }
     if (/^\/v1\/agents\/[^/]+\/start-failures$/.test(p)) return json({ items: [] });

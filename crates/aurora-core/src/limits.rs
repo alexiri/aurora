@@ -267,6 +267,46 @@ pub const PREVIEW_AWAKE_CAP: Duration = Duration::from_secs(4 * 3600);
 /// the label of a share hostname: `p` + this many base32 chars (120 bits of CSPRNG).
 pub const PREVIEW_LABEL_CHARS: usize = 24;
 
+// Port preview access and byte streams (phase 4, P4-PRV-2, D-146, D-147; docs/02 §Limits,
+// docs/04 §Preview access, docs/16 §W17/§W18).
+/// absolute life of a preview session (never past the dashboard session's own expiry).
+pub const PREVIEW_SESSION_TTL: Duration = Duration::from_secs(8 * 3600);
+/// a preview session unused for this long is dead.
+pub const PREVIEW_SESSION_IDLE: Duration = Duration::from_secs(3600);
+/// single-use browser authorization grant (sealed, docs/04 §Preview access).
+pub const PREVIEW_GRANT_TTL: Duration = Duration::from_secs(60);
+/// single-use stream grant (`aux_`, redeemed by the runner at the API).
+pub const PREVIEW_STREAM_GRANT_TTL: Duration = Duration::from_secs(30);
+/// relay cache of a resolve: 15 s positive, 5 s negative; also the open-stream
+/// revalidation interval (worst-case revocation latency, SEC-81).
+pub const PREVIEW_AUTH_CACHE: Duration = Duration::from_secs(15);
+pub const PREVIEW_AUTH_CACHE_NEG: Duration = Duration::from_secs(5);
+/// concurrent streams per share / per sandbox / per user (per relay replica).
+pub const PREVIEW_STREAMS_PER_SHARE: u32 = 32;
+pub const PREVIEW_STREAMS_PER_SANDBOX: u32 = 64;
+pub const PREVIEW_STREAMS_PER_USER: u32 = 64;
+/// credit window per direction per stream; a chunk never exceeds `PREVIEW_CHUNK`.
+pub const PREVIEW_STREAM_WINDOW: usize = 128 * KIB;
+pub const PREVIEW_CHUNK: usize = 16 * KIB;
+/// idle timeouts of a leg-1 stream (plain HTTP vs upgraded) and its total lifetime.
+pub const PREVIEW_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+pub const PREVIEW_WS_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+pub const PREVIEW_STREAM_LIFETIME: Duration = Duration::from_secs(4 * 3600);
+/// the runner's stream-open round trip (grant redemption + `stream.open`).
+pub const PREVIEW_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// the supervisor's loopback connect timeout (`docs/16 §W18`).
+pub const PREVIEW_SUPERVISOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// upstream response headers must arrive within this.
+pub const PREVIEW_HEADER_TIMEOUT: Duration = Duration::from_secs(60);
+/// request bodies proxied to a preview app, at most.
+pub const PREVIEW_REQUEST_BODY_MAX: usize = 100 * MIB;
+/// relayed bytes per share per UTC day; beyond it 429 `preview_quota`.
+pub const PREVIEW_BYTES_PER_SHARE_DAY: u64 = 5 * 1024 * 1024 * 1024;
+/// relay-plane requests/s per relay replica (burst is double).
+pub const PREVIEW_API_RATE: u32 = 100;
+/// grant redemptions per minute per client address (and per share) at the relay.
+pub const PREVIEW_GRANT_RATE: u32 = 30;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +328,21 @@ mod tests {
         assert_eq!(PREVIEW_SHARES_PER_ORG, 200);
         assert_eq!(PREVIEW_WAKE_WINDOW, Duration::from_secs(60));
         assert_eq!(PREVIEW_AWAKE_CAP, Duration::from_secs(4 * 3600));
+        assert_eq!(PREVIEW_SESSION_TTL, Duration::from_secs(28_800));
+        assert_eq!(PREVIEW_SESSION_IDLE, Duration::from_secs(3_600));
+        assert_eq!(PREVIEW_GRANT_TTL, Duration::from_secs(60));
+        assert_eq!(PREVIEW_STREAM_GRANT_TTL, Duration::from_secs(30));
+        assert_eq!(PREVIEW_AUTH_CACHE, Duration::from_secs(15));
+        assert_eq!(PREVIEW_STREAMS_PER_SHARE, 32);
+        assert_eq!(PREVIEW_STREAMS_PER_SANDBOX, 64);
+        assert_eq!(PREVIEW_STREAM_WINDOW, 131_072);
+        assert_eq!(PREVIEW_CHUNK, 16_384);
+        assert_eq!(PREVIEW_IDLE_TIMEOUT, Duration::from_secs(120));
+        assert_eq!(PREVIEW_WS_IDLE_TIMEOUT, Duration::from_secs(600));
+        assert_eq!(PREVIEW_STREAM_LIFETIME, Duration::from_secs(14_400));
+        assert_eq!(PREVIEW_REQUEST_BODY_MAX, 104_857_600);
+        assert_eq!(PREVIEW_BYTES_PER_SHARE_DAY, 5 * 1024 * 1024 * 1024);
+        assert_eq!(PREVIEW_API_RATE, 100);
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
         const { assert!(CONDITION_BODY_BUFFER <= CONDITION_BODY_BUFFER_MAX) };
     }

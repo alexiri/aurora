@@ -289,6 +289,9 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = aurora_api::domains::runners_admin::service::bootstrap_default(&state).await {
         tracing::warn!(error = %e, "bootstrap runner token not applied");
     }
+    if let Err(e) = aurora_api::domains::relay::service::bootstrap_relay_token(&state).await {
+        tracing::warn!(error = %e, "bootstrap relay token not applied");
+    }
     if let Err(e) = aurora_api::domains::connectors::bootstrap_tokens(&state).await {
         tracing::warn!(error = %e, "bootstrap connector tokens not applied");
     }

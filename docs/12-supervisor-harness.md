@@ -456,8 +456,12 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   (`{ shares: [{ share_id, port, start_command?, cwd? }] }`, replaced as a whole by each full
   sync, empty when previews are off, the org has them off, the share is paused or the agent is
   frozen). Nothing is read back from the home (the agent can write it) and nothing is persisted.
-- `ports.state` discovery is unchanged (informational). The allow-list for streams is the share
-  list, **never** the discovery result (`12 §Streams`).
+- `ports.state` discovery is informational only: on the 10 s harvest tick (the first fires at
+  boot) the supervisor scans `/proc/net/tcp{,6}` for TCP LISTEN rows (st `0A`) on loopback
+  addresses (127.0.0.0/8, ::1, wildcard binds) and reports `ports.state { ports }` only when the
+  set changed.
+  Port 0 is never reported. The allow-list for streams is the share list, **never** the
+  discovery result (`12 §Streams`).
 - **On-demand start**: the frame `preview.start { port }` (from the work item `preview.start`)
   looks the port up in the share list; with a `start_command` and the port not listening, the
   supervisor starts it as a background process `preview:<port>` (kind `preview` in

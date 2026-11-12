@@ -216,6 +216,10 @@ pub async fn insert(
     .bind(created_by.1)
     .execute(&mut *conn)
     .await?;
+    // Like update/delete: a share change must reach a running sandbox at once (the `previews`
+    // home part is re-synced, the runner learns share → port before arm 5 emits
+    // `preview.start`); a bump never wakes a parked sandbox (docs/11 §Port previews).
+    bump_agent(conn, id).await?;
     let row = get(&mut *conn, id).await?.ok_or(DbError::NotFound)?;
     Ok((row, label))
 }

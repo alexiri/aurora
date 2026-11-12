@@ -50,7 +50,7 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 
 | Call | Request → Response |
 |------|--------------------|
-| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
+| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners; optional `stream_tls`: the stream listener speaks TLS, default false — the API derives the endpoint scheme it hands the relay from it, `§W18`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
 | `POST /work` | `{ wait_secs ≤ 25, capacity: { running, max } }` → `{ items: [WorkItem], reconciler: bool }` (also the heartbeat; `reconciler` is true only for the oldest live replica of this runner, computed at poll time — spec fix S-08) |
 | `POST /reports` | `{ reports: [Report] }` (≤ 200, ≤ 1 MiB) → `{ results: [{ report_id, status: "applied"|"duplicate"|"fenced"|"invalid", detail? }] }` |
 | `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404 |
@@ -397,8 +397,10 @@ its supervisor-side credit is exhausted and its buffer (`PREVIEW_STREAM_WINDOW`)
 Closing: either side sends a WebSocket close; codes `1000` normal, `4403` not allowed
 (grant, access revoked), `4404` not found, `4409` limit reached (`PREVIEW_STREAMS_PER_SANDBOX`,
 `PREVIEW_STREAMS_PER_SHARE`), `4502` the supervisor could not connect to the port or refused it,
-`4503` channel lost or sandbox stopped, `4504` timeout (connect, idle, lifetime). TLS on this leg is
-optional (`runner.stream_tls`, default off in-cluster, residual risk in `17`).
+`4503` channel lost or sandbox stopped, `4504` timeout (connect, idle, lifetime). TLS on this leg
+is optional (`runner.stream_tls`, default off in-cluster, residual risk in `17`): the runner
+registers a `stream_tls` capability at registration and the API derives the endpoint scheme it
+hands the relay from it (`ws://` off, `wss://` on).
 
 **Leg 2, runner ↔ supervisor, over the existing W6 channel (wire change).** W6 gains **stream
 frames** that are **outside the seq/ack lineage**: JSON text frames of kind `stream.*` carry

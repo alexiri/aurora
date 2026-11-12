@@ -8,6 +8,14 @@ use crate::redacted::Redacted;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+fn default_preview_rate() -> u32 {
+    aurora_core::limits::PREVIEW_API_RATE
+}
+
+fn default_preview_burst() -> u32 {
+    200
+}
+
 pub const DEFAULT_AGENT_BRIEF: &str = "You are a general-purpose assistant in this workspace. Be concise and direct. Ask before acting on anything irreversible, and say which tools or apps you used.";
 
 fn strs(v: &[&str]) -> Vec<String> {
@@ -35,6 +43,10 @@ pub struct EnvSecrets {
     pub bootstrap_runner_token: Option<Redacted<String>>,
     pub bootstrap_connector_tokens: Option<Redacted<String>>,
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
+    /// (P4-PRV-2) `aul_…`: the relay's anchor token, upserted at start.
+    pub bootstrap_relay_token: Option<Redacted<String>>,
+    /// (P4-PRV-2) `aul_…`: the relay's own credential (`aurora-relay` only).
+    pub relay_token: Option<Redacted<String>>,
     /// OIDC client secrets keyed by provider id (from each `client_secret_env`).
     pub oidc_client_secrets: BTreeMap<String, Redacted<String>>,
     /// (phase 4, P4-CNT) values of `ratelimit.counters.redis.username_env` / `password_env`.
@@ -77,6 +89,8 @@ pub struct RawConfig {
     pub scim: ScimSection,
     /// (phase 4, P4-PRV-1) port previews: master switch, domain and limits.
     pub previews: PreviewsSection,
+    /// (phase 4, P4-PRV-2) the `aurora-relay` service.
+    pub relay: RelaySection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -539,7 +553,7 @@ impl Default for ScimSection {
     }
 }
 
-/// `[previews]` (phase 4, P4-PRV-1, D-144; docs/15 §Port previews operations).
+/// `[previews]` (phase 4, P4-PRV-1/2, D-144; docs/15 §Port previews operations).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PreviewsSection {
@@ -555,6 +569,12 @@ pub struct PreviewsSection {
     pub shares_per_org: u32,
     /// `PREVIEW_AWAKE_CAP` in seconds; at most `hosted.background_cap_secs`.
     pub awake_cap_secs: u64,
+    /// (P4-PRV-2) `PREVIEW_SESSION_TTL` in seconds (8 h); an operator may only lower it.
+    pub session_ttl_secs: u64,
+    /// (P4-PRV-2) `PREVIEW_SESSION_IDLE` in seconds (1 h); an operator may only lower it.
+    pub session_idle_secs: u64,
+    /// (P4-PRV-2) `PREVIEW_BYTES_PER_SHARE_DAY` in bytes (5 GiB).
+    pub bytes_per_share_day: u64,
 }
 impl Default for PreviewsSection {
     fn default() -> Self {
@@ -564,6 +584,40 @@ impl Default for PreviewsSection {
             shares_per_agent: 10,
             shares_per_org: 200,
             awake_cap_secs: 4 * 3600,
+            session_ttl_secs: 8 * 3600,
+            session_idle_secs: 3600,
+            bytes_per_share_day: 5 * 1024 * 1024 * 1024,
+        }
+    }
+}
+
+/// `[relay]` (phase 4, P4-PRV-2, D-146; docs/15 §Port previews): the `aurora-relay` service.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RelaySection {
+    /// The API the relay registers with (default the local dev API).
+    pub api_url: String,
+    /// Edge-facing HTTP listen address (port 4112 behind the edge).
+    pub listen: String,
+    /// Health and metrics listener (4193).
+    pub ops_port: u16,
+    /// Per replica: concurrent streams in total / per user / request body bytes.
+    pub max_streams: u32,
+    pub max_streams_per_user: u32,
+    pub request_body_max_bytes: usize,
+    /// The API's `previews.domain` (the relay refuses to serve on mismatch after registering).
+    pub previews_domain: Option<String>,
+}
+impl Default for RelaySection {
+    fn default() -> Self {
+        Self {
+            api_url: "http://127.0.0.1:4101".into(),
+            listen: "0.0.0.0:4112".into(),
+            ops_port: 4193,
+            max_streams: 2048,
+            max_streams_per_user: 64,
+            request_body_max_bytes: 100 * 1024 * 1024,
+            previews_domain: None,
         }
     }
 }
@@ -783,6 +837,14 @@ pub struct RunnerSection {
     /// read-only over the image's supervisor in new podman sandboxes. Refused unless the
     /// instance is in dev mode (loopback bind and external URL, podman backend).
     pub dev_supervisor_binary: Option<String>,
+    /// (phase 4, P4-PRV-2) Address of the relay-facing stream listener (4108). Default:
+    /// `server.bind` (startup warns when it overlaps the sandbox listener, like `ops_bind`).
+    /// Opened only when the API reports `previews.enabled` at registration.
+    pub stream_bind: Option<String>,
+    /// (phase 4, P4-PRV-2) Optional TLS of the stream listener (`docs/16 §W18`): off by default
+    /// in-cluster; a runner outside the cluster should set both files (the relay verifies
+    /// against `relay.runner_ca_file`).
+    pub stream_tls: StreamTlsSection,
     pub k8s: K8sSection,
 }
 impl Default for RunnerSection {
@@ -809,9 +871,20 @@ impl Default for RunnerSection {
             sandbox_hosts: BTreeMap::new(),
             dev_allow_external_network: false,
             dev_supervisor_binary: None,
+            stream_bind: None,
+            stream_tls: StreamTlsSection::default(),
             k8s: K8sSection::default(),
         }
     }
+}
+
+/// `[runner.stream_tls]` (phase 4, P4-PRV-2): optional TLS of the stream listener.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StreamTlsSection {
+    /// Operator-supplied certificate chain (PEM). Both or neither.
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -986,6 +1059,12 @@ pub struct ApiRateSection {
     pub org_per_minute: u32,
     /// Per-class overrides keyed by class name.
     pub classes: BTreeMap<String, RateClassOverride>,
+    /// (P4-PRV-2) the relay plane's own per-replica class: refill per second, burst.
+    #[serde(default = "default_preview_rate")]
+    pub preview_per_second: u32,
+    /// (P4-PRV-2) burst of the relay plane's class.
+    #[serde(default = "default_preview_burst")]
+    pub preview_burst: u32,
 }
 impl Default for ApiRateSection {
     fn default() -> Self {
@@ -994,10 +1073,11 @@ impl Default for ApiRateSection {
             multiplier: 1.0,
             org_per_minute: 3000,
             classes: BTreeMap::new(),
+            preview_per_second: aurora_core::limits::PREVIEW_API_RATE,
+            preview_burst: 200,
         }
     }
 }
-
 /// `{ per_minute | per_hour, burst }`; omitted fields keep the class default.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
