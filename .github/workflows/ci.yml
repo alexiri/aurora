@@ -14,6 +14,13 @@ on:
 permissions:
   contents: read
 
+# VTL-001: the sccache step, shared by every compiling job (`*sccache` anchor, defined in `rust-lint`).
+# mozilla-actions/sccache-action reads ACTIONS_RESULTS_URL / ACTIONS_RUNTIME_TOKEN from the job environment;
+# it is a no-op where the backend cannot start (fork PRs: the runtime token is read-only — sccache falls
+# back to its local directory and the build proceeds; identical to OPS-023's measured fallback in image
+# builds). ACTIONS_CACHE_KEY_PREFIX namespaces sccache's entries inside the repository's shared 10 GB
+# Actions cache so they are identifiable next to the BuildKit scopes and rust-cache.
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
@@ -25,6 +32,14 @@ env:
   DATABASE_URL: postgres://aurora:aurora@127.0.0.1:5432/aurora
   SQLX_CLI_VERSION: 0.8.6
   NEXTEST_SHARDS: 4
+  # VTL-001 (velocity): shared sccache over the GitHub Actions cache for the compiling jobs. OPS-023 removed
+  # sccache from the *docker image builds* (it competed with the BuildKit layer cache for the 10 GB repo cache
+  # and never hit there); this is the plain `cargo` path in the lint/test jobs, measured at +0 hits/0 min cost
+  # on a first run and faster warm runs (see docs/ops/build-performance.md §CI). The repo Actions cache cap
+  # (10 GB) is the budget; the rust-cache entries stay under it.
+  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_CACHE_SIZE: "8G"
+  ACTIONS_CACHE_KEY_PREFIX: "sccache-"
 
 jobs:
   rust-lint:
@@ -40,6 +55,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { components: "rustfmt, clippy" }
+      # VTL-001 (velocity): sccache on top of the rust-cache. Dependencies do not change between
+      # consecutive runs, so their rlibs come from sccache while only the workspace crates recompile;
+      # rust-cache keeps restoring target/ for the workspace part. Backend env set once in workflow env;
+      # the step is anchored and reused by every other compiling job.
+      - &sccache
+        name: sccache (GitHub Actions cache backend, VTL-001)
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-lint }
       - &sqlx-cache
@@ -85,6 +107,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { targets: wasm32-wasip2 }
+      - *sccache
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, cache-on-failure: true }
       - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
@@ -154,6 +177,7 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - *sccache
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, save-if: "false" }
       - *sqlx-cache
@@ -177,6 +201,7 @@ jobs:
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - *sccache
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, save-if: "false" }
       - name: Podman preflight (rootless, userns, netavark)
@@ -256,6 +281,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - *sccache
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, save-if: "false" }
       - *sqlx-cache

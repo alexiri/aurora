@@ -8,7 +8,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 | Layer | Scope | Tooling | Runs |
 |-------|-------|---------|------|
-| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo test` (`cargo nextest` optional, `just test-nextest`), `proptest`, `insta` | every PR |
+| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo test`, `cargo nextest` (the documented fast path, `just test-nextest`), `proptest`, `insta` | every PR |
 | **Database** | repositories, claims, partial-unique races, migrations up from empty and from the previous release's schema | ephemeral Postgres from `aurora-testkit` (podman), one database per test | every PR |
 | **Service** | one service in-process with real Postgres and mocks for its neighbours (API with fake runner/connector clients; gateway with mock upstreams and a stub hook host) | `aurora-testkit`, `wiremock` | every PR |
 | **Contract** | OpenAPI document vs handlers; JSON Schemas of every wire type vs checked-in schemas; dashboard client regenerated without drift | schema diff | every PR |
@@ -762,6 +762,40 @@ done when its tests exist, pass in CI, and the security invariants it touches
   `just test-nextest` runs the same set under cargo-nextest when installed (`.config/nextest.toml`; no retries; 10 min per-test kill).
 - **Build speed and disk**: see `docs/ops/build-performance.md` (linker, `dev-fast` profile, optional sccache, lane clean-up).
 
+## Velocity: fast local commands (VTL-001)
+
+The developer-loop wins, in the order they matter (measured numbers in
+`docs/ops/build-performance.md`; this host is 16 cores shared with worker
+lanes, so absolute times vary):
+
+1. **Run tests under cargo-nextest.** Same test set as `cargo test` (doctests
+   excepted, as always with nextest); each test runs in its own process with
+   its own `aurora-testkit` database, so parallel processes are isolated.
+   Install once (`cargo install cargo-nextest --locked`, or the prebuilt
+   binary from <https://nexte.st>), then `just test-nextest` / `cargo nextest
+   run`. `.config/nextest.toml` caps parallelism at 8 processes (the shared
+   dev Postgres has `max_connections = 100` and every lane's tests share it;
+   16 parallel processes hit "too many clients"), keeps `retries = 0` — a
+   flaky test is a bug, not noise — and kills a hung test at 10 minutes.
+2. **Keep sccache warm.** `scripts/dev/rustc-wrapper.sh` routes every rustc
+   call through sccache when it is installed; a fresh worktree with a warm
+   cache compiles its dependency graph in roughly half the time. Leave the
+   cache at its 30 GB cap (`SCCACHE_CACHE_SIZE`, set by the wrapper).
+3. **Link with lld.** `scripts/dev/linker.sh` picks `clang -fuse-ld=lld` when
+   both are installed (they are, on this host) and falls back to `cc` on
+   machines without them, so nothing to configure; `AURORA_LD=mold|system`
+   overrides. Measured (VTL-001, one `aurora-api --tests` relink): lld and
+   mold are within noise of each other at the current debuginfo profile —
+   `it` links in ~4.4 s under either, smaller binaries faster — and links are
+   a small share of a build, so lld stays the default. The linker is plumbing,
+   not the bottleneck.
+4. **Playwright mock suites run 4 workers** (`web/playwright.config.ts`,
+   `fullyParallel`); the dev server under test is a single `next dev` process,
+   so more workers only queue there. Real-stack journeys
+   (`first-run.spec.ts`, `m1.sh`) stay one-file-at-a-time scripts. Override
+   with `AURORA_E2E_WORKERS`; `AURORA_E2E_RETRIES=0` for a strict no-retry
+   run.
+
 ## CI pipeline
 
 1. `fmt`, `clippy -D warnings`, `cargo deny` (licenses, advisories), pnpm lint
@@ -783,3 +817,14 @@ done when its tests exist, pass in CI, and the security invariants it touches
 doctests run in `rust-build` (nextest skips them). `rust-lint`, `rust-deny`, `web` and `guards` are
 separate jobs. Actions are SHA-pinned and on Node 24; runners are pinned to `ubuntu-24.04`.
 `e2e-gateway` (`scripts/e2e/gateway.sh`) and `e2e-hosted` (`AURORA_TEST_PODMAN=1 scripts/e2e/hosted.sh`, rootless podman, sandbox image cached with `actions/cache`) are separate jobs after `rust-build`, parallel to the shards; both compile in-job via their scripts. If `e2e-hosted` cannot run on GitHub runners (user-namespace limits), it becomes a local and nightly gate. See `docs/ops/build-performance.md`.
+
+**Caching (VTL-001).** Every compiling CI job runs
+[mozilla-actions/sccache-action](https://github.com/mozilla-actions/sccache-action) (SHA-pinned)
+before rust-cache: dependency rlibs come from the shared GitHub Actions cache (`SCCACHE_GHA_ENABLED`
+in the workflow `env`, `SCCACHE_CACHE_SIZE=8G`, namespaced with `ACTIONS_CACHE_KEY_PREFIX=sccache-`),
+while the workspace crates keep coming from the per-key rust-cache (`rust-test` / `rust-lint`). This
+is the plain `cargo` path only: OPS-023 measured and removed sccache from the *docker image builds*,
+where its entries competed with the BuildKit layer cache for the repository's 10 GB Actions cache and
+never hit; keep the two paths separate. The nightly Mattermost conformance job compiles on the runner
+and uses the same backend. On a fork PR (read-only runtime token) sccache silently falls back to its
+local directory — the build is unaffected.
