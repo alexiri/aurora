@@ -31,7 +31,13 @@ const T: Duration = Duration::from_secs(10);
 /// process is a libtest binary, not the supervisor — the bootstrap re-exec must be the
 /// real one, which understands `pty_exec::SUBCOMMAND`).
 fn bootstrap_exe() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_aurora-supervisor"))
+    // Runtime path first (nextest sets `NEXTEST_BIN_EXE_aurora-supervisor` when running from an
+    // archive built elsewhere — CI's shard runners never compile and the compile-time path
+    // points at the build runner's checkout, hence the ENOENT "pty flake"); the compile-time
+    // fallback covers plain `cargo test` (same pattern as aurora-cli's plugin test).
+    std::env::var_os("NEXTEST_BIN_EXE_aurora-supervisor")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_BIN_EXE_aurora-supervisor")))
 }
 
 /// The channel ends a PTY engine runs on, built like `channel::spawn` builds them, plus the
