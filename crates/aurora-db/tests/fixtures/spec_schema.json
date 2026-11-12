@@ -596,6 +596,16 @@
     "preview_labels": [
       "label"
     ],
+    "preview_sessions": [
+      "display_prefix",
+      "expires_at",
+      "id",
+      "last_seen_at",
+      "session_id",
+      "share_id",
+      "token_hash",
+      "user_id"
+    ],
     "preview_shares": [
       "agent_id",
       "created_by_label",
