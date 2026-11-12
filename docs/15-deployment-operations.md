@@ -861,6 +861,34 @@ responses, must allow WebSocket upgrades, read timeouts ≥ 600 s and request bo
 enabled and check that the wildcard host routes **only** to the relay and that the dashboard
 host is untouched (an implementation task of P4-PRV-2).
 
+**nginx WebSocket recipe (edge front door)**: "allow WebSocket upgrades" concretely means the
+Upgrade/Connection headers must reach the backend — an nginx edge that proxies with
+`proxy_set_header Connection "";` (the keepalive idiom) silently strips the browser's
+handshake; the dashboard renders but every WebSocket feature (terminal, previews live view)
+dies at the edge with nothing in the api logs. Found in production 2026-11-12
+(aurora-ui.cern.ch). The minimal working posture:
+
+```nginx
+# http context: map the hop-by-hop Connection header to the upgrade
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+# server/location context, on every location proxying /v1 (or `/`):
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+```
+
+Keep the chart's defaults for the rest (`proxy_buffering off`, `proxy_read_timeout`/
+`proxy_send_timeout` ≥ 600 s — an idle terminal longer than the read timeout is cut by the
+edge; the tab auto-reconnects, but raise the timeout to avoid the visible reconnect). Note on
+`http2 on`: browsers do not send HTTP/1.1-style Upgrade over h2 (nginx has no RFC 8441
+CONNECT-UDP/extended connect), so the WebSocket arrives as a separate HTTP/1.1 connection —
+h2 on the vhost is fine as long as the headers above pass through. The same class was fixed
+inside the product in FIX-052 (the gateway must not send `Host` beside `:authority` on h2
+upstream hops); front-door oracle tests are TEST-021.
+
 **Runners.** The relay reaches each runner replica on its **stream listener** `runner.stream_bind`
 (default `server.bind`, port **4108**, `16 §W17`), at the replica's `advertised_host`. A runner
 inside the cluster needs only the NetworkPolicy of *Port previews relay* below; a runner **outside**
