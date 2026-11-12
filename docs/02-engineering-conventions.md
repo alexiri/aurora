@@ -376,6 +376,8 @@ overridden by the named configuration key (`15`).
 | `LIBRARY_REFRESH_INTERVAL` / `LIBRARY_LEASE` / `LIBRARY_REFRESH_CONCURRENCY` | (phase 4, P4-GSL) 15 min (minimum 5 min) per library / 5 min lease / 4 refreshes per API replica | `skills.library.refresh_interval_secs` (≥ 300) | 05, 10 |
 | `LIBRARY_CHECK_NOW_INTERVAL` | (phase 4, P4-GSL) 60 s per library | — | 05 |
 | `LIBRARY_FETCH_TIMEOUT` / `LIBRARY_FETCH_RATE` | (phase 4, P4-GSL) 20 s per fetch / 20 per second per gateway, 5 per second per org | — | 06 |
+| `ADDON_MANIFEST_MAX` / `ADDON_ADDONS_MAX` / `ADDON_VERSIONS_MAX` | (phase 5, P5-ASRC, D-250) 1 MiB per manifest / 100 addons per manifest / 50 versions per addon | — | 09, 22 |
+| `ADDON_LEASE` / `ADDON_CHECK_CONCURRENCY` / `ADDON_FETCH_TIMEOUT` / `ADDON_FAILURE_BACKOFF` | (phase 5, P5-ASRC) 5 min lease per source / 2 checks per replica at once / 20 s per fetch / 1 h backoff after a failed check | `plugins.addon_sources.update_interval` (the schedule itself) | 05, 22 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

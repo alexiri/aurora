@@ -1354,7 +1354,15 @@ hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze actio
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host
-claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Connectors** (provision,
+claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
+P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
+list with key fingerprint and check status, add with a preview/trust review of the
+repo's signing key before anything is registered, "Check now", per-source schedule
+(`6h…1mo`, `never` = manual only), remove (refused while packages are active; the
+confirm states that packages stay), and a re-confirm flow when a repo's signing key
+changed: old and new fingerprint side by side, the trusted key is updated in the same
+audited transaction; the plugins list gains the source name, "Update available"
+badges and a "Check for updates" button), **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
 (capacity table per runner — backend, running sandboxes of the declared limit, live replicas, version, last seen — and a **Rotate token** action with a grace period for the old token and a one-time copy of the new one; FIX-121, D-211, C-694/C-695; **provisioning (adding and removing runners) is Helm/CLI, not the dashboard**; FIX-025, D-158, C-586: each runner has a

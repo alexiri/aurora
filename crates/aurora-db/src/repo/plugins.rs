@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 const SEL: &str = "p.id, p.package_id, p.version, p.contract, p.publisher, p.digest,
     p.signer_key_id, tk.name AS signer_name, p.manifest, p.permissions, p.violations,
-    p.source, p.status, p.status_reason, p.approved_by, u.display_name AS approved_by_name,
+    p.source, p.source_id, p.status, p.status_reason, p.approved_by, u.display_name AS approved_by_name,
     p.approved_at, p.created_at";
 const FROM: &str = "plugin_packages p
     LEFT JOIN trusted_keys tk ON tk.public_key = p.signer_key_id
@@ -30,6 +30,8 @@ pub struct PackageRow {
     pub permissions: Value,
     pub violations: Value,
     pub source: String,
+    /// (P5-ASRC) the addon source row for `source = "addon"`.
+    pub source_id: Option<Uuid>,
     pub status: String,
     pub status_reason: Option<String>,
     pub approved_by: Option<Uuid>,
@@ -54,6 +56,8 @@ pub struct NewPackage<'a> {
     pub status_reason: Option<&'a str>,
     /// Set `approved_at = now()` (automatic activation).
     pub approved_now: bool,
+    /// (P5-ASRC) the addon source row for `source = "addon"`.
+    pub source_id: Option<Uuid>,
 }
 
 /// Insert; `None` when `(package_id, version, digest)` already exists.
@@ -63,9 +67,9 @@ pub async fn insert_package(
 ) -> Result<Option<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
         "INSERT INTO plugin_packages (id, package_id, version, contract, publisher, digest,
-            signer_key_id, manifest, permissions, violations, source, status, status_reason,
-            approved_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, CASE WHEN $14 THEN now() END)
+            signer_key_id, manifest, permissions, violations, source, source_id, status,
+            status_reason, approved_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, CASE WHEN $15 THEN now() END)
          ON CONFLICT (package_id, version, digest) DO NOTHING RETURNING id",
     )
     .bind(p.id)
@@ -79,6 +83,7 @@ pub async fn insert_package(
     .bind(p.permissions)
     .bind(p.violations)
     .bind(p.source)
+    .bind(p.source_id)
     .bind(p.status)
     .bind(p.status_reason)
     .bind(p.approved_now)
@@ -266,6 +271,25 @@ pub async fn revoke_trusted_key(
     .bind(id)
     .fetch_optional(conn)
     .await?)
+}
+
+/// (P5-ASRC, C-595) Move a trusted key to a new public key (the admin re-confirmed an
+/// addon source's changed signing key). Nothing is revoked; packages signed by the old
+/// key stay as they are.
+pub async fn update_trusted_key_public_key(
+    conn: &mut PgConnection,
+    id: Uuid,
+    public_key: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE trusted_keys SET public_key = $2, updated_at = now()
+         WHERE id = $1 AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .bind(public_key)
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Disable every live package signed by `public_key`; returns `(id, was_active)`.

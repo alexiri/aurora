@@ -17,12 +17,14 @@ use aurora_registry::{Limits, Manifest, Package, Violation};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     Builtin,
     Directory,
     Upload,
+    Addon,
 }
 
 impl Source {
@@ -31,6 +33,7 @@ impl Source {
             Self::Builtin => "builtin",
             Self::Directory => "directory",
             Self::Upload => "upload",
+            Self::Addon => "addon",
         }
     }
 }
@@ -66,6 +69,11 @@ fn reject(v: &[Violation]) -> ApiError {
     }
     ApiError::unprocessable("package_invalid", "The package is invalid.")
         .with_details(json!({"violations": violations_json(v)}))
+}
+
+/// `reject` for sibling domains (addon sources surface the same violations).
+pub fn reject_public(v: &Violation) -> ApiError {
+    reject(std::slice::from_ref(v))
 }
 
 /// Reserved hosts (09 §6): LLM endpoints, the external and service hosts,
@@ -185,6 +193,8 @@ async fn decide(
     }
     let prev = plugins::previous_approved(&state.pool, &m.package.id).await?;
     let Some(prev) = prev else {
+        // (P5-ASRC, D-164(b)) addon packages are never auto-activated on first sight:
+        // third-party permissions always need the ordinary instance-admin approval.
         return Ok(if source == Source::Builtin && *signer == Signer::Project {
             activate
         } else {
@@ -232,6 +242,28 @@ pub async fn ingest(
     state: &AppState,
     bytes: &[u8],
     source: Source,
+    actor: &AuditActor,
+) -> Result<Ingested, ApiError> {
+    ingest_inner(state, bytes, source, None, actor).await
+}
+
+/// (P5-ASRC, C-607) Ingest an addon package for `source_row`: same pipeline, the row
+/// records `source = "addon"` and `source_id`; the audit action is `addon.ingest`.
+pub async fn ingest_for_source(
+    state: &AppState,
+    bytes: &[u8],
+    source_row: &aurora_db::repo::addon_sources::AddonSourceRow,
+    actor: &AuditActor,
+) -> Result<PackageRow, ApiError> {
+    let out = ingest_inner(state, bytes, Source::Addon, Some(source_row.id), actor).await?;
+    Ok(out.row)
+}
+
+async fn ingest_inner(
+    state: &AppState,
+    bytes: &[u8],
+    source: Source,
+    source_id: Option<Uuid>,
     actor: &AuditActor,
 ) -> Result<Ingested, ApiError> {
     let pkg = Package::read(bytes, &Limits::default()).map_err(|v| reject(&v))?;
@@ -337,6 +369,7 @@ pub async fn ingest(
             permissions: &permissions,
             violations: &violations_v,
             source: source.as_str(),
+            source_id,
             status: decision.status,
             status_reason: decision.reason,
             approved_now: auto,
@@ -388,13 +421,19 @@ pub async fn ingest(
         None => tx.commit().await.map_err(DbError::from)?,
     }
 
+    let audit_action = if source == Source::Addon {
+        "addon.ingest"
+    } else {
+        "plugin.ingest"
+    };
     audit::record(
         state,
-        AuditEvent::new(actor.clone(), "plugin.ingest", Outcome::Success)
+        AuditEvent::new(actor.clone(), audit_action, Outcome::Success)
             .target("plugin_package", new_id)
             .metadata(json!({
                 "package_id": package_id, "version": version, "digest": digest,
-                "source": source.as_str(), "status": decision.status,
+                "source": source.as_str(), "source_id": source_id,
+                "status": decision.status,
                 "reason": decision.reason,
             })),
     );

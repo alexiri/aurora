@@ -56,9 +56,15 @@ async fn list_plugins(
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    // (P5-ASRC, C-600) provenance + update badges: one read of the addon sources.
+    let sources = crate::domains::addon_sources::source_names(&s).await?;
     let mut items = Vec::with_capacity(page.items.len());
     for r in page.items {
-        items.push(service::to_dto(&s, r).await?);
+        let mut dto = service::to_dto(&s, r).await?;
+        if let Some(sid) = dto.source_id {
+            dto.source_name = sources.get(&sid).cloned();
+        }
+        items.push(dto);
     }
     Ok(Json(Page {
         items,

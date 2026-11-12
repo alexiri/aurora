@@ -549,6 +549,16 @@ impl RawConfig {
         if self.plugins.builtin_dir.is_empty() {
             c.err("plugins.builtin_dir", "must not be empty");
         }
+        // (P5-ASRC, D-164) the addon poll interval must be one of the owner's enum values.
+        if !matches!(
+            self.plugins.addon_sources.update_interval.as_str(),
+            "6h" | "12h" | "1d" | "1w" | "2w" | "1mo" | "never"
+        ) {
+            c.err(
+                "plugins.addon_sources.update_interval",
+                "must be one of 6h, 12h, 1d, 1w, 2w, 1mo, never",
+            );
+        }
         check_pos(
             &mut c,
             "retention.request_log_days",

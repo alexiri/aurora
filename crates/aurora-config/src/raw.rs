@@ -829,6 +829,8 @@ pub struct PluginsSection {
     /// Built-in catalogue (09 §10): only archives signed by the project key are loaded from here.
     pub builtin_dir: String,
     pub allow_unsigned: bool,
+    /// (phase 5, P5-ASRC, D-164) addon sources: the poll interval for every source.
+    pub addon_sources: AddonSourcesSection,
 }
 impl Default for PluginsSection {
     fn default() -> Self {
@@ -836,6 +838,23 @@ impl Default for PluginsSection {
             dir: "/var/lib/aurora/plugins".into(),
             builtin_dir: "/usr/share/aurora/plugins".into(),
             allow_unsigned: false,
+            addon_sources: AddonSourcesSection::default(),
+        }
+    }
+}
+
+/// `[plugins.addon_sources]` (phase 5, P5-ASRC, D-164; docs/15).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AddonSourcesSection {
+    /// How often every addon source is re-checked: `6h|12h|1d|1w|2w|1mo|never`
+    /// (`never` = manual checks only). Validated in `validate_for`.
+    pub update_interval: String,
+}
+impl Default for AddonSourcesSection {
+    fn default() -> Self {
+        Self {
+            update_interval: "1d".into(),
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
 mod action_approvals;
 mod activity;
+mod addons;
 mod admin;
 mod admin_delete;
 mod admin_overview_previews;
