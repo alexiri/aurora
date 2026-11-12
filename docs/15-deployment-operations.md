@@ -91,7 +91,7 @@ one new entry without activating it.
 | `skills.library.enabled` | `true` | api | (phase 4, P4-GSL) kill-switch of the git skill library; invisible until an org admin connects a repository; no new infrastructure (`§Git skill library`) |
 | `api.gateway_internal_url` | `http://aurora-gateway:4103` | api | (phase 4, P4-GSL, D-154) the gateway's internal listener as the API reaches it for `POST /internal/v1/library-fetch` (`06 §Library fetch`); the internal secret ring authenticates; must be an `http(s)` URL (startup refusal naming the key otherwise) |
 | `skills.library.refresh_interval_secs`, `skills.library.bytes_per_agent` | 900 (≥ 300), 1 MiB (lower only) | api | (phase 4, P4-GSL) `LIBRARY_REFRESH_INTERVAL`, `LIBRARY_BYTES_PER_AGENT` (`02 §Limits`) |
-| `previews.enabled` | `false` | api, relay | (phase 4, P4-PRV-1) master switch for port previews; **off unless configured**; when `true` the API refuses to start without a valid `previews.domain` (`§Port previews`) |
+| `previews.enabled` | `false` | api, relay | (phase 4, P4-PRV-1) master switch for port previews; **off unless configured**; when `true` the API refuses to start without a valid `previews.domain` (`§Port previews`). Helm: the chart value `relay.enabled` is the single switch — it mirrors `config.previews.enabled` (FIX-056), so `helm upgrade --set relay.enabled=true --set relay.domain=…` wires everything; set the config key only to agree explicitly, never alone |
 | `previews.domain` | — | api, relay | (phase 4, P4-PRV-1) the DNS suffix of preview hostnames, e.g. `preview.example.org`; needs a wildcard DNS record and a wildcard TLS certificate; must not be, contain or sit under the dashboard host (startup validation, `§Port previews`) |
 | `previews.session_ttl_secs`, `previews.session_idle_secs`, `previews.bytes_per_share_day` | 28800, 3600, 5 GiB | api, relay | (phase 4, P4-PRV-2) lower only for the first two (`02 §Limits`) |
 | `relay.api_url` | `http://127.0.0.1:4101` | relay | (phase 4, P4-PRV-2) the API it registers with; the anchor token comes from `AURORA_RELAY_TOKEN` (`aul_`) |
@@ -314,8 +314,9 @@ override changes nothing else (same package list, same labels, same tag scheme
   WebSocket is `/v1/agents/{agent}/terminal` on the ordinary origin (the proxy must allow
   WebSocket upgrades for `/v1/*`, which it already does for SSE keepalives; no timeout change
   beyond `TERMINAL_IDLE_TIMEOUT`'s client-side pings).
-- (phase 4, P4-PRV-2) With `previews.enabled` the edge also serves the **wildcard host**
-  `*.<previews.domain>` → relay :4112 (a second host, never a path of `server.external_url`;
+- (phase 4, P4-PRV-2) With `relay.enabled` (the chart's single previews switch,
+  FIX-056) the edge also serves the **wildcard host** `*.<previews.domain>` →
+  relay :4112 (a second host, never a path of `server.external_url`;
   `§Port previews`). Without it nothing about the edge changes.
 - (phase 2, RFE-017) The API limits by authenticated principal, not by IP, except
   for unauthenticated routes (which trust the edge's overwritten `X-Forwarded-For`).
@@ -470,6 +471,12 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   terminal.enabled=true` (the chart value mirrors `config.terminal.enabled`
   and renders the runner :4108 listener and NetworkPolicy flows with it;
   `docs/23 §NetworkPolicy`).
+- (phase 4, P4-PRV-2, FIX-056) Turning port previews on in an existing
+  deployment is likewise a single-switch upgrade: `helm upgrade … --set
+  relay.enabled=true --set relay.domain=<previews.domain>` (the chart value
+  mirrors `config.previews.enabled` and renders the relay, the wildcard edge
+  rules and the NetworkPolicy flows with it; `docs/23 §NetworkPolicy`,
+  `§Port previews` below).
 - Running sandboxes keep their image until their next boot; the dashboard shows
   "restart to update" when an agent's boot image differs from the runner's.
 - (phase 1, RFE-002) Upgrading to phase 1 requires restarting running sandboxes; the
@@ -818,12 +825,12 @@ sign out, which ends delivery.
 ## Port previews (phase 4, P4-PRV-1, P4-PRV-2, D-144..D-147, SEC-80..SEC-82, SEC-85)
 
 **Optional and off by default.** Port previews (`11 §Port previews`) need infrastructure no other
-feature needs, so a deployment that does not set `previews.enabled` has no relay, no wildcard DNS or
+feature needs, so a deployment that does not set `relay.enabled` has no relay, no wildcard DNS or
 certificate, no extra Service, no extra Ingress rule and no extra NetworkPolicy; every other
 behaviour is unchanged and an upgrade changes nothing. The feature is also off per organization
 until an org owner or admin switches **Port previews** on.
 
-**Requirements** (all three, before `previews.enabled: true` is accepted):
+**Requirements** (all three, before `relay.enabled: true` is accepted):
 
 1. **A preview domain** `previews.domain`, a DNS suffix **you control**, e.g. `preview.example.org`.
    Browsers treat every host under it as a separate origin, so it is the isolation boundary between
@@ -846,15 +853,16 @@ until an org owner or admin switches **Port previews** on.
    previews are **https only** (the edge redirects `http` and the relay refuses to mint a grant for
    a non-https redirect target).
 
-**Turn it on**: install the relay (`relay.enabled`, chart default `true` when `previews.enabled` is
-`true`, otherwise nothing is rendered), set `previews.enabled: true` and `previews.domain`, wait for
-`aurora_relay_up` and the Admin → Overview "Previews" line (relay replicas seen by the API), then an
-org owner or admin enables **Port previews** in the org settings. **Turn it off**: unset
-`previews.enabled` (shares are kept but inert; the supervisor allow-list is emptied at the next
-sync) or switch the org setting off.
+**Turn it on** (one switch): set `relay.enabled: true` and `relay.domain` (the chart value
+mirrors `config.previews.enabled`, FIX-056 — set the config key only to agree explicitly,
+never alone), wait for `aurora_relay_up` and the Admin → Overview "Previews" line (relay
+replicas seen by the API), then an org owner or admin enables **Port previews** in the org
+settings. **Turn it off**: set `relay.enabled: false` (or unset it; shares are kept but
+inert; the supervisor allow-list is emptied at the next sync) or switch the org setting
+off.
 
 **Wildcard edge rule**: Ingress and HTTPRoute templates add one host rule `*.<previews.domain>`
-→ `aurora-relay:4112` only when `previews.enabled` is true (no change to the rules of
+→ `aurora-relay:4112` only when `relay.enabled` is true (no change to the rules of
 `server.external_url`, `/internal` and `/metrics` stay unrouted). The edge must not buffer
 responses, must allow WebSocket upgrades, read timeouts ≥ 600 s and request bodies up to
 `PREVIEW_REQUEST_BODY_MAX`. The edge-routes guard is extended to render the chart with previews
@@ -899,7 +907,7 @@ guard, `18`).
 
 **The relay** (`aurora-relay`, image `aurora-relay`, P4-PRV-2). A stateless Rust service (hyper,
 `tokio-tungstenite`; no database, no key, no Vault). Helm (`relay.*`; rendered **only** when
-`previews.enabled`): Deployment `aurora-relay` (replicas 2, `relay.resources`, PodDisruptionBudget,
+`relay.enabled`, FIX-056): Deployment `aurora-relay` (replicas 2, `relay.resources`, PodDisruptionBudget,
 read-only root filesystem, dropped capabilities, non-root), Service on 4112 (edge-routed) and a headless
 ops Service on 4193. Its anchor token `aul_` is generated by the `secrets` hook into the instance
 Secret (`AURORA_BOOTSTRAP_RELAY_TOKEN`, never shown), given to the API under the same name and to the
@@ -907,7 +915,7 @@ relay as `AURORA_RELAY_TOKEN`. The relay sets no cookie other than `__Host-auror
 `__Host-aurora_pstate` and keeps no state beyond in-memory caches (resolve results ≤ 15 s), so a
 restart loses only open streams.
 
-**NetworkPolicy** (default deny stays; each rule is rendered only with `previews.enabled`):
+**NetworkPolicy** (default deny stays; each rule is rendered only with `relay.enabled`, FIX-056):
 relay ingress from the edge (and the Cilium edge entities) on 4112 and from the monitoring
 namespace on 4193; relay egress to **api:4101** and **runner:4108** (runner pods of this release,
 or `relay.networkPolicy.runnerEgressTo` for runners elsewhere) and DNS **only**: no Postgres, no

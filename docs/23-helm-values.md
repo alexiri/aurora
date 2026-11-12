@@ -56,6 +56,7 @@ a conflicting `config` entry is merged away or fails the render:
 | `tls.extra_ca_bundle` | `extraCaBundle.*` | set when either `existingConfigMap` or `existingSecret` is set |
 | `auth.dev_idp.*` | `devIdp.*` | only when `devIdp.enabled` |
 | `terminal.enabled` | `terminal.enabled` | mirrored from the top-level value (FIX-053): rendered only when the config side is unset; both set and unequal — or `config.terminal.enabled` alone — fails the render |
+| `previews.enabled` | `relay.enabled` | mirrored from the top-level value (FIX-056): rendered only when the config side is unset; both set and unequal — or `config.previews.enabled` alone — fails the render |
 | `ratelimit.counters` | `counters.*` | rendered only when `backend ≠ memory` |
 | `secrets.stores[]` (Vault) | `vault.*` | api and gateway each get their own store config |
 
@@ -246,7 +247,8 @@ Many `aurora.toml` keys look like chart values but are **not** — they go in
 `config.*` (see §The config block) or are set per org in the dashboard:
 
 - Feature toggles with their own config sections: previews
-  (`previews.enabled`, `previews.domain`, …), the web terminal
+  (limits `previews.session_ttl_secs`, …; the switch is the chart value
+  `relay.enabled`, which mirrors `config.previews.enabled`), the web terminal
   (limits `terminal.awake_cap_secs`, …; the switch is the chart value
   `terminal.enabled`, which mirrors `config.terminal.enabled`), SCIM
   (`scim.enabled`, …), Web Push (`push.*`),
@@ -266,7 +268,7 @@ These Helm keys are **specified** (with config keys in `15`) but not yet
 implemented in the chart — a brief names them so the chart work lands with the
 feature:
 
-- previews: `previews.enabled`, `previews.domain`, `previews.tls.certManager.issuerRef` / `previews.tls.secretName`, `relay.enabled`, `relay.resources`, `relay.networkPolicy.runnerEgressTo` (P4-PRV-1/2; `15 §Port previews`)
+- previews: `previews.domain`, `previews.tls.certManager.issuerRef` / `previews.tls.secretName`, `relay.enabled`, `relay.resources`, `relay.networkPolicy.runnerEgressTo` (P4-PRV-1/2; `15 §Port previews` — note: `previews.domain` is a config key, set via `config.previews.domain`; the switch itself is the chart value `relay.enabled`, above — it mirrors `config.previews.enabled`, so set only the chart value)
 - web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: config keys, set via `config.terminal.*`; the switch itself is the chart value `terminal.enabled`, above — it mirrors `config.terminal.enabled`, so set only the chart value)
 - SCIM: `scim.enabled`, `scim.allowedEmailDomains`, `scim.ratePerMinute`, `scim.tokenMaxDays` (P4-GRP-2; `15 §SCIM directory sync`)
 - approval park + Web Push: `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)

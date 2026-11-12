@@ -256,10 +256,12 @@ connectorHost:
 
 # Port-previews relay (P4-PRV-2, D-146, docs/15 §Port previews): serves `<label>.<previews
 # domain>` HTTP/WebSocket previews through leg-1 WebSocket streams to the runner (4108).
-# Deployed only when `previews.enabled` (the wildcard Ingress/HTTPRoute is part of it); while
+# Deployed only when `relay.enabled` (the wildcard Ingress/HTTPRoute is part of it); while
 # previews are off, nothing here is rendered and the API answers 404 previews_disabled.
 relay:
-  enabled: false          # mirrors config.previews.enabled; both must agree (the guard checks)
+  enabled: false          # the single switch (FIX-056): mirrors config.previews.enabled — set
+                          # only this; both set and unequal, or config.previews.enabled=true
+                          # alone, fails the render
   replicas: 1
   resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
   nodeSelector: {}

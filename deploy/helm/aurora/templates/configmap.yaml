@@ -32,6 +32,27 @@
 {{- $_ := set $tm "enabled" .Values.terminal.enabled -}}
 {{- $_ := set $cfg "terminal" $tm -}}
 {{- end -}}
+{{- /* (P4-PRV-2, FIX-056) port previews: `relay.enabled` (top-level) is the single
+      operator switch and MIRRORS `config.previews.enabled` (D-159 semantics, as
+      FIX-053's terminal pair): with the config side not explicitly set it renders
+      FROM the top-level value, so flipping one key wires the whole feature. The guard
+      fails only on real disagreement: both keys set and unequal, or
+      `config.previews.enabled=true` alone — the top-level switch does the chart-level
+      work (the relay Deployment/Service/PDB, the wildcard `*.<previews.domain>` edge
+      rules and the relay NetworkPolicy posture) that the config value alone never
+      renders, so config-only-true is refused with an actionable message instead of
+      silently half-wiring a previews feature with no relay to serve it (every share
+      answers 502 `preview_unreachable`). The limits ride [previews] unchanged.
+      (Must precede the stream-listener block: the shared `stream_bind`/
+      `advertised_host` line keys off both features' switches.) */ -}}
+{{- $pv := default (dict) $cfg.previews -}}
+{{- if hasKey $pv "enabled" }}
+{{- if and .Values.relay.enabled (not (get $pv "enabled")) }}{{ fail "relay.enabled (top-level) mirrors config.previews.enabled and they disagree; set only relay.enabled, or make both equal" }}{{ end -}}
+{{- if and (not .Values.relay.enabled) (get $pv "enabled") }}{{ fail "config.previews.enabled=true alone does not turn previews on: set the top-level relay.enabled — config alone leaves the chart's relay Deployment and wildcard edge routing off" }}{{ end -}}
+{{- else }}
+{{- $_ := set $pv "enabled" .Values.relay.enabled -}}
+{{- $_ := set $cfg "previews" $pv -}}
+{{- end -}}
 {{- /* (P4-PRV-2, P4-TERM) the runner's relay/API-facing stream listener: opened when previews
       or the web terminal is on (the runner registers the `terminal` capability and redeems
       `kind: "terminal"` grants on the same listener, `16 §W19`). The value is an address
@@ -47,16 +68,13 @@
       `scim.enabled` below. */ -}}
 {{- $_ := set $cfg "scim" (merge (dict "rate_per_minute" .Values.scim.ratePerMinute) (default (dict) $cfg.scim)) -}}
 {{- if .Values.scim.enabled }}{{ $_ := set (default (dict) $cfg).scim "enabled" true }}{{ end -}}
-{{- /* (P4-PRV-2) port previews: [previews] master switch + [relay] service config. Both are
-      rendered from the operator-facing `relay.*` values (`relay.enabled` IS
-      `previews.enabled`); the fail guard below refuses a partial setup. */ -}}
-{{- if or .Values.relay.enabled (get (default (dict) $cfg.previews) "enabled") }}
-{{- if ne (default false .Values.relay.enabled) (default false (get (default (dict) $cfg.previews) "enabled")) }}{{ fail "relay.enabled and config.previews.enabled must agree: set both (relay.enabled + config.previews.enabled) or neither" }}{{ end -}}
-{{- end -}}
+{{- /* (P4-PRV-2, FIX-056) the chart-level wiring renders only from the top-level switch:
+      the relay workload, the wildcard edge rules and the NetworkPolicy posture below all
+      read `.Values.relay.enabled` (never the config side). The domain and the [relay]
+      limits render as before. */ -}}
 {{- if .Values.relay.enabled }}
 {{- if not .Values.relay.domain }}{{ fail "relay.domain is required when relay.enabled (the preview DNS suffix, e.g. preview.example.org)" }}{{ end -}}
-{{- $pv := default (dict) $cfg.previews -}}
-{{- $_ := set $pv "enabled" true -}}
+{{- $pv = default (dict) $cfg.previews -}}
 {{- $_ := set $pv "domain" .Values.relay.domain -}}
 {{- $_ := set $cfg "previews" $pv -}}
 {{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) -}}
