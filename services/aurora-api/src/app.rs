@@ -291,6 +291,9 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::terminal::router())
         .merge(domains::relay::router())
         .merge(domains::groups::router())
+        // (P4-GRP-2, FIX-081) The SCIM management routes are ordinary owner `/v1` routes and
+        // OpenAPI paths (C-471/C-472); only the `/scim/v2` plane stays outside the document.
+        .merge(domains::scim::management_router())
         .merge(domains::runners_admin::router())
         .merge(domains::runner_plane::router())
         .merge(domains::plugins::router())
@@ -331,13 +334,10 @@ pub fn api_router(state: Option<&AppState>) -> (Router<AppState>, utoipa::openap
     let (router, doc) = OpenApiRouter::with_openapi(openapi::base())
         .nest("/v1", v1_router())
         .split_for_parts();
-    let router = router
-        .route(
-            "/v1/openapi.json",
-            axum::routing::get(openapi::serve_document),
-        )
-        // (P4-GRP-2) The SCIM management routes are `/v1` paths but not OpenAPI paths.
-        .merge(domains::scim::management_router());
+    let router = router.route(
+        "/v1/openapi.json",
+        axum::routing::get(openapi::serve_document),
+    );
     // The SCIM plane never appears in the OpenAPI document and its nested rate-limit
     // middleware needs the real state at build time (`from_fn_with_state`), so it is only
     // wired when actually serving (`Some`); the document build passes `None`.

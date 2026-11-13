@@ -338,7 +338,7 @@ async fn token_expiring_notices_14d_and_1d() {
         .execute(fx.h.pool())
         .await
         .unwrap();
-    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool())
+    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), None)
         .await
         .unwrap();
     let n14 = count(
@@ -349,7 +349,7 @@ async fn token_expiring_notices_14d_and_1d() {
     .await;
     assert_eq!(n14, 1, "the 14-day notice fires once");
     // Re-running the same day does not duplicate it.
-    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool())
+    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), None)
         .await
         .unwrap();
     let n = count(
@@ -364,7 +364,7 @@ async fn token_expiring_notices_14d_and_1d() {
         .execute(fx.h.pool())
         .await
         .unwrap();
-    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool())
+    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), None)
         .await
         .unwrap();
     let n = count(
@@ -374,6 +374,53 @@ async fn token_expiring_notices_14d_and_1d() {
     )
     .await;
     assert_eq!(n, 2, "the 1-day notice fires");
+}
+
+/// FIX-081: the expiry notice reaches the org's owners and admins by e-mail (the channel quota
+/// notices use), once per recipient and threshold, and never carries token material.
+#[tokio::test]
+async fn token_expiry_notice_is_mailed_once_per_owner_and_threshold() {
+    let fx = ScimFx::new().await;
+    let admin = fx.h.user("admin-notice@x.io", false).await;
+    fx.h.member(fx.org, admin, "admin", "active").await;
+    let mail = aurora_api::domains::attachments::sweep::QuotaMail {
+        mailer: fx.h.mail.clone(),
+        external_url: "https://aurora.example".to_owned(),
+    };
+    fx.h.mail.clear();
+    let sweep = || aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), Some(&mail));
+    sqlx::query("UPDATE scim_tokens SET expires_at = now() + interval '13 days'")
+        .execute(fx.h.pool())
+        .await
+        .unwrap();
+    sweep().await.unwrap();
+    let recipients = |n: usize| {
+        let mut to: Vec<String> = fx.h.mail.sent().into_iter().map(|m| m.to).collect();
+        to.sort();
+        assert_eq!(to.len(), n, "{to:?}");
+        to
+    };
+    assert_eq!(
+        recipients(2),
+        vec!["admin-notice@x.io".to_owned(), "owner@x.io".to_owned()]
+    );
+    // The next pass of the same day mails nobody again.
+    sweep().await.unwrap();
+    recipients(2);
+    // The 1-day threshold is a second notice per recipient.
+    sqlx::query("UPDATE scim_tokens SET expires_at = now() + interval '6 hours'")
+        .execute(fx.h.pool())
+        .await
+        .unwrap();
+    sweep().await.unwrap();
+    recipients(4);
+    for m in fx.h.mail.sent() {
+        assert!(m.link.ends_with("/settings/directory"), "{}", m.link);
+        assert!(
+            !m.body.contains(&fx.token) && !m.subject.contains(&fx.token),
+            "token material in a notice"
+        );
+    }
 }
 
 #[tokio::test]

@@ -189,6 +189,12 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 /// Routes that are not checked against the principal matrix, with reasons.
 const EXEMPT: &[(&str, &str, &str)] = &[
     (
+        "DELETE",
+        "/v1/scim/tokens/{id}",
+        "authorization resolves through the token's org (owner only); an unknown id is an \
+         idempotent 204 — covered by scim_auth.rs (FIX-081 lists the route)",
+    ),
+    (
         "GET",
         "/v1/public/avatars/{key}",
         "public capability: unguessable current avatar key in path (05 auth class P)",
@@ -455,6 +461,12 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}", G::Member, false),
     r("PATCH", "/v1/orgs/{org}", G::Owner, false),
     r("DELETE", "/v1/orgs/{org}", G::Owner, false),
+    // (FIX-081, C-471/C-472) Directory-sync management: org owner only, session only.
+    r("GET", "/v1/orgs/{org}/scim", G::Owner, true),
+    r("PUT", "/v1/orgs/{org}/scim", G::Owner, true),
+    r("GET", "/v1/orgs/{org}/scim/status", G::Owner, true),
+    r("GET", "/v1/orgs/{org}/scim/tokens", G::Owner, true),
+    r("POST", "/v1/orgs/{org}/scim/tokens", G::Owner, true),
     // (phase 2, RFE-006) freeze / unfreeze: org owner; workspace and agent: `can_own`.
     r("POST", "/v1/orgs/{org}/freeze", G::Owner, false),
     r("POST", "/v1/orgs/{org}/unfreeze", G::Owner, false),
@@ -1215,6 +1227,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             | "/v1/admin/orgs/{org}/freeze",
         ) => json!({"reason": "matrix"}),
         ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),
+        ("POST", "/v1/orgs/{org}/scim/tokens") => json!({"name": "matrix"}),
         ("POST", "/v1/orgs/{org}/groups") => json!({"name": "matrix group"}),
         ("PUT", "/v1/workspaces/{ws}/access/groups/{group}") => json!({"role": "member"}),
         ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),

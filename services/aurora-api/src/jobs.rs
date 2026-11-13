@@ -92,24 +92,79 @@ pub async fn maintain_request_log(
     }
 }
 
-/// (P4-GRP-2) One SCIM token expiry-notice pass: for every live token expiring within 14 days
-/// (and again within 1 day) write a non-critical `scim_token.expiry_notice` audit row (once
-/// per token per threshold — the repo query checks the audit log). Singleton: `Ok(None)` when
-/// another replica holds the lock. Returns the number of notices written.
+/// (P4-GRP-2, FIX-081) One SCIM token expiry-notice pass: for every live token expiring within
+/// 14 days (and again within 1 day) write a non-critical `scim_token.expiry_notice` audit row
+/// (the in-app notice; once per token per threshold — the repo query checks the audit log) and
+/// e-mail the organization's owners and admins through the channel quota notices use (`mail`:
+/// `None` = e-mail off). Singleton: `Ok(None)` when another replica holds the lock. Returns the
+/// number of notices written.
 pub async fn sweep_scim_token_expiry(
     pool: &PgPool,
+    mail: Option<&crate::domains::attachments::sweep::QuotaMail>,
 ) -> Result<Option<usize>, aurora_core::ApiError> {
-    let ran =
-        aurora_db::jobs::try_singleton(pool, SCIM_EXPIRY_JOB, || run_scim_expiry_notices(pool))
-            .await?
-            .transpose()
-            .map_err(aurora_core::ApiError::from)?;
+    let ran = aurora_db::jobs::try_singleton(pool, SCIM_EXPIRY_JOB, || {
+        run_scim_expiry_notices(pool, mail)
+    })
+    .await?
+    .transpose()
+    .map_err(aurora_core::ApiError::from)?;
     Ok(ran)
+}
+
+/// E-mail the owners/admins of `org` that the SCIM token `name` expires (platform voice: the
+/// token name, the date and a dashboard link; never token material).
+async fn mail_scim_expiry(
+    pool: &PgPool,
+    m: &crate::domains::attachments::sweep::QuotaMail,
+    org: uuid::Uuid,
+    token_name: &str,
+    expires_at: chrono::DateTime<Utc>,
+    days: i64,
+) {
+    use crate::domains::auth::mail::Mail;
+    let Ok((org_name, slug, owners)) =
+        aurora_db::repo::approval_notify::org_owners(pool, org).await
+    else {
+        return;
+    };
+    let when = if days <= 1 {
+        "within a day"
+    } else {
+        "within 14 days"
+    };
+    let subject = format!(
+        "{}: a directory-sync token expires {when}",
+        aurora_core::sanitize::one_line(&org_name, 80)
+    );
+    let intro = format!(
+        "The provisioning token \"{}\" of {} expires on {}. Create a new token under \
+         Organization settings → Directory sync before then, or your identity provider's \
+         provisioning stops.",
+        aurora_core::sanitize::one_line(token_name, 80),
+        aurora_core::sanitize::one_line(&org_name, 80),
+        expires_at.format("%Y-%m-%d %H:%M UTC"),
+    );
+    let link = format!(
+        "{}/o/{slug}/settings/directory",
+        m.external_url.trim_end_matches('/')
+    );
+    for (_, email) in owners {
+        if let Err(e) = m
+            .mailer
+            .send(Mail::new(&email, &subject, &intro, &link))
+            .await
+        {
+            tracing::error!(error = %e, "scim token expiry e-mail failed");
+        }
+    }
 }
 
 /// The body of the SCIM token expiry-notice pass (the singleton's closure; returns the
 /// number of notices written).
-async fn run_scim_expiry_notices(pool: &PgPool) -> Result<usize, aurora_db::DbError> {
+async fn run_scim_expiry_notices(
+    pool: &PgPool,
+    mail: Option<&crate::domains::attachments::sweep::QuotaMail>,
+) -> Result<usize, aurora_db::DbError> {
     let now = Utc::now();
     let mut notices = 0;
     for days in [14i64, 1] {
@@ -138,6 +193,11 @@ async fn run_scim_expiry_notices(pool: &PgPool) -> Result<usize, aurora_db::DbEr
                 tracing::warn!(error = %e, "scim: expiry notice failed");
             } else {
                 notices += 1;
+                // The e-mail follows the audit row, so it is sent once per token and
+                // threshold (the row is what the next pass looks for).
+                if let Some(m) = mail {
+                    mail_scim_expiry(pool, m, org, &name, expires_at, days).await;
+                }
             }
         }
     }
@@ -268,7 +328,7 @@ pub fn spawn(
                 Err(e) => tracing::warn!(error = %e.message(), "attachment storage sweep failed"),
             }
             // (P4-GRP-2) SCIM token expiry notices share the daily tick as well.
-            match sweep_scim_token_expiry(&rp).await {
+            match sweep_scim_token_expiry(&rp, quota_mail.as_ref()).await {
                 Ok(Some(n)) if n > 0 => tracing::info!(notices = n, "scim token expiry notices"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "scim token expiry sweep failed"),

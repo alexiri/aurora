@@ -307,7 +307,6 @@ pub fn router(state: &crate::app::AppState) -> axum::Router<AppState> {
             super::rate_limit::middleware,
         ))
         .layer(middleware::from_fn(media_type_middleware))
-        .layer(axum::middleware::from_fn(body_limit_middleware))
         .layer(axum::middleware::from_fn(metrics_middleware))
 }
 
@@ -330,13 +329,11 @@ async fn metrics_middleware(req: Request, next: Next) -> Response {
 #[derive(Debug, Clone, Copy)]
 pub struct PathId(pub Uuid);
 
-async fn body_limit_middleware(req: Request, next: Next) -> Response {
-    if let Some(n) = content_length(&req)
-        && n > limits::SCIM_BODY_MAX
-    {
-        return ScimError::payload_too_large().into_response();
-    }
-    next.run(req).await
+/// The `{id}` of an item route, parsed **after** authentication: a malformed one is a SCIM
+/// `404` error body (never axum's plain-text 400 from a `Path<Uuid>` extractor, and never
+/// something an unauthenticated caller can provoke instead of the one 401).
+fn parse_id(raw: &str) -> ScimResult<Uuid> {
+    Uuid::parse_str(raw).map_err(|_| ScimError::not_found())
 }
 
 fn content_length(req: &Request) -> Option<usize> {
@@ -388,16 +385,19 @@ async fn groups_list(State(state): State<AppState>, req: Request) -> Response {
     finish(super::resource_groups::list_groups(&state, &parts.headers, parts.uri.query()).await)
 }
 
+/// A body request: **authenticate first** (FIX-081: the one 401 for a bearer-less or dead-token
+/// request, before anything of the body is read — a 2 MiB body or malformed JSON is never
+/// parsed for a caller who is not allowed to send it), then read the body through the bounded
+/// reader, run the handler, render.
 macro_rules! body_request {
     ($state:expr, $req:ident, |$s:ident, $c:ident, $body:ident| $call:expr) => {{
-        let req = $req;
-        let mut req = req;
-        let $body = match bounded_body(&mut req).await {
-            Ok(b) => b,
-            Err(e) => return e.into_response(),
-        };
+        let mut req = $req;
         match ScimToken::authenticate($state, req.headers()).await {
             Ok($c) => {
+                let $body = match bounded_body(&mut req).await {
+                    Ok(b) => b,
+                    Err(e) => return e.into_response(),
+                };
                 let $s = $state;
                 finish($call.await)
             }
@@ -420,50 +420,65 @@ async fn groups_create(State(state): State<AppState>, req: Request) -> Response 
 
 async fn users_put(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
     body_request!(&state, req, |s, c, body| {
-        super::resource_users::put_user(s, c, id, body)
+        async {
+            let id = parse_id(&raw)?;
+            super::resource_users::put_user(s, c, id, body).await
+        }
     })
 }
 
 async fn users_patch(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
     body_request!(&state, req, |s, c, body| {
-        super::resource_users::patch_user(s, c, id, body)
+        async {
+            let id = parse_id(&raw)?;
+            super::resource_users::patch_user(s, c, id, body).await
+        }
     })
 }
 
 async fn groups_put(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
     body_request!(&state, req, |s, c, body| {
-        super::resource_groups::put_group(s, c, id, body)
+        async {
+            let id = parse_id(&raw)?;
+            super::resource_groups::put_group(s, c, id, body).await
+        }
     })
 }
 
 async fn groups_patch(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
     body_request!(&state, req, |s, c, body| {
-        super::resource_groups::patch_group(s, c, id, body)
+        async {
+            let id = parse_id(&raw)?;
+            super::resource_groups::patch_group(s, c, id, body).await
+        }
     })
 }
 
-/// A body-less item request (GET/DELETE `{id}`): authenticate, run, render.
+/// A body-less item request (GET/DELETE `{id}`): authenticate, parse the id, run, render.
 macro_rules! item_request {
-    ($state:expr, $req:ident, $id:expr, $handler:path) => {{
+    ($state:expr, $req:ident, $raw:expr, $handler:path) => {{
         let req = $req;
         match ScimToken::authenticate($state, req.headers()).await {
-            Ok(caller) => finish($handler($state, caller, $id).await),
+            Ok(caller) => match parse_id(&$raw) {
+                Ok(id) => finish($handler($state, caller, id).await),
+                Err(e) => e.into_response(),
+            },
             Err(e) => e.into_response(),
         }
     }};
@@ -471,34 +486,34 @@ macro_rules! item_request {
 
 async fn users_get(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
-    item_request!(&state, req, id, super::resource_users::get_user)
+    item_request!(&state, req, raw, super::resource_users::get_user)
 }
 
 async fn users_delete(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
-    item_request!(&state, req, id, super::resource_users::delete_user)
+    item_request!(&state, req, raw, super::resource_users::delete_user)
 }
 
 async fn groups_get(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
-    item_request!(&state, req, id, super::resource_groups::get_group)
+    item_request!(&state, req, raw, super::resource_groups::get_group)
 }
 
 async fn groups_delete(
     State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::extract::Path(raw): axum::extract::Path<String>,
     req: Request,
 ) -> Response {
-    item_request!(&state, req, id, super::resource_groups::delete_group)
+    item_request!(&state, req, raw, super::resource_groups::delete_group)
 }
 
 /// A body request (collection POST or item PUT/PATCH): read the body through the bounded
@@ -506,6 +521,11 @@ async fn groups_delete(
 /// is `Uuid::nil` on collection routes), render.
 /// The request body, capped at `SCIM_BODY_MAX` (413 above it).
 pub async fn bounded_body(req: &mut Request) -> ScimResult<serde_json::Value> {
+    // A declared length over the cap is refused without reading a byte (the caller has
+    // authenticated by now, FIX-081).
+    if content_length(req).is_some_and(|n| n > limits::SCIM_BODY_MAX) {
+        return Err(ScimError::payload_too_large());
+    }
     let bytes = axum::body::to_bytes(std::mem::take(req.body_mut()), limits::SCIM_BODY_MAX + 1)
         .await
         .map_err(|e| {

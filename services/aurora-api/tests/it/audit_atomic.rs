@@ -386,6 +386,165 @@ async fn failed_audit_write_fails_the_action_and_changes_nothing() {
     }
 }
 
+/// FIX-081 (SEC-72: "audit failure = nothing applied" for SCIM, which rested on a static scan):
+/// through the real routes, a SCIM user POST, a SCIM group PATCH, a management token create and
+/// a token revoke answer a refused request — SCIM format on the `/scim/v2` plane, 503
+/// `audit_unavailable` on `/v1` — and change nothing while critical audit inserts fail; with the
+/// fault removed the same calls succeed and write critical rows.
+#[tokio::test]
+async fn scim_writes_fail_with_the_audit_write_and_change_nothing() {
+    use crate::scim_common::*;
+    let fx = ScimFx::new().await;
+    // A group and a second token to act on (created before the fault).
+    let (s, _, g) = fx
+        .scim(
+            Method::POST,
+            "/scim/v2/Groups",
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+                "displayName": "audit-group",
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{g}");
+    let gid = g["id"].as_str().unwrap().to_owned();
+    let (s, v) = fx
+        .mgmt(
+            Method::POST,
+            &format!("/v1/orgs/{}/scim/tokens", fx.org),
+            Some(json!({"name": "second"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let second: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let pool = fx.h.pool().clone();
+    sqlx::query(
+        "CREATE FUNCTION audit_critical_fail() RETURNS trigger AS $$ BEGIN \
+         RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER audit_critical_fail BEFORE INSERT ON audit_log FOR EACH ROW \
+         WHEN (NEW.critical) EXECUTE FUNCTION audit_critical_fail()",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let n = |sql: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    let state = || async {
+        (
+            n("SELECT count(*) FROM scim_users").await,
+            n("SELECT count(*) FROM org_members").await,
+            n("SELECT count(*) FROM scim_tokens WHERE revoked_at IS NULL").await,
+            sqlx::query_scalar::<_, String>("SELECT name FROM groups WHERE source = 'scim'")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+        )
+    };
+    let before = state().await;
+    let patch_group = json!({
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        "Operations": [{"op": "replace", "path": "displayName", "value": "renamed"}],
+    });
+    // ---- the fault is on: every write is refused and nothing changes.
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            "/scim/v2/Users",
+            Some(json!({"userName": "atomic@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 503, "user POST: {v}");
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("/scim/v2/Groups/{gid}"),
+            Some(patch_group.clone()),
+        )
+        .await;
+    assert_eq!(s, 503, "group PATCH: {v}");
+    let (s, v) = fx
+        .mgmt(
+            Method::POST,
+            &format!("/v1/orgs/{}/scim/tokens", fx.org),
+            Some(json!({"name": "third"})),
+        )
+        .await;
+    assert_eq!(
+        (s, code(&v)),
+        (503, "audit_unavailable"),
+        "token create: {v}"
+    );
+    let (s, v) = fx
+        .mgmt(Method::DELETE, &format!("/v1/scim/tokens/{second}"), None)
+        .await;
+    assert_eq!(
+        (s, code(&v)),
+        (503, "audit_unavailable"),
+        "token revoke: {v}"
+    );
+    assert_eq!(state().await, before, "nothing was applied");
+    // ---- the fault is gone: the same calls succeed and write critical rows.
+    sqlx::query("DROP TRIGGER audit_critical_fail ON audit_log")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            "/scim/v2/Users",
+            Some(json!({"userName": "atomic@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("/scim/v2/Groups/{gid}"),
+            Some(patch_group),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = fx
+        .mgmt(
+            Method::POST,
+            &format!("/v1/orgs/{}/scim/tokens", fx.org),
+            Some(json!({"name": "third"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, _) = fx
+        .mgmt(Method::DELETE, &format!("/v1/scim/tokens/{second}"), None)
+        .await;
+    assert_eq!(s, 204);
+    for action in [
+        "member.add",
+        "group.update",
+        "scim_token.create",
+        "scim_token.revoke",
+    ] {
+        let crit: bool = sqlx::query_scalar(
+            "SELECT critical FROM audit_log WHERE action = $1 ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(action)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("{action}: no audit row ({e})"));
+        assert!(crit, "{action}: critical row expected");
+    }
+}
+
 #[tokio::test]
 async fn best_effort_actions_still_succeed_while_critical_audit_fails() {
     let w = world().await;

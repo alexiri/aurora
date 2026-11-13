@@ -485,8 +485,8 @@ async fn owner_link_put_refused_nothing_written() {
         .await
         .unwrap();
     assert_eq!(n, 0);
-    // A PATCH that does not deactivate stays allowed (docs/04: PATCH active=false, PUT and
-    // DELETE are the refused mutations) and lands on the link only.
+    // FIX-081 (SEC-72, C-473): a SCIM request that would change anything about an owner —
+    // membership, link attributes or state — is 403 and writes nothing, a PATCH included.
     let (s, _, v) = fx
         .scim(
             Method::PATCH,
@@ -497,8 +497,6 @@ async fn owner_link_put_refused_nothing_written() {
             })),
         )
         .await;
-    assert_eq!(s, 200, "{v}");
-    let after = snap().await;
-    assert_eq!(after.1, before.1, "membership untouched");
-    assert_eq!(after.2, before.2, "account untouched");
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(snap().await, before, "nothing written by the PATCH either");
 }

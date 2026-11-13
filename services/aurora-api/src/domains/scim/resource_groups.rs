@@ -276,32 +276,35 @@ pub async fn list_groups(
         a.split(',')
             .any(|s| s.trim().eq_ignore_ascii_case("members"))
     });
-    let rows: Vec<grepo::GroupRow> = match &filter {
-        None => repo::scim_groups(&state.pool, caller.org.org_id, None, 10_000)
-            .await
-            .map_err(db)?,
-        Some(service::Filter::DisplayName(v)) => {
-            repo::scim_groups(&state.pool, caller.org.org_id, None, 10_000)
+    // The list, `displayName` and `externalId` pages in SQL (a count and an `OFFSET`/`LIMIT`
+    // window: no bound on the number of groups, FIX-081); `id` is one lookup.
+    let org = caller.org.org_id;
+    let skip = i64::try_from(start - 1).unwrap_or(i64::MAX);
+    let limit = i64::try_from(count).unwrap_or(i64::MAX);
+    let (total, rows): (u64, Vec<grepo::GroupRow>) = match &filter {
+        None | Some(service::Filter::DisplayName(_)) | Some(service::Filter::ExternalId(_)) => {
+            let (name, ext) = match &filter {
+                Some(service::Filter::DisplayName(v)) => (Some(v.as_str()), None),
+                Some(service::Filter::ExternalId(v)) => (None, Some(v.as_str())),
+                _ => (None, None),
+            };
+            let total = repo::scim_groups_count(&state.pool, org, name, ext)
                 .await
-                .map_err(db)?
-                .into_iter()
-                .filter(|r| r.name.eq_ignore_ascii_case(v))
-                .collect()
-        }
-        Some(service::Filter::ExternalId(v)) => {
-            repo::scim_groups(&state.pool, caller.org.org_id, None, 10_000)
+                .map_err(db)?;
+            let rows = repo::scim_groups_window(&state.pool, org, name, ext, skip, limit)
                 .await
-                .map_err(db)?
-                .into_iter()
-                .filter(|r| r.external_id.as_deref() == Some(v.as_str()))
-                .collect()
+                .map_err(db)?;
+            (u64::try_from(total).unwrap_or(0), rows)
         }
         Some(service::Filter::Id(id)) => {
-            match scim_group(&state.pool, caller.org.org_id, *id).await {
+            let found = match scim_group(&state.pool, org, *id).await {
                 Ok(r) => vec![r],
                 Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => vec![],
                 Err(e) => return Err(e),
-            }
+            };
+            let total = found.len() as u64;
+            let skip = usize::try_from(skip).unwrap_or(usize::MAX);
+            (total, found.into_iter().skip(skip).take(count).collect())
         }
         Some(_) => {
             return Err(ScimError::invalid_filter(
@@ -309,11 +312,8 @@ pub async fn list_groups(
             ));
         }
     };
-    let total = rows.len() as u64;
-    let skip = usize::try_from(start - 1).unwrap_or(usize::MAX);
-    let items: Vec<&grepo::GroupRow> = rows.iter().skip(skip).take(count).collect();
-    let mut resources = Vec::with_capacity(items.len());
-    for r in items {
+    let mut resources = Vec::with_capacity(rows.len());
+    for r in &rows {
         let ms = if want_members {
             Some(members_of(&state.pool, caller.org.org_id, r.id).await?)
         } else {

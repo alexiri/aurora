@@ -922,7 +922,7 @@ fails it with `scim_refused`, and a refused invitation answers 403 `scim_refused
 **Rate limits and size.** Per token `SCIM_RATE` (600 requests/min, burst 120) through the
 `CounterStore` (class `management`, `05 §Conventions`), request bodies ≤ `SCIM_BODY_MAX` (1 MiB),
 `SCIM_MAX_PATCH_OPS` (100) operations per PATCH, `SCIM_MAX_MEMBERS_PER_REQUEST` (1 000),
-list pages ≤ `SCIM_PAGE_MAX` (100, default 50). Requests with a rejected `aud_` bearer fall
+list pages ≤ `SCIM_PAGE_MAX` (100, default 50) — a list pages **in SQL** (count plus `OFFSET`/`LIMIT`), with no bound on the size of the directory (`totalResults` is the true count; FIX-081). Requests with a rejected `aud_` bearer fall
 under the existing 30/min/IP rejected-bearer limit (class `security`, never fails open). A refusal
 is `429` in SCIM error format with `retry-after`.
 

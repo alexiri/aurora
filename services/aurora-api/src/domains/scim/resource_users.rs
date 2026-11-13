@@ -592,45 +592,56 @@ pub async fn list_users(
     let filter = parse_filter(q.filter.as_deref().unwrap_or(""))?;
     touch(state, &caller).await;
 
-    // The filter subset runs on indexed lookups; `displayName` scans the org's links
-    // (bounded: the set is the org's directory, not the instance).
-    let rows: Vec<repo::UserRow> = match &filter {
-        None => repo::users_page(&state.pool, caller.org.org_id, None, 10_000)
-            .await
-            .map_err(db)?,
-        Some(Filter::UserName(v)) => repo::users_by_user_name(&state.pool, caller.org.org_id, v)
-            .await
-            .map_err(db)?,
-        Some(Filter::Email(v)) => repo::users_by_email(&state.pool, caller.org.org_id, v)
-            .await
-            .map_err(db)?,
-        Some(Filter::ExternalId(v)) => {
-            repo::users_by_external_id(&state.pool, caller.org.org_id, v)
+    // The unfiltered list and the `displayName` filter page in SQL (a count and an
+    // `OFFSET`/`LIMIT` window, no bound on the directory's size, FIX-081); the other filters
+    // are indexed lookups of at most a handful of rows.
+    let org = caller.org.org_id;
+    let skip = i64::try_from(start - 1).unwrap_or(i64::MAX);
+    let (total, rows): (u64, Vec<repo::UserRow>) = match &filter {
+        None | Some(Filter::DisplayName(_)) => {
+            let name = match &filter {
+                Some(Filter::DisplayName(v)) => Some(v.as_str()),
+                _ => None,
+            };
+            let total = repo::users_count(&state.pool, org, name)
                 .await
-                .map_err(db)?
+                .map_err(db)?;
+            let rows = repo::users_window(
+                &state.pool,
+                org,
+                name,
+                skip,
+                i64::try_from(count).unwrap_or(i64::MAX),
+            )
+            .await
+            .map_err(db)?;
+            (u64::try_from(total).unwrap_or(0), rows)
         }
-        Some(Filter::Id(id)) => repo::users_by_scim_id(&state.pool, caller.org.org_id, *id)
-            .await
-            .map_err(db)?,
-        Some(Filter::DisplayName(v)) => {
-            repo::users_page(&state.pool, caller.org.org_id, None, 10_000)
-                .await
-                .map_err(db)?
-                .into_iter()
-                .filter(|r| {
-                    r.display_name
-                        .as_deref()
-                        .is_some_and(|d| d.eq_ignore_ascii_case(v))
-                })
-                .collect()
+        Some(f) => {
+            let found: Vec<repo::UserRow> = match f {
+                Filter::UserName(v) => repo::users_by_user_name(&state.pool, org, v)
+                    .await
+                    .map_err(db)?,
+                Filter::Email(v) => repo::users_by_email(&state.pool, org, v)
+                    .await
+                    .map_err(db)?,
+                Filter::ExternalId(v) => repo::users_by_external_id(&state.pool, org, v)
+                    .await
+                    .map_err(db)?,
+                Filter::Id(id) => repo::users_by_scim_id(&state.pool, org, *id)
+                    .await
+                    .map_err(db)?,
+                Filter::DisplayName(_) => Vec::new(),
+            };
+            let found: Vec<repo::UserRow> =
+                found.into_iter().filter(|r| r.state != "removed").collect();
+            let total = found.len() as u64;
+            let skip = usize::try_from(skip).unwrap_or(usize::MAX);
+            (total, found.into_iter().skip(skip).take(count).collect())
         }
     };
-    let rows: Vec<repo::UserRow> = rows.into_iter().filter(|r| r.state != "removed").collect();
-    let total = rows.len() as u64;
-    let skip = usize::try_from(start - 1).unwrap_or(usize::MAX);
-    let items: Vec<&repo::UserRow> = rows.iter().skip(skip).take(count).collect();
-    let mut resources = Vec::with_capacity(items.len());
-    for r in items {
+    let mut resources = Vec::with_capacity(rows.len());
+    for r in &rows {
         resources.push(
             serde_json::to_value(render_user(state, caller.org.org_id, r).await?)
                 .unwrap_or_else(|_| json!({})),
@@ -684,14 +695,14 @@ pub async fn put_user(
         state,
         caller,
         id,
-        Update {
+        UpdateSource::Replace(Update {
             put: true,
             email,
             external_id,
             display,
             names,
             active: input.active,
-        },
+        }),
     )
     .await
 }
@@ -715,13 +726,27 @@ pub async fn patch_user(
             limits::SCIM_MAX_PATCH_OPS
         )));
     }
-    let current = repo::user_by_id(&state.pool, caller.org.org_id, id)
-        .await
-        .map_err(db)?
-        .filter(|r| r.state != "removed")
-        .ok_or_else(ScimError::not_found)?;
-    // Merge the operations over the current resource, then apply like a PUT (atomicity is
-    // free: nothing is written until every operation parsed and merged).
+    // The operations are merged over the current resource *under the link row lock*, inside
+    // `apply_update`'s transaction (FIX-081): a merge over a row read before the lock let two
+    // overlapping PATCHes write back each other's stale attributes.
+    apply_update(state, caller, id, UpdateSource::Patch(patch.operations)).await
+}
+
+/// Where an update's attributes come from: a full body (`PUT`), or PATCH operations merged
+/// over the locked row.
+enum UpdateSource {
+    Replace(Update),
+    Patch(Vec<PatchOp>),
+}
+
+/// Merge PATCH `ops` over the (locked) `current` link and validate the result like a `PUT`
+/// (atomicity is free: nothing is written until every operation parsed and merged).
+fn patch_to_update(
+    state: &AppState,
+    caller: &ScimToken,
+    current: &repo::UserRow,
+    ops: &[PatchOp],
+) -> ScimResult<Update> {
     let mut merged = UserInput {
         user_name: Some(current.user_name.clone()),
         external_id: current.external_id.clone(),
@@ -739,7 +764,7 @@ pub async fn patch_user(
         active: Some(Active(current.state == "active")),
         raw: json!({}),
     };
-    for op in &patch.operations {
+    for op in ops {
         apply_patch_op(&mut merged, op)?;
     }
     // A removed `displayName` stores NULL — it must not come back through `display_of`'s
@@ -759,20 +784,54 @@ pub async fn patch_user(
     // Exactly what the IdP asserts: a removed/absent displayName stays absent (the
     // given+family fallback is a POST-creation default, not an update behavior).
     let display = clean_name(merged.display_name.as_deref(), 120);
-    apply_update(
-        state,
-        caller,
-        id,
-        Update {
-            put: false,
-            email,
-            external_id,
-            display,
-            names,
-            active: merged.active,
-        },
-    )
-    .await
+    Ok(Update {
+        put: false,
+        email,
+        external_id,
+        display,
+        names,
+        active: merged.active,
+    })
+}
+
+/// Does the filter of an `emails[<filter>].value` path select the stored e-mail — the single
+/// primary `work` entry the resource renders? Supported: `type eq "<t>"` and `primary eq
+/// <bool>`, joined by `and`, and the path must end in `.value`; anything else is 400
+/// `invalidPath`.
+fn email_filter_matches(path: &str) -> ScimResult<bool> {
+    let bad = || ScimError::invalid_path(format!("The path `{path}` is not supported."));
+    let open = path.find('[').ok_or_else(bad)?;
+    let close = path.rfind(']').ok_or_else(bad)?;
+    if close < open || !path[close + 1..].eq_ignore_ascii_case(".value") {
+        return Err(bad());
+    }
+    let mut matches = true;
+    for clause in path[open + 1..close].split(" and ") {
+        let mut parts = clause.trim().splitn(3, ' ');
+        let (Some(attr), Some(op), Some(value)) = (parts.next(), parts.next(), parts.next()) else {
+            return Err(bad());
+        };
+        if !op.eq_ignore_ascii_case("eq") {
+            return Err(bad());
+        }
+        let value = value.trim();
+        match attr.to_ascii_lowercase().as_str() {
+            "type" => {
+                let unquoted = value
+                    .strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .ok_or_else(bad)?;
+                matches &= unquoted.eq_ignore_ascii_case("work");
+            }
+            "primary" => match value.to_ascii_lowercase().as_str() {
+                "true" => {}
+                "false" => matches = false,
+                _ => return Err(bad()),
+            },
+            _ => return Err(bad()),
+        }
+    }
+    Ok(matches)
 }
 
 /// One PATCH operation against the merged input. Paths supported: `active`, `userName`,
@@ -830,6 +889,15 @@ fn apply_patch_op(target: &mut UserInput, op: &PatchOp) -> ScimResult<()> {
         if kind == "remove" {
             return Err(ScimError::invalid_path(
                 "`emails[…].value` cannot be removed; replace `emails` instead.",
+            ));
+        }
+        // (FIX-081) The filter selects entries: the one stored e-mail is rendered as a single
+        // primary `work` entry, so only a filter that matches it changes anything; a filter
+        // that matches nothing is `noTarget` (RFC 7644 §3.5.2.3), never a rewrite of the
+        // primary address (and so of `userName`).
+        if !email_filter_matches(path)? {
+            return Err(ScimError::no_target(
+                "The `emails` filter matches no entry of this user.",
             ));
         }
         let Some(v) = &op.value else {
@@ -950,7 +1018,7 @@ async fn apply_update(
     state: &AppState,
     caller: ScimToken,
     id: Uuid,
-    u: Update,
+    source: UpdateSource,
 ) -> ScimResult<axum::Json<UserResource>> {
     let org = caller.org.clone();
     let actor = service::actor(&caller.token.name);
@@ -961,14 +1029,28 @@ async fn apply_update(
         .map_err(db)?
         .filter(|r| r.state != "removed")
         .ok_or_else(ScimError::not_found)?;
-    // Owners are never mutated by SCIM (C-473, SEC-72): a `PUT` (whatever its body) and a
-    // deactivating `PATCH` are refused before any write.
+    // A PATCH is merged over the row as read *under the lock* (FIX-081).
+    let u = match source {
+        UpdateSource::Replace(u) => u,
+        UpdateSource::Patch(ops) => patch_to_update(state, &caller, &current, &ops)?,
+    };
+    // Owners are never mutated by SCIM (C-473, SEC-72): a request that would change anything
+    // about an owner — membership, link attributes or state — answers 403 and writes nothing.
+    // A `PUT` is refused whatever its body; a `PATCH` only when it changes something.
     let member = members::get(&mut *tx, org.org_id, current.user_id)
         .await
         .map_err(db)?;
     let is_owner = member.as_ref().is_some_and(|m| m.role == "owner");
     let want_active = u.active.map(|a| a.0).unwrap_or(current.state == "active");
-    if is_owner && (u.put || !want_active) {
+    if is_owner
+        && (u.put
+            || want_active != (current.state == "active")
+            || !current.user_name.eq_ignore_ascii_case(&u.email)
+            || u.external_id != current.external_id
+            || u.display != current.display_name
+            || u.names.0 != current.given_name
+            || u.names.1 != current.family_name)
+    {
         return Err(ScimError::forbidden(
             "Organization owners are managed in Aurora.",
         ));
