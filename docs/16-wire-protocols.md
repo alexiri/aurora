@@ -133,7 +133,9 @@ are dropped.
 
 ## W6 — Supervisor channel (WebSocket)
 
-- URL: `ws://<runner>:4105/v1/supervisor`; first message from the supervisor:
+- URL: `ws://<runner>:4105/v1/supervisor` — `ws://` only until TLS is implemented (FIX-114:
+  the supervisor refuses a `wss://` `runner_url` at boot, because the WebSocket client has
+  no TLS support); first message from the supervisor:
   `{ "hello": { "protocol": 1, "bootstrap_token": "aup_…" } }` or
   `{ "hello": { "protocol": 1, "session": { "sandbox_id", "boot_id", "issued_at", "mac" } } }`.
   Answer: `{ "welcome": { "session": {…new…}, "resume_from": <last acked seq> } }`

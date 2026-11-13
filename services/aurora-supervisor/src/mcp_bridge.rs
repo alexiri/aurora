@@ -135,6 +135,60 @@ async fn handle(session: &str, socket: &Path, msg: &Value) -> Option<Value> {
     })
 }
 
+/// (FIX-114) Longest request line the bridge accepts, and its in-flight cap.
+pub const MAX_LINE: usize = 1024 * 1024;
+pub const MAX_INFLIGHT: usize = 32;
+
+/// One input line or a refused over-long one.
+pub enum Line {
+    Ok(String),
+    TooLong,
+}
+
+/// Cancel-safe line reader bounded to `max` bytes per line: the partial line lives in the
+/// caller's `buf`, an over-long line is discarded up to its newline and reported as
+/// [`Line::TooLong`]. `Ok(None)` at end of input.
+pub async fn next_line_bounded<R: tokio::io::AsyncBufRead + Unpin>(
+    r: &mut R,
+    buf: &mut Vec<u8>,
+    skipping: &mut bool,
+    max: usize,
+) -> std::io::Result<Option<Line>> {
+    loop {
+        let chunk = r.fill_buf().await?;
+        if chunk.is_empty() {
+            return Ok(None);
+        }
+        match chunk.iter().position(|b| *b == b'\n') {
+            Some(i) => {
+                if !*skipping {
+                    buf.extend_from_slice(&chunk[..i]);
+                }
+                r.consume(i + 1);
+                let over = *skipping || buf.len() > max;
+                *skipping = false;
+                let line = std::mem::take(buf);
+                return Ok(Some(if over {
+                    Line::TooLong
+                } else {
+                    Line::Ok(String::from_utf8_lossy(&line).into_owned())
+                }));
+            }
+            None => {
+                let n = chunk.len();
+                if !*skipping {
+                    buf.extend_from_slice(chunk);
+                    if buf.len() > max {
+                        buf.clear();
+                        *skipping = true;
+                    }
+                }
+                r.consume(n);
+            }
+        }
+    }
+}
+
 /// Serves MCP on `input`/`output` until `input` closes.
 pub async fn run<R, W>(session: String, socket: PathBuf, input: R, mut output: W)
 where
@@ -144,12 +198,27 @@ where
     let session = Arc::new(session);
     let socket = Arc::new(socket);
     let (tx, mut rx) = mpsc::channel::<Value>(32);
-    let mut lines = BufReader::new(input).lines();
+    let mut reader = BufReader::new(input);
+    let (mut buf, mut skipping) = (Vec::new(), false);
     let mut tasks = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
-            line = lines.next_line() => {
-                let Ok(Some(line)) = line else { break };
+            line = next_line_bounded(&mut reader, &mut buf, &mut skipping, MAX_LINE) => {
+                let line = match line {
+                    Ok(Some(Line::Ok(l))) => l,
+                    Ok(Some(Line::TooLong)) => {
+                        let _ = tx.send(json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"request too large"}})).await;
+                        continue;
+                    }
+                    _ => break,
+                };
+                // (FIX-114) At most MAX_INFLIGHT calls in flight per bridge: a harness that
+                // floods requests gets an error instead of an unbounded task per line.
+                while tasks.try_join_next().is_some() {}
+                if tasks.len() >= MAX_INFLIGHT {
+                    let _ = tx.send(json!({"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"too many requests in flight"}})).await;
+                    continue;
+                }
                 let Ok(msg) = serde_json::from_str::<Value>(&line) else {
                     let _ = tx.send(json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}})).await;
                     continue;

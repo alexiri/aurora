@@ -189,9 +189,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         (*ptys).clone(),
     );
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    // (FIX-114) PID 1 reaps orphans, and forwards SIGTERM to registered process groups.
+    let _reaper = aurora_supervisor::process::spawn_reaper(std::time::Duration::from_secs(1));
+    let procs = sup.process_manager();
     tokio::select! {
         () = sup.run(chan.inbound) => Ok(()),
         r = chan.task => Ok(r??),
-        _ = term.recv() => Ok(()),
+        _ = term.recv() => {
+            procs.terminate_all();
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            Ok(())
+        }
     }
 }
