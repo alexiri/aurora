@@ -12,6 +12,7 @@ pub mod dto;
 pub mod error;
 pub mod gates;
 pub mod management;
+pub mod pending;
 pub mod protocol;
 pub mod rate_limit;
 pub mod resource_groups;

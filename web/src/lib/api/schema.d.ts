@@ -6458,7 +6458,7 @@ export interface components {
             state: string;
         };
         /** @enum {string} */
-        MemberStatus: "active" | "suspended";
+        MemberStatus: "active" | "suspended" | "pending";
         MembersBatchRequest: {
             add?: string[];
             remove?: string[];

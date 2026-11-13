@@ -82,6 +82,25 @@ describe("role-change options", () => {
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
   });
+
+  it("a pending member (D-175) shows as waiting for first sign-in and cannot be activated", () => {
+    render(
+      <table>
+        <tbody>
+          <MemberRow
+            m={{ ...m("member"), status: "pending" as const }}
+            viewer="owner"
+            onRole={noop}
+            onStatus={noop}
+            onRemove={noop}
+          />
+        </tbody>
+      </table>,
+    );
+    expect(screen.getByText("Waiting for first sign-in")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reactivate|Suspend/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Remove/ })).toBeInTheDocument();
+  });
 });
 
 describe("invite form", () => {

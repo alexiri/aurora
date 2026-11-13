@@ -44,7 +44,13 @@ The wire is the subset Entra ID, Okta and Keycloak actually send
 `ServiceProviderConfig`/`ResourceTypes`/`Schemas` discovery. Soft deletes: deactivating a
 user (`active: false`) suspends the membership (keys revoked, sessions ended when the
 person has no other org, running turns aborted); `DELETE /Users/{id}` removes it
-entirely; re-provisioning re-adds. Everything else (the enterprise extension, `roles`,
+entirely; re-provisioning re-adds. **A person who already has an Aurora account** (they
+have signed in before, to any organization of the instance) is *not* made a member by the
+directory's say-so: provisioning creates the link and a membership that waits —
+*Waiting for first sign-in*, it counts as a seat, may be placed in SCIM groups, and gives
+no access — until that person's own next sign-in, which activates it (audited). A person
+with no account yet is pre-provisioned as before. Deactivating or deleting someone who
+has not signed in yet simply removes the waiting membership. Everything else (the enterprise extension, `roles`,
 bulk, sort) is declared unsupported in `ServiceProviderConfig` and answered with a SCIM
 error, never silently ignored.
 

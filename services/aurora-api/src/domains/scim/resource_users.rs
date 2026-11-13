@@ -11,6 +11,7 @@
 use super::deprovision;
 use super::dto::{Active, Email, ListResponse, Name, PatchOp, UserInput, UserResource};
 use super::error::{ScimError, ScimResult};
+use super::pending;
 use super::service::{
     self, Filter, USER_REFUSED_ATTRS, clean_external_id, clean_name, email_domain_allowed,
     page_params, parse_filter,
@@ -44,6 +45,22 @@ fn uniqueness(e: aurora_db::DbError) -> ScimError {
     } else {
         db(e)
     }
+}
+
+/// Has this account signed in — an identity or a verified e-mail (the definition of
+/// `repo::lock_account().signed_in`, read without the row lock: a sign-in that binds it a
+/// moment later only makes the answer "false" too early, which is the pre-provisioned rule
+/// for an account nobody has used yet, never the other way round)?
+async fn account_signed_in(conn: &mut sqlx::PgConnection, user: Uuid) -> ScimResult<bool> {
+    sqlx::query_scalar(
+        "SELECT (u.email_verified_at IS NOT NULL \
+                 OR EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id)) \
+         FROM users u WHERE u.id = $1",
+    )
+    .bind(user)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(sq)
 }
 
 fn audit_unavailable() -> ScimError {
@@ -278,13 +295,10 @@ async fn ensure_seat(conn: &mut sqlx::PgConnection, org: Uuid) -> ScimResult<()>
     let Some(cap) = cap else {
         return Ok(());
     };
-    let used: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM org_members WHERE org_id = $1 AND status = 'active'",
-    )
-    .bind(org)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(sq)?;
+    // Active and `pending` members hold a seat (D-175).
+    let used = aurora_db::repo::invitations::count_seats(&mut *conn, org)
+        .await
+        .map_err(db)?;
     if used >= cap {
         return Err(ScimError::forbidden("member_limit_reached"));
     }
@@ -375,7 +389,27 @@ pub async fn create_user(
         .await
         .map_err(db)?;
     let mut flush: Vec<(Uuid, Uuid)> = Vec::new();
+    // (D-175, FIX-082) An account that already signed in (an identity or a verified e-mail)
+    // and is not a member of this org is not pulled in by the directory's assertion: its
+    // membership is only *prepared* (`pending`, no access) and the person's own next
+    // verified sign-in activates it. A new pre-provisioned user, or one still unbound, keeps
+    // the existing rule (an active membership that can do nothing until its first sign-in).
+    let prepare_only =
+        existing.is_none() && !created_user && account_signed_in(&mut tx, user_id).await?;
+    let mut member_state = if active { "active" } else { "suspended" };
     match &existing {
+        None if prepare_only => {
+            if active {
+                ensure_seat(&mut tx, org.org_id).await?;
+                members::insert_pending(&mut *tx, org.org_id, user_id)
+                    .await
+                    .map_err(db)?;
+                member_state = "pending";
+            } else {
+                // `active: false`: no membership at all, the link alone (suspended).
+                member_state = "none";
+            }
+        }
         None => {
             ensure_seat(&mut tx, org.org_id).await?;
             members::insert(&mut *tx, org.org_id, user_id, "member")
@@ -392,6 +426,22 @@ pub async fn create_user(
                 return Err(ScimError::forbidden(
                     "Organization owners are managed in Aurora.",
                 ));
+            }
+        }
+        Some(m) if m.status == "pending" => {
+            // A membership SCIM prepared earlier and the person has not activated yet.
+            member_state = "pending";
+            if !active {
+                pending::remove(
+                    &mut tx,
+                    org.org_id,
+                    user_id,
+                    &email,
+                    &service::actor(&caller.token.name),
+                )
+                .await
+                .map_err(scim_of_api)?;
+                member_state = "none";
             }
         }
         Some(m) => {
@@ -464,20 +514,33 @@ pub async fn create_user(
         .await
         .map_err(uniqueness)?,
     };
-    let ev = AuditEvent::new(
-        service::actor(&caller.token.name),
-        "member.add",
-        Outcome::Success,
-    )
-    .org(org.org_id)
-    .target("user", user_id)
-    .metadata(json!({
-        "via": VIA,
-        "scim_id": row.id,
-        "role": "member",
-        "status": state_str,
-        "user_created": created_user,
-    }));
+    let ev = if member_state == "none" {
+        // `active: false` for an account that signed in and is not a member (D-175): only the
+        // link is created, no membership exists to add.
+        AuditEvent::new(
+            service::actor(&caller.token.name),
+            "scim.update",
+            Outcome::Success,
+        )
+        .org(org.org_id)
+        .target("scim_user", row.id)
+        .metadata(json!({"via": VIA, "change": "linked", "membership": null}))
+    } else {
+        AuditEvent::new(
+            service::actor(&caller.token.name),
+            "member.add",
+            Outcome::Success,
+        )
+        .org(org.org_id)
+        .target("user", user_id)
+        .metadata(json!({
+            "via": VIA,
+            "scim_id": row.id,
+            "role": "member",
+            "status": member_state,
+            "user_created": created_user,
+        }))
+    };
     crate::audit::commit_critical(tx, &ev)
         .await
         .map_err(|_| audit_unavailable())?;
@@ -1004,10 +1067,49 @@ async fn apply_update(
         flush = move_link(&mut tx, &actor, org.org_id, &row, to, want_active, &mut evs).await?;
         "moved"
     } else if member.is_none() {
-        // The link keeps its user, whose membership must exist (a human removal tombstones
-        // the link, FIX-037): a broken invariant is refused, never papered over.
-        tracing::error!(scim_id = %id, "scim: unremoved link without a membership");
-        return Err(ScimError::internal());
+        // A link without a membership is legitimate in one state only (D-175): the IdP
+        // deactivated a person whose membership was still `pending` (it was removed, nothing
+        // to deprovision) and the link is `suspended`. A human removal tombstones the link
+        // (FIX-037), so any other combination is a broken invariant: refused, never papered
+        // over.
+        if row.state != "suspended" {
+            tracing::error!(scim_id = %id, "scim: unremoved link without a membership");
+            return Err(ScimError::internal());
+        }
+        if want_active {
+            // The IdP reactivates: the membership is prepared again (`pending`, seat cap) —
+            // the account is the same existing one, and still only its own sign-in activates.
+            if !row.suspended_by_scim {
+                return Err(ScimError::forbidden(
+                    "This member was suspended in Aurora; reactivation is an Aurora decision.",
+                ));
+            }
+            groups::lock_org(&mut tx, org.org_id).await.map_err(db)?;
+            ensure_seat(&mut tx, org.org_id).await?;
+            members::insert_pending(&mut *tx, org.org_id, row.user_id)
+                .await
+                .map_err(db)?;
+            repo::set_user_state(&mut tx, org.org_id, id, "active", false)
+                .await
+                .map_err(db)?;
+            evs.push(
+                AuditEvent::new(actor.clone(), "member.add", Outcome::Success)
+                    .org(org.org_id)
+                    .target("user", row.user_id)
+                    .metadata(json!({
+                        "via": VIA,
+                        "scim_id": id,
+                        "role": "member",
+                        "status": "pending",
+                    })),
+            );
+            groups::notify_member_changed(&mut tx, org.org_id, row.user_id)
+                .await
+                .map_err(db)?;
+            "reactivated"
+        } else {
+            "attributes"
+        }
     } else if !want_active && row.state != "suspended" {
         // Suspend (deprovisioning matrix, D-135). (FIX-080) Under the org lock, so a sign-in
         // deciding on this link serializes with the state change, and `suspended_by_scim` is
@@ -1015,33 +1117,47 @@ async fn apply_update(
         // stays human-owned (SEC-73: the IdP never lifts a human suspension), exactly like
         // `move_link` records it.
         groups::lock_org(&mut tx, org.org_id).await.map_err(db)?;
-        let already_suspended = members::get(&mut *tx, org.org_id, row.user_id)
+        let current_member = members::get(&mut *tx, org.org_id, row.user_id)
             .await
-            .map_err(db)?
+            .map_err(db)?;
+        let pending_member = current_member
+            .as_ref()
+            .is_some_and(|m| m.status == "pending");
+        let already_suspended = current_member
+            .as_ref()
             .is_some_and(|m| m.status == "suspended");
         repo::set_user_state(&mut tx, org.org_id, id, "suspended", !already_suspended)
             .await
             .map_err(db)?;
-        deprovision::suspend_membership(
-            &mut tx,
-            org.org_id,
-            row.user_id,
-            &service::actor(&caller.token.name),
-        )
-        .await
-        .map_err(scim_of_api)?;
-        flush = deprovision::abort_turns(&mut tx, org.org_id, row.user_id)
+        if pending_member {
+            // (D-175) Deactivated before the person's first sign-in: the pending membership
+            // is removed (the link is suspended above); nothing to deprovision — no session,
+            // key or turn of this org exists.
+            pending::remove(&mut tx, org.org_id, row.user_id, &row.user_name, &actor)
+                .await
+                .map_err(scim_of_api)?;
+        } else {
+            deprovision::suspend_membership(
+                &mut tx,
+                org.org_id,
+                row.user_id,
+                &service::actor(&caller.token.name),
+            )
             .await
             .map_err(scim_of_api)?;
-        deprovision::revoke_org_keys(&mut tx, org.org_id, row.user_id)
-            .await
-            .map_err(scim_of_api)?;
-        deprovision::revoke_sessions_if_last(&mut tx, row.user_id)
-            .await
-            .map_err(scim_of_api)?;
-        deprovision::cancel_invitations(&mut tx, org.org_id, &row.user_name, row.user_id)
-            .await
-            .map_err(scim_of_api)?;
+            flush = deprovision::abort_turns(&mut tx, org.org_id, row.user_id)
+                .await
+                .map_err(scim_of_api)?;
+            deprovision::revoke_org_keys(&mut tx, org.org_id, row.user_id)
+                .await
+                .map_err(scim_of_api)?;
+            deprovision::revoke_sessions_if_last(&mut tx, row.user_id)
+                .await
+                .map_err(scim_of_api)?;
+            deprovision::cancel_invitations(&mut tx, org.org_id, &row.user_name, row.user_id)
+                .await
+                .map_err(scim_of_api)?;
+        }
         "suspended"
     } else if want_active && row.state == "suspended" {
         // Reactivation only when SCIM suspended the membership (04 §SCIM).
@@ -1148,7 +1264,29 @@ async fn move_link(
     // `to`'s membership, exactly like `create_user`.
     let existing = members::get(&mut *tx, org, to).await.map_err(db)?;
     let mut flush = Vec::new();
+    // (D-175, FIX-082) An account that already signed in is only prepared (`pending`), like
+    // on a `POST`; `active: false` creates the link alone.
+    let prepare_only = existing.is_none() && account_signed_in(&mut *tx, to).await?;
     match &existing {
+        None if prepare_only => {
+            if want_active {
+                ensure_seat(&mut *tx, org).await?;
+                members::insert_pending(&mut *tx, org, to)
+                    .await
+                    .map_err(db)?;
+                evs.push(
+                    AuditEvent::new(actor.clone(), "member.add", Outcome::Success)
+                        .org(org)
+                        .target("user", to)
+                        .metadata(json!({
+                            "via": VIA,
+                            "scim_id": link.id,
+                            "role": "member",
+                            "status": "pending",
+                        })),
+                );
+            }
+        }
         None => {
             ensure_seat(&mut *tx, org).await?;
             members::insert(&mut *tx, org, to, "member")
@@ -1285,7 +1423,13 @@ pub async fn delete_user(
         .map_err(db)?;
     let actor = service::actor(&caller.token.name);
     let mut flush = Vec::new();
-    if member.is_some() {
+    if member.as_ref().is_some_and(|m| m.status == "pending") {
+        // (D-175) Deleted before the person's first sign-in: the pending membership goes,
+        // nothing to deprovision (a pending member has no session, key or turn of this org).
+        pending::remove(&mut tx, org.org_id, row.user_id, &row.user_name, &actor)
+            .await
+            .map_err(scim_of_api)?;
+    } else if member.is_some() {
         deprovision::remove_membership(&mut tx, org.org_id, row.user_id, &actor)
             .await
             .map_err(scim_of_api)?;

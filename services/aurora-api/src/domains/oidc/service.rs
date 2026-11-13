@@ -624,6 +624,15 @@ async fn sign_in(
         }
         aurora_db::repo::idp_roles::clear_admin_source(&mut *tx, user.id).await?;
     }
+    // (D-175, FIX-082) The person's own verified sign-in activates every membership SCIM
+    // prepared for this account (`pending` → `active`, audited), before the role and group sync
+    // so both see the member they now are; the SCIM admission gate still applies.
+    crate::domains::scim::pending::activate_on_sign_in(&mut tx, &state.pool, &user)
+        .await
+        .map_err(|e| {
+            tracing::error!("oidc: activate pending memberships: {e:?}");
+            Fail("oidc_failed")
+        })?;
     // Precedence: invitation (in `create_user`) → role claims → provider `jit` → placement.
     roles::sync(&mut tx, state, p, &mut user, &v.role_values, &desired).await?;
     apply_jit(state, &mut tx, p, &mut user).await?;

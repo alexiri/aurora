@@ -382,11 +382,29 @@ pub async fn patch_member(
         }
         Some(v) => Some(To::parse("/reassign_to", v)?),
     };
+    // (D-175, FIX-082) `pending` is written only by SCIM and left only by the person's own
+    // verified sign-in: an admin can neither set it nor move a member out of it (a
+    // suspend-then-reactivate would be an activation); removing the member is allowed.
+    if req.status == Some(MemberStatus::Pending) {
+        return Err(ApiError::invalid_request(
+            "Invalid request.",
+            vec![aurora_core::FieldError::new(
+                "/status",
+                "must be active or suspended",
+            )],
+        ));
+    }
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
     let owners = members::lock_active_owners(&mut tx, org_id).await?;
     let cur = members::get(&mut *tx, org_id, target)
         .await?
         .ok_or_else(|| ApiError::not_found("Member not found."))?;
+    if cur.status == "pending" && req.status.is_some() {
+        return Err(ApiError::conflict(
+            "member_pending",
+            "This member has not signed in yet; the membership activates at their first sign-in. Remove it instead.",
+        ));
+    }
     if actor_role != OrgRole::Owner && (cur.role == "owner" || req.role == Some(OrgRole::Owner)) {
         return Err(admin_vs_owner());
     }

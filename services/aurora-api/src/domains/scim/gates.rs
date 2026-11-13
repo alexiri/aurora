@@ -93,7 +93,7 @@ pub async fn admit_new_member(
     }
     let settings = scim::settings_of(&mut *tx, org).await?;
     if let Some(cap) = OrgSettings::from_json(&settings).max_members
-        && aurora_db::repo::invitations::count_active_members(&mut *tx, org).await? + 1 > cap
+        && aurora_db::repo::invitations::count_seats(&mut *tx, org).await? + 1 > cap
     {
         return Ok(Some(MEMBER_LIMIT_REASON));
     }

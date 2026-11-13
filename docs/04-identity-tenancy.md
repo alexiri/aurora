@@ -445,7 +445,7 @@ values are stored only as keyed hashes.
 | Layer | Values | Notes |
 |-------|--------|-------|
 | Org role | `owner` > `admin` > `member` | Always enforced. |
-| Membership status | `active`, `suspended` | Suspended = non-member for **every** check including API keys, channel clicks, schedules. |
+| Membership status | `active`, `suspended`, `pending` (phase 4, D-175) | Suspended = non-member for **every** check including API keys, channel clicks, schedules. `pending` (SCIM prepared it for an existing account; becomes `active` only in that person's next verified sign-in) is the same: a non-member for every check, but it counts against the seat cap and may sit in SCIM groups. An admin can neither set nor leave `pending` (409 `member_pending`), only remove the member. |
 | Workspace access | `owner`, `member` — phase 0/1. **From phase 2 (RFE-012): `owner` > `approver` > `member`** | Org owners and admins are implicit workspace owners of every workspace in their org. `approver` is one deliberate notch between chatting and owning: it adds the authority to decide approvals. |
 | Group (phase 4, P4-GRP-1) | member of zero or more org groups | A group can hold workspace roles (`owner`, `approver`, `member`) and map to an org role (`admin`, `member`; never `owner`). The **effective** role is the strongest of the direct and group-derived ones, see *Groups* below. A group never creates membership. |
 | Freeze state (phase 2, RFE-006) | not frozen / `frozen` — per **agent**, **workspace** and **organization** | A reversible, audited emergency switch, see *Freeze* below. |

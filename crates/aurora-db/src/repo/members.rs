@@ -77,6 +77,56 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (D-175, FIX-082) A membership SCIM prepares for an existing account: `pending`, role
+/// `member`. It counts against the seat cap, can be placed in SCIM groups and confers
+/// nothing; only [`activate_pending`] (the person's own verified sign-in) makes it `active`.
+pub async fn insert_pending<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, status) VALUES ($1, $2, 'member', 'pending')",
+    )
+    .bind(org)
+    .bind(user)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// The orgs where `user` holds a `pending` membership, in org-id order (the lock order).
+pub async fn pending_orgs<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT org_id FROM org_members WHERE user_id = $1 AND status = 'pending' ORDER BY org_id",
+    )
+    .bind(user)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// `pending` → `active`; `true` only when this call made the change (the caller holds the
+/// org lock, but the compare-and-set keeps a stale read from activating anything else).
+pub async fn activate_pending<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE org_members SET status = 'active', updated_at = now()
+         WHERE org_id = $1 AND user_id = $2 AND status = 'pending'",
+    )
+    .bind(org)
+    .bind(user)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
 pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,

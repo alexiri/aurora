@@ -29154,7 +29154,8 @@
         "type": "string",
         "enum": [
           "active",
-          "suspended"
+          "suspended",
+          "pending"
         ]
       },
       "MembersBatchRequest": {

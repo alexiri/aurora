@@ -116,11 +116,13 @@ interface Workspace { id: Uuid; org_id: Uuid; slug: string; name: string; timezo
   created_at: Timestamp; updated_at: Timestamp }
 
 interface Me { user: User; default_org_id: Uuid | null;
-  memberships: { org: OrgSummary; role: OrgRole; status: "active" | "suspended";
+  memberships: { org: OrgSummary; role: OrgRole; status: "active" | "suspended" | "pending";
                  workspaces: { id: Uuid; slug: string; name: string; my_role: WorkspaceRole }[] }[] }
 
 interface Member { user_id: Uuid; email: string; display_name: string; role: OrgRole;
-  status: "active" | "suspended"; created_at: Timestamp }
+  status: "active" | "suspended" | "pending"; created_at: Timestamp }
+// `pending` (D-175, FIX-082): prepared by SCIM for an existing account; read-only — `PATCH` refuses it as a value (400)
+// and refuses any `status` change of a pending member (409 `member_pending`; removing the member is allowed).
 
 interface Invitation { id: Uuid; org_id: Uuid; email: string; role: "admin" | "member";
   workspace_ids: Uuid[]; status: "pending" | "accepted" | "cancelled" | "expired";
@@ -181,7 +183,7 @@ interface Page<T> { items: T[]; next_cursor: string | null }
 | PATCH `/v1/orgs/{org}` | S/K owner | `{ name?, slug?, settings?: {members_can_create_workspaces?, max_members?, max_agents?} }` | 200 `Org` | 403; 409 `slug_taken` |
 | DELETE `/v1/orgs/{org}` | S/K owner | `{ confirm: <org slug> }` | 204 | 400 `confirmation_mismatch`; 403 |
 | GET `/v1/orgs/{org}/members` | S/K | `?limit&cursor&status` | 200 `Page<Member>` | 403 (member role) |
-| PATCH `/v1/orgs/{org}/members/{user}` | S/K owner/admin | `{ role?, status? }` | 200 `Member` | 403 (admin vs owner / granting owner); 409 `last_owner` |
+| PATCH `/v1/orgs/{org}/members/{user}` | S/K owner/admin | `{ role?, status? }` | 200 `Member` | 403 (admin vs owner / granting owner); 409 `last_owner`, `member_pending` (a `status` change of a pending member) |
 | DELETE `/v1/orgs/{org}/members/{user}` | S/K owner/admin | — | 204 | 403; 409 `last_owner` |
 | GET `/v1/orgs/{org}/invitations` | S/K owner/admin | `?status` | 200 `Page<Invitation>` | 403 |
 | POST `/v1/orgs/{org}/invitations` | S/K owner/admin | `{ email, role, workspace_ids? }` | 201 `Invitation` (re-invite of a pending email rotates token, same response) | 409 `already_member`; 422 `member_limit_reached`; 400 |

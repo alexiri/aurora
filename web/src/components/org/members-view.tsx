@@ -79,7 +79,17 @@ export function MemberRow({
         )}
       </Td>
       <Td>
-        <Badge tone={m.status === "active" ? "accent" : "pending"}>{m.status}</Badge>
+        {m.status === "pending" ? (
+          <Badge
+            tone="pending"
+            title="Your identity provider prepared this membership for an existing account. It becomes active at the person's next sign-in."
+            className="normal-case tracking-normal"
+          >
+            Waiting for first sign-in
+          </Badge>
+        ) : (
+          <Badge tone={m.status === "active" ? "accent" : "pending"}>{m.status}</Badge>
+        )}
         {m.directory ? (
           <Badge
             tone="neutral"
@@ -94,15 +104,17 @@ export function MemberRow({
       <Td>
         {manage ? (
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              aria-label={`${m.status === "active" ? "Suspend" : "Reactivate"} ${m.email}`}
-              onClick={() => onStatus(m.status === "active" ? "suspended" : "active")}
-            >
-              {m.status === "active" ? "Suspend" : "Reactivate"}
-            </Button>
+            {m.status === "pending" ? null : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                aria-label={`${m.status === "active" ? "Suspend" : "Reactivate"} ${m.email}`}
+                onClick={() => onStatus(m.status === "active" ? "suspended" : "active")}
+              >
+                {m.status === "active" ? "Suspend" : "Reactivate"}
+              </Button>
+            )}
             {fromIdp ? null : (
               <Button
                 variant="danger"

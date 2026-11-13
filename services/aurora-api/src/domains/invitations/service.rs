@@ -94,7 +94,7 @@ pub async fn create(
         return Err(already_member());
     }
     if let Some(cap) = max_members(&settings) {
-        let used = repo::count_active_members(&mut *tx, org).await?
+        let used = repo::count_seats(&mut *tx, org).await?
             + repo::count_pending_except(&mut *tx, org, &email).await?;
         if used + 1 > cap {
             return Err(limit_reached());
