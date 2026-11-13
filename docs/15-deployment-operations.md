@@ -950,8 +950,8 @@ the sandboxes namespace.
 (`closed`, `eof`, `detached`, `revoked`, `idle`, `lifetime`), `aurora_relay_stream_dial_seconds` (histogram) and
 `aurora_relay_stream_dial_errors_total{kind}` (`connect`, `timeout`), `aurora_relay_grants_total{result}`
 (`redeemed`, `invalid`, `no_state`), `aurora_relay_resolve_cache{hit}` (`true`/`false`), `aurora_relay_refused_total{reason}` (FIX-072, `docs/16 §W18`, C-636:
-`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`; no ids in labels; present once
-FIX-072 has merged); API (every replica):
+`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`; no ids in labels; the matching responses are 429 `preview_streams_limit` / WebSocket 4409,
+429 `preview_quota` with `Retry-After`, and 429 `grant_rate_limited`); API (every replica):
 `aurora_preview_shares{org}` (active shares per org slug, set by the share job) and
 `aurora_preview_stream_bytes_total{direction}`. There is no `aurora_relay_up`: relay liveness is the
 Prometheus-generated `up{job="aurora-relay"}` of the 4193 scrape (`== 0` means the relay is down or unscrapable)

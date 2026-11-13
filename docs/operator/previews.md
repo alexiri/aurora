@@ -78,17 +78,17 @@ private link; without it previews of that runner's sandboxes answer 502 `preview
 
 ## Limits
 
-As specified (`docs/16 §W18`, `docs/02 §Limits`; FIX-072 brings the code in line with the per-share, per-user and daily
-quota rows, see [docs/16 §W18](../16-wire-protocols.md) for the current statement):
+Enforced as specified in [docs/16 §W18](../16-wire-protocols.md) and `docs/02 §Limits` (FIX-072, C-636/C-637). The
+stream caps and the grant rate are per relay replica; the daily quota is one counter shared by all replicas:
 
 | What | Value |
 |------|-------|
 | Shares per agent / per org | 10 / 200 |
-| Concurrent streams per share / per sandbox / per user | 32 / 64 / 64 (`relay.max_streams_per_user`) |
+| Concurrent streams per share / per sandbox / per user | 32 / 64 / 64 (`relay.max_streams_per_user`). Over a share or user cap a plain request answers 429 `preview_streams_limit` (`Retry-After: 1`) and a WebSocket upgrade is accepted and closed 4409 |
 | Relay streams in total (per replica) | `relay.max_streams` (2048) |
 | Request body | `relay.request_body_max_bytes` (chart 32 MiB, ceiling 100 MiB) |
-| Bytes per share per day | `previews.bytes_per_share_day` (5 GiB), over it 429 `preview_quota` |
-| Grant redemption | `PREVIEW_GRANT_RATE` per client and per share |
+| Bytes per share per day | `previews.bytes_per_share_day` (5 GiB), one shared counter per share and UTC day; over it 429 `preview_quota` with `Retry-After` to the next UTC midnight (a stream already started may finish; the bound can be exceeded by what the relays move between two 15 s heartbeats). With the `management` counter class `closed` and the store down, usage reporting answers 503 `counter_unavailable` and the relay re-sends the bytes with its next heartbeat |
+| Grant redemption | `PREVIEW_GRANT_RATE`: 30/min per client address and 10/min per share (per replica, every attempt counts), over it 429 `grant_rate_limited` with `Retry-After` |
 | Idle / WebSocket idle / stream lifetime | 120 s / 600 s / 4 h |
 | Browser session / idle | 8 h / 1 h |
 | Revocation reaches open streams | within `PREVIEW_AUTH_CACHE`, 15 s |
@@ -102,7 +102,7 @@ quota rows, see [docs/16 §W18](../16-wire-protocols.md) for the current stateme
 | 502 `preview_unreachable` | nothing listening on the shared port, the runner's 4108 is not reachable from the relay, or the sandbox is gone |
 | Login redirect loops | the browser blocks the `__Host-` cookies (the wildcard host is not served over https), or the edge rewrites `X-Forwarded-Proto` |
 | WebSocket apps fail, page loads | the edge strips `Upgrade`/`Connection` (see the nginx recipe) |
-| Previews refused under load or after heavy use | `aurora_relay_refused_total{reason}` says which limit: `share_streams`/`user_streams` (concurrent streams), `quota` (429 `preview_quota`, daily bytes per share), `grant_rate_*` (too many logins from one address or for one share) |
+| Previews refused under load or after heavy use | `aurora_relay_refused_total{reason}` says which limit: `share_streams`/`user_streams` (429 `preview_streams_limit`, or WebSocket close 4409), `quota` (429 `preview_quota`, daily bytes per share), `grant_rate_address`/`grant_rate_share` (429 `grant_rate_limited`: too many logins from one address or for one share) |
 | Uploads fail at about 32 MiB | raise `relay.request_body_max_bytes` (at most 100 MiB) and the edge's body limit |
 | Dashboard shows no relay replicas | the relay cannot reach api:4101 (policy), or the anchor token key is missing |
 
@@ -119,7 +119,7 @@ Scrape the relay's ops port 4193 `/metrics`. Series emitted (all of them are in 
 | `aurora_relay_stream_dial_seconds` (histogram), `aurora_relay_stream_dial_errors_total` | `kind` |
 | `aurora_relay_grants_total` | `result` (`redeemed`, `invalid`, `no_state`) |
 | `aurora_relay_resolve_cache` | `hit` |
-| `aurora_relay_refused_total` (FIX-072) | `reason` (`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`) |
+| `aurora_relay_refused_total` (FIX-072, C-636) | `reason` (`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`) |
 | `aurora_preview_shares` (API gauge) | `org` |
 | `aurora_preview_stream_bytes_total` (API) | `direction` |
 
