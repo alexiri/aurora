@@ -19,11 +19,15 @@ Every lane spec names its lane name, its task ids and their briefs (`docs/tasks/
 - New tables/columns → real `### \`table\`` sections in `docs/03-data-model.md` (`created_at`/`updated_at` implicit) and `python3 scripts/extract-schema.py --check`. Migrations: `git fetch origin` and take the next free timestamp after `origin/master`'s newest; say so in the commit.
 - Tests must prove the behaviour: no sleeps for synchronisation (use barriers/notify/polling with a deadline), no assertions on mocks where a real path exists, no `#[ignore]`. A new test must fail without your fix — check that for at least the main test of each task and say so in the report. WebSocket test consumers answer Pings and bound every wait (FIX-051/FIX-055 playbooks).
 
-## Gates before each task's final commit
-- `cargo fmt --all --check`; `cargo clippy -p <touched crates> --all-targets --all-features -- -D warnings` (workspace-wide once before your final report).
-- The test suites the brief names; for `aurora-api` changes the full it-suite: `cargo test -p aurora-api --test it -- --test-threads=8` (or `cargo nextest run -p aurora-api` if installed — same coverage).
-- `bash scripts/guards/run-all.sh`.
-- Web touched: `pnpm -C web typecheck`, `lint`, `test`, `build`.
+## Gates (owner, 2026-11-13: full suites in batches, not after every fix)
+**Per task (before its commit) — fast, targeted:**
+- `cargo fmt --all --check`; `cargo clippy -p <touched crates> --all-targets --all-features -- -D warnings`.
+- The new/changed tests and the touched area's tests by filter (e.g. `cargo test -p aurora-api --test it -- scim_` / `cargo nextest run -p aurora-api -E 'test(/^scim_/)'`), plus the touched crates' lib tests; the fail-before check for the main new test.
+- Web touched: `pnpm -C web typecheck` + the related vitest files (`pnpm -C web exec vitest run <files>`).
+
+**Batch gate — every ~5 tasks, at the end of your chain, and before your final report:**
+- The full suites of every crate touched since the last batch gate: for `aurora-api` the full it-suite (`cargo nextest run -p aurora-api` or `cargo test -p aurora-api --test it -- --test-threads=8`; build the fixtures first with `bash scripts/fixtures/build.sh`), `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `bash scripts/guards/run-all.sh`, web `lint`/`test`/`build` if web changed, and `scripts/e2e/*.sh` the batch's changes require (e.g. `gateway.sh` for proxying).
+- A batch-gate failure is fixed in its own commit (`<ID>: …` of the task that caused it) before continuing. Say in each per-task report which gate level ran.
 
 ## Host discipline (shared 16-core box, up to 3 lanes)
 - Heavy commands under `nice -n 10`. Check `uptime` before long runs: wait while the 1-minute load is > 25.
