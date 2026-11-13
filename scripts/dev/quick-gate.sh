@@ -12,7 +12,18 @@
 #   bash scripts/dev/quick-gate.sh --all          everything (the old full pre-commit suite)
 #   bash scripts/dev/quick-gate.sh --clippy-only  fmt + clippy, no tests or web
 #   bash scripts/dev/quick-gate.sh --tests-only   tests only (no fmt, no clippy, no tsc)
+#   bash scripts/dev/quick-gate.sh --dry-run     print the plan and exit (runs nothing)
 #   AURORA_QUICK_GATE_VERBOSE=1 ...               list every changed file before running
+#
+# VEL-005 scope rules: clippy covers the touched crates AND their workspace
+# dependents (from `cargo metadata --no-deps`; the plan says why each is
+# included), so a change in aurora-core/-db/-protocol can no longer "pass"
+# while aurora-api or aurora-gateway no longer compile. Tests run on the
+# touched crates only, plus aurora-db and aurora-api when a migration changed.
+# Tests use cargo-nextest when installed (doctests are skipped, as always with
+# nextest), else `cargo test`. Clippy omits --all-features unless a touched
+# crate defines feature flags (--all and workspace-wide changes keep it).
+# One line warns when target/ exceeds 60 GB (`just clean-stale`).
 #
 # Scope detection: changed paths from git diff (working tree vs HEAD, plus the
 # index, plus untracked files); with a clean tree on a lane, the commits
@@ -50,13 +61,15 @@ usage() {
   echo "  --clippy-only  fmt + clippy, no tests, no web"
   echo "  --tests-only   tests only (cargo tests; web vitest, no tsc)"
   echo "  --web          web checks only: tsc + the changed/vitest-related files"
+  echo "  --dry-run      print the plan (scope, clippy dependents, test set) and exit"
   echo "  AURORA_QUICK_GATE_VERBOSE=1 lists every changed file before running"
   echo "  docs/18-testing.md §\"Quick gate (local loops)\": a dev-loop tool, NOT a merge gate"
 }
 
-ALL=0 CLIPPY_ONLY=0 TESTS_ONLY=0 WEB_ONLY=0
+ALL=0 CLIPPY_ONLY=0 TESTS_ONLY=0 WEB_ONLY=0 DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
+    --dry-run)     DRY_RUN=1 ;;
     --all)         ALL=1 ;;
     --clippy-only) CLIPPY_ONLY=1 ;;
     --tests-only)  TESTS_ONLY=1 ;;
@@ -114,6 +127,50 @@ cargo_name() {
   grep -m1 '^name = ' "$toml" | cut -d'"' -f2
 }
 
+# VEL-005: `scope_info <crate>...` reads `cargo metadata --no-deps` (workspace
+# members only; fast, nothing cached) and prints one line per fact:
+#   RDEP <dependent> <crate-it-depends-on>   workspace dependents, transitive
+#   FEAT <crate>                             defines feature flags beyond `default`
+# The e2e crates are CI-only and never listed as dependents.
+scope_info() {
+  cargo metadata --no-deps --format-version 1 | python3 -I -c '
+import json, sys
+pk = {p["name"]: p for p in json.load(sys.stdin)["packages"]}
+touched = [t for t in sys.argv[1:] if t in pk]
+rdeps = {}
+for p in pk.values():
+    for d in p["dependencies"]:
+        if d["name"] in pk:
+            rdeps.setdefault(d["name"], set()).add(p["name"])
+seen = {}
+for t in touched:
+    stack = [t]
+    while stack:
+        c = stack.pop()
+        for r in sorted(rdeps.get(c, ())):
+            if r not in touched and r not in seen and not r.startswith("aurora-e2e-"):
+                seen[r] = c
+                stack.append(r)
+for r, c in sorted(seen.items()):
+    print("RDEP", r, c)
+for t in touched:
+    if any(f != "default" for f in pk[t]["features"]):
+        print("FEAT", t)
+' "$@"
+}
+
+have_nextest() { cargo nextest --version >/dev/null 2>&1; }
+
+# One line, never deletes anything: target/ past 60 GB.
+disk_warning() {
+  local kb
+  [ -d target ] || return 0
+  kb="$(du -sk target 2>/dev/null | cut -f1)" || return 0
+  if [ "${kb:-0}" -gt $((60 * 1024 * 1024)) ]; then
+    echo "note: target/ is $((kb / 1024 / 1024)) GB (> 60 GB) — run 'just clean-stale' (prunes old incremental dirs and stale artefacts) when no build is running"
+  fi
+}
+
 changed_files() {
   {
     git diff --name-only HEAD --
@@ -146,7 +203,7 @@ plan_fixtures() {
   if [ "$ALL" -eq 1 ] || [ "$workspace_wide" -eq 1 ]; then
     fixtures_needed=1
   else
-    for c in ${crates[@]+"${crates[@]}"}; do
+    for c in ${test_crates[@]+"${test_crates[@]}"}; do
       [ "$c" = aurora-api ] && fixtures_needed=1
     done
   fi
@@ -200,10 +257,13 @@ if [ "${#files[@]}" -eq 0 ]; then
 fi
 
 crates=() web_src=() web_tests=()
-web_changed=0 workspace_wide=0 e2e_note=0 schema_check=0
+web_changed=0 workspace_wide=0 e2e_note=0 schema_check=0 migrations_changed=0
 for f in ${files[@]+"${files[@]}"}; do
   case "$f" in
     crates/aurora-db/migrations/*|docs/03-data-model.md) schema_check=1 ;;
+  esac
+  case "$f" in
+    crates/aurora-db/migrations/*) migrations_changed=1 ;;
   esac
   case "$f" in
     crates/*|services/*|connectors/*)
@@ -238,6 +298,40 @@ if [ "${#crates[@]}" -gt 0 ]; then
   mapfile -t crates < <(printf '%s\n' "${crates[@]}" | sort -u)
 fi
 
+# VEL-005: tests run on the touched crates (+ aurora-db and aurora-api when a
+# migration changed: migrations change behaviour everywhere); clippy runs on
+# the touched crates plus their workspace dependents.
+test_crates=(${crates[@]+"${crates[@]}"})
+test_notes=()
+if [ "$migrations_changed" -eq 1 ]; then
+  test_crates+=(aurora-db aurora-api)
+  test_notes+=("aurora-db/migrations changed → also test aurora-db and aurora-api")
+fi
+if [ "${#test_crates[@]}" -gt 0 ]; then
+  mapfile -t test_crates < <(printf '%s\n' "${test_crates[@]}" | sort -u)
+fi
+clippy_crates=(${crates[@]+"${crates[@]}"})
+rdep_notes=() feat_crates=()
+if [ "${#crates[@]}" -gt 0 ] && [ "$workspace_wide" -eq 0 ]; then
+  scope_out="$(scope_info "${crates[@]}")" || die "cargo metadata failed — cannot expand the clippy scope to dependents"
+  while read -r kind a b; do
+    case "$kind" in
+      RDEP) clippy_crates+=("$a"); rdep_notes+=("$a (depends on $b)") ;;
+      FEAT) feat_crates+=("$a") ;;
+    esac
+  done <<<"$scope_out"
+fi
+# Inner loop: --all-features only when a touched crate has gating features.
+# The workspace-wide set and --all keep it (CI parity).
+clippy_features=()
+clippy_feature_note="no --all-features: touched crates define no feature flags"
+if [ "${#feat_crates[@]}" -gt 0 ]; then
+  clippy_features=(--all-features)
+  clippy_feature_note="--all-features: ${feat_crates[*]} define feature flags"
+fi
+use_nextest=0
+have_nextest && use_nextest=1
+
 # --- plan --------------------------------------------------------------------
 
 echo "== quick gate (VEL-002) — development-loop tool, NOT a merge gate (CI runs the full suite)"
@@ -265,9 +359,12 @@ else
     if [ "$workspace_wide" -eq 1 ]; then
       echo "  workspace-wide files changed → cargo clippy --workspace --all-targets --all-features -- -D warnings"
     elif [ "${#crates[@]}" -gt 0 ]; then
-      echo "  cargo clippy ${crates[*]} --all-targets --all-features -- -D warnings"
+      echo "  cargo clippy ${clippy_crates[*]} --all-targets ${clippy_features[*]:-} -- -D warnings"
+      echo "    touched: ${crates[*]}"
+      [ "${#rdep_notes[@]}" -gt 0 ] && printf '    + dependent: %s\n' "${rdep_notes[@]}"
+      echo "    ($clippy_feature_note; CI runs --all-features on the whole workspace)"
     else
-      echo "  no crates mapped → core set: cargo clippy -p aurora-db -p aurora-protocol --all-targets --all-features -- -D warnings"
+      echo "  no crates mapped → core set: cargo clippy -p aurora-db -p aurora-protocol --all-targets -- -D warnings (no --all-features)"
     fi
   fi
   if [ "$CLIPPY_ONLY" -eq 0 ]; then
@@ -275,8 +372,13 @@ else
     [ "$fixtures_needed" -eq 1 ] && echo "  fixture packages: bash scripts/fixtures/build.sh (plugins/fixtures/dist is gitignored)"
     if [ "$workspace_wide" -eq 1 ]; then
       echo "  cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted"
-    elif [ "${#crates[@]}" -gt 0 ]; then
-      echo "  cargo test ${crates[*]}"
+    elif [ "${#test_crates[@]}" -gt 0 ]; then
+      if [ "$use_nextest" -eq 1 ]; then
+        echo "  cargo nextest run ${test_crates[*]}   (doctests are skipped by nextest; 'cargo test --doc -p <crate>' or 'just test' runs them)"
+      else
+        echo "  cargo test ${test_crates[*]}   (cargo-nextest not installed)"
+      fi
+      for n in ${test_notes[@]+"${test_notes[@]}"}; do echo "    $n"; done
     fi
   fi
   if [ "$web_changed" -eq 1 ] && [ "$CLIPPY_ONLY" -eq 0 ]; then
@@ -288,6 +390,12 @@ else
     echo "  (nothing to test: no crate or workspace-wide file in the changed set; the full suite remains CI's job)"
   fi
 fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "(--dry-run: nothing executed)"
+  exit 0
+fi
+disk_warning
 
 # --- execute -----------------------------------------------------------------
 
@@ -329,12 +437,12 @@ else
         cargo clippy --workspace --all-targets --all-features -- -D warnings
     elif [ "${#crates[@]}" -gt 0 ]; then
       clippy_args=()
-      for c in "${crates[@]}"; do clippy_args+=(-p "$c"); done
-      phase "cargo clippy ${crates[*]} --all-targets --all-features -- -D warnings" \
-        cargo clippy "${clippy_args[@]}" --all-targets --all-features -- -D warnings
+      for c in "${clippy_crates[@]}"; do clippy_args+=(-p "$c"); done
+      phase "cargo clippy ${clippy_crates[*]} --all-targets ${clippy_features[*]:-} -- -D warnings" \
+        cargo clippy "${clippy_args[@]}" --all-targets ${clippy_features[@]+"${clippy_features[@]}"} -- -D warnings
     else
-      phase "core set: cargo clippy -p aurora-db -p aurora-protocol --all-targets --all-features -- -D warnings" \
-        cargo clippy -p aurora-db -p aurora-protocol --all-targets --all-features -- -D warnings
+      phase "core set: cargo clippy -p aurora-db -p aurora-protocol --all-targets -- -D warnings" \
+        cargo clippy -p aurora-db -p aurora-protocol --all-targets -- -D warnings
     fi
   fi
   if [ "$CLIPPY_ONLY" -eq 0 ]; then
@@ -344,13 +452,18 @@ else
       ensure_db_url
       phase "cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted (8 test threads; shared dev Postgres)" \
         cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted -- --test-threads=8
-    elif [ "${#crates[@]}" -gt 0 ]; then
+    elif [ "${#test_crates[@]}" -gt 0 ]; then
       plan_fixtures
       run_fixtures
       ensure_db_url
       test_args=()
-      for c in "${crates[@]}"; do test_args+=(-p "$c"); done
-      phase "cargo test ${crates[*]}" cargo test "${test_args[@]}"
+      for c in "${test_crates[@]}"; do test_args+=(-p "$c"); done
+      if [ "$use_nextest" -eq 1 ]; then
+        phase "cargo nextest run ${test_crates[*]} (doctests skipped)" \
+          cargo nextest run "${test_args[@]}" --no-tests=pass
+      else
+        phase "cargo test ${test_crates[*]}" cargo test "${test_args[@]}"
+      fi
     fi
     run_web
   fi

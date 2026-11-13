@@ -145,6 +145,35 @@ sccache with incremental on (aurora-crypto, fresh target dir, warm cache): reque
 workspace crates bypass sccache); with `CARGO_INCREMENTAL=1` env (wrapper unsets it): +52 requests, 43 hits, 7 misses, 0 errors.
 Registry crates still hit the cache.
 
+### 7. Quick gate, test pool, thread count (VEL-005)
+
+Measured on the shared host (other lanes compiling; load recorded per row — read as indicative only).
+
+**Test pool size.** `TestDb` keeps a pool of 5 (now `AURORA_TEST_POOL_SIZE`-overridable, default 5). The brief's
+hoped-for 2 does **not** work: the `aurora-api` harness hands `db.pool()` to the app under test (workers, SSE, LISTEN,
+long polls), and with 2 connections `cargo nextest run -p aurora-api -j 8` failed 20 of 899 tests (500s / timeouts at 40–127 s:
+`channels_inbox::file_fetch_*`, `channels_mgmt::*`, `grants_*`, `runner_plane::*`, `schedules::*`, …; 2390 s run, load 15–20).
+The same 20 tests pass with `AURORA_TEST_POOL_SIZE=5` (20/20, 195 s). Full suite at pool 5, 8 threads: 899/899 passed,
+1272 s wall (load 7–14, ~16 CPU-minutes of user time, i.e. dominated by waiting on a loaded host).
+
+**Thread-count sweep (8 / 12 / 16): pending an idle machine — the coordinator runs it.** Load stayed 7–30 the whole lane, so no
+meaningful sweep was possible; `test-threads = 8` is unchanged and `max_connections` of aurora-dev-pg was not touched
+(unmeasured estimate: pool 5 × threads connections plus app-side pools, so 16 threads may need a raised
+`max_connections` first — watch for "too many clients"). Command: `for j in 8 12 16; do /usr/bin/time cargo nextest run -p aurora-api -j $j; done`
+(optionally with `AURORA_TEST_POOL_SIZE=3|4`), then pick the fastest run without "too many clients" and set
+`[profile.default] test-threads` in `.config/nextest.toml`.
+
+**Quick gate on a one-file `aurora-gateway` change** (incremental profile, interleaved, load 3–15): the old command set
+(`clippy -p aurora-gateway --all-targets --all-features` + `cargo test -p aurora-gateway`) took 87 s and 193 s (after a
+416 s warm-up); the new one (clippy without `--all-features` — gateway defines no feature flags, so the artefacts are identical —
++ `cargo nextest run -p aurora-gateway`) took 197 s and 225 s (warm-up 271 s). **No speed-up measured**: the gateway suite
+is database-bound, libtest ran its binaries with 16 threads where nextest is capped at 8, and host load swung the numbers more
+than the tools did. The gate's gain here is correctness (dependents) not speed.
+
+**Template provenance.** The stamp is `COMMENT ON DATABASE` on the template (`hash=… migrations=53`); the
+`aurora_template_meta` table is gone and the hash is a stable SHA-256 prefix. A testkit test asserts a clone's relation list
+equals the `AURORA_TEST_TEMPLATE_DB=0` path's and that the stamp table is absent.
+
 ## Disk hygiene
 
 - `bash scripts/dev/disk-report.sh [dir…]` (or `just disk-report`): free space, `target/` of every

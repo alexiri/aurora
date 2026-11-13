@@ -858,6 +858,28 @@ the 16-core dev host (VEL-002, 2026-11-12): a single-crate change ≈ 80 s warm
 tree (the target is ≤ 3 min for a single-crate change; `--all` is the escape
 hatch, not the loop).
 
+**Scope rules, nextest, flags (VEL-005).** Clippy covers the touched crates
+*and their workspace dependents* (taken from `cargo metadata --no-deps`; the
+plan lists each added crate and the dependency that pulled it in), so a change
+in `aurora-core`, `aurora-db` or `aurora-protocol` can no longer pass while
+`aurora-api` or `aurora-gateway` stop compiling; the e2e crates are never
+pulled in. Tests stay on the directly touched crates, plus `aurora-db` and
+`aurora-api` when `crates/aurora-db/migrations/**` changed (migrations change
+behaviour everywhere). Tests run under `cargo nextest` when it is installed
+(same tests as `cargo test`, one process each; **doctests are skipped** —
+run `cargo test --doc -p <crate>` or `just test` for them), else `cargo test`.
+Inner-loop clippy drops `--all-features` unless a touched crate defines
+feature flags; `--all` and workspace-wide changes keep it. Not CI-parity:
+code behind features of an *untouched* dependent crate is not linted, and
+doctests do not run — CI runs both. `--dry-run` prints the plan and exits.
+The gate prints one line when `target/` exceeds 60 GB (`just clean-stale`);
+it never deletes anything. Test databases are cloned from a migration
+template (VEL-003) whose provenance stamp is a `COMMENT ON DATABASE`, so a
+clone has exactly the schema of the `AURORA_TEST_TEMPLATE_DB=0` path (a
+testkit test asserts it); `AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
+pool (default 5 — 2 starves 20 `aurora-api` tests, see
+`docs/ops/build-performance.md` §7).
+
 **What the quick gate is NOT.** The quick gate is a development loop tool;
 it is not a merge gate — CI runs the full suite on every push; never cite a
 quick-gate pass as a merge-gate pass. It is additive: it runs a subset of
