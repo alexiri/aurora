@@ -651,8 +651,10 @@ pub async fn append_start_log(
 /// caller's transaction. The ordinary due-work start arm (`claim_starts`, notified right after)
 /// then claims the sandbox with a fresh `boot_id` and the ordinary `lifecycle_lease_until` —
 /// the retry itself never sets a lease, because a live lease would block that claim (and the
-/// readiness deadline is shorter than a start lease). Returns `false` when nothing was retried
-/// (the state is not `failed` or a lifecycle lease is still live) so the caller answers 409
+/// readiness deadline is shorter than a start lease). (FIX-049, D-164) An explicit retry overrides
+/// the failure-backoff lease (it stops only *automatic* storms, C-583; a live lease on a `failed`
+/// row fences no in-flight start, which would leave the row `starting`). Returns `false` when
+/// nothing was retried (the state is not `failed`) so the caller answers 409
 /// `sandbox_not_failed`; the conditional UPDATE also fences concurrent retries.
 pub async fn retry_failed_start(
     conn: &mut PgConnection,
@@ -665,15 +667,14 @@ pub async fn retry_failed_start(
              start_failures = 0, lifecycle_lease_until = NULL,
              stop_reason = NULL, stop_requested_at = NULL, restart_requested_at = NULL,
              updated_at = now()
-         WHERE agent_id = $1 AND state = 'failed'
-           AND (lifecycle_lease_until IS NULL OR lifecycle_lease_until < now())",
+         WHERE agent_id = $1 AND state = 'failed'",
     )
     .bind(agent)
     .execute(&mut *conn)
     .await?
     .rows_affected();
     if n == 0 {
-        // Another caller won, or the lease is live: 409 `sandbox_not_failed`.
+        // Another caller won, or the state is not `failed`: 409 `sandbox_not_failed`.
         return Ok(false);
     }
     let sandbox: Uuid = sqlx::query_scalar("SELECT id FROM sandboxes WHERE agent_id = $1")

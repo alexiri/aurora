@@ -279,8 +279,9 @@ after the last failure retries once the backoff has passed.
 
 **Retry after a failure** (FIX-029, D-160, C-610): `POST
 /v1/agents/{agent}/sandbox/retry` (same authority as restart, `can_use`), only
-from `failed` (409 `sandbox_not_failed` otherwise or while a lifecycle lease is
-live; 423 `frozen`). It clears the failure fields, **resets `start_failures`
+from `failed` (409 `sandbox_not_failed` otherwise; 423 `frozen`; (FIX-049, D-164) a
+live failure-backoff lease never refuses — an explicit retry overrides the
+backoff, which stops only automatic storms). It clears the failure fields, **resets `start_failures`
 to 0** — the bound stops failure storms, not recovery after an operator fix —
 claims the ordinary lifecycle lease, notes the retry in the start log (audited
 `agent.sandbox_retry`) and notifies due work: the next start is the ordinary
@@ -292,6 +293,16 @@ re-posted as a new message. An agent's past start failures are visible to its
 users (`GET /v1/agents/{agent}/start-failures`, C-613) and to admins with the
 runner named (`GET /v1/admin/agents/{agent}/start-failures`, C-614) — both read
 `sandbox_start_failures`, no new table.
+
+**Slow home-volume provisioning** (FIX-049, D-164, C-626): the Kubernetes
+runner's `home_volume_unbound` fail-fast treats a `FailedBinding` warning on a
+Pending home claim as final, but a `ProvisioningFailed` warning (e.g. the
+in-tree controller's "object has been modified" annotation race) only when no
+Normal `Provisioning`/`ProvisioningSucceeded` event is as new as it **and** it is
+older than `PVC_PROVISION_GRACE` (90 s); otherwise the start keeps waiting
+(`provisioning` progress) inside the readiness deadline. **Restart** from `failed`
+runs the same recovery as Retry now (audit `via: "restart"`); from `stopped`,
+`unprovisioned` or `stopping` it answers 409 `restart_not_applicable`.
 
 ### Keep-awake (single definition)
 

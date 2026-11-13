@@ -329,9 +329,23 @@ async fn retry_sandbox(
     Path(agent): Path<Uuid>,
 ) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
+    retry_failed(&s, &c, &a, "retry").await
+}
+
+/// (FIX-029, C-610, FIX-049, C-626) The one recovery path from `failed`, shared by
+/// `POST …/sandbox/retry` and `POST …/restart` on a failed sandbox (`via` is the audit's route
+/// name). An explicit action overrides the failure-backoff lease; 409 `sandbox_not_failed` only
+/// for a state that is not `failed`.
+async fn retry_failed(
+    s: &AppState,
+    c: &Caller,
+    a: &AgentRow,
+    via: &str,
+) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
+    let agent = a.id;
     // 423 `frozen` on an effectively frozen agent (a retry would start work).
-    crate::domains::freeze::service::ensure_agent_active_pool(&s, agent).await?;
-    let label = AuditActor::from_caller(&c).label;
+    crate::domains::freeze::service::ensure_agent_active_pool(s, agent).await?;
+    let label = AuditActor::from_caller(c).label;
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     let (retried, previous_code) = {
         // The note names the failure code being retried; the row is fenced by the conditional
@@ -354,18 +368,18 @@ async fn retry_sandbox(
     if !retried {
         return Err(ApiError::conflict(
             "sandbox_not_failed",
-            "The sandbox start is not failed (it may be in flight or its backoff lease is live).",
+            "The sandbox start is not failed (it may already be in flight).",
         ));
     }
     conv::notify_work(&mut tx).await?;
     tx.commit().await.map_err(DbError::from)?;
-    // Best-effort audit (docs/04 §Audit): metadata carries the previous failure code only.
-    audit_event(&s, &c, &a, previous_code);
-    Ok((StatusCode::ACCEPTED, Json(view(&s, &a).await?)))
+    // Best-effort audit (docs/04 §Audit): previous failure code and the route taken.
+    audit_event(s, c, a, previous_code, via);
+    Ok((StatusCode::ACCEPTED, Json(view(s, a).await?)))
 }
 
 /// Best-effort `agent.sandbox_retry` audit row.
-fn audit_event(s: &AppState, c: &Caller, a: &AgentRow, previous_code: Option<String>) {
+fn audit_event(s: &AppState, c: &Caller, a: &AgentRow, previous_code: Option<String>, via: &str) {
     crate::audit::record(
         s,
         AuditEvent::new(
@@ -376,11 +390,14 @@ fn audit_event(s: &AppState, c: &Caller, a: &AgentRow, previous_code: Option<Str
         .org(a.org_id)
         .workspace(a.workspace_id)
         .target("agent", a.id)
-        .metadata(serde_json::json!({ "previous_failure_code": previous_code })),
+        .metadata(serde_json::json!({ "previous_failure_code": previous_code, "via": via })),
     );
 }
 
 /// Restart the agent's computer; its active turns fail with `agent_restarted`.
+// (FIX-049, C-626) From `failed` it performs the C-610 recovery (no second start path); from
+// `stopped`, `unprovisioned` or `stopping` there is nothing to restart: 409
+// `restart_not_applicable`. No OpenAPI change (the contract names the codes).
 #[utoipa::path(post, path = "/agents/{agent}/restart", operation_id = "restartAgent", tag = "agents",
     params(("agent" = Uuid, Path, description = "Agent id")),
     responses((status = 202, body = SandboxView), (status = 404, body = ErrorEnvelope)),
@@ -392,7 +409,26 @@ async fn restart(
 ) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-    hosted::request_restart(&mut tx, agent).await?;
+    if !hosted::request_restart(&mut tx, agent).await? {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT state FROM sandboxes WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(DbError::from)?;
+        drop(tx);
+        return match state.as_deref() {
+            // The conditional UPDATE inside the retry fences a concurrent state change.
+            Some("failed") => retry_failed(&s, &c, &a, "restart").await,
+            other => Err(ApiError::conflict(
+                "restart_not_applicable",
+                format!(
+                    "The agent's computer is {} — there is nothing to restart.",
+                    other.unwrap_or("unprovisioned")
+                ),
+            )),
+        };
+    }
     let mut flush = Vec::new();
     for (turn, cid) in hosted::active_turns_of_agent(&mut tx, agent).await? {
         convs::lock(&mut tx, cid).await?;
