@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ModelReadiness } from "@/lib/api/credential-grants";
 import { homeTarget, personalWorkspacePath } from "@/lib/nav/landing";
 import { computeGuide, type GuideKey } from "@/lib/onboarding/guide";
+import { repliedPollInterval } from "@/lib/onboarding/use-guide";
 
 const key = (over: Partial<ModelReadiness["keys"][number]> = {}): ModelReadiness["keys"][number] => ({
   secret_id: "k1",
@@ -126,5 +127,17 @@ describe("where `/` sends people (D-141)", () => {
   it("everyone else lands on the workspace; an unknown Welcome state never redirects", () => {
     expect(homeTarget({ landing: "/o/users/w/main", me, isInstanceAdmin: false, placementSaved: true, welcomeSeen: true })).toBe("/o/users/w/main");
     expect(homeTarget({ landing: "/o/users/w/main", me, isInstanceAdmin: true, placementSaved: undefined, welcomeSeen: undefined })).toBe("/o/users/w/main");
+  });
+});
+
+describe("reply polling backs off and stops (FIX-067)", () => {
+  it("10 s, then 30 s, then 60 s, then nothing; never once answered", () => {
+    expect(repliedPollInterval(0, false)).toBe(10_000);
+    expect(repliedPollInterval(5, false)).toBe(10_000);
+    expect(repliedPollInterval(6, false)).toBe(30_000);
+    expect(repliedPollInterval(12, false)).toBe(60_000);
+    expect(repliedPollInterval(29, false)).toBe(60_000);
+    expect(repliedPollInterval(30, false)).toBe(false);
+    expect(repliedPollInterval(0, true)).toBe(false);
   });
 });

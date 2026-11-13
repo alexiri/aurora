@@ -231,7 +231,7 @@ function LlmBody({ step, onChanged }: { step: SetupStep; onChanged: () => void }
               <strong className="text-ink">{orgKey.name}</strong> belongs to {org.name}. It is stored sealed and never shown again.
             </p>
           ) : (
-            <LlmKeyForm scope={{ kind: "organization", id: org.id }} orgId={org.id} />
+            <LlmKeyForm scope={{ kind: "organization", id: org.id }} orgId={org.id} onSaved={onChanged} />
           )}
           {orgKey ? <StarterSwitch placement={placement.data} secretId={orgKey.id} onChanged={onChanged} /> : null}
         </div>

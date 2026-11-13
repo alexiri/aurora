@@ -294,7 +294,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
         }
       />
       <ConnectorError error={toggle.error} />
-      {c.status === "pending_approval" ? <ApprovalPanel c={c} /> : null}
+      {c.status === "pending_approval" ? <ApprovalPanel key={c.manifest_digest ?? "none"} c={c} /> : null}
       {/* Keyed by what the form was built from, so a reloaded type or saved settings reset it. */}
       <SettingsForm key={`${c.id}:${fields.map((f) => f.name).join(",")}`} c={c} fields={fields} />
       <HostStatus c={c} />

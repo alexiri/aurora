@@ -24,9 +24,12 @@ export function LlmKeyForm({
   scope,
   orgId,
   preselect,
+  onSaved,
 }: {
   scope: SecretScope;
   orgId: string;
+  /** Called once the key exists (the setup wizard refetches its status, which now counts this key). */
+  onSaved?: (secret: Secret) => void;
   /** Agents ticked in the "Give agents access" step that follows (the getting-started guide: the workspace's own agent). */
   preselect?: string[];
 }) {
@@ -58,6 +61,7 @@ export function LlmKeyForm({
       );
       setSaved(s);
       setName("");
+      onSaved?.(s);
     } catch {
       // surfaced via create.error
     } finally {

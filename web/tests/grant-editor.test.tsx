@@ -310,11 +310,28 @@ describe("editor", () => {
     expect(screen.getByRole("radio", { name: "Full access" })).toBeTruthy();
   });
 
-  it("maps empty_custom to a message and keeps the dialog open", async () => {
+  it("an empty custom grant cannot be saved: Save is off until a tool is allowed or asked (FIX-067)", async () => {
+    setup({ appExtra: { app_restrictions: { custom_only: true, block_untooled: false } } });
+    view();
+    await openEditor("Give access to acme-bot");
+    const save = await screen.findByRole("button", { name: "Save access" });
+    expect(save).toHaveProperty("disabled", true);
+    expect(screen.getByText("Allow or ask at least one tool to save.")).toBeTruthy();
+    fireEvent.click(radio("Access for List issues", "Allow"));
+    expect(screen.getByRole("button", { name: "Save access" })).toHaveProperty("disabled", false);
+    expect(screen.queryByText("Allow or ask at least one tool to save.")).toBeNull();
+    fireEvent.click(radio("Access for List issues", "Block"));
+    expect(screen.getByRole("button", { name: "Save access" })).toHaveProperty("disabled", true);
+    expect(calls.some((c) => c.key.startsWith("PUT"))).toBe(false);
+  });
+
+  it("still maps a server empty_custom to a message and keeps the dialog open", async () => {
+    // Reached through the learned custom_only path: the first save is Full, refused; the form then starts empty.
     setup({ put: () => json(422, { error: { code: "grant_invalid", message: "A custom grant needs at least one tool.", details: { reason: "empty_custom" } } }) });
     view();
     await openEditor("Give access to acme-bot");
     fireEvent.click(await screen.findByRole("radio", { name: "Custom" }));
+    fireEvent.click(radio("Access for List issues", "Allow"));
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Allow or ask at least one tool");
     expect(screen.getByRole("dialog")).toBeTruthy();
