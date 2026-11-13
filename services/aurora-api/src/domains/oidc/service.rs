@@ -656,14 +656,15 @@ async fn sign_in(
     // (P4-GRP-1, D-156) IdP-linked group memberships, in the same transaction after the role
     // sync, JIT and placement: those are what can create the org membership a group needs (a
     // first sign-in is then already in its groups). Never creates a membership itself.
-    if p.group_claim.is_some() {
-        crate::domains::groups::sync::sync_signin(&mut tx, p, user.id, &v.group_values)
-            .await
-            .map_err(|e| {
-                tracing::error!("oidc: group sync: {e:?}");
-                Fail("oidc_failed")
-            })?;
-    }
+    // (FIX-083) Always runs: a provider whose `group_claim` was removed from the configuration
+    // syncs an empty value set (`v.group_values` is empty without a claim), which removes the
+    // IdP rows it once created instead of leaving them for ever.
+    crate::domains::groups::sync::sync_signin(&mut tx, p, user.id, &v.group_values)
+        .await
+        .map_err(|e| {
+            tracing::error!("oidc: group sync: {e:?}");
+            Fail("oidc_failed")
+        })?;
 
     user = users::record_login(&mut *tx, user.id).await?;
     let token = auth::issue_session(&mut tx, state, user.id, client)

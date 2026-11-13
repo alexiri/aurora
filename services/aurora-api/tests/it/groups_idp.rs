@@ -475,42 +475,191 @@ async fn fix063_the_sync_stops_at_the_per_user_cap_and_a_second_sync_is_a_no_op(
 }
 
 #[tokio::test]
-async fn fix063_a_suspended_members_idp_rows_survive_a_sign_in_and_reactivation_restores_them() {
+async fn fix083_suspension_ends_idp_group_access_and_reactivation_does_not_restore_it() {
+    // REVIEW-5 GRP-1 (SEC-71: a removal is effective for the next request): a member who is
+    // suspended, dropped from the IdP group meanwhile and reactivated must not hold the group's
+    // access again until a sign-in re-adds it. The IdP rows go when the membership leaves
+    // `active`; the next sign-in puts back whatever the claim then says.
+    let idp = MockIdp::start().await;
+    let h = harness(&idp, SignupMode::InviteOnly, admit, &[]).await;
+    // The org exists with its own owner, so the person is a plain member (a claim that creates
+    // the org would make the first sign-in its owner, FIX-050).
+    let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1, 'users', 'Users', 'users')")
+        .bind(org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let owner = h.user("owner@example.com", false).await;
+    h.member(org, owner, "owner", "active").await;
+    claims(&idp, json!([]));
+    sign_in(&h).await;
+    let u = user_id(&h).await;
+    let g = idp_group(&h, org, "a", "mock", "eg-a").await;
+    let ws = h.workspace(org).await;
+    sqlx::query(
+        "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) \
+         VALUES ($1, $2, $3, 'owner')",
+    )
+    .bind(g)
+    .bind(ws)
+    .bind(org)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    claims(&idp, json!(["eg-a"]));
+    sign_in(&h).await;
+    assert_eq!(members(&h, g).await, 1);
+    let person = cookie(&h.good_session(u).await.1);
+    let ws_uri = format!("/v1/workspaces/{ws}");
+    let (s, _) = h.get(&ws_uri, &[("cookie", &person)]).await;
+    assert_eq!(s, 200, "the group's owner binding applies");
+
+    // An org owner suspends the member in the dashboard: the IdP rows go with the status.
+    let admin = cookie(&h.good_session(owner).await.1);
+    let member_uri = format!("/v1/orgs/{org}/members/{u}");
+    let patch = |status: &'static str| {
+        let (h, uri, admin) = (&h, &member_uri, &admin);
+        async move {
+            h.send(
+                Method::PATCH,
+                uri,
+                &[("cookie", admin.as_str()), ("origin", ORIGIN)],
+                Some(json!({ "status": status })),
+            )
+            .await
+        }
+    };
+    let (s, _, v) = patch("suspended").await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(members(&h, g).await, 0, "IdP rows deleted at suspension");
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM audit_log WHERE action = 'group_member.remove' AND critical"
+        )
+        .await,
+        1,
+        "the removal is audited"
+    );
+    // The IdP drops the group while the member is suspended; the owner then reactivates.
+    claims(&idp, json!([]));
+    let (s, _, v) = patch("active").await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(members(&h, g).await, 0, "reactivation restores nothing");
+    let (s, _) = h.get(&ws_uri, &[("cookie", &person)]).await;
+    assert_eq!(s, 404, "no group access before any new sign-in");
+    // The next sign-in adds back exactly what the claim says now.
+    sign_in(&h).await;
+    assert_eq!(members(&h, g).await, 0);
+    claims(&idp, json!(["eg-a"]));
+    sign_in(&h).await;
+    assert_eq!(members(&h, g).await, 1);
+}
+
+#[tokio::test]
+async fn fix083_the_sync_stops_at_the_members_per_group_cap() {
     let idp = MockIdp::start().await;
     let h = harness(&idp, SignupMode::InviteOnly, admit, &[]).await;
     claims(&idp, json!([]));
     sign_in(&h).await;
     let org = org_id(&h).await;
     let u = user_id(&h).await;
-    let g = idp_group(&h, org, "a", "mock", "eg-a").await;
-    claims(&idp, json!(["eg-a"]));
+    let full = idp_group(&h, org, "full", "mock", "eg-full").await;
+    let open = idp_group(&h, org, "open", "mock", "eg-open").await;
+    // Fill `full` to GROUP_MEMBERS_MAX (5 000) with other members of the org.
+    sqlx::query(
+        "WITH n AS (SELECT gen_random_uuid() AS id, i FROM generate_series(1, 5000) i), \
+              u AS (INSERT INTO users (id, email, display_name) \
+                    SELECT id, 'cap' || i || '@example.com', 'u' FROM n RETURNING id), \
+              m AS (INSERT INTO org_members (org_id, user_id, role) \
+                    SELECT $1, id, 'member' FROM u RETURNING user_id) \
+         INSERT INTO group_members (group_id, org_id, user_id, source) \
+         SELECT $2, $1, user_id, 'idp' FROM m",
+    )
+    .bind(org)
+    .bind(full)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    claims(&idp, json!(["eg-full", "eg-open"]));
     sign_in(&h).await;
-    assert_eq!(members(&h, g).await, 1);
-    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE user_id = $1 AND org_id = $2")
-        .bind(u)
-        .bind(org)
-        .execute(h.pool())
-        .await
-        .unwrap();
-    // the IdP no longer sends the group; the sign-in may or may not be admitted, but the
-    // suspended org's row must stay and no removal is audited
-    claims(&idp, json!([]));
-    let (path, cookie) = authorize(&h, None).await;
-    let _ = callback(&h, &path, &cookie).await;
-    assert_eq!(members(&h, g).await, 1);
+    assert_eq!(members(&h, full).await, 5000, "the full group takes nobody");
+    assert_eq!(
+        members(&h, open).await,
+        1,
+        "the other group is still synced"
+    );
     assert_eq!(
         count(
             &h,
-            "SELECT count(*) FROM audit_log WHERE action = 'group_member.remove'"
+            &format!(
+                "SELECT count(*) FROM group_members WHERE group_id = '{full}' AND user_id = '{u}'"
+            )
         )
         .await,
         0
     );
-    sqlx::query("UPDATE org_members SET status = 'active' WHERE user_id = $1 AND org_id = $2")
-        .bind(u)
+    assert_eq!(
+        count(
+            &h,
+            &format!(
+                "SELECT count(*) FROM audit_log WHERE action = 'group_member.add' \
+                 AND target_id = '{full}'"
+            )
+        )
+        .await,
+        0,
+        "no add is audited for the skipped group"
+    );
+}
+
+#[tokio::test]
+async fn fix083_a_provider_without_group_claim_removes_its_idp_rows() {
+    // The operator removed `group_claim` from the provider: its IdP memberships must not
+    // linger for ever. The next sign-in syncs an empty set.
+    let idp = MockIdp::start().await;
+    let h = harness(
+        &idp,
+        SignupMode::InviteOnly,
+        |p| {
+            admit(p);
+            p.group_claim = None;
+        },
+        &[],
+    )
+    .await;
+    claims(&idp, json!(["eg-a"]));
+    sign_in(&h).await;
+    let org = org_id(&h).await;
+    let u = user_id(&h).await;
+    let a = idp_group(&h, org, "a", "mock", "eg-a").await;
+    let other = idp_group(&h, org, "other", "other", "eg-a").await;
+    for g in [a, other] {
+        sqlx::query(
+            "INSERT INTO group_members (group_id, org_id, user_id, source) \
+             VALUES ($1, $2, $3, 'idp')",
+        )
+        .bind(g)
         .bind(org)
+        .bind(u)
         .execute(h.pool())
         .await
         .unwrap();
-    assert_eq!(members(&h, g).await, 1, "access is back without a sign-in");
+    }
+    sign_in(&h).await;
+    assert_eq!(members(&h, a).await, 0, "this provider's rows are removed");
+    assert_eq!(members(&h, other).await, 1, "another provider's rows stay");
+}
+
+#[test]
+fn fix083_orphaned_idp_providers_are_named_by_id_only() {
+    use aurora_api::domains::groups::sync::orphaned_providers;
+    let linked = vec![("mock".to_owned(), 2), ("gone".to_owned(), 1)];
+    let configured_with_claim = ["mock".to_owned()];
+    assert_eq!(
+        orphaned_providers(&linked, &configured_with_claim),
+        vec![("gone".to_owned(), 1)]
+    );
+    assert!(orphaned_providers(&linked, &["mock".to_owned(), "gone".to_owned()]).is_empty());
 }

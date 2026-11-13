@@ -388,25 +388,62 @@ async fn permission_matrix_per_route() {
         (Method::GET, format!("{gu}/workspaces"), None, "admin"),
         (Method::GET, format!("{gu}/impact"), None, "admin"),
     ];
+    // (FIX-083) Group-derived principals: a plain member whose group maps to `admin`, a member
+    // with no direct binding whose group owns the workspace, and a suspended member who is still
+    // in both groups (a suspended member derives nothing, SEC-71).
+    let gadmin = who(&f.h, f.org, f.ws, "gadmin@x.io", "member", None).await;
+    let gwsowner = who(&f.h, f.org, f.ws, "gwso@x.io", "member", None).await;
+    let gsusp = who(&f.h, f.org, f.ws, "gsusp@x.io", "member", None).await;
+    f.h.set_member_status(f.org, gsusp.id, "suspended").await;
+    let admins = f
+        .create("mapped-admins", json!({"org_role": "admin"}))
+        .await;
+    let owners = f.create("ws-owners", json!({})).await;
+    sqlx::query(
+        "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) VALUES ($1, $2, $3, 'owner')",
+    )
+    .bind(owners)
+    .bind(f.ws)
+    .bind(f.org)
+    .execute(f.h.pool())
+    .await
+    .unwrap();
+    for (grp, user) in [
+        (admins, gadmin.id),
+        (admins, gsusp.id),
+        (owners, gwsowner.id),
+        (owners, gsusp.id),
+    ] {
+        sqlx::query("INSERT INTO group_members (group_id, org_id, user_id) VALUES ($1, $2, $3)")
+            .bind(grp)
+            .bind(f.org)
+            .bind(user)
+            .execute(f.h.pool())
+            .await
+            .unwrap();
+    }
     let people: Vec<(&str, &Who)> = vec![
         ("owner", &f.owner),
         ("admin", &f.admin),
+        ("gadmin", &gadmin),
         ("wsowner", &f.wsowner),
+        ("gwsowner", &gwsowner),
         ("member", &f.member),
         ("plain", &f.plain),
+        ("gsusp", &gsusp),
         ("outsider", &f.outsider),
     ];
     for (m, uri, body, who_may) in &routes {
         for (name, w) in &people {
             let (s, v) = f.call(w, m.clone(), uri, body.clone()).await;
             let allowed = match *name {
-                "owner" | "admin" => true,
-                "wsowner" => *who_may == "reader",
+                "owner" | "admin" | "gadmin" => true,
+                "wsowner" | "gwsowner" => *who_may == "reader",
                 _ => false,
             };
             if allowed {
                 assert!(s < 300 || s == 409, "{m} {uri} as {name}: {s} {v}");
-            } else if *name == "outsider" {
+            } else if matches!(*name, "outsider" | "gsusp") {
                 assert_eq!(s, 404, "{m} {uri} as {name}");
             } else {
                 assert_eq!((s, code(&v)), (403, "forbidden"), "{m} {uri} as {name}");
@@ -1281,4 +1318,154 @@ async fn group_only_workspace_access_counts_for_workspace_user_checks() {
     assert_eq!(s, 200, "{v}");
     let (s, v) = f.call(&f.plain, Method::GET, &list, None).await;
     assert_eq!(s, 200, "{v}");
+}
+
+// ---------------------------------------------------------------- FIX-083
+
+#[tokio::test]
+async fn fix083_my_role_and_the_implicit_rows_follow_the_effective_roles() {
+    let f = fx().await;
+    // A group-only workspace owner: `plain` has no direct binding.
+    let owners = f.create("ws-owners", json!({})).await;
+    let (s, v) = f.bind(owners, "owner").await;
+    assert!(s == 200 || s == 201, "{v}");
+    let (s, v) = f.add(owners, f.plain.id).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = f
+        .call(
+            &f.plain,
+            Method::GET,
+            &format!("/v1/orgs/{}/workspaces", f.org),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let mine = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["id"] == f.ws.to_string())
+        .unwrap_or_else(|| panic!("workspace listed: {v}"));
+    assert_eq!(mine["my_role"], "owner", "group-derived role, not `member`");
+
+    // A group-mapped org admin: `member` is a plain member whose group maps to `admin`.
+    let admins = f.create("org-admins", json!({"org_role": "admin"})).await;
+    let (s, v) = f.add(admins, f.member.id).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = f.call(&f.member, Method::GET, "/v1/orgs", None).await;
+    assert_eq!(s, 200, "{v}");
+    let org = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == f.org.to_string())
+        .unwrap_or_else(|| panic!("org listed: {v}"));
+    assert_eq!(org["my_role"], "admin", "/v1/orgs agrees with /v1/me");
+    let (s, v) = f
+        .call(&f.member, Method::GET, &format!("/v1/orgs/{}", f.org), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["my_role"], "admin", "{v}");
+    // The workspace access list carries the group-mapped admin as an implicit owner.
+    let (s, v) = f
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/workspaces/{}/access", f.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let row = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["user_id"] == f.member.id.to_string())
+        .unwrap_or_else(|| panic!("group-mapped admin is listed: {v}"));
+    assert_eq!(
+        (row["role"].as_str(), row["implicit"].as_bool()),
+        (Some("owner"), Some(true))
+    );
+}
+
+#[tokio::test]
+async fn fix083_member_filter_of_the_group_list_is_admin_or_self() {
+    let f = fx().await;
+    let g = f.create("g", json!({})).await;
+    let (s, v) = f.add(g, f.plain.id).await;
+    assert_eq!(s, 200, "{v}");
+    let base = format!("/v1/orgs/{}/groups", f.org);
+    // A workspace owner may read the org's group names, but not a colleague's memberships.
+    let (s, v) = f
+        .call(
+            &f.wsowner,
+            Method::GET,
+            &format!("{base}?member={}", f.plain.id),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
+    let (s, v) = f
+        .call(
+            &f.wsowner,
+            Method::GET,
+            &format!("{base}?member={}", f.wsowner.id),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = f
+        .call(
+            &f.admin,
+            Method::GET,
+            &format!("{base}?member={}", f.plain.id),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"].as_array().unwrap().len(), 1, "{v}");
+}
+
+/// Waiting backends of this database on a lock (poll with a deadline, never a sleep-and-hope).
+async fn lock_waiters(f: &Fx) -> i64 {
+    f.n(
+        "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+         AND wait_event_type = 'Lock'",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn fix083_group_patch_and_delete_take_the_org_lock_before_the_group_lock() {
+    let f = fx().await;
+    let g = f.create("racy", json!({})).await;
+    for (label, method, body) in [
+        ("patch", Method::PATCH, Some(json!({"description": "x"}))),
+        ("delete", Method::DELETE, None),
+    ] {
+        // Another transaction holds the org lock (what a sign-in group sync and every SCIM
+        // writer take first): the dashboard write must queue behind it, not slip past it and
+        // race the sync into a foreign-key violation.
+        let mut held = f.h.pool().begin().await.unwrap();
+        sqlx::query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE")
+            .bind(f.org)
+            .fetch_one(&mut *held)
+            .await
+            .unwrap();
+        let uri = format!("/v1/groups/{g}");
+        let write = f.call(&f.owner, method, &uri, body);
+        let release = async {
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            while lock_waiters(&f).await < 1 {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{label}: the group write did not wait for the org lock"
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            held.commit().await.unwrap();
+        };
+        let ((status, v), ()) = tokio::join!(write, release);
+        assert!(status == 200 || status == 204, "{label}: {status} {v}");
+    }
 }

@@ -430,6 +430,18 @@ pub async fn patch_member(
         req.status.map(MemberStatus::as_str),
     )
     .await?;
+    // (FIX-083) A membership leaving `active` ends the access the IdP's group claim granted,
+    // in this transaction; a reactivation does not bring it back, the next sign-in re-syncs.
+    if req.status == Some(MemberStatus::Suspended) && cur.status == "active" {
+        crate::domains::groups::sync::drop_idp_memberships(
+            &mut tx,
+            actor,
+            org_id,
+            target,
+            "membership_suspended",
+        )
+        .await?;
+    }
     // (FIX-037) A human status change of a SCIM-linked member reconciles the link in the same
     // transaction (04 §SCIM, D-135(f)): suspension → link `suspended` with
     // `suspended_by_scim = false` (a human suspension is never lifted by the IdP), manual

@@ -19,7 +19,14 @@ pub struct OrgRow {
     pub my_role: String,
 }
 
-const SEL: &str = "o.id, o.slug, o.name, o.app_posture, o.external_id, o.settings, o.created_at, m.role AS my_role";
+/// `my_role` is the **effective** org role (the strongest of the direct role and a group's org
+/// role, D-130(b), the `effective_org_members` view `/v1/me` reads), so the two never disagree;
+/// a member who is not active has no effective row and keeps the direct one.
+const SEL: &str = "o.id, o.slug, o.name, o.app_posture, o.external_id, o.settings, o.created_at, COALESCE(e.role, m.role) AS my_role";
+
+/// The join the effective role comes from, after `org_members m`.
+const EFFECTIVE: &str =
+    "LEFT JOIN effective_org_members e ON e.org_id = m.org_id AND e.user_id = m.user_id";
 
 pub async fn insert<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -54,7 +61,7 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     user: Uuid,
 ) -> Result<Option<OrgRow>, DbError> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {SEL} FROM organizations o JOIN org_members m ON m.org_id = o.id AND m.user_id = $2 WHERE o.id = $1"
+        "SELECT {SEL} FROM organizations o JOIN org_members m ON m.org_id = o.id AND m.user_id = $2 {EFFECTIVE} WHERE o.id = $1"
     ))
     .bind(org)
     .bind(user)
@@ -72,6 +79,7 @@ pub async fn list_for_user<'e, E: PgExecutor<'e>>(
     let (t, id) = split(after);
     Ok(sqlx::query_as(&format!(
         "SELECT {SEL} FROM organizations o JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.status = 'active'
+         {EFFECTIVE}
          WHERE ($2::timestamptz IS NULL OR (o.created_at, o.id) < ($2, $3))
          ORDER BY o.created_at DESC, o.id DESC LIMIT $4"
     ))

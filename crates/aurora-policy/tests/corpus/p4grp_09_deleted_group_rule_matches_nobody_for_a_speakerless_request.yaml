@@ -1,0 +1,6 @@
+description: FIX-083 (SEC-71) a rule whose only identity is a deleted group never matches a request without a speaker either (a hosted turn with no person)
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: dead-group-block, action: block, identities: [{kind: group, id: 00000000-0000-0000-0000-0000000000dd}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow}

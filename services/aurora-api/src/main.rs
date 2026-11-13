@@ -285,6 +285,9 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("{w}");
     }
     let state = aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?;
+    // (FIX-083) IdP-linked groups of a provider that no longer syncs them (provider ids only).
+    aurora_api::domains::groups::sync::warn_orphaned_providers(&pool, &cfg.auth.oidc_providers)
+        .await;
     aurora_api::http::auth::spawn_revocation_listener(pool.clone(), state.session_cache.clone());
     if let Err(e) = aurora_api::domains::runners_admin::service::bootstrap_default(&state).await {
         tracing::warn!(error = %e, "bootstrap runner token not applied");

@@ -465,11 +465,10 @@ async fn apply_group_change(
     }
     let org = caller.org.clone();
     let mut tx = state.pool.begin().await.map_err(sq)?;
-    // Lock order: the org first (the `GROUPS_PER_USER` cap, see `ensure_member_limit`),
+    // Lock order: the org first (the `GROUPS_PER_USER` cap, see `ensure_member_limit`; and, for
+    // every write, the sign-in group sync that inserts members under the same lock, FIX-083),
     // then the group row.
-    if member_ops.is_some() {
-        grepo::lock_org(&mut tx, org.org_id).await.map_err(db)?;
-    }
+    grepo::lock_org(&mut tx, org.org_id).await.map_err(db)?;
     let row = grepo::lock(&mut tx, id)
         .await
         .map_err(db)?
@@ -795,6 +794,9 @@ pub async fn delete_group(
     use axum::http::StatusCode;
     let org = caller.org.clone();
     let mut tx = state.pool.begin().await.map_err(sq)?;
+    // (FIX-083) The org lock before the group lock, like every other group writer: a sign-in
+    // sync inserting this group's member cannot race the delete into a foreign-key failure.
+    grepo::lock_org(&mut tx, org.org_id).await.map_err(db)?;
     let Some(row) = grepo::lock(&mut tx, id).await.map_err(db)? else {
         return Ok(StatusCode::NO_CONTENT);
     };

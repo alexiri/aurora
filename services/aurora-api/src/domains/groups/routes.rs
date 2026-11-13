@@ -61,7 +61,17 @@ async fn list_groups(
     Path(org): Path<Uuid>,
     Query(q): Query<GroupListQuery>,
 ) -> Result<Json<Page<Group>>, ApiError> {
-    c.org_credential_reader(&s, org).await?;
+    let auth = c.org_credential_reader(&s, org).await?;
+    // (FIX-083, C-460) `member=` reveals a person's memberships — the groups of a colleague are
+    // as private as `GET /groups/{id}/members` (org admin): only an admin, or the caller's own id.
+    if let Some(member) = q.member
+        && member != c.user_id
+        && !auth.role.is_admin()
+    {
+        return Err(ApiError::forbidden(
+            "Organization owner/admin required to list another member's groups.",
+        ));
+    }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     if let Some(src) = q.source.as_deref()
         && !matches!(src, "manual" | "scim" | "idp")

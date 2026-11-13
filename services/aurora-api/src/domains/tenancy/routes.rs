@@ -362,7 +362,7 @@ async fn list_workspaces(
     let roles: std::collections::HashMap<Uuid, String> = if all {
         Default::default()
     } else {
-        workspaces::roles_of(&s.pool, c.user_id, &ids)
+        workspaces::effective_roles_of(&s.pool, c.user_id, &ids)
             .await?
             .into_iter()
             .collect()
