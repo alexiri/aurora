@@ -597,7 +597,11 @@ async fn s8_security_probes() {
     );
     check(
         "SEC-24 forged session",
-        r.contains("\"ok\":false") && r.contains("not_found"),
+        // Refused either way: since FIX-110 a platform tool call outside a running turn is
+        // refused first (`no_active_turn`); with a turn running, the API fences forged identity
+        // (`not_found`; `api/it/tools.rs::identity_comes_from_authenticated_facts` covers forged
+        // turn/conversation/stale boot/finished turn). Never `"ok":true`.
+        r.contains("\"ok\":false") && (r.contains("not_found") || r.contains("no_active_turn")),
         r.clone(),
     );
 
