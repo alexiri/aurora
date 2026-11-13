@@ -19,14 +19,23 @@ cd "$ROOT"
 # FIX-057: fd 9 carries the lock — keep it away from every child (a detached `podman run` that
 # passed fd 9 to its conmon kept the flock alive after this script was SIGKILLed).
 LOCK=/tmp/aurora-e2e-gateway.lock  # fixed path: TMPDIR differs between sessions
+#
+# FIX-068: the run body is this same script re-executed (AURORA_E2E_GW_PARENT = the lock-holding
+# parent's pid) in its own session/process group with fd 9 closed. If only the parent is SIGKILLed
+# its EXIT trap can't run, so the body would keep running `cargo test` WITHOUT the lock; the body
+# therefore polls its parent and, once it is gone, TERMs then KILLs its whole group. (A
+# `setpriv --pdeathsig` would only reach the direct child, not cargo and the test binary below it.)
+if [ -z "${AURORA_E2E_GW_PARENT:-}" ]; then
 exec 9>"$LOCK"
 if ! flock -n 9; then
   # The lock can outlive its holder (FIX-057): conmon processes of leaked aurora-testkit
   # containers kept fd 9 open after their run was killed. Decide between waiting for a live
   # run and refusing to wait behind a dead one.
+  # FIX-068: lsof lists this very script too (it opened $LOCK above), so $$ is excluded — else
+  # `holders` was never empty and the "nobody holds it" branch below was dead code.
   holders=""
   if command -v lsof >/dev/null 2>&1; then
-    holders="$(lsof -t -- "$LOCK" 2>/dev/null || true)"
+    holders="$(lsof -t -- "$LOCK" 2>/dev/null | grep -vx "$$" || true)"
   fi
   if [ -n "$holders" ]; then
     echo "another scripts/e2e/gateway.sh run holds the lock (pid$( [ "$(printf '%s\n' "$holders" | wc -l)" -gt 1 ] && echo s): $(echo "$holders" | tr '\n' ' '); lsof \"$LOCK\"); waiting (up to 1 h)..." >&2
@@ -44,7 +53,31 @@ fi
 
 # FIX-057: the body runs with the lock fd closed — a leaked container's conmon (and any other
 # child) inherits nothing that holds the lock, so a SIGKILLed run cannot pin the flock.
+AURORA_E2E_GW_PARENT=$$ setsid bash "$0" "$@" 9>&- &
+child=$!
+# Ctrl-C / TERM reach the body's group (it is a separate session, so the terminal does not).
+trap 'kill -TERM -- "-$child" 2>/dev/null' INT TERM HUP
+wait "$child"
+rc=$?
+# A forwarded signal interrupts the first wait; wait again for the body's own cleanup to finish.
+if kill -0 "$child" 2>/dev/null; then wait "$child"; rc=$?; fi
+exit $rc
+fi
+
+# ---- run body (re-executed child; holds no lock fd) ----
+# Parent-death watchdog (see above): fd 9 is closed in this process, so the watcher cannot pin the lock.
+BODY_PGID="$(ps -o pgid= -p $$ | tr -d ' ')"
 (
+  trap '' TERM
+  while kill -0 "$AURORA_E2E_GW_PARENT" 2>/dev/null; do sleep 1; done
+  echo "gateway e2e: parent $AURORA_E2E_GW_PARENT is gone; stopping the run" >&2
+  kill -TERM -- "-$BODY_PGID" 2>/dev/null   # the body's EXIT trap removes the containers
+  sleep 5
+  kill -KILL -- "-$BODY_PGID" 2>/dev/null
+) &
+WATCHER=$!
+trap 'kill -KILL "$WATCHER" 2>/dev/null' EXIT   # replaced by cleanup's trap below, which also stops it
+{
   cargo build -p aurora-api -p aurora-gateway -p aurora-hookhost || { echo "cargo build failed" >&2; exit 1; }
 
   for ip in 127.0.0.31 127.0.0.32 127.0.0.33 127.0.0.34; do
@@ -55,6 +88,7 @@ fi
   FD_RUN=""
   PG=""
   cleanup() {
+    kill -KILL "$WATCHER" 2>/dev/null
     [ -n "$PG" ] && podman rm -f "$PG" >/dev/null 2>&1
     podman rm -f aurora-e2e-fd-nginx aurora-e2e-fd-haproxy >/dev/null 2>&1
     [ -n "$FD_RUN" ] && rm -rf "$FD_RUN"
@@ -71,6 +105,8 @@ fi
     PG="$(basename "$ROOT")-gwe2e-dbtarget"
     # FIX-057: this container (and the front doors below) outlive a killed run, so its conmon
     # must not inherit the lock fd: `9>&-` closes it for this podman and its conmon.
+    # FIX-068: a SIGKILLed run never reached its EXIT trap — drop the leftover so the name is free.
+    podman rm -f --ignore "$PG" >/dev/null 2>&1
     podman run -d --name "$PG" -p 127.0.0.1::5432 \
       -e POSTGRES_USER=aurora -e POSTGRES_PASSWORD=aurora -e POSTGRES_DB=postgres \
       docker.io/library/postgres:16 -c fsync=off >/dev/null 9>&- || { echo "cannot start $PG" >&2; exit 1; }
@@ -121,6 +157,8 @@ fi
     AURORA_E2E_FRONTDOOR_MOCK_KEY="$FD_RUN/mock.key"
     export AURORA_E2E_FRONTDOOR AURORA_E2E_FRONTDOOR_HAPROXY AURORA_E2E_FRONTDOOR_MOCK \
       AURORA_E2E_FRONTDOOR_MOCK_CERT AURORA_E2E_FRONTDOOR_MOCK_KEY
+    # FIX-068: fixed container names — clear a killed run's leftovers before `podman run` (name in use).
+    podman rm -f --ignore aurora-e2e-fd-nginx aurora-e2e-fd-haproxy >/dev/null 2>&1
     podman run -d --rm --name aurora-e2e-fd-nginx --network=host \
       -v "$FD_CONF/nginx.conf:/etc/nginx/nginx.conf:ro,Z" \
       -v "$FD_RUN:/fd:ro,Z" "$NGINX_IMAGE" >/dev/null 9>&- || { echo "cannot start the nginx front door" >&2; exit 1; }
@@ -139,6 +177,4 @@ fi
   cargo test -p aurora-e2e-gateway -- --test-threads=1 "$@"
   rc=$?
   exit $rc
-) 9>&-
-rc=$?
-exit $rc
+}

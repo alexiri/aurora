@@ -20,10 +20,9 @@ cd "$ROOT"
 
 fail() { echo "hook-policies: FAIL: $*" >&2; exit 1; }
 
-if ! command -v helm >/dev/null 2>&1; then
-  echo "hook-policies: helm not installed; skipping chart checks" >&2
-  exit 0
-fi
+# shellcheck source=scripts/guards/lib.sh
+source scripts/guards/lib.sh
+require_helm hook-policies || exit 0
 
 check_render() {
   local label="$1"; shift
@@ -55,6 +54,9 @@ def selector_matches(policy_selector, pod_labels):
             return False
         if op == "DoesNotExist" and k in pod_labels:
             return False
+        # FIX-068: a selector the guard cannot evaluate must fail it, never be treated as a match.
+        if op not in ("In", "NotIn", "Exists", "DoesNotExist"):
+            sys.exit("hook-policies: FAIL: %s: unsupported matchExpressions operator %r" % (label, op))
     return True
 
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
@@ -74,6 +76,7 @@ def fail(msg, job=None):
     where = ("%s: " % job) if job else ""
     sys.exit("hook-policies: FAIL: %s: %s%s" % (label, where, msg))
 
+checked = 0     # pre-upgrade hook Jobs with a serviceAccountName that were actually inspected
 for job in jobs:
     ann = (job.get("metadata", {}).get("annotations") or {})
     hooks = ann.get(HOOK_KEY) or ""
@@ -86,6 +89,7 @@ for job in jobs:
     name = job["metadata"]["name"]
     if not spec.get("serviceAccountName"):
         continue  # no API identity -> not a kubectl-to-API hook (e.g. migrate)
+    checked += 1
     covered_np = any(selector_matches(s, labels) for s in policies)
     if not covered_np:
         fail("pre-upgrade hook Job %r (serviceAccountName=%r, pod labels %r) is matched by no "
@@ -101,7 +105,12 @@ for job in jobs:
              "Cilium the NetworkPolicy ipBlock never matches the kube-apiserver entity, so the "
              "upgrade still times out; render the CNP as a hook too (like -hooks-kube-api)" % name,
              name)
-print("hook-policies: %s ok" % label)
+# FIX-068: a guard that inspected nothing proves nothing — renaming/removing the secrets hook Job
+# (or its serviceAccountName) used to leave this green.
+if checked < 1:
+    fail("inspected no pre-upgrade hook Job with a serviceAccountName (the secrets hook is "
+         "expected): the guard would pass vacuously")
+print("hook-policies: %s ok (%d hook Job(s) checked)" % (label, checked))
 ' "$label"
 }
 

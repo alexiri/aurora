@@ -10,10 +10,9 @@ cd "$ROOT"
 
 fail() { echo "sandbox-network: FAIL: $*" >&2; exit 1; }
 
-if ! command -v helm >/dev/null 2>&1; then
-  echo "sandbox-network: helm not installed; skipping" >&2
-  exit 0
-fi
+# shellcheck source=scripts/guards/lib.sh
+source scripts/guards/lib.sh
+require_helm sandbox-network || exit 0
 
 check() {
   local label="$1"; shift
