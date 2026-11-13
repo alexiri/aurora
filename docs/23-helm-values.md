@@ -195,6 +195,44 @@ and failure policy: `15 §Shared rate-limit counters`, `06 §Rate limiting`.
 | `gatewayApi.hostnames` | list | `[]` = host of `externalUrl` | route hostnames | — |
 | `gatewayApi.requestTimeout` | duration | `600s` | HTTPRoute request timeout (SSE/long-poll need long timeouts; the implementation must not buffer) | — |
 
+## Port previews (relay)
+
+The preview relay (P4-PRV-2, FIX-056; [15 §Port previews](15-deployment-operations.md#port-previews-phase-4-p4-prv-1-p4-prv-2-d-144d-147-sec-80sec-82-sec-85),
+[11 §Port previews](11-runner-sandboxes.md)). `relay.enabled` is the **single switch**: it renders the relay
+Deployment, Service and PodDisruptionBudget, the wildcard `*.<relay.domain>` edge rules (relay only) and the relay
+NetworkPolicy, and mirrors `config.previews.enabled`. The relay's `[relay]` section is chart-owned. The relay may
+reach only the api (:4101), the runners' stream listener (:4108) and DNS — it has **no** external egress (FIX-069).
+The generic per-service keys `<svc>.replicas`, `.resources`, `.nodeSelector`, `.tolerations` and `.extraEnv`
+([§Workloads](#workloads)) apply to `relay` too; their relay defaults are in the table.
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `relay.enabled` | bool | `false` | the single previews switch: relay workload + wildcard edge + policies; mirrors `config.previews.enabled` — set only this; both set and unequal, or `config.previews.enabled: true` alone, fails the render | enabling port previews |
+| `relay.domain` | DNS suffix | `""` (**required when `relay.enabled`**; the render fails without it) | the preview DNS suffix: sessions are served at `<label>.<relay.domain>`; must equal `config.previews.domain` (the relay refuses a mismatch after registering) | always with `relay.enabled`; needs wildcard DNS and a wildcard certificate for `*.<domain>` |
+| `relay.replicas` | int ≥ 1 | `1` | relay Deployment replicas | previews carry load or must survive a node loss |
+| `relay.resources` | resources | requests `100m` / `128Mi`, memory limit `512Mi` | relay pod resources | many concurrent streams |
+| `relay.nodeSelector` / `relay.tolerations` | map / list | `{}` / `[]` | scheduling of the relay pods | a dedicated edge node pool |
+| `relay.extraEnv` | list of env entries | `[]` | extra environment for the relay container (`valueFrom` supported) | corporate proxy / tracing variables |
+| `relay.max_streams` | int | `2048` | `[relay] max_streams`: concurrent proxied streams per relay replica | tuning edge capacity |
+| `relay.max_streams_per_user` | int | `64` | `[relay] max_streams_per_user`: the per-user share of them | tuning fairness |
+| `relay.request_body_max_bytes` | bytes | `33554432` (32 MiB) | `[relay] request_body_max_bytes`: request-body cap on a preview request | previews that upload large bodies |
+
+## SCIM
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `scim.enabled` | bool | `false` | the instance switch for the SCIM plane (P4-GRP-2, SEC-72): `true` routes `/scim` to the API in the Ingress and the HTTPRoute; `false` renders no `/scim` route and the API answers 404 for the whole surface | directory sync (IdP → Aurora provisioning; [15 §SCIM directory sync](15-deployment-operations.md)) |
+| `scim.ratePerMinute` | int | `600` | `[scim] rate_per_minute`: the per-SCIM-token limit (burst is a fifth of it) | an IdP that syncs in large bursts |
+
+## Plugin packages
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `plugins.source` | `none` \| `configMap` \| `pvc` | `none` | where the api pods find `*.aurora-plugin` packages: no volume, a ConfigMap (its keys are package files, 1 MiB Kubernetes limit; an init container copies them into an emptyDir) or an existing PVC | operator-supplied plugin packages ([15 §Production](15-deployment-operations.md)) |
+| `plugins.dir` | path | `/var/lib/aurora/plugins` | rendered into `[plugins] dir`; the package volume is mounted here (do not set it in `config`) | almost never |
+| `plugins.configMapName` | ConfigMap name | `""` | the ConfigMap for `source: configMap` (restart the api pods after changing it; no auto-reload) | `source: configMap` |
+| `plugins.pvcName` | PVC name | `""` | the PersistentVolumeClaim for `source: pvc` (every api replica scans it: use ReadWriteMany when `api.replicas` > 1) | `source: pvc` |
+
 ## Sandboxes namespace
 
 | Value | Type / values | Default | What it does | Set it when / details |
@@ -268,9 +306,9 @@ These Helm keys are **specified** (with config keys in `15`) but not yet
 implemented in the chart — a brief names them so the chart work lands with the
 feature:
 
-- previews: `previews.domain`, `previews.tls.certManager.issuerRef` / `previews.tls.secretName`, `relay.enabled`, `relay.resources`, `relay.networkPolicy.runnerEgressTo` (P4-PRV-1/2; `15 §Port previews` — note: `previews.domain` is a config key, set via `config.previews.domain`; the switch itself is the chart value `relay.enabled`, above — it mirrors `config.previews.enabled`, so set only the chart value)
+- previews: `previews.domain` is a **config** key (set via `config.previews.domain`, `15 §Port previews`); the chart values are `relay.*` ([§Port previews (relay)](#port-previews-relay)). There are no `previews.tls.*` chart values: the wildcard certificate is the operator's own edge configuration (the chart renders no TLS block for `*.<relay.domain>`), and the relay's egress is fixed (api, runners, DNS).
 - web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: config keys, set via `config.terminal.*`; the switch itself is the chart value `terminal.enabled`, above — it mirrors `config.terminal.enabled`, so set only the chart value)
-- SCIM: `scim.enabled`, `scim.allowedEmailDomains`, `scim.ratePerMinute`, `scim.tokenMaxDays` (P4-GRP-2; `15 §SCIM directory sync`)
+- SCIM: `scim.enabled` and `scim.ratePerMinute` are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are config keys (`config.scim.*`, `15 §SCIM directory sync`)
 - approval park + Web Push: `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)
 - S3 blob store: `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
 

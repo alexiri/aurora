@@ -66,12 +66,28 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
+        {{- /* FIX-069: who may the secrets hook reach on 443/6443? In order of preference:
+               (1) networkPolicy.kubeApiCidrs, as set by the operator;
+               (2) the real API server addresses, read from the `kubernetes` Endpoints in
+                   `default` at install/upgrade time (Helm `lookup`; this is the post-DNAT address
+                   a NetworkPolicy matches, so the ClusterIP would not do) — /32 each;
+               (3) only when neither exists (`helm template`/--dry-run, where lookup is empty, or
+                   no read access to that Endpoints object): 0.0.0.0/0, as before, so no existing
+                   install or render breaks. Requiring kubeApiCidrs instead would fail every
+                   current upgrade that leaves it empty. */}}
+        {{- $hookApi := list }}
         {{- if $np.kubeApiCidrs }}
-        {{- range $np.kubeApiCidrs }}
-        - ipBlock: {cidr: {{ . }}}
-        {{- end }}
+        {{- $hookApi = $np.kubeApiCidrs }}
         {{- else }}
-        - ipBlock: {cidr: 0.0.0.0/0}
+        {{- $eps := lookup "v1" "Endpoints" "default" "kubernetes" }}
+        {{- range (dig "subsets" (list) $eps) }}
+        {{- range (default (list) .addresses) }}
+        {{- $hookApi = append $hookApi (printf "%s/%s" .ip (ternary "128" "32" (contains ":" .ip))) }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- range ($hookApi | default (list "0.0.0.0/0")) }}
+        - ipBlock: {cidr: {{ . }}}
         {{- end }}
       ports:
         {{- range (default (list 443 6443) $np.kubeApiPorts) }}
@@ -177,9 +193,12 @@ spec:
               put AURORA_CONNECTOR_TOKEN "aun_$(hex)"
               # P4-MCON: the connector host's anchor token (given to the api as the bootstrap token).
               put AURORA_CONNECTOR_HOST_TOKEN "auh_$(hex)"
-              # P4-PRV-2: the relay's anchor token (aul_…) and the api's bootstrap copy of it.
+              # P4-PRV-2: the relay's anchor token (aul_…). One key: the relay reads it as
+              # AURORA_RELAY_TOKEN and the api is handed the same secret key as its
+              # AURORA_BOOTSTRAP_RELAY_TOKEN env (workloads.yaml). (FIX-069: a second, never-read
+              # secret key AURORA_BOOTSTRAP_RELAY_TOKEN used to be generated here; instances that
+              # already have it keep it, harmlessly — nothing reads it and `put` never deletes.)
               put AURORA_RELAY_TOKEN "aul_$(hex)"
-              put AURORA_BOOTSTRAP_RELAY_TOKEN "aul_$(hex)"
               if [ "$PG_ENABLED" = "true" ]; then
                 put POSTGRES_PASSWORD "$(hex)"
                 pw="$(kubectl get secret "$NAME" -o 'jsonpath={.data.POSTGRES_PASSWORD}' | base64 -d)"

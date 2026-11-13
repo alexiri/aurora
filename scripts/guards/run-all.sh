@@ -38,6 +38,9 @@ bash scripts/guards/sandbox-network.sh
 echo "== no-deployment-defaults (RFE-019: neutral brief, public digest-pinned sandbox base)"
 bash scripts/guards/no-deployment-defaults.sh
 
+echo "== helm-values-docs (FIX-069: docs/23 documents every values.yaml key and names none that do not exist)"
+bash scripts/guards/helm-values-docs.sh
+
 echo "== quick-gate syntax (VEL-002; shellcheck when installed, else bash -n)"
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/dev/quick-gate.sh
