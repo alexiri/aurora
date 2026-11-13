@@ -20,5 +20,7 @@ mod pipeline;
 mod policy_db;
 mod proxy;
 mod proxy_tls;
+mod proxy_wire;
+
 mod refresh;
 mod refresh_proxy;
