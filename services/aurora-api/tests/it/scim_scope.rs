@@ -363,6 +363,63 @@ async fn per_token_rate_limit_429_with_retry_after() {
     assert_eq!(last.0, 429, "the bucket must refuse within 6 requests");
 }
 
+/// FIX-070: the seat cap holds under concurrent `POST /Users` — with one seat left, parallel
+/// provisions serialize on the org lock before counting: exactly one is created, the others
+/// answer 403 `member_limit_reached`, and the org never exceeds `max_members`.
+#[tokio::test]
+async fn concurrent_posts_at_the_last_seat_create_exactly_one() {
+    const N: usize = 6;
+    let fx = ScimFx::new().await;
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM org_members WHERE org_id = $1 AND status = 'active'",
+    )
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    let cap = active + 1;
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || jsonb_build_object('max_members', $2::int8) \
+         WHERE id = $1",
+    )
+    .bind(fx.org)
+    .bind(cap)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(N));
+    let rs = futures::future::join_all((0..N).map(|i| {
+        let barrier = barrier.clone();
+        let fx = &fx;
+        async move {
+            barrier.wait().await;
+            fx.scim(
+                Method::POST,
+                USERS,
+                Some(json!({"userName": format!("seat-{i}@x.io")})),
+            )
+            .await
+        }
+    }))
+    .await;
+    let created = rs.iter().filter(|(s, _, _)| *s == 201).count();
+    for (s, _, v) in &rs {
+        assert!(
+            *s == 201 || (*s == 403 && v["detail"] == "member_limit_reached"),
+            "{s}: {v}"
+        );
+    }
+    assert_eq!(created, 1, "exactly the last seat is taken");
+    let after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM org_members WHERE org_id = $1 AND status = 'active'",
+    )
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(after, cap, "never above max_members");
+}
+
 /// FIX-062 (C-473, SEC-72): a `PUT` of an owner's link is refused 403 whatever its body —
 /// a harmless attribute change and an e-mail change alike — before anything is written: the
 /// link row, the membership and the account stay exactly as they were.

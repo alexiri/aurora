@@ -264,7 +264,9 @@ async fn touch(state: &AppState, caller: &ScimToken) {
 }
 
 /// The seat cap of the org (`organizations.settings.max_members`; `None` = no cap) against
-/// the active members. 403 `member_limit_reached` when full.
+/// the active members. 403 `member_limit_reached` when full. A cap only under concurrency
+/// when the caller holds [`groups::lock_org`] (both callers, `create_user` and `move_link`,
+/// do).
 async fn ensure_seat(conn: &mut sqlx::PgConnection, org: Uuid) -> ScimResult<()> {
     let cap: Option<i64> = sqlx::query_scalar(
         "SELECT (settings ->> 'max_members')::int8 FROM organizations WHERE id = $1",
@@ -313,6 +315,10 @@ pub async fn create_user(
     let display = display_of(&input, &names);
 
     let mut tx = state.pool.begin().await.map_err(sq)?;
+    // The org lock first (FIX-070): the seat cap below is a count-then-insert, so concurrent
+    // POSTs serialize on it like `move_link` and the token/group caps (`groups::lock_org`,
+    // taken before any other row lock of this transaction).
+    groups::lock_org(&mut tx, org.org_id).await.map_err(db)?;
     // (c) an unremoved link of this org with the same e-mail or externalId → 409 uniqueness.
     let by_email = repo::users_by_email(&mut *tx, org.org_id, &email)
         .await

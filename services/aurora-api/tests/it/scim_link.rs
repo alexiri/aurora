@@ -765,3 +765,81 @@ async fn post_revives_renamed_tombstone_on_its_person() {
         Some(("member".to_owned(), "active".to_owned()))
     );
 }
+
+/// FIX-070: a SCIM in-place rename of a pre-provisioned user (D-167(b)) racing the OIDC
+/// sign-in that verified the **old** address. Interleaving, driven deterministically on
+/// separate connections: the rename transaction (SCIM's `lock_account` + `UPDATE users SET
+/// email`) holds the row; the sign-in of `old@` starts and blocks on it; the rename commits.
+/// The sign-in must not bind to — or mark verified — the account that now carries the new,
+/// unverified address: the old address is free again and resolves afresh. Before FIX-070 the
+/// sign-in read the pre-rename row, its `mark_email_verified` waited and then verified the
+/// renamed account and linked the identity to it.
+#[tokio::test]
+async fn signin_racing_a_placeholder_rename_never_binds_the_renamed_account() {
+    use sqlx::{ConnectOptions, Connection};
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("race-old@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let placeholder = fx.aurora_user(&sid).await;
+    let opts = fx.h.pool().connect_options();
+    // The rename, exactly SCIM's statements, left uncommitted.
+    let mut rename = opts.connect().await.unwrap();
+    let mut tx = rename.begin().await.unwrap();
+    let rename_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(placeholder)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET email = 'race-new@x.io', updated_at = now() WHERE id = $1")
+        .bind(placeholder)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let mut watcher = opts.connect().await.unwrap();
+    let (signed, ()) = tokio::join!(fx.h.sign_in("race-old@x.io"), async {
+        // Wait (bounded) until the sign-in is blocked behind the rename, then commit it.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                 WHERE $1 = ANY (pg_blocking_pids(pid)))",
+            )
+            .bind(rename_pid)
+            .fetch_one(&mut watcher)
+            .await
+            .unwrap();
+            if blocked {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the sign-in never reached the renamed row"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tx.commit().await.unwrap();
+    });
+    assert_ne!(
+        signed.user_id, placeholder,
+        "the sign-in of the old address never binds the renamed account"
+    );
+    assert_eq!(
+        account(&fx.h, placeholder).await,
+        Some(("race-new@x.io".to_owned(), false)),
+        "the renamed placeholder is not verified and has no identity"
+    );
+    assert_eq!(
+        account(&fx.h, signed.user_id).await,
+        Some(("race-old@x.io".to_owned(), true)),
+        "the verified old address resolved afresh"
+    );
+    assert_eq!(
+        link_user(&fx.h, sid.parse().unwrap()).await,
+        placeholder,
+        "the link stays on its placeholder"
+    );
+}
