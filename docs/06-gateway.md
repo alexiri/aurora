@@ -530,7 +530,12 @@ minted.
     `host` with a bare 400 before the application sees it), HTTP/1.1 hops get
     their `Host` synthesized from the request URI by the client stack
     (default ports dropped). An injection header targeting `host` is refused
-    at snapshot/app load (it cannot work on h2 upstreams).
+    at snapshot/app load (it cannot work on h2 upstreams). (TEST-021) The
+    gateway adds **no transport headers of its own** to a relayed request
+    beyond the declared injections and mechanism outputs — this exact shape is
+    pinned per protocol version by strict (non-hyper) oracles in
+    `services/aurora-gateway/tests/it/proxy_wire.rs`, and reviewers point
+    there for any future header the gateway must add.
 14. **Post-response.**
     - Upstream 401 and the app opted into stale-token detection (manifest
       `token.stale_codes`) on a body-less request → refresh once and resend
