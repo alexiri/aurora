@@ -626,7 +626,10 @@ every limiter behaves the same.
   at start and on `NOSCRIPT`) implement the operations with `PEXPIRE` TTLs and the
   Redis `TIME`. TLS by default (`rediss://`), ACL user and password from
   environment variables, keys under `ratelimit.counters.redis.key_prefix`. The
-  Redis ACL needs only `EVALSHA`/`SCRIPT LOAD`/`GET`/`PING` on that prefix. Run it
+  Redis ACL must allow `EVALSHA`, `SCRIPT LOAD`, `GET`, `SET`, `INCRBY`, `PEXPIRE` and
+  `PING` on that prefix (`~<prefix>*`), and `TIME` (it takes no key): the scripts call
+  all of them, and a narrower ACL makes every counter call fail as unavailable
+  (REVIEW-5, FIX-087). Run it
   with `maxmemory-policy noeviction` or `volatile-ttl` (an LRU policy evicts live
   counters, which resets limits); persistence may be off. Redis is **optional and
   never required**; every Aurora feature works without it.
