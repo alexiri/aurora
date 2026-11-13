@@ -329,9 +329,24 @@ Only then are the stored credentials opened (`host`, `port`, `dbname`, `user`, `
 optional `sslmode` (default `require`), `ca_pem`) and the gateway opens **its own** server
 session through the guarded dial (the platform database is refused by address and port, SEC-06):
 `sslmode` `disable`, `allow`/`prefer` (TLS first, plaintext only if the server answers `N`),
-`require` (TLS; verifies the chain when `ca_pem` is stored, as libpq), `verify-ca`, `verify-full`;
-authentication with cleartext, MD5 or SCRAM-SHA-256. The server's outcome is relayed as a FATAL
-error (28P01 / 08006 / 08001); the exchange itself never is. The client then gets
+`require` (TLS, **verified** (FIX-106, D-178 Q-R5-7): against the stored `ca_pem` when there is one
+(chain, as libpq's `verify-ca`), otherwise chain **and host name** against the system roots, so the
+stored password is never sent to a server that cannot prove who it is), `verify-ca`, `verify-full`
+(both against `ca_pem`, or the system roots without one). `allow`/`prefer` are opportunistic by
+definition and never verify. A private CA is handled by storing its certificate as `ca_pem`; where
+that is impossible the connection carries the **explicit opt-out** `tls_verification = off` (the
+`postgresql` package's "Server certificate check" field, only offered under `require`, stored in the
+connection's non-secret metadata): it is named, it is recorded in the `connection.create` /
+`connection.reconnect` audit row (`metadata.tls_verification = "off"`), the dashboard shows a warning on
+the connection, and every session that uses it is logged and counted
+(`aurora_gateway_db_tls_unverified_total`). A stored `ca_pem` always wins over the opt-out;
+`verify-ca` and `verify-full` ignore it;
+authentication with cleartext, MD5 or SCRAM-SHA-256. A login the server refuses is relayed to the
+agent as a FATAL error with a **fixed text per class** (28P01 "the database rejected the stored
+credentials; ask a workspace admin to check this connection", 08006 for a TLS/verification or protocol
+failure, 08001 for an unreachable or refused destination): the upstream server's own error text and
+the connection's details (host, role, TLS error) go to the gateway log only (FIX-106, DB-3); the
+exchange itself is never relayed. The client then gets
 `AuthenticationOk`, the server's `ParameterStatus` messages, a **gateway-generated**
 `BackendKeyData` and `ReadyForQuery`. Live sessions are registered with the tunnel registry, so a
 freeze, a revoked credential or a tightened BYO posture ends them (FATAL 57P01).

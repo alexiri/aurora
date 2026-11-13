@@ -38,6 +38,11 @@ async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
     .execute(&pool)
     .await
     .unwrap();
+    // (FIX-106) An earlier release granted `api_keys`: applying the grants takes it back.
+    sqlx::query(&format!("GRANT SELECT ON api_keys TO \"{role}\""))
+        .execute(&pool)
+        .await
+        .unwrap();
     // `migrate` applies the grants after every upgrade: twice must be fine.
     apply_gateway_grants(&pool, &role).await.unwrap();
     apply_gateway_grants(&pool, &role).await.unwrap();
@@ -55,7 +60,6 @@ async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
         "workspace_access",
         "org_members",
         "gateway_users",
-        "api_keys",
         "agents",
         "gateway_credentials",
         "secrets",
@@ -111,6 +115,8 @@ async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
         "SELECT * FROM users WHERE false",
         "SELECT * FROM plugin_packages WHERE false",
         "SELECT * FROM audit_log WHERE false",
+        // (FIX-106) No gateway query reads the hashed user API keys.
+        "SELECT * FROM api_keys WHERE false",
         "SELECT summary FROM approvals WHERE false",
         "SELECT hostname FROM gateway_instances WHERE false",
         "UPDATE users SET id = id WHERE false",

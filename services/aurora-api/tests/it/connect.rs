@@ -41,11 +41,13 @@ apps:
       - { name: api_token, secret: true, optional: true }
       - { name: access_token, secret: true, optional: true }
       - { name: refresh_token, secret: true, optional: true }
-    metadata: [ { name: org } ]
+    metadata: [ { name: org }, { name: tls_verification } ]
     connect:
       - id: api_key
         kind: fields
-        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+        fields:
+          - { name: api_token, label: T, type: secret, required: true }
+          - { name: tls_verification, label: TLS, type: select, store: metadata, options: [ { value: verify, label: V }, { value: "off", label: Off } ] }
         probe: { url: "https://api.acme.example/me", label: /email, metadata: { org: /org/name } }
       - id: oauth
         kind: oauth2
@@ -336,6 +338,44 @@ async fn fields_connect_with_probe_blocklist_and_no_credentials_leak() {
         .0,
         400
     );
+}
+
+/// (FIX-106, D-178 Q-R5-7) The opt-out of server certificate verification is a named, audited,
+/// visible per-connection choice: it lands in the connection's metadata (which the dashboard
+/// shows) and in the `connection.create` audit row; a connection without it records neither.
+#[tokio::test]
+async fn a_tls_verification_opt_out_is_audited_and_visible_on_the_connection() {
+    let w = world(None).await;
+    let audit = |id: Uuid| {
+        let pool = w.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT metadata->>'tls_verification' FROM audit_log \
+                 WHERE action = 'connection.create' AND target_id = $1",
+            )
+            .bind(id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t1", "tls_verification": "off"});
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["metadata"]["tls_verification"], "off");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(audit(id).await.as_deref(), Some("off"));
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t2", "tls_verification": "verify"});
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(audit(id).await, None);
 }
 
 #[tokio::test]

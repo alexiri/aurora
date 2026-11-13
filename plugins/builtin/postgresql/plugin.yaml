@@ -1,6 +1,6 @@
 package:
   id: postgresql
-  version: 1.0.1
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -26,6 +26,10 @@ apps:
       - { name: password, secret: true }
       - { name: sslmode, secret: false, optional: true }
       - { name: ca_pem, secret: false, optional: true }
+    metadata:
+      # (FIX-106, D-178 Q-R5-7) `off` = the explicit, audited opt-out of server certificate
+      # verification under `require` without a CA certificate. Never part of the sealed login.
+      - { name: tls_verification }
     connect:
       - id: login
         kind: fields
@@ -64,7 +68,7 @@ apps:
             options:
               - { value: verify-full, label: "verify-full (verify the certificate and host name)" }
               - { value: verify-ca, label: "verify-ca (verify the certificate chain)" }
-              - { value: require, label: "require (encrypt; verifies the chain only when a CA certificate is given)" }
+              - { value: require, label: "require (encrypt and verify the certificate: against the CA certificate below, or the system's trusted CAs)" }
               - { value: prefer, label: "prefer (encrypt when the server supports it)", warning: "Falls back to an unencrypted connection when the server does not offer TLS." }
               - { value: allow, label: "allow (encrypt only when the server insists)", warning: "Sends the password unencrypted unless the server demands TLS." }
               - { value: disable, label: "disable (no encryption)", warning: "Everything, including the password, travels unencrypted." }
@@ -72,6 +76,14 @@ apps:
             label: CA certificate (PEM, for a private certificate authority)
             type: file
             store: credentials
+          - name: tls_verification
+            label: Server certificate check (only for "require" without a CA certificate)
+            type: select
+            store: metadata
+            show_when: { field: sslmode, equals: require }
+            options:
+              - { value: verify, label: "Verify the certificate against the system's trusted CAs (default)" }
+              - { value: "off", label: "Do not verify the certificate", warning: "Use only for a private certificate authority whose certificate you cannot store above. The gateway then sends the database password to whichever server answers, so anyone able to intercept the connection can read it. This choice is recorded in the audit log and shown on the connection." }
     tools:
       read:
         items:

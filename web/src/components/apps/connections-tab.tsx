@@ -142,6 +142,12 @@ function ConnectionRow({
           </p>
         </Notice>
       ) : null}
+      {c.database && c.metadata.tls_verification === "off" ? (
+        <Notice tone="pending" role="status" aria-label={`TLS verification is off for ${c.label}`} className="text-xs">
+          The gateway does not verify this database server&apos;s TLS certificate: the database password goes to whichever server
+          answers. Store the CA certificate (or use a publicly trusted one) and reconnect to turn verification back on.
+        </Notice>
+      ) : null}
       {ok.length ? <p className="text-xs text-ink-2">Injecting credentials for: {ok.map((i) => i.host).join(", ")}</p> : null}
       {lost.length ? (
         <p className="text-xs text-pending-ink">
