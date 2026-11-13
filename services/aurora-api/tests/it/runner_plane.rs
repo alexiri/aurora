@@ -2042,6 +2042,55 @@ async fn starting_without_a_turn_is_bounded_and_the_pin_is_cleared() {
     assert_eq!(code.as_deref(), Some("sandbox_start_failed"));
 }
 
+/// (FIX-115, `10` §The answer rule) A turn the API ends (here the readiness sweep) keeps the
+/// answer text buffered after its last tool call: a durable `text` event before the `error`,
+/// and no buffer row left behind.
+#[tokio::test]
+async fn failed_turn_keeps_its_buffered_answer_text() {
+    let r = rig().await;
+    let agent = r.agent("answerer").await;
+    let turn = r.turn(agent).await;
+    sqlx::query("INSERT INTO turn_answer_buffers (turn_id, msgs) VALUES ($1, $2)")
+        .bind(turn)
+        .bind(json!([{"id": "m1", "text": "Here is what I found so far.", "reply_to": null}]))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.turns_failed, 1);
+    let (status, ..) = turn_error(&r, turn).await;
+    assert_eq!(status, "failed");
+    let kinds: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT type, payload->>'text' FROM transcript_events WHERE turn_id = $1
+           AND type IN ('text', 'error') ORDER BY seq",
+    )
+    .bind(turn)
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        kinds,
+        vec![
+            (
+                "text".to_owned(),
+                Some("Here is what I found so far.".to_owned())
+            ),
+            ("error".to_owned(), None)
+        ]
+    );
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM turn_answer_buffers WHERE turn_id = $1")
+            .bind(turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+}
+
 /// (FIX-093) After the API's give-up, the runner's late `failed` for the same boot lands the
 /// sandbox in `failed` without counting a second failure or overwriting the specific reason.
 #[tokio::test]

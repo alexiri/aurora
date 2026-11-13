@@ -1182,3 +1182,60 @@ async fn org_secret_visibility_and_foreign_access() {
         .await;
     assert_eq!(s, 404);
 }
+
+/// (D-178 Q-R5-21, FIX-115) An org-level secret's creator (and, for LLM keys, origin) is shown
+/// to org admins only: a workspace owner who lists or reads it to grant it gets the secret
+/// without those fields; a workspace secret is unchanged.
+#[tokio::test]
+async fn org_secret_provenance_is_for_org_admins_only() {
+    let w = world().await;
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.admin,
+            Some(json!({
+        "name": "orgkey2", "kind": "generic", "host_pattern": "api.example.com", "value": "v"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    // Admin: creator visible.
+    let (s, v) = w
+        .call(Method::GET, &format!("/v1/secrets/{id}"), &w.admin, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["created_by"].is_object(), "{v}");
+    // A plain org member who owns a workspace (can discover org secrets to grant them): no
+    // creator, no origin.
+    let wo = w.h.user("wso@x.io", false).await;
+    w.h.member(w.org, wo, "member", "active").await;
+    w.h.bind_ws(w.ws, wo, "owner").await;
+    let (_, wo) = w.h.good_session(wo).await;
+    let (s, v) = w
+        .call(Method::GET, &format!("/v1/secrets/{id}"), &wo, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["created_by"].is_null() && v["origin"].is_null(), "{v}");
+    assert_eq!(v["name"], "orgkey2");
+    let (s, v) = w.call(Method::GET, &w.org_url(), &wo, None).await;
+    assert_eq!(s, 200, "{v}");
+    let item = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == id.as_str())
+        .unwrap();
+    assert!(
+        item["created_by"].is_null() && item["origin"].is_null(),
+        "{v}"
+    );
+    let (_, v) = w.call(Method::GET, &w.org_url(), &w.admin, None).await;
+    let item = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == id.as_str())
+        .unwrap();
+    assert!(item["created_by"].is_object(), "{v}");
+}

@@ -252,6 +252,9 @@ interface Secret { id: Uuid; org_id: Uuid; workspace_id: Uuid | null; scope: "or
   status: "active" | "proposed" | "rejected"; origin: StoredOrigin | null; value_version: number;
   proposed_by_agent_id: Uuid | null; created_by: { id: Uuid; display_name: string } | null;
   last_used_at: Timestamp | null; created_at: Timestamp; updated_at: Timestamp }
+// (D-178 Q-R5-21, FIX-115) For an **organization-level** secret, `origin` (provider account ids) and
+// `created_by` are returned to organization owners/admins only; a workspace owner who lists or reads
+// the org secret to grant it gets it with both `null`. Workspace secrets are unchanged.
 
 interface ContainerConfig { proxy_url: string /* contains <AGENT_TOKEN> unless revealed */; env: Record<string, string>;
   ca_pem: string; ca_path: string; proxy_ca_path: string /* C-44 */; proxy_tls: "operator_certificate" | null /* C-44 */;

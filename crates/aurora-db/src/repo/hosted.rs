@@ -665,17 +665,30 @@ pub async fn touch_progress(conn: &mut PgConnection, turn: Uuid) -> Result<bool,
         > 0)
 }
 
-/// Active (`queued`) hosted turns that have not reached a sandbox yet, for the `no_model_key`
-/// check before any start.
-pub async fn queued_hosted_turns(
+/// (FIX-115) Hosted agents with a `queued` turn that has not reached a sandbox yet, oldest first,
+/// for the `no_model_key` / harness check before any start: one row per agent
+/// `(agent, oldest queued turn's created_at)`, keyset-paged after `after`. Turns are
+/// per-agent facts here, so sixteen queued turns of one agent that cannot start no longer hide
+/// the turn of another agent behind them.
+pub async fn queued_hosted_agents(
     conn: &mut PgConnection,
+    after: Option<(DateTime<Utc>, Uuid)>,
     limit: i64,
-) -> Result<Vec<(Uuid, Uuid, Uuid)>, DbError> {
+) -> Result<Vec<(Uuid, DateTime<Utc>)>, DbError> {
+    let (ts, agent) = match after {
+        Some((t, a)) => (Some(t), Some(a)),
+        None => (None, None),
+    };
     Ok(sqlx::query_as(
-        "SELECT t.id, t.conversation_id, t.agent_id FROM turns t JOIN agents a ON a.id = t.agent_id
+        "SELECT t.agent_id, min(t.created_at) AS first_at
+         FROM turns t JOIN agents a ON a.id = t.agent_id
          WHERE t.role = 'turn' AND t.status = 'queued' AND a.kind = 'hosted'
-         ORDER BY t.created_at LIMIT $1",
+         GROUP BY t.agent_id
+         HAVING $1::timestamptz IS NULL OR (min(t.created_at), t.agent_id) > ($1, $2)
+         ORDER BY first_at, t.agent_id LIMIT $3",
     )
+    .bind(ts)
+    .bind(agent)
     .bind(limit)
     .fetch_all(conn)
     .await?)

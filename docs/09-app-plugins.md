@@ -88,6 +88,11 @@ permissions:
 ```
 Host claims are derived from `apps[].hosts` and shown alongside.
 
+(FIX-115) **Hook-based connects report no requested scopes**: `requested_scopes` stays
+empty and `missing_scopes` is always empty for them; the hook reports what was granted.
+`app_connections.source_connection_id` is reserved (nothing writes it yet); deletion
+handles one level of children until it is used.
+
 ### 3.3 `oauth_clients` (shared by the package's apps)
 ```yaml
 oauth_clients:

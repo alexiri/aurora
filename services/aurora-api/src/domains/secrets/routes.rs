@@ -85,8 +85,22 @@ async fn list_org_secrets(
     Path(org): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Secret>>, ApiError> {
-    caller.org_credential_reader(&state, org).await?;
-    Ok(Json(service::list(&state, org, None, &q).await?))
+    let a = caller.org_credential_reader(&state, org).await?;
+    let mut page = service::list(&state, org, None, &q).await?;
+    // (D-178 Q-R5-21, FIX-115) Org-level secret origin and creator are for org admins only:
+    // a workspace owner who lists them to grant them gets the secret without those two fields.
+    if !a.role.is_admin() {
+        page.items.iter_mut().for_each(redact_org_provenance);
+    }
+    Ok(Json(page))
+}
+
+/// Strip `origin` (provider account ids) and `created_by` from an organization-level secret.
+fn redact_org_provenance(s: &mut Secret) {
+    if s.workspace_id.is_none() {
+        s.origin = None;
+        s.created_by = None;
+    }
 }
 
 const CREATE_ERRORS: &str = "llm_key_not_permitted";
@@ -166,9 +180,17 @@ async fn get_secret(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Secret>, ApiError> {
-    Ok(Json(
-        service::load_readable(&caller, &state, id).await?.into(),
-    ))
+    let row = service::load_readable(&caller, &state, id).await?;
+    let org_level = row.workspace_id.is_none();
+    let mut out: Secret = row.into();
+    if org_level {
+        // (D-178 Q-R5-21) Org-level provenance is for org admins only.
+        let a = caller.org_credential_reader(&state, out.org_id).await?;
+        if !a.role.is_admin() {
+            redact_org_provenance(&mut out);
+        }
+    }
+    Ok(Json(out))
 }
 
 /// Update name / host / path / injection (generic secrets; LLM secrets: name only).
