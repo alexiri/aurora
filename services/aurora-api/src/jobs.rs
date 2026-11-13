@@ -302,16 +302,18 @@ pub async fn preview_housekeeping(pool: &PgPool) -> Result<u64, aurora_db::DbErr
         tracing::debug!(cleared, pruned, replicas, "preview housekeeping");
         cleared + pruned + replicas
     };
-    let orgs: Vec<(uuid::Uuid, String, i64)> = sqlx::query_as(
-        "SELECT o.id, o.slug, count(ps.id) FROM organizations o \
-           LEFT JOIN preview_shares ps ON ps.org_id = o.id AND ps.state = 'active' \
-         GROUP BY o.id, o.slug",
-    )
-    .fetch_all(pool)
-    .await?;
-    for (id, slug, n) in orgs {
-        metrics::gauge!("aurora_preview_shares", "org" => slug).set(n as f64);
-        tracing::trace!(org = %id, shares = n, "preview shares gauge");
+    // Labelled by `state` only (FIX-090): a tenant's slug is not a metric label.
+    let counts: Vec<(String, i64)> =
+        sqlx::query_as("SELECT state, count(*) FROM preview_shares GROUP BY state")
+            .fetch_all(pool)
+            .await?;
+    for state in ["active", "paused"] {
+        let n = counts
+            .iter()
+            .find(|(s, _)| s == state)
+            .map_or(0, |(_, n)| *n);
+        metrics::gauge!("aurora_preview_shares", "state" => state).set(n as f64);
+        tracing::trace!(state, shares = n, "preview shares gauge");
     }
     Ok(cleared)
 }

@@ -11,8 +11,8 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::previews::service as previews;
 use crate::domains::runner_plane::preview_streams::runner_endpoint_of;
 use aurora_core::limits::{
-    PREVIEW_GRANT_TTL, PREVIEW_SESSION_IDLE, PREVIEW_SESSION_TTL, PREVIEW_STREAM_GRANT_TTL,
-    PREVIEW_WAKE_WAIT,
+    PREVIEW_GRANT_TTL, PREVIEW_LISTEN_WAIT, PREVIEW_SESSION_IDLE, PREVIEW_SESSION_TTL,
+    PREVIEW_START_ATTEMPTS, PREVIEW_STREAM_GRANT_TTL, PREVIEW_WAKE_WAIT, PREVIEW_WAKE_WINDOW,
 };
 use aurora_core::{ApiError, token};
 use aurora_crypto::Purpose;
@@ -117,47 +117,109 @@ async fn session_of(
     Ok(Some((s, share)))
 }
 
-/// The whole access law of one resolve (`docs/04` step 4): share `active`, agent not frozen,
-/// org previews on, previews on at the instance, user still an active member with `can_use`.
-/// Failing anything (except the caller-visible states) is `not_found`.
+/// Why the access law refuses someone. `NotFound` is the uniform "no such preview or no
+/// access"; `Paused` and `Frozen` are only ever spoken to a person who still passes every
+/// other check (a live session whose holder may use the workspace), so they reveal nothing.
+#[derive(Debug)]
+enum Denial {
+    NotFound,
+    Paused,
+    /// The 423 the freeze service words (level included).
+    Frozen(ApiError),
+}
+
+/// The paused-share refusal (403) for the routes that answer with an HTTP status.
+fn paused_error() -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::FORBIDDEN,
+        "preview_paused",
+        "This preview share is paused.",
+    )
+}
+
+/// The share-state half of the law: `paused` and a frozen agent. The caller has already
+/// established that the person may use the workspace.
+async fn state_denial(
+    conn: &mut PgConnection,
+    share: &shares_repo::ShareRow,
+) -> Result<Option<Denial>, ApiError> {
+    match share.state.as_str() {
+        "active" => {}
+        "paused" => return Ok(Some(Denial::Paused)),
+        _ => return Ok(Some(Denial::NotFound)),
+    }
+    match crate::domains::freeze::service::ensure_agent_active(conn, share.agent_id).await {
+        Ok(()) => Ok(None),
+        Err(e) if e.status() == axum::http::StatusCode::LOCKED => Ok(Some(Denial::Frozen(e))),
+        Err(e) => Err(e),
+    }
+}
+
+/// The org switch (docs/18: "org switch off → next resolve denies").
+async fn org_previews_on(conn: &mut PgConnection, org: Uuid) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce((settings->'previews_enabled')::bool, false) FROM organizations WHERE id = $1",
+    )
+    .bind(org)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from)?)
+}
+
+/// The whole access law of one resolve (`docs/04` step 4): agent exists, user still an active
+/// member with `can_use`, previews on in the org (and at the instance), share `active`, agent
+/// not frozen. The first three failing is `NotFound` for anyone; `paused` and `frozen` are
+/// reported separately so a person who passes the first three can be told. A database error
+/// is an `Err` — never a denial (FIX-089: an outage must not revoke anyone).
+async fn access_verdict(
+    conn: &mut PgConnection,
+    share: &shares_repo::ShareRow,
+    user: Uuid,
+) -> Result<Option<Denial>, ApiError> {
+    if agents::get(&mut *conn, share.agent_id).await?.is_none() {
+        return Ok(Some(Denial::NotFound));
+    }
+    if !authz::can_use(&mut *conn, user, share.workspace_id).await? {
+        return Ok(Some(Denial::NotFound));
+    }
+    if !org_previews_on(conn, share.org_id).await? {
+        return Ok(Some(Denial::NotFound));
+    }
+    state_denial(conn, share).await
+}
+
+/// [`access_verdict`] as an HTTP answer: 404 / 403 `preview_paused` / 423 `frozen`.
 async fn access_of(
     conn: &mut PgConnection,
     share: &shares_repo::ShareRow,
     user: Uuid,
 ) -> Result<(), ApiError> {
-    if share.state != "active" {
-        return Err(not_found());
+    match access_verdict(conn, share, user).await? {
+        None => Ok(()),
+        Some(Denial::NotFound) => Err(not_found()),
+        Some(Denial::Paused) => Err(paused_error()),
+        Some(Denial::Frozen(e)) => Err(e),
     }
-    if agents::get(&mut *conn, share.agent_id).await?.is_none() {
-        return Err(not_found());
-    }
-    if !authz::can_use(&mut *conn, user, share.workspace_id).await? {
-        return Err(not_found());
-    }
-    // The org switch (docs/18: "org switch off → next resolve denies").
-    let on: bool = sqlx::query_scalar(
-        "SELECT coalesce((settings->'previews_enabled')::bool, false) FROM organizations WHERE id = $1",
-    )
-    .bind(share.org_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(DbError::from)?;
-    if !on {
-        return Err(not_found());
-    }
-    // A frozen agent ends access (423 to someone who may see it; folded into `not_found`
-    // here — the relay renders its uniform page either way).
-    crate::domains::freeze::service::ensure_agent_active(conn, share.agent_id).await?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------- register
 
-/// `AURORA_BOOTSTRAP_RELAY_TOKEN`: upsert the relay anchor token's hash. Idempotent.
+/// `AURORA_BOOTSTRAP_RELAY_TOKEN`: upsert the relay anchor token's hash and make it the only
+/// one: every other `relay_tokens` row (and, by cascade, its replicas) is deleted, so changing
+/// the secret ends the old token's access (rotation, FIX-090). Idempotent.
 pub async fn bootstrap_relay_token(s: &AppState) -> Result<(), DbError> {
     if let Some(t) = &s.config.bootstrap_relay_token {
         let t = t.expose();
-        relay_repo::upsert_relay_token(&s.pool, &token::hash(t)).await?;
+        let mut tx = s.pool.begin().await?;
+        let keep = relay_repo::upsert_relay_token(&mut *tx, &token::hash(t)).await?;
+        let gone = relay_repo::delete_other_relay_tokens(&mut *tx, keep).await?;
+        tx.commit().await?;
+        if gone > 0 {
+            tracing::info!(
+                removed = gone,
+                "relay anchor token rotated: older tokens removed"
+            );
+        }
     }
     Ok(())
 }
@@ -226,6 +288,7 @@ async fn route_of(
             start: "none".into(),
             runner_endpoint: None,
             retry_after_secs: None,
+            exit_code: None,
         });
     };
     let listening = ports.is_some_and(|p| p.contains(&share.port));
@@ -253,6 +316,7 @@ async fn route_of(
         start: "none".into(),
         runner_endpoint,
         retry_after_secs: None,
+        exit_code: None,
     })
 }
 
@@ -267,12 +331,25 @@ pub async fn resolve(
         .unwrap_or(0)
         .min(PREVIEW_WAKE_WAIT.as_secs() as u32);
     let deadline = Utc::now() + Duration::seconds(i64::from(wait));
+    // The wake demand is recorded at most once per request, on the first pass: a long-poll
+    // that watches for the port must not spend the share's hourly wake budget (FIX-089).
+    let mut first = true;
     loop {
-        let answer = resolve_once(s, &req).await?;
-        // Long-poll only while waking and not yet listening: the relay's wake-wait page.
+        let answer = resolve_once(s, &req, first).await?;
+        first = false;
+        // Long-poll only while a wake or a start is under way and the port is not yet
+        // listening: the relay's wake-wait page. A sandbox that runs with nothing starting
+        // (no start command, an exited or budget-limited command) answers at once.
         let again = answer.decision == "allow"
-            && !answer.route.as_ref().is_some_and(|r| r.listening)
-            && wait > 0;
+            && wait > 0
+            && answer.route.as_ref().is_some_and(|r| {
+                !r.listening
+                    && match r.sandbox.as_str() {
+                        "running" => r.start == "starting",
+                        "waking" | "stopped" => true,
+                        _ => false,
+                    }
+            });
         if !again || Utc::now() >= deadline {
             return Ok(answer);
         }
@@ -280,9 +357,96 @@ pub async fn resolve(
     }
 }
 
+/// What the start flow of one resolve decided.
+enum Flow {
+    Go,
+    /// The hourly wake budget is spent: `deny` `wake_limited`.
+    WakeLimited(u32),
+}
+
+/// Fills `route.start` (and `exit_code`/`retry_after_secs`) and sets the demands a request
+/// makes (`docs/11 §Port previews`). `demand` is true only on the first pass of a resolve.
+///
+/// * parked sandbox: the wake demand (once per window, hourly budget; over it `WakeLimited`);
+/// * running sandbox, share with a start command, port not listening: `starting` while a
+///   start request is outstanding or the launched command has not yet exited; `exited` (with
+///   the code) when the last launch ended, which also re-arms a start; `limited` when
+///   `PREVIEW_START_ATTEMPTS` launches already happened in `PREVIEW_START_WINDOW`.
+async fn start_flow(
+    conn: &mut PgConnection,
+    share: &shares_repo::ShareRow,
+    route: &mut RelayRoute,
+    demand: bool,
+) -> Result<Flow, ApiError> {
+    match route.sandbox.as_str() {
+        "stopped" => {
+            if demand {
+                match shares_repo::demand_wake(
+                    conn,
+                    share.id,
+                    share.agent_id,
+                    share.start_command.is_some(),
+                    PREVIEW_WAKE_WINDOW.as_secs_f64(),
+                )
+                .await?
+                {
+                    shares_repo::WakeOutcome::Limited { retry_after_secs } => {
+                        return Ok(Flow::WakeLimited(retry_after_secs));
+                    }
+                    shares_repo::WakeOutcome::Recorded => {
+                        crate::domains::conversations::service::notify_work(conn).await?;
+                    }
+                    shares_repo::WakeOutcome::Outstanding => {}
+                }
+            }
+            route.start = "starting".into();
+        }
+        "running" if !route.listening && share.start_command.is_some() => {
+            let window = shares_repo::START_WINDOW_SECS;
+            let launches = shares_repo::attempts_within(&share.start_attempts, window);
+            let last_launch = launches.iter().max().copied();
+            let (_, requested_at) = shares_repo::sandbox_stamps(conn, share.agent_id).await?;
+            let now = Utc::now();
+            let wake_wait = Duration::seconds(PREVIEW_WAKE_WAIT.as_secs() as i64);
+            let request_fresh = requested_at.is_some_and(|t| now - t < wake_wait);
+            // The last launch ended after the latest request: it ran and exited.
+            let ended = share
+                .last_start_at
+                .filter(|_| share.last_start_exit_code.is_some());
+            let exited = ended.is_some_and(|e| {
+                last_launch.is_some_and(|l| e >= l) && requested_at.is_none_or(|r| e > r)
+            });
+            // Launched, not yet ended, not yet listening: still coming up.
+            let coming_up =
+                last_launch.is_some_and(|l| now - l < wake_wait && ended.is_none_or(|e| e < l));
+            let exhausted = launches.len() >= PREVIEW_START_ATTEMPTS as usize;
+            if exited {
+                route.exit_code = share.last_start_exit_code;
+            }
+            if (request_fresh && !exited) || coming_up {
+                route.start = "starting".into();
+            } else if exhausted {
+                route.start = "limited".into();
+                route.retry_after_secs = Some(shares_repo::secs_until_slot(&launches, window));
+            } else {
+                // No launch under way (never started, or exited): this request asks for one.
+                // `exited` is still reported to this visitor; the next sees `starting`.
+                if demand {
+                    shares_repo::stamp_start_requested(conn, share.agent_id).await?;
+                    crate::domains::conversations::service::notify_work(conn).await?;
+                }
+                route.start = if exited { "exited" } else { "starting" }.into();
+            }
+        }
+        _ => {}
+    }
+    Ok(Flow::Go)
+}
+
 async fn resolve_once(
     s: &AppState,
     req: &RelayResolveRequest,
+    first: bool,
 ) -> Result<RelayResolveResponse, ApiError> {
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     if share_of(&mut conn, &req.label).await.is_err() {
@@ -304,12 +468,15 @@ async fn resolve_once(
     let Some((session, share)) = session_of(&mut conn, &hash, &req.label).await? else {
         return Ok(login());
     };
-    if access_of(&mut conn, &share, session.user_id).await.is_err() {
-        // A live preview session whose holder lost access (paused/deleted share, frozen
-        // agent, lost `can_use`, org switch off): the uniform `not_found` deny (docs/18
-        // "next resolve denies"). A dead session never reaches here — `session_of` already
-        // filtered it (that is the silent `login` restart).
-        return Ok(deny("not_found"));
+    // A live preview session whose holder lost access (deleted share, lost `can_use`, org
+    // switch off) is the uniform `not_found` deny (docs/18 "next resolve denies"); a holder
+    // who still passes those checks is told `paused` or `frozen` (`16 §W17`). A dead session
+    // never reaches here — `session_of` already filtered it (the silent `login` restart).
+    match access_verdict(&mut conn, &share, session.user_id).await? {
+        None => {}
+        Some(Denial::NotFound) => return Ok(deny("not_found")),
+        Some(Denial::Paused) => return Ok(deny("paused")),
+        Some(Denial::Frozen(_)) => return Ok(deny("frozen")),
     }
     // The daily byte quota (`PREVIEW_BYTES_PER_SHARE_DAY`, shared across relay replicas): a
     // holder of a live, authorized session may be told (429 `preview_quota`); nobody else
@@ -319,17 +486,13 @@ async fn resolve_once(
     }
     relay_repo::touch_preview_session(&mut *conn, session.id).await?;
     let mut route = route_of(&mut conn, &share).await?;
-    // A stopped sandbox: set the wake demand (`11 §Port previews`) — once per window; the
-    // share's own wake limiter answers 429 `wake_limited` beyond it.
-    if route.sandbox == "stopped" {
-        match demand_wake(&mut conn, &share).await {
-            Ok(()) => route.start = "starting".into(),
-            Err(limited) => {
-                route.start = "limited".into();
-                route.retry_after_secs = Some(60);
-                let _ = limited;
-            }
-        }
+    // The wake and start demands of this request (`11 §Port previews`); over the share's
+    // hourly wake budget the answer is a deny the relay renders as its 429 page.
+    if let Flow::WakeLimited(retry) = start_flow(&mut conn, &share, &mut route, first).await? {
+        return Ok(RelayResolveResponse {
+            retry_after_secs: Some(retry),
+            ..deny("wake_limited")
+        });
     }
     shares_repo::touch_accessed(&mut conn, share.id).await?;
     relay_repo::keep_preview_awake(&mut *conn, share.agent_id).await?;
@@ -342,6 +505,7 @@ async fn resolve_once(
         }),
         route: Some(route),
         user: Some(session.user_id),
+        retry_after_secs: None,
     })
 }
 
@@ -352,6 +516,7 @@ fn deny(reason: &str) -> RelayResolveResponse {
         share: None,
         route: None,
         user: None,
+        retry_after_secs: None,
     }
 }
 
@@ -362,35 +527,8 @@ fn login() -> RelayResolveResponse {
         share: None,
         route: None,
         user: None,
+        retry_after_secs: None,
     }
-}
-
-/// The wake demand of a stopped sandbox: record both stamps (wake + start request), notify
-/// due work, honour the share's wake limiter (`true` = limited).
-async fn demand_wake(conn: &mut PgConnection, share: &shares_repo::ShareRow) -> Result<(), bool> {
-    if share.start_command.is_none() {
-        // Nothing to start; the relay shows its own page. Not an error.
-        return Ok(());
-    }
-    if !shares_repo::record_wake(&mut *conn, share.id, 3600.0)
-        .await
-        .map_err(|_| false)?
-    {
-        return Err(true);
-    }
-    sqlx::query(
-        "UPDATE sandboxes SET preview_wake_at = now(), preview_start_requested_at = now(), \
-              updated_at = now() \
-          WHERE agent_id = $1 AND state IS NOT NULL",
-    )
-    .bind(share.agent_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(|_| false)?;
-    crate::domains::conversations::service::notify_work(conn)
-        .await
-        .map_err(|_| false)?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------- authorize (dashboard side)
@@ -436,17 +574,7 @@ pub async fn authorize(
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let share = share_of(&mut conn, label).await?;
     // Org switch (404 page, same as every other failure of this route).
-    let on: bool = sqlx::query_scalar(
-        "SELECT coalesce((settings->'previews_enabled')::bool, false) FROM organizations WHERE id = $1",
-    )
-    .bind(share.org_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(DbError::from)?;
-    if !on {
-        return Err(not_found());
-    }
-    if share.state != "active" {
+    if !org_previews_on(&mut conn, share.org_id).await? {
         return Err(not_found());
     }
     let _ = caller.workspace(s, share.workspace_id).await.map_err(|e| {
@@ -456,6 +584,15 @@ pub async fn authorize(
             not_found()
         }
     })?;
+    // The same access law as `resolve` runs before anything is minted (FIX-089): a paused
+    // share answers 403, a frozen agent the 423 page, anything else the uniform 404 — and
+    // only a person who may use the workspace is told which (the checks above come first).
+    match state_denial(&mut conn, &share).await? {
+        None => {}
+        Some(Denial::NotFound) => return Err(not_found()),
+        Some(Denial::Paused) => return Err(paused_error()),
+        Some(Denial::Frozen(e)) => return Err(e),
+    }
     let session_id = match caller.principal {
         crate::http::auth::Principal::Session { id } => id,
         _ => return Err(not_found()),
@@ -581,6 +718,16 @@ pub async fn streams(
     s: &AppState,
     req: RelayStreamsRequest,
 ) -> Result<RelayStreamsResponse, ApiError> {
+    streams_waiting(s, req, PREVIEW_LISTEN_WAIT).await
+}
+
+/// [`streams`] with the listen wait as a parameter (production: `PREVIEW_LISTEN_WAIT`; the
+/// tests shorten it through this one code path).
+pub async fn streams_waiting(
+    s: &AppState,
+    req: RelayStreamsRequest,
+    listen_wait: std::time::Duration,
+) -> Result<RelayStreamsResponse, ApiError> {
     previews::ensure_enabled(s)?;
     validate_label(&req.label)?;
     let hash = parse_session_hash(&req.session_hash)?;
@@ -590,9 +737,36 @@ pub async fn streams(
     };
     access_of(&mut conn, &share, session.user_id).await?;
     relay_repo::touch_preview_session(&mut *conn, session.id).await?;
-    let route = route_of(&mut conn, &share).await?;
+    let mut route = route_of(&mut conn, &share).await?;
+    // A running sandbox whose port is not listening yet: wait up to `PREVIEW_LISTEN_WAIT` for
+    // it to appear in the current boot's listening set before dialling (`docs/11`); then
+    // `not_listening`, which the relay renders as the 502 "nothing is listening" page. The
+    // pooled connection is not held across the wait.
+    if route.sandbox == "running" && route.runner_endpoint.is_some() && !route.listening {
+        drop(conn);
+        let deadline = tokio::time::Instant::now() + listen_wait;
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            tokio::time::sleep((deadline - now).min(std::time::Duration::from_millis(250))).await;
+            let mut c = s.pool.acquire().await.map_err(DbError::from)?;
+            route = route_of(&mut c, &share).await?;
+            if route.listening || route.sandbox != "running" {
+                break;
+            }
+        }
+        conn = s.pool.acquire().await.map_err(DbError::from)?;
+    }
     if route.sandbox != "running" || route.runner_endpoint.is_none() {
         return Err(not_running());
+    }
+    if !route.listening {
+        return Err(ApiError::conflict(
+            "not_listening",
+            "Nothing is listening on this preview's port.",
+        ));
     }
     // The boot is current and a runner holds its channel.
     let (sandbox_id, boot, host, tls) =
@@ -664,16 +838,23 @@ pub async fn validate(
             revoked.push(entry(&e));
             continue;
         };
+        // `revoked` holds only decided denials (a dead session, a deleted share, an access
+        // verdict). A database error is the API's own failure: it answers 5xx, the relay
+        // keeps its streams and asks again next cycle (FIX-089).
         match session_of(&mut conn, &hash, &e.label).await {
             Ok(Some((session, share))) => {
-                match access_of(&mut conn, &share, session.user_id).await {
-                    Ok(()) => {
+                match access_verdict(&mut conn, &share, session.user_id).await? {
+                    None => {
                         relay_repo::touch_preview_session(&mut *conn, session.id).await?;
                     }
-                    Err(_) => revoked.push(entry(&e)),
+                    Some(_) => revoked.push(entry(&e)),
                 }
             }
-            _ => revoked.push(entry(&e)),
+            Ok(None) => revoked.push(entry(&e)),
+            Err(err) if err.status() == axum::http::StatusCode::NOT_FOUND => {
+                revoked.push(entry(&e));
+            }
+            Err(err) => return Err(err),
         }
     }
     Ok(RelayValidateResponse { revoked })

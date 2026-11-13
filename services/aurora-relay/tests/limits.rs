@@ -78,7 +78,10 @@ async fn fake_runner(listener: TcpListener, app_port: u16) {
                     }
                 }
             };
-            tokio::select! { () = to_app => {}, () = to_ws => {} }
+            // Both directions run to their end: the relay now asks the app to close after
+            // each answer, so the app's EOF follows its last byte at once and the leg must
+            // not be dropped before the relay has read every frame it carried.
+            tokio::join!(to_app, to_ws);
         });
     }
 }

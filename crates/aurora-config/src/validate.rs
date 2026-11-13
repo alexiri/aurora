@@ -371,6 +371,8 @@ pub struct RelayConfig {
     pub max_streams: u32,
     pub max_streams_per_user: u32,
     pub request_body_max_bytes: usize,
+    /// `relay.trusted_proxies`: validated CIDRs (`/0` refused), see `RelaySection`.
+    pub trusted_proxies: Vec<String>,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
 }
@@ -1015,6 +1017,9 @@ impl RawConfig {
                 String::new()
             }
         };
+        // Same rules as `server.trusted_proxies`'s sibling lists: strict CIDRs, `/0` refused
+        // (trusting every peer would let any visitor forge their address).
+        check_cidr_list(&mut c, "relay.trusted_proxies", &r.trusted_proxies, false);
         check_common(&mut c, &self.tls, &self.telemetry);
         c.finish()?;
         Ok(RelayConfig {
@@ -1026,6 +1031,7 @@ impl RawConfig {
             max_streams: r.max_streams,
             max_streams_per_user: r.max_streams_per_user,
             request_body_max_bytes: r.request_body_max_bytes,
+            trusted_proxies: r.trusted_proxies.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })

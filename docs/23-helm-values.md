@@ -218,6 +218,7 @@ The generic per-service keys `<svc>.replicas`, `.resources`, `.nodeSelector`, `.
 | `relay.max_streams` | int | `2048` | `[relay] max_streams`: concurrent proxied streams per relay replica | tuning edge capacity |
 | `relay.max_streams_per_user` | int | `64` | `[relay] max_streams_per_user`: the per-user share of them | tuning fairness |
 | `relay.request_body_max_bytes` | bytes | `33554432` (32 MiB) | `[relay] request_body_max_bytes`: request-body cap on a preview request | previews that upload large bodies |
+| `relay.trusted_proxies` | CIDR list | `[]` | `[relay] trusted_proxies` (same semantics and default as `server.trusted_proxies`): the edge proxies / ingress pods in front of the relay. When the socket peer is inside one, the visitor's address is the rightmost untrusted `X-Forwarded-For` entry; without it the peer address is the client address (every visitor behind an ingress would share one grant-redemption bucket). `/0` is refused | an ingress or load balancer sits in front of the relay |
 
 ## SCIM
 

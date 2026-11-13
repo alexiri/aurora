@@ -21,6 +21,7 @@ async fn a_gibibyte_streams_in_constant_memory() {
             idle_ws: Duration::from_secs(60),
             lifetime: Duration::from_secs(300),
             validate_every: Duration::from_secs(60),
+            close: Duration::from_secs(2),
         },
         false,
     )

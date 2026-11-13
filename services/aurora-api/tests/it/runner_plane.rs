@@ -113,6 +113,19 @@ impl Rig {
         v["replica_id"].as_str().unwrap().parse().unwrap()
     }
 
+    /// A registration attempt that must be refused; returns (status, body).
+    async fn register_raw(&self, host: &str) -> (u16, Value) {
+        self.call(
+            None,
+            "/v1/runner/register",
+            Some(
+                json!({"version": "0.1", "backend": "fake", "capabilities": caps(1),
+                        "advertised_host": host}),
+            ),
+        )
+        .await
+    }
+
     async fn work(&self, replica: Uuid, wait: u32) -> Value {
         let (s, v) = self
             .call(
@@ -195,6 +208,40 @@ impl Rig {
             .fetch_one(self.h.pool())
             .await
             .unwrap()
+    }
+}
+
+/// FIX-090: the relay dials `advertised_host` with a live stream grant, so a runner credential
+/// may register only a host name or IP literal with an optional port.
+#[tokio::test]
+async fn registration_refuses_an_advertised_host_that_is_not_a_plain_authority() {
+    let r = rig().await;
+    for bad in [
+        "evil.example/x",
+        "user@evil.example",
+        "evil.example?x=1",
+        "evil example",
+        "ws://evil.example",
+        "evil.example:0",
+    ] {
+        let (s, v) = r.register_raw(bad).await;
+        assert_eq!(s, 400, "{bad}: {v}");
+        assert_eq!(v["error"]["code"], "invalid_request", "{bad}: {v}");
+    }
+    // Nothing was registered by the refused attempts; plain forms are accepted.
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM runner_replicas")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    for ok in [
+        "runner-a",
+        "runner-a.ns.svc:4108",
+        "10.0.0.7",
+        "[fd00::1]:4108",
+    ] {
+        let (s, v) = r.register_raw(ok).await;
+        assert_eq!(s, 200, "{ok}: {v}");
     }
 }
 

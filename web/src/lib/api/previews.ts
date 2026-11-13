@@ -18,11 +18,18 @@ export const previewKeys = {
   list: (agent: string) => ["agents", agent, "previews"] as const,
 };
 
+/** How often the share list refetches while a share is `waking` (5 s: a wake or start is under way). */
+export const PREVIEW_WAKING_POLL_MS = 5000;
+
 export function usePreviews(agent: string) {
   return useQuery({
     queryKey: previewKeys.list(agent),
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/previews", { params: { path: { agent } } })),
     retry: false,
+    // A share that is waking changes without anyone touching the page (the sandbox boots, the
+    // command starts or exits): poll while any is, and stop as soon as none is.
+    refetchInterval: (q) =>
+      q.state.data?.shares.some((s) => s.status === "waking") ? PREVIEW_WAKING_POLL_MS : false,
   });
 }
 

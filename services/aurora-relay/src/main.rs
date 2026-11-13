@@ -105,7 +105,24 @@ async fn serve(cfg: RelayConfig) -> std::io::Result<()> {
         cfg.max_streams_per_user
             .min(aurora_core::limits::PREVIEW_STREAMS_PER_USER),
     );
-    let state = aurora_relay::state::State::new(api.clone(), api_domain, external_url, wake_wait);
+    // `relay.trusted_proxies` (validated at load: strict CIDRs, no /0).
+    let trusted_proxies = cfg
+        .trusted_proxies
+        .iter()
+        .map(|c| aurora_core::cidr::Cidr::parse(c))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| invalid(format!("relay.trusted_proxies: {e}")))?;
+    let state = aurora_relay::state::State::with_edge(
+        api.clone(),
+        api_domain,
+        external_url,
+        wake_wait,
+        aurora_relay::limits::GrantRate::spec(),
+        trusted_proxies,
+        aurora_relay::limits::NegativeResolves::new(
+            aurora_relay::limits::NEGATIVE_RESOLVES_PER_MIN,
+        ),
+    );
     // The 15 s validate + heartbeat cycle.
     {
         let streams = streams.clone();

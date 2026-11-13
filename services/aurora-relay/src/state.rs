@@ -47,6 +47,10 @@ pub struct State {
     pub wake_wait_secs: u32,
     /// `PREVIEW_GRANT_RATE` at the grant endpoint (per replica).
     pub grant_rate: crate::limits::GrantRate,
+    /// `relay.trusted_proxies`: edge proxies whose `X-Forwarded-For` names the visitor.
+    pub trusted_proxies: Vec<aurora_core::cidr::Cidr>,
+    /// Negative resolves per client address (FIX-090).
+    pub negative: crate::limits::NegativeResolves,
     cache: Mutex<HashMap<(String, String), CachedResolve>>,
 }
 
@@ -79,12 +83,36 @@ impl State {
         wake_wait_secs: u32,
         grant_rate: crate::limits::GrantRate,
     ) -> Arc<Self> {
+        Self::with_edge(
+            api,
+            domain,
+            external_url,
+            wake_wait_secs,
+            grant_rate,
+            Vec::new(),
+            crate::limits::NegativeResolves::new(crate::limits::NEGATIVE_RESOLVES_PER_MIN),
+        )
+    }
+
+    /// Everything explicit: the grant limiter, the trusted edge proxies and the negative-resolve
+    /// cap (production passes the configured proxies; tests shorten the limits).
+    pub fn with_edge(
+        api: Arc<RelayApi>,
+        domain: String,
+        external_url: String,
+        wake_wait_secs: u32,
+        grant_rate: crate::limits::GrantRate,
+        trusted_proxies: Vec<aurora_core::cidr::Cidr>,
+        negative: crate::limits::NegativeResolves,
+    ) -> Arc<Self> {
         Arc::new(Self {
             api,
             domain,
             external_url,
             wake_wait_secs,
             grant_rate,
+            trusted_proxies,
+            negative,
             cache: Mutex::new(HashMap::new()),
         })
     }
@@ -123,6 +151,7 @@ impl State {
         label: &str,
         hash: Option<&str>,
         navigation: bool,
+        client: Option<std::net::IpAddr>,
     ) -> Result<crate::api::ResolveAnswer, crate::api::ApiError> {
         let key = hash.unwrap_or("");
         if let Some(c) = self.cached(label, key).await {
@@ -133,11 +162,34 @@ impl State {
                 share: c.share,
                 route: None,
                 user: c.user,
+                retry_after_secs: None,
             });
         }
         metrics::counter!("aurora_relay_resolve_cache", "hit" => "false").increment(1);
+        // An address that already burned its negative-resolve budget (random or stale cookies)
+        // gets the login answer locally: the API is not asked, so this visitor cannot spend the
+        // relay plane's rate class (FIX-090). A holder of a good, cached credential is unaffected.
+        if hash.is_some() && !self.negative.allows(client) {
+            metrics::counter!("aurora_relay_refused_total", "reason" => "negative_resolves")
+                .increment(1);
+            return Ok(crate::api::ResolveAnswer {
+                decision: "login".into(),
+                reason: None,
+                share: None,
+                route: None,
+                user: None,
+                retry_after_secs: None,
+            });
+        }
         let a = self.api.resolve(label, hash, 0, navigation).await?;
-        self.cache_put(label, key, &a).await;
+        if hash.is_some() && a.decision != "allow" {
+            self.negative.record(client);
+        }
+        // A `wake_limited` answer is not cached: its `retry_after_secs` is the API's, and the
+        // budget frees a slot on the API's clock, not after a cache entry.
+        if a.reason.as_deref() != Some("wake_limited") {
+            self.cache_put(label, key, &a).await;
+        }
         Ok(a)
     }
 }
@@ -194,6 +246,43 @@ pub async fn registration_loop(
     }
 }
 
+/// Pauses between the attempts of one `validate` / `report` call (FIX-090): a throttled (429),
+/// overloaded (5xx) or briefly unreachable API is retried within the cycle instead of waiting
+/// 15 s for the next one — a revocation delayed by an API hiccup is a security delay.
+const RETRY_BACKOFF: [Duration; 3] = [
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+];
+
+/// Whether a failed API call is worth repeating at once.
+fn retryable(e: &crate::api::ApiError) -> bool {
+    use crate::api::ApiError;
+    match e {
+        ApiError::Transport(_) => true,
+        ApiError::Status(s) => matches!(*s, 429 | 500 | 502 | 503 | 504),
+        ApiError::Decode(_) => false,
+    }
+}
+
+/// Runs `call`, repeating it with [`RETRY_BACKOFF`] while it fails in a way a retry can fix.
+async fn with_retry<T, Fut>(mut call: impl FnMut() -> Fut) -> Result<T, crate::api::ApiError>
+where
+    Fut: std::future::Future<Output = Result<T, crate::api::ApiError>>,
+{
+    let mut last = call().await;
+    for pause in RETRY_BACKOFF {
+        match &last {
+            Err(e) if retryable(e) => {
+                tokio::time::sleep(pause).await;
+                last = call().await;
+            }
+            _ => break,
+        }
+    }
+    last
+}
+
 /// The 15 s heartbeat + validation cycle. `hooks.live` reports the currently open
 /// `(label, session_hash)` pairs of open streams; revoked pairs go to `hooks.on_revoked`
 /// so the stream table can close them with 4403.
@@ -213,7 +302,7 @@ pub async fn heartbeat_loop(
         // Re-validate open streams first (docs/04 step 5): revoked → close 4403.
         let pairs = (hooks.live)();
         if !pairs.is_empty() {
-            match api.validate(&pairs).await {
+            match with_retry(|| api.validate(&pairs)).await {
                 Ok(revoked) => {
                     if !revoked.is_empty() {
                         tracing::info!(revoked = revoked.len(), "preview sessions revoked");
@@ -227,7 +316,7 @@ pub async fn heartbeat_loop(
         // relayed per share since the last one: the API adds them to the share's daily
         // counter (`PREVIEW_BYTES_PER_SHARE_DAY`). A failed report is retried with the next.
         let shares = (hooks.report)();
-        if let Err(e) = api.report(&shares).await {
+        if let Err(e) = with_retry(|| api.report(&shares)).await {
             tracing::warn!(error = %e, "relay report failed");
             (hooks.restore)(&shares);
         }

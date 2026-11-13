@@ -23,6 +23,17 @@ pub async fn register(
 ) -> Result<RegisterResponse, ApiError> {
     req.validate()
         .map_err(|e| ApiError::invalid_request(e.to_string(), vec![]))?;
+    // The relay dials this address with a live stream grant (FIX-090): a plain host name or IP
+    // literal with an optional port, never a URL fragment.
+    if !super::preview_streams::advertised_host_ok(&req.advertised_host) {
+        return Err(ApiError::invalid_request(
+            "Invalid request.",
+            vec![aurora_core::FieldError::new(
+                "/advertised_host",
+                "must be a host name or an IP literal with an optional port",
+            )],
+        ));
+    }
     let replica = Uuid::now_v7();
     let caps =
         serde_json::to_value(&req.capabilities).map_err(|e| ApiError::internal(e.to_string()))?;

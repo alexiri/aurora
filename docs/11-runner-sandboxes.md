@@ -475,9 +475,9 @@ for a sandbox that is not effectively frozen, subject to the ordinary start back
    code and the tail of the process output for people who can use the workspace.
 
 A share **without** a start command never starts anything: a request to a running sandbox
-whose port is not listening answers 502 "nothing is listening on this port" at once (the
-supervisor's loopback dial is refused; `PREVIEW_LISTEN_WAIT` (5 s) is specified but not yet
-applied as a wait, FIX-074); a request to a parked sandbox still wakes it (the agent
+whose port is not listening waits up to `PREVIEW_LISTEN_WAIT` (5 s, the API's stream grant,
+FIX-089) for the port to appear in the current boot's listening set, then answers 502 "nothing is
+listening on this port"; a request to a parked sandbox still wakes it (the agent
 may bring the app up by itself, e.g. from its shell history or a schedule) and waits the same
 `PREVIEW_WAKE_WAIT`. A preview **never** creates a turn, a conversation event or a
 `last_engaged_at` stamp.

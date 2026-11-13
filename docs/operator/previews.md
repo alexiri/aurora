@@ -120,7 +120,7 @@ Scrape the relay's ops port 4193 `/metrics`. Series emitted (all of them are in 
 | `aurora_relay_grants_total` | `result` (`redeemed`, `invalid`, `no_state`) |
 | `aurora_relay_resolve_cache` | `hit` |
 | `aurora_relay_refused_total` (FIX-072, C-636) | `reason` (`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`) |
-| `aurora_preview_shares` (API gauge) | `org` |
+| `aurora_preview_shares` (API gauge) | `state` (`active`, `paused`; FIX-090: no tenant label) |
 | `aurora_preview_stream_bytes_total` (API) | `direction` |
 
 Alert on `up{job="aurora-relay"} == 0`, on a rising `aurora_relay_grants_total{result="no_state"}` or `"invalid"`

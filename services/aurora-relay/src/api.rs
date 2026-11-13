@@ -66,6 +66,9 @@ pub struct ResolveAnswer {
     /// to the browser.
     #[serde(default)]
     pub user: Option<Uuid>,
+    /// On a `deny` with `wake_limited` (or `preview_quota`): when it may be retried.
+    #[serde(default)]
+    pub retry_after_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -83,6 +86,9 @@ pub struct Route {
     pub runner_endpoint: Option<String>,
     #[serde(default)]
     pub retry_after_secs: Option<u32>,
+    /// With `start: "exited"`: the last start command's exit code.
+    #[serde(default)]
+    pub exit_code: Option<i32>,
 }
 
 /// `POST /v1/relay/grants/redeem`.

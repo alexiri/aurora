@@ -45,6 +45,15 @@ async fn send_chunk(tx: &crate::stream::LiveTx, d: &[u8]) -> bool {
 /// "one WebSocket per upstream connection"). `head` is the rebuilt request head,
 /// `body` the request body, `upgrade` the browser's pending upgrade (present for
 /// WebSocket requests only): on a 101 answer the two upgraded pipes are bridged.
+/// What the edge knows about the exchange beyond the bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct Exchange {
+    /// The request was `HEAD`: the answer has a head only, whatever its framing headers say.
+    pub head_request: bool,
+    /// `relay.request_body_max_bytes`: a chunked upload counts against it as it streams.
+    pub body_max: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn forward(
     state: Arc<State>,
@@ -56,7 +65,9 @@ pub async fn forward(
     mut body: hyper::body::Incoming,
     upgrade: Option<hyper::upgrade::OnUpgrade>,
     slot: Slot,
+    ex: Exchange,
 ) -> Result<hyper::Response<RelayBody>, HttpError> {
+    let head_limit = streams.timeouts().header;
     // A failed dial drops `slot` (the concurrent-stream reservation) on this return.
     let ws = dial(&state, &sa).await?;
     let mut live = run_leg(streams, key, ws, slot);
@@ -67,14 +78,22 @@ pub async fn forward(
     }
     // The body follows: with a known `content-length` the raw frames pass through; a
     // chunked request is re-framed (the outbound head dropped `transfer-encoding`, so the
-    // app expects exactly `content-length` bytes); no body is a no-op.
+    // app expects exactly `content-length` bytes); no body is a no-op. A chunked upload is
+    // counted against the body cap: past it the exchange is over (413, leg closed).
+    let (too_big_tx, too_big_rx) = tokio::sync::oneshot::channel::<()>();
     let body_task = tokio::spawn(async move {
         match body_len {
             BodyLen::None => true,
             BodyLen::Chunked => {
+                let mut total = 0usize;
                 while let Some(res) = body.frame().await {
                     let Ok(f) = res else { return false };
                     let Ok(d) = f.into_data() else { return false };
+                    total = total.saturating_add(d.len());
+                    if total > ex.body_max {
+                        let _ = too_big_tx.send(());
+                        return false;
+                    }
                     if !send_chunk(&tx, &d).await {
                         return false;
                     }
@@ -99,13 +118,30 @@ pub async fn forward(
             }
         }
     });
-    // The answer's head: raw bytes from the stream until `\r\n\r\n`.
-    let raw = match read_head(&mut live).await {
-        Ok(b) => b,
-        Err(_) => {
-            body_task.abort();
-            tracing::debug!("relay: the leg ended before the answer head");
-            return Err(502);
+    // The answer's head: raw bytes from the stream until `\r\n\r\n`, within the response-head
+    // limit (`PREVIEW_HEADER_TIMEOUT`, 504). A chunked upload that outgrows the body cap ends
+    // the exchange first (413).
+    let raw = tokio::select! {
+        r = tokio::time::timeout(head_limit, read_head(&mut live)) => match r {
+            Ok(Ok(b)) => b,
+            Ok(Err(())) => {
+                body_task.abort();
+                tracing::debug!("relay: the leg ended before the answer head");
+                return Err(502);
+            }
+            Err(_) => {
+                body_task.abort();
+                tracing::debug!(limit = ?head_limit, "relay: no answer head in time");
+                metrics::counter!("aurora_relay_refused_total", "reason" => "head_timeout")
+                    .increment(1);
+                return Err(504);
+            }
+        },
+        Ok(()) = too_big_rx => {
+            tracing::debug!(max = ex.body_max, "relay: chunked upload over the body cap");
+            metrics::counter!("aurora_relay_refused_total", "reason" => "body_too_large")
+                .increment(1);
+            return Err(413);
         }
     };
     let Some(rh) = parse_response_head(&raw) else {
@@ -141,55 +177,166 @@ pub async fn forward(
     }
     // The response is handed to hyper with a body task that forwards until the stream ends.
     let (body_tx, body_rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, std::io::Error>>(16);
-    let mut dec = is_chunked(&rh.headers).then(ChunkedDecoder::default);
+    let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let framing = answer_framing(rh.status, &rh.headers, ex.head_request);
+    let mut mode = match framing {
+        Framing::Chunked => Mode::Chunked(ChunkedDecoder::default()),
+        Framing::Length(n) => Mode::Length(n),
+        Framing::UntilClose => Mode::UntilClose,
+        Framing::Empty => Mode::Length(0),
+    };
+    let abort_flag = aborted.clone();
     let _body_task = tokio::spawn(async move {
-        // One piece of the answer's body: through the de-framer when `chunked`. `true` = keep
-        // going, `false` = the body is over (last chunk, a framing error or a gone browser).
-        async fn emit(
-            dec: &mut Option<ChunkedDecoder>,
-            tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
-            data: Bytes,
-        ) -> bool {
-            let Some(d) = dec else {
-                return tx.send(Ok(Frame::data(data))).await.is_ok();
-            };
-            let mut out = Vec::new();
-            let more = matches!(d.feed(&data, &mut out), Ok(false));
-            for b in out {
-                if tx.send(Ok(Frame::data(b))).await.is_err() {
-                    return false;
-                }
-            }
-            more
+        let mut revoked = live.tx().watch();
+        // The body's end: complete, the browser went away (`Gone`: nothing more to say to
+        // it), or the answer is cut short (`Aborted`: the browser must see an error, not a
+        // document that merely stops).
+        let end = pump_answer(&mut live, &mut revoked, &body_tx, &mut mode, rest).await; // A viewer cut off by revocation gets an error too, not a short document.
+        if end == AnswerEnd::Aborted || (end == AnswerEnd::Gone && *revoked.borrow()) {
+            abort_flag.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        if !rest.is_empty() && !emit(&mut dec, &body_tx, Bytes::from(rest)).await {
-            return;
-        }
-        // Bridge the rest of the body. A `chunked` answer is de-framed here (hyper re-frames
-        // it toward the browser, `transfer-encoding` being hop-by-hop): each app chunk — a
-        // server-sent event, say — goes out as it arrives, and the last chunk ends the
-        // stream at once. Also ends when hyper dropped the body (the browser went away, or a
-        // `content-length` answer is complete): dropping `live` detaches the leg and frees
-        // the stream slot instead of waiting for a next frame that may never come.
-        loop {
-            let b = tokio::select! {
-                b = live.from_app() => b,
-                () = body_tx.closed() => return,
-            };
-            let Some(b) = b else { break };
-            if !emit(&mut dec, &body_tx, b).await {
-                return;
-            }
-        }
-        // The stream ended; the body ends with it.
+        // Dropping `body_tx` ends (or, with the flag, fails) the body; dropping `live`
+        // detaches the leg and frees the stream slot.
     });
     let mut res = hyper::Response::builder()
         .status(rh.status)
-        .body(RelayBody::new(body_rx))
+        .body(RelayBody::new(body_rx, aborted))
         .map_err(|_| 502u16)?;
     // Apply the response header rewrite (SEC-85) on the parsed head.
     rewrite(&mut res, &rh.headers, rh.status);
     Ok(res)
+}
+
+/// How the app's answer body is delimited (RFC 9112 §6.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Framing {
+    /// No body (`HEAD`, 1xx, 204, 304).
+    Empty,
+    Chunked,
+    Length(u64),
+    /// No length: the end of the stream ends the body (the relay asks the app to close).
+    UntilClose,
+}
+
+/// The framing of an answer with this status and head, to a request that was `HEAD` or not.
+pub fn answer_framing(status: u16, headers: &[(String, String)], head_request: bool) -> Framing {
+    if head_request || status < 200 || status == 204 || status == 304 {
+        return Framing::Empty;
+    }
+    if is_chunked(headers) {
+        return Framing::Chunked;
+    }
+    let len = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse::<u64>().ok());
+    len.map_or(Framing::UntilClose, Framing::Length)
+}
+
+/// The body de-framer in use, with what is still owed.
+enum Mode {
+    Chunked(ChunkedDecoder),
+    /// This many body bytes are still to arrive.
+    Length(u64),
+    UntilClose,
+}
+
+/// How the answer's body ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerEnd {
+    Complete,
+    /// The browser dropped the body, or access was revoked while it was not reading.
+    Gone,
+    /// Malformed framing, or the leg ended before the body was whole.
+    Aborted,
+}
+
+/// Queues one frame for the browser without waiting on it past revocation: a viewer that
+/// stopped reading fills the queue, and the wait must still end when the share is revoked.
+async fn queue(
+    tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
+    revoked: &mut tokio::sync::watch::Receiver<bool>,
+    data: Bytes,
+) -> bool {
+    tokio::select! {
+        r = tx.send(Ok(Frame::data(data))) => r.is_ok(),
+        // (`Ok` only: the flag's sender going away with the pump is not a revocation.)
+        Ok(_) = revoked.wait_for(|v| *v) => false,
+    }
+}
+
+/// Feeds the answer's body to the browser: through the de-framer when `chunked` (hyper
+/// re-frames it toward the browser, `transfer-encoding` being hop-by-hop), each app chunk — a
+/// server-sent event, say — going out as it arrives. Ends when the body is whole (last chunk,
+/// declared length reached), when hyper dropped the body (the browser went away), when the
+/// share is revoked, or when the framing breaks or the leg ends early.
+async fn pump_answer(
+    live: &mut LiveStream,
+    revoked: &mut tokio::sync::watch::Receiver<bool>,
+    tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
+    mode: &mut Mode,
+    first: Vec<u8>,
+) -> AnswerEnd {
+    /// One piece of the body through the mode; `Some(end)` when the body is over.
+    async fn step(
+        mode: &mut Mode,
+        tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
+        revoked: &mut tokio::sync::watch::Receiver<bool>,
+        data: Bytes,
+    ) -> Option<AnswerEnd> {
+        match mode {
+            Mode::UntilClose => (!queue(tx, revoked, data).await).then_some(AnswerEnd::Gone),
+            Mode::Length(left) => {
+                let n = (*left).min(data.len() as u64);
+                *left -= n;
+                // Bytes beyond the declared length are not part of the answer.
+                let data = data.slice(..usize::try_from(n).unwrap_or(usize::MAX));
+                if !data.is_empty() && !queue(tx, revoked, data).await {
+                    return Some(AnswerEnd::Gone);
+                }
+                (*left == 0).then_some(AnswerEnd::Complete)
+            }
+            Mode::Chunked(d) => {
+                let mut out = Vec::new();
+                let fed = d.feed(&data, &mut out);
+                for b in out {
+                    if !queue(tx, revoked, b).await {
+                        return Some(AnswerEnd::Gone);
+                    }
+                }
+                match fed {
+                    Ok(false) => None,
+                    Ok(true) => Some(AnswerEnd::Complete),
+                    Err(ChunkError) => Some(AnswerEnd::Aborted),
+                }
+            }
+        }
+    }
+    if matches!(mode, Mode::Length(0)) {
+        return AnswerEnd::Complete;
+    }
+    if !first.is_empty()
+        && let Some(end) = step(mode, tx, revoked, Bytes::from(first)).await
+    {
+        return end;
+    }
+    loop {
+        let b = tokio::select! {
+            b = live.from_app() => b,
+            () = tx.closed() => return AnswerEnd::Gone,
+        };
+        let Some(b) = b else {
+            // The leg ended: only a body with no length ends cleanly here.
+            return if matches!(mode, Mode::UntilClose) && !*revoked.borrow() {
+                AnswerEnd::Complete
+            } else {
+                AnswerEnd::Aborted
+            };
+        };
+        if let Some(end) = step(mode, tx, revoked, b).await {
+            return end;
+        }
+    }
 }
 
 /// Bridges hyper's upgraded browser pipe to the leg-1 stream in both directions: browser →

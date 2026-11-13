@@ -107,6 +107,51 @@ async fn app_route(
     }
     Ok(match path.as_str() {
         "/echo" => full(200, "echo"),
+        // What the app saw of the request's cookies and connection handling (FIX-088).
+        "/who" => {
+            let h = |n: &str| {
+                req.headers()
+                    .get(n)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("none")
+                    .to_owned()
+            };
+            let body = format!(
+                "cookie={} connection={} xrealip={} via={} xff={}",
+                h("cookie"),
+                h("connection"),
+                h("x-real-ip"),
+                h("via"),
+                h("x-forwarded-for")
+            );
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/plain")
+                .body(Full::new(Bytes::from(body)).boxed_unsync())
+                .unwrap()
+        }
+        // Counts the request body's bytes (a chunked upload has no length up front).
+        "/upload" => {
+            let n = req
+                .into_body()
+                .collect()
+                .await
+                .map_or(0, |b| b.to_bytes().len());
+            hyper::Response::builder()
+                .status(200)
+                .body(Full::new(Bytes::from(format!("got={n}"))).boxed_unsync())
+                .unwrap()
+        }
+        // Headers the relay must not pass to the browser (SEC-85).
+        "/hdrs" => hyper::Response::builder()
+            .status(200)
+            .header("clear-site-data", "\"cache\"")
+            .header("alt-svc", "h3=\":443\"")
+            .header("service-worker-allowed", "/")
+            .header("strict-transport-security", "max-age=1")
+            .header("content-security-policy", "default-src 'self'")
+            .body(Full::new(Bytes::from_static(b"h")).boxed_unsync())
+            .unwrap(),
         // Range requests pass through untouched: the app answers 206 itself.
         "/range" => match req.headers().get("range").and_then(|v| v.to_str().ok()) {
             Some("bytes=0-3") => hyper::Response::builder()
@@ -235,6 +280,21 @@ pub struct Script {
     /// How many long-polling `resolve` calls the API saw, and the `wait_secs` of the last.
     pub waits: std::sync::atomic::AtomicU32,
     pub last_wait: std::sync::atomic::AtomicU32,
+    /// When set, every `resolve` answers this body instead (a `deny`, say).
+    pub resolve_override: Mutex<Option<serde_json::Value>>,
+    /// The status `grants/redeem` answers (0 = 404, the default of the fake).
+    pub redeem_status: std::sync::atomic::AtomicU16,
+    /// When set, `resolve` answers `login` for every session hash not in the set (random or
+    /// stale cookies) and counts those calls in `unknown_resolves`.
+    pub known: Mutex<Option<HashSet<String>>>,
+    pub unknown_resolves: std::sync::atomic::AtomicU32,
+    /// A non-zero status makes every `resolve` answer it (a throttled or failing API).
+    pub resolve_status: std::sync::atomic::AtomicU16,
+    /// The next this many `validate` calls answer 429; every call is timed in `validate_calls`.
+    pub validate_fail: std::sync::atomic::AtomicU32,
+    pub validate_calls: Mutex<Vec<Instant>>,
+    /// Replaces the `runner_endpoint` of the `streams` answer.
+    pub endpoint_override: Mutex<Option<String>>,
 }
 
 pub async fn fake_api(listener: TcpListener, runner_endpoint: String, script: Arc<Script>) {
@@ -272,8 +332,34 @@ pub async fn fake_api(listener: TcpListener, runner_endpoint: String, script: Ar
                                     "wake_wait_secs": 45,
                                 }
                             })),
+                            "/v1/relay/grants/redeem" => {
+                                let st = script
+                                    .redeem_status
+                                    .load(std::sync::atomic::Ordering::SeqCst);
+                                hyper::Response::builder()
+                                    .status(if st == 0 { 404 } else { st })
+                                    .body(Full::new(Bytes::new()))
+                                    .unwrap()
+                            }
                             "/v1/relay/resolve" => {
                                 use std::sync::atomic::Ordering::SeqCst;
+                                if let Some(v) = script.resolve_override.lock().unwrap().clone() {
+                                    return Ok::<_, Infallible>(reply(v));
+                                }
+                                let rs = script.resolve_status.load(SeqCst);
+                                if rs != 0 {
+                                    return Ok(hyper::Response::builder()
+                                        .status(rs)
+                                        .body(Full::new(Bytes::new()))
+                                        .unwrap());
+                                }
+                                if let Some(known) = script.known.lock().unwrap().as_ref() {
+                                    let h = json["session_hash"].as_str().unwrap_or_default();
+                                    if !known.contains(h) {
+                                        script.unknown_resolves.fetch_add(1, SeqCst);
+                                        return Ok(reply(serde_json::json!({"decision": "login"})));
+                                    }
+                                }
                                 let waited = json["wait_secs"].as_u64().unwrap_or(0) as u32;
                                 let mut route = script.route.lock().unwrap().clone();
                                 if waited > 0 {
@@ -304,14 +390,30 @@ pub async fn fake_api(listener: TcpListener, runner_endpoint: String, script: Ar
                                         .body(Full::new(Bytes::new()))
                                         .unwrap()
                                 } else {
+                                    let endpoint = script
+                                        .endpoint_override
+                                        .lock()
+                                        .unwrap()
+                                        .clone()
+                                        .unwrap_or(runner_endpoint);
                                     reply(serde_json::json!({
                                         "grant": "aux_test",
                                         "expires_in": 30,
-                                        "runner_endpoint": runner_endpoint,
+                                        "runner_endpoint": endpoint,
                                     }))
                                 }
                             }
                             "/v1/relay/validate" => {
+                                use std::sync::atomic::Ordering::SeqCst;
+                                script.validate_calls.lock().unwrap().push(Instant::now());
+                                let left = script.validate_fail.load(SeqCst);
+                                if left > 0 {
+                                    script.validate_fail.store(left - 1, SeqCst);
+                                    return Ok(hyper::Response::builder()
+                                        .status(429)
+                                        .body(Full::new(Bytes::new()))
+                                        .unwrap());
+                                }
                                 let revoked = script.revoked.lock().unwrap().clone();
                                 let out: Vec<_> = json["sessions"]
                                     .as_array()
@@ -355,13 +457,119 @@ pub async fn bind_any() -> (TcpListener, u16) {
     (l, port)
 }
 
+/// A raw TCP "app": the test writes exactly the bytes it wants the relay to see (framing
+/// violations hyper would never emit).
+pub type RawApp = Arc<
+    dyn Fn(TcpStream) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// A raw app from an async closure.
+pub fn raw_app<F, Fut>(f: F) -> RawApp
+where
+    F: Fn(TcpStream) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    Arc::new(move |tcp| Box::pin(f(tcp)))
+}
+
+/// Reads one request head from a raw app's socket (up to the blank line).
+pub async fn raw_read_head(tcp: &mut TcpStream) -> Vec<u8> {
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 4096];
+    while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
+        let n = tcp.read(&mut buf).await.unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        raw.extend_from_slice(&buf[..n]);
+    }
+    raw
+}
+
+/// Rig options beyond the timeouts.
+#[derive(Clone)]
+pub struct Opts {
+    pub heartbeat: bool,
+    /// `relay.request_body_max_bytes`.
+    pub body_max: usize,
+    /// Replaces the hyper app (the runner dials it for every stream).
+    pub app: Option<RawApp>,
+    /// The runner accepts the leg-1 WebSocket and then never reads or writes again.
+    pub deaf_runner: bool,
+    /// `relay.trusted_proxies` (CIDRs).
+    pub trusted_proxies: Vec<&'static str>,
+    /// Negative resolves per address per minute (`None` = the relay's default).
+    pub negative_cap: Option<u32>,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self {
+            heartbeat: false,
+            body_max: 1 << 20,
+            app: None,
+            deaf_runner: false,
+            trusted_proxies: Vec::new(),
+            negative_cap: None,
+        }
+    }
+}
+
+/// A runner that completes the handshake and then holds the socket without reading.
+async fn deaf_runner(listener: TcpListener) {
+    loop {
+        let Ok((tcp, _)) = listener.accept().await else {
+            return;
+        };
+        tokio::spawn(async move {
+            let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else {
+                return;
+            };
+            let _hold = ws;
+            std::future::pending::<()>().await;
+        });
+    }
+}
+
 /// The relay on `timeouts`; `heartbeat` starts the validate + report loop (every
 /// `timeouts.validate_every`).
 pub async fn rig(timeouts: Timeouts, heartbeat: bool) -> Rig {
+    rig_with(
+        timeouts,
+        Opts {
+            heartbeat,
+            ..Opts::default()
+        },
+    )
+    .await
+}
+
+pub async fn rig_with(timeouts: Timeouts, opts: Opts) -> Rig {
+    let heartbeat = opts.heartbeat;
     let (app_l, app_port) = bind_any().await;
-    tokio::spawn(fake_app(app_l));
+    match opts.app {
+        Some(app) => {
+            tokio::spawn(async move {
+                loop {
+                    let Ok((tcp, _)) = app_l.accept().await else {
+                        return;
+                    };
+                    tokio::spawn(app(tcp));
+                }
+            });
+        }
+        None => {
+            tokio::spawn(fake_app(app_l));
+        }
+    }
     let (run_l, run_port) = bind_any().await;
-    tokio::spawn(fake_runner(run_l, app_port));
+    if opts.deaf_runner {
+        tokio::spawn(deaf_runner(run_l));
+    } else {
+        tokio::spawn(fake_runner(run_l, app_port));
+    }
     let (api_l, api_port) = bind_any().await;
     let script = Arc::new(Script::default());
     tokio::spawn(fake_api(
@@ -374,11 +582,20 @@ pub async fn rig(timeouts: Timeouts, heartbeat: bool) -> Rig {
         aurora_relay::api::RelayApi::new(&format!("http://127.0.0.1:{api_port}"), "aul_test")
             .unwrap(),
     );
-    let state = aurora_relay::state::State::new(
+    let state = aurora_relay::state::State::with_edge(
         api.clone(),
         "previews.example.org".into(),
         "https://aurora.example.org".into(),
         45,
+        aurora_relay::limits::GrantRate::spec(),
+        opts.trusted_proxies
+            .iter()
+            .map(|c| aurora_core::cidr::Cidr::parse(c).unwrap())
+            .collect(),
+        aurora_relay::limits::NegativeResolves::new(
+            opts.negative_cap
+                .unwrap_or(aurora_relay::limits::NEGATIVE_RESOLVES_PER_MIN),
+        ),
     );
     let streams = aurora_relay::stream::Streams::with_timeouts(32, 64, timeouts);
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
@@ -413,7 +630,7 @@ pub async fn rig(timeouts: Timeouts, heartbeat: bool) -> Rig {
         state,
         streams.clone(),
         2048,
-        1 << 20,
+        opts.body_max,
         stop_rx,
     ));
     Rig {

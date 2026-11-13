@@ -372,6 +372,112 @@ pub async fn record_wake(
     Ok(true)
 }
 
+/// The timestamps of an `*_attempts` array that fall inside the last `window_secs`.
+pub fn attempts_within(v: &serde_json::Value, window_secs: f64) -> Vec<DateTime<Utc>> {
+    let cutoff =
+        Utc::now() - chrono::TimeDelta::try_seconds(window_secs as i64).unwrap_or_default();
+    json_times(v).into_iter().filter(|t| *t > cutoff).collect()
+}
+
+/// Seconds until an attempt budget frees a slot: the oldest in-window attempt leaves the
+/// window (at least 1; 60 when there is none).
+pub fn secs_until_slot(in_window: &[DateTime<Utc>], window_secs: f64) -> u32 {
+    let Some(oldest) = in_window.iter().min() else {
+        return 60;
+    };
+    let left = (*oldest + chrono::TimeDelta::try_seconds(window_secs as i64).unwrap_or_default())
+        - Utc::now();
+    u32::try_from(left.num_seconds().max(1)).unwrap_or(u32::MAX)
+}
+
+/// What a wake demand did (`demand_wake`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeOutcome {
+    /// A new wake was recorded against the share's hourly budget and the sandbox stamped.
+    Recorded,
+    /// A demand of the current `PREVIEW_WAKE_WINDOW` is still outstanding: nothing recorded.
+    Outstanding,
+    /// `PREVIEW_WAKES_PER_SHARE_HOUR` is exhausted; the next slot frees in this many seconds.
+    Limited { retry_after_secs: u32 },
+}
+
+/// The wake demand of a request to a share whose sandbox is parked (`docs/11 §Port previews`):
+/// at most one per `PREVIEW_WAKE_WINDOW` however many requests (or long-poll iterations) ask,
+/// recorded against `PREVIEW_WAKES_PER_SHARE_HOUR` only when it is new. Stamps
+/// `preview_wake_at` (due work for the start arm) and, when the share has a start command,
+/// `preview_start_requested_at`. One transaction: the share row is the lock.
+pub async fn demand_wake(
+    conn: &mut PgConnection,
+    share: Uuid,
+    agent: Uuid,
+    with_start: bool,
+    window_secs: f64,
+) -> Result<WakeOutcome, DbError> {
+    let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+    let cur: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT wake_attempts FROM preview_shares WHERE id = $1 FOR UPDATE")
+            .bind(share)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(cur) = cur else {
+        return Ok(WakeOutcome::Limited {
+            retry_after_secs: 60,
+        });
+    };
+    let outstanding: bool = sqlx::query_scalar(
+        "SELECT coalesce(bool_or(preview_wake_at > now() - make_interval(secs => $2)), false) \
+           FROM sandboxes WHERE agent_id = $1 AND state IS NOT NULL",
+    )
+    .bind(agent)
+    .bind(window_secs)
+    .fetch_one(&mut *tx)
+    .await?;
+    if outstanding {
+        return Ok(WakeOutcome::Outstanding);
+    }
+    let kept = attempts_within(&cur, 3600.0);
+    if kept.len() >= PREVIEW_WAKES_PER_SHARE_HOUR as usize {
+        return Ok(WakeOutcome::Limited {
+            retry_after_secs: secs_until_slot(&kept, 3600.0),
+        });
+    }
+    sqlx::query("UPDATE preview_shares SET wake_attempts = $2, updated_at = now() WHERE id = $1")
+        .bind(share)
+        .bind(push_times(&kept, Utc::now()))
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE sandboxes SET preview_wake_at = now(), \
+              preview_start_requested_at = CASE WHEN $2 THEN now() ELSE preview_start_requested_at END, \
+              updated_at = now() \
+          WHERE agent_id = $1 AND state IS NOT NULL",
+    )
+    .bind(agent)
+    .bind(with_start)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(WakeOutcome::Recorded)
+}
+
+/// `(preview_wake_at, preview_start_requested_at)` of a sandbox.
+pub type SandboxStamps = (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+
+/// The sandbox's start-demand stamps: `(preview_wake_at, preview_start_requested_at)`.
+pub async fn sandbox_stamps(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<SandboxStamps, DbError> {
+    let row: Option<SandboxStamps> = sqlx::query_as(
+        "SELECT preview_wake_at, preview_start_requested_at FROM sandboxes \
+          WHERE agent_id = $1 AND state IS NOT NULL",
+    )
+    .bind(agent)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.unwrap_or_default())
+}
+
 /// Records a start attempt inside `start_attempts`, keeping only `window_secs` back.
 /// Returns `false` when `PREVIEW_START_ATTEMPTS` within the window is exhausted.
 pub async fn record_start_attempt(

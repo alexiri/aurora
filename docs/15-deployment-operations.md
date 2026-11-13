@@ -96,6 +96,7 @@ one new entry without activating it.
 | `previews.session_ttl_secs`, `previews.session_idle_secs`, `previews.bytes_per_share_day` | 28800, 3600, 5 GiB | api, relay | (phase 4, P4-PRV-2) lower only for the first two (`02 §Limits`) |
 | `relay.api_url` | `http://127.0.0.1:4101` | relay | (phase 4, P4-PRV-2) the API it registers with; the anchor token comes from `AURORA_RELAY_TOKEN` (`aul_`) |
 | `relay.listen` / `relay.ops_port` | `0.0.0.0:4112` / `4193` | relay | (phase 4, P4-PRV-2) edge-facing HTTP / health and metrics |
+| `relay.trusted_proxies` | `[]` | relay | (FIX-090) CIDRs of the edge proxies in front of the relay (same syntax, semantics and default as `server.trusted_proxies`; `/0` refused): when the socket peer is inside one, the visitor's address is the rightmost untrusted `X-Forwarded-For` entry (grant-redemption limit, outbound `X-Forwarded-For`); without it the socket peer is the client address |
 | `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB (chart: 2048, 64, **32 MiB**) | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two. 100 MiB is the ceiling and the binary's default; the Helm chart deliberately ships the lower 32 MiB (`docs/23`), raise it to at most 100 MiB if previews must accept larger uploads (FIX-074) |
 | `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`). The runner registers the `stream_tls` capability; the API derives the endpoint scheme it hands the relay from it (`ws://` off, `wss://` on, `16 §W18`) — the relay verifies the presented certificate against its own trust configuration |
 | `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled. Helm: the chart value `terminal.enabled` is the single switch — it mirrors `config.terminal.enabled` (FIX-053), so `helm upgrade --set terminal.enabled=true` wires everything; set the config key only to agree explicitly, never alone |
@@ -866,8 +867,10 @@ until an org owner or admin switches **Port previews** on.
    wildcards; use DNS-01 through cert-manager). The chart has no `previews.tls.*` values and renders
    no TLS block for the wildcard host: configure the certificate on your ingress controller or
    Gateway listener ([23 §Port previews (relay)](23-helm-values.md#port-previews-relay)). The relay serves plain HTTP behind the edge (it
-   never holds the certificate key) and trusts the edge's overwritten `X-Forwarded-Proto`/`-For`
-   exactly like the API (`server.trusted_proxies`). Browsers must reach the preview host on 443;
+   never holds the certificate key) and trusts the edge's overwritten `X-Forwarded-For`
+   exactly like the API, but only from the peers listed in its own `relay.trusted_proxies` (same
+   semantics and default as `server.trusted_proxies`; **list your ingress pods' CIDR**, or every visitor
+   shares the ingress pod's address in the grant-redemption limit). Browsers must reach the preview host on 443;
    previews are **https only** (the edge redirects `http` and the relay refuses to mint a grant for
    a non-https redirect target).
 
@@ -955,11 +958,11 @@ the sandboxes namespace.
 `quota`, `too_large`, `unreachable`, `upstream_error`, `invalid`), `aurora_relay_streams_open` (gauge),
 `aurora_relay_stream_bytes_total{direction}` (`to_app`, `from_app`), `aurora_relay_stream_closed_total{reason}`
 (`closed`, `eof`, `detached`, `revoked`, `idle`, `lifetime`), `aurora_relay_stream_dial_seconds` (histogram) and
-`aurora_relay_stream_dial_errors_total{kind}` (`connect`, `timeout`), `aurora_relay_grants_total{result}`
+`aurora_relay_stream_dial_errors_total{kind}` (`connect`, `timeout`, `endpoint` — a runner endpoint that is not host[:port], FIX-090), `aurora_relay_grants_total{result}`
 (`redeemed`, `invalid`, `no_state`), `aurora_relay_resolve_cache{hit}` (`true`/`false`), `aurora_relay_refused_total{reason}` (FIX-072, `docs/16 §W18`, C-636:
-`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`; no ids in labels; the matching responses are 429 `preview_streams_limit` / WebSocket 4409,
+`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`, `negative_resolves`, `head_timeout`, `body_too_large` (FIX-088/090); no ids in labels; the matching responses are 429 `preview_streams_limit` / WebSocket 4409,
 429 `preview_quota` with `Retry-After`, and 429 `grant_rate_limited`); API (every replica):
-`aurora_preview_shares{org}` (active shares per org slug, set by the share job) and
+`aurora_preview_shares{state}` (shares per state, `active` / `paused`, set by the share job; no tenant label) and
 `aurora_preview_stream_bytes_total{direction}`. There is no `aurora_relay_up`: relay liveness is the
 Prometheus-generated `up{job="aurora-relay"}` of the 4193 scrape (`== 0` means the relay is down or unscrapable)
 and the Deployment's readiness. Alert on `up{job="aurora-relay"} == 0`, on a rising

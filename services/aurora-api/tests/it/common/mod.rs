@@ -10,15 +10,20 @@ use aurora_core::token::{self, TokenPrefix};
 use aurora_testkit::TestDb;
 use aurora_testkit::oidc::MockIdp;
 
+/// The whole text exposition of the process-wide recorder (installed on first use).
+pub fn metrics_text() -> String {
+    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+    static H: std::sync::OnceLock<PrometheusHandle> = std::sync::OnceLock::new();
+    H.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap())
+        .render()
+}
+
 /// Value of one counter series (`name` plus its exact label text, e.g.
 /// `aurora_scim_requests_total{outcome="ok"}`) in the process-wide Prometheus recorder, 0 when
 /// the series does not exist yet. The recorder is global to the `it` binary and installed once
 /// here; counters only grow, so tests assert on deltas.
 pub fn counter_value(series: &str) -> f64 {
-    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-    static H: std::sync::OnceLock<PrometheusHandle> = std::sync::OnceLock::new();
-    let h = H.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap());
-    h.render()
+    metrics_text()
         .lines()
         .find(|l| l.starts_with(series) && l[series.len()..].starts_with(' '))
         .and_then(|l| l.split_whitespace().last()?.parse().ok())

@@ -629,6 +629,10 @@ pub struct RelaySection {
     pub request_body_max_bytes: usize,
     /// The API's `previews.domain` (the relay refuses to serve on mismatch after registering).
     pub previews_domain: Option<String>,
+    /// CIDRs of the edge proxies in front of the relay (same syntax and semantics as
+    /// `server.trusted_proxies`; default none): when the socket peer is inside one, the visitor's
+    /// address is the rightmost untrusted `X-Forwarded-For` entry; otherwise the peer itself.
+    pub trusted_proxies: Vec<String>,
 }
 impl Default for RelaySection {
     fn default() -> Self {
@@ -640,6 +644,7 @@ impl Default for RelaySection {
             max_streams_per_user: 64,
             request_body_max_bytes: 100 * 1024 * 1024,
             previews_domain: None,
+            trusted_proxies: vec![],
         }
     }
 }

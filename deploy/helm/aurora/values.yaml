@@ -284,6 +284,11 @@ relay:
   request_body_max_bytes: 33554432   # 32 MiB (the binary's default and ceiling is 100 MiB)
   max_streams: 2048
   max_streams_per_user: 64
+  # CIDRs of the edge proxies / ingress pods in front of the relay ([relay] trusted_proxies, the
+  # same semantics as server.trusted_proxies): when the socket peer is inside one, the visitor's
+  # address is the rightmost untrusted X-Forwarded-For entry (grant-redemption limit, the
+  # X-Forwarded-For sent to the app); empty means the socket peer is the visitor (FIX-090).
+  trusted_proxies: []
 
 # Web terminal (P4-TERM, D-161, docs/15 §Web terminal operations): the dashboard's Terminal
 # tab — a wterm pane over the API's same-origin WebSocket (`/v1/agents/{agent}/terminal`),
