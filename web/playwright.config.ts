@@ -31,13 +31,9 @@ const defaultWorkers = 4;
 // next to each other. They live in their own project with a single worker and no file parallelism;
 // every other (mocked) spec stays in the parallel "mocked" project. The real-stack project is
 // selected by `--project real-stack` (the scripts/e2e/*.sh wrappers pass spec paths, which match it).
-// Playwright's `workers` is global, not per project, so the single-worker guarantee is applied
-// whenever a run targets the real stack: `--project real-stack`, a real-stack spec path, or an
-// external stack (AURORA_E2E_BASE_URL, which only the real-stack harnesses set).
+// The project's own `workers: 1` (a per-project cap under the global limit) keeps its files from
+// running on different workers at the same time.
 const REAL_STACK = [/first-run\.spec\.ts$/, /m1\.spec\.ts$/, /no-default-model\.spec\.ts$/, /onboarding-journeys\.spec\.ts$/];
-const targetsRealStack =
-  external !== undefined ||
-  process.argv.some((a) => a.includes("real-stack") || REAL_STACK.some((re) => re.test(a)));
 
 export default defineConfig({
   testDir: "./e2e",
@@ -46,11 +42,11 @@ export default defineConfig({
   fullyParallel: true,
   // Locally no retries (a retry hides a flake); CI keeps its own explicit value via AURORA_E2E_RETRIES.
   retries: process.env.AURORA_E2E_RETRIES ? Number(process.env.AURORA_E2E_RETRIES) : 0,
-  workers: targetsRealStack ? 1 : process.env.AURORA_E2E_WORKERS ? Number(process.env.AURORA_E2E_WORKERS) : defaultWorkers,
+  workers: process.env.AURORA_E2E_WORKERS ? Number(process.env.AURORA_E2E_WORKERS) : defaultWorkers,
   projects: [
     { name: "mocked", testIgnore: REAL_STACK, fullyParallel: true },
     // One worker, files and tests strictly in order: they share one stack.
-    { name: "real-stack", testMatch: REAL_STACK, fullyParallel: false },
+    { name: "real-stack", testMatch: REAL_STACK, fullyParallel: false, workers: 1 },
   ],
   use: { baseURL: external ?? webUrl },
   webServer: external
