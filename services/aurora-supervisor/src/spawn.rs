@@ -20,17 +20,37 @@ const PLACEHOLDER: &str = "aurora-placeholder";
 /// credential (`aub_`/`aup_`), and no secret-shaped name unless the value is the placeholder.
 fn may_pass(key: &str, value: &str) -> bool {
     let k = key.to_ascii_uppercase();
-    if k.starts_with("AURORA_BOOT") || value.starts_with("aub_") || value.starts_with("aup_") {
+    if k.starts_with("AURORA_BOOT") || PLATFORM_PREFIXES.iter().any(|p| value.starts_with(p)) {
         return false;
     }
-    let secret_name = ["_TOKEN", "_SECRET", "_PASSWORD", "_KEY", "_CREDENTIALS"]
-        .iter()
-        .any(|s| k.ends_with(s))
-        || k == "TOKEN"
-        || k == "SECRET"
-        || k == "PASSWORD";
+    let secret_name = SECRET_SUFFIXES.iter().any(|s| k.ends_with(s))
+        || ["TOKEN", "SECRET", "PASSWORD", "DATABASE_URL", "DB_URL"].contains(&k.as_str());
     !secret_name || value == PLACEHOLDER
 }
+
+/// (FIX-114, SEC-34) Every platform token prefix (`aurora_core::token::TokenPrefix`): a value
+/// that starts with one is a platform credential whatever the variable is called.
+const PLATFORM_PREFIXES: [&str; 18] = [
+    "aug_", "aub_", "auc_", "auk_", "auo_", "aur_", "aun_", "aut_", "auw_", "aus_", "aui_", "aup_",
+    "auh_", "aud_", "aul_", "auv_", "aux_", "auy_",
+];
+
+/// Secret-shaped name endings (upper-cased): token/secret/password/key/credential(s)/DSN/pass/
+/// pwd/auth/apikey.
+const SECRET_SUFFIXES: [&str; 12] = [
+    "_TOKEN",
+    "_SECRET",
+    "_PASSWORD",
+    "_KEY",
+    "_CREDENTIALS",
+    "_CREDENTIAL",
+    "_DSN",
+    "_PASS",
+    "_PWD",
+    "_AUTH",
+    "_APIKEY",
+    "_DATABASE_URL",
+];
 
 /// The complete environment of a child: the filtered supervisor environment, then `extra`
 /// (later entries win; rejected entries are dropped).
@@ -126,6 +146,29 @@ mod tests {
         assert!(env.iter().all(|(k, _)| k != "AURORA_BOOT"));
         assert!(env.iter().any(|(k, v)| k == "MY_APP" && v == "1"));
         assert!(env.iter().any(|(k, _)| k == "PATH"));
+    }
+
+    /// (FIX-114) Every added name suffix and every platform token prefix is refused.
+    #[test]
+    fn extended_secret_names_and_prefixes_are_filtered() {
+        for name in [
+            "DATABASE_URL",
+            "REPORTING_DSN",
+            "DB_PASS",
+            "DB_PWD",
+            "SERVICE_AUTH",
+            "VENDOR_APIKEY",
+            "CLOUD_CREDENTIAL",
+            "LEGACY_CREDENTIALS",
+        ] {
+            assert!(!may_pass(name, "real-value"), "{name}");
+            assert!(may_pass(name, PLACEHOLDER), "{name} with the placeholder");
+        }
+        for prefix in PLATFORM_PREFIXES {
+            assert!(!may_pass("ANY_NAME", &format!("{prefix}abc")), "{prefix}");
+        }
+        assert!(may_pass("EDITOR", "vim"));
+        assert!(may_pass("LANG", "C.UTF-8"));
     }
 
     /// No source file other than this one may create a process directly.

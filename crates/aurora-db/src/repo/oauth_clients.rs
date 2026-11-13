@@ -90,26 +90,32 @@ pub async fn list_scope<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Replace public fields / secret ref / enabled flag (each optional).
-pub async fn update<'e, E: PgExecutor<'e>>(
+/// Replace public fields / secret ref / enabled flag (each optional), **compare-and-set**
+/// (FIX-115): only while the row is still the one the caller read — same `secret_ref` and
+/// `updated_at` (the version of the public fields). Returns false when it changed meanwhile;
+/// the caller answers 409 and discards what it sealed.
+pub async fn update_cas<'e, E: PgExecutor<'e>>(
     exec: E,
-    id: Uuid,
+    seen: &ClientRow,
     fields: Option<&serde_json::Value>,
     secret_ref: Option<&str>,
     enabled: Option<bool>,
-) -> Result<(), DbError> {
-    sqlx::query(
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
         "UPDATE app_oauth_clients SET fields = COALESCE($2, fields), \
          secret_ref = COALESCE($3, secret_ref), enabled = COALESCE($4, enabled), \
-         updated_at = now() WHERE id = $1",
+         updated_at = now() WHERE id = $1 AND secret_ref = $5 AND updated_at = $6",
     )
-    .bind(id)
+    .bind(seen.id)
     .bind(fields)
     .bind(secret_ref)
     .bind(enabled)
+    .bind(&seen.secret_ref)
+    .bind(seen.updated_at)
     .execute(exec)
-    .await?;
-    Ok(())
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 pub async fn delete<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {

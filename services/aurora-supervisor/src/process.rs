@@ -34,6 +34,8 @@ use crate::channel::ChannelSender;
 /// Captured gate stdout bound (`12 §Process manager`).
 pub const GATE_CAPTURE: usize = 16 * 1024;
 const MAX_NAME: usize = 64;
+/// (FIX-114) Exited process records kept (beyond those still waiting to be reported).
+pub const MAX_EXITED_RECORDS: usize = 64;
 const MAX_COMMAND: usize = 4096;
 const MAX_PATTERN: usize = aurora_core::limits::WATCH_PATTERN_MAX;
 const MAX_WATCHES: usize = 8;
@@ -109,6 +111,20 @@ pub struct ProcessManager {
     dirty: Notify,
 }
 
+/// (FIX-114) Drop the oldest exited records beyond `MAX_EXITED_RECORDS`, keeping any the API has
+/// not been told about yet (`dirty`). Ids are UUID v7: the map is ordered oldest first.
+fn prune_exited(procs: &mut BTreeMap<String, Proc>, dirty: &BTreeSet<String>) {
+    let exited: Vec<String> = procs
+        .iter()
+        .filter(|(id, p)| p.state != ProcessStatus::Running && !dirty.contains(*id))
+        .map(|(id, _)| id.clone())
+        .collect();
+    let excess = (exited.len() + 1).saturating_sub(MAX_EXITED_RECORDS);
+    for id in exited.into_iter().take(excess) {
+        procs.remove(&id);
+    }
+}
+
 fn tail_string(ring: &VecDeque<u8>, max: usize) -> String {
     let bytes: Vec<u8> = ring.iter().copied().collect();
     let mut s = String::from_utf8_lossy(&bytes).into_owned();
@@ -131,6 +147,63 @@ fn truncate_bytes(s: &str, max: usize) -> String {
         end -= 1;
     }
     s[..end].to_owned()
+}
+
+/// `(state, ppid)` from the text of `/proc/<pid>/stat` (the command name may contain spaces and
+/// parentheses, so the fields start after the **last** `)`).
+pub fn parse_proc_stat(stat: &str) -> Option<(char, i32)> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let mut f = rest.split_whitespace();
+    let state = f.next()?.chars().next()?;
+    let ppid = f.next()?.parse().ok()?;
+    Some((state, ppid))
+}
+
+/// Zombie children of this process, from `/proc`.
+fn zombie_children(me: i32) -> Vec<i32> {
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    rd.filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|pid| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|s| parse_proc_stat(&s))
+                .is_some_and(|(state, ppid)| state == 'Z' && ppid == me)
+        })
+        .collect()
+}
+
+/// (FIX-114, `12` §Process model) The supervisor runs as PID 1 of the sandbox: processes whose
+/// parent died (tool subprocesses of an aborted turn, `sh -c 'server &'`) are reparented to it
+/// and stay zombies until someone waits for them, eating the sandbox's pid budget.
+///
+/// Tokio reaps only the children it spawned, and does so itself at SIGCHLD; a zombie child of
+/// ours that is **still there on the next scan** (`interval` later, long after tokio would have
+/// reaped its own) is an orphan nobody owns, so it is reaped here. Returns a task handle.
+pub fn spawn_reaper(interval: Duration) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let me = i32::try_from(std::process::id()).unwrap_or(1);
+        let mut seen: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
+        let mut tick = tokio::time::interval(interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut chld = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).ok();
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {}
+                Some(()) = async { match chld.as_mut() { Some(s) => s.recv().await, None => None } } => {}
+            }
+            let now: std::collections::BTreeSet<i32> = zombie_children(me).into_iter().collect();
+            for pid in now.intersection(&seen) {
+                if let Some(p) = Pid::from_raw(*pid) {
+                    let _ = rustix::process::waitpid(Some(p), rustix::process::WaitOptions::NOHANG);
+                }
+            }
+            // Zombies seen for the first time get one more interval to be reaped by their owner.
+            seen = now.difference(&seen).copied().collect();
+        }
+    })
 }
 
 fn signal_group(pid: i32, sig: Signal) {
@@ -328,6 +401,21 @@ impl ProcessManager {
         }
     }
 
+    /// Ids of the processes that are running now.
+    pub fn running_ids(&self) -> Vec<String> {
+        self.lock()
+            .procs
+            .iter()
+            .filter(|(_, p)| p.state == ProcessStatus::Running)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Number of process records held (running plus remembered exits).
+    pub fn record_count(&self) -> usize {
+        self.lock().procs.len()
+    }
+
     /// Starts a process; returns its id.
     pub fn start(
         self: &Arc<Self>,
@@ -342,8 +430,10 @@ impl ProcessManager {
             return Err(format!("command must be 1..={MAX_COMMAND} bytes, no NUL"));
         }
         let cwd = resolve_cwd(&self.cfg.working_dir, cwd)?;
+        // (FIX-114) The slot is reserved under the same lock as the `max_running` check, so N+1
+        // concurrent starts yield at most N; exited records are capped so the table stays bounded.
         let id = {
-            let g = self.lock();
+            let mut g = self.lock();
             let running = g
                 .procs
                 .values()
@@ -357,21 +447,15 @@ impl ProcessManager {
             }
             // (P4-PRV-2) Supervisor-assigned UUID (`03 §processes`): the API's `process.state`
             // handler parses the id as a UUID — a `p{n}` string would invalidate the report.
-            Uuid::now_v7().to_string()
-        };
-        let mut child = shell(&self.cfg, command, &cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("could not start process: {e}"))?;
-        {
-            let mut g = self.lock();
-            g.procs.insert(
+            let id = Uuid::now_v7().to_string();
+            let Inner { procs, dirty, .. } = &mut *g;
+            prune_exited(procs, dirty);
+            procs.insert(
                 id.clone(),
                 Proc {
                     name: name.to_owned(),
                     command: command.to_owned(),
-                    pid: child.id().and_then(|p| i32::try_from(p).ok()),
+                    pid: None,
                     state: ProcessStatus::Running,
                     exit_code: None,
                     ring: VecDeque::new(),
@@ -380,6 +464,24 @@ impl ProcessManager {
                     watches: Vec::new(),
                 },
             );
+            id
+        };
+        let mut child = match shell(&self.cfg, command, &cwd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.lock().procs.remove(&id);
+                return Err(format!("could not start process: {e}"));
+            }
+        };
+        {
+            let mut g = self.lock();
+            if let Some(p) = g.procs.get_mut(&id) {
+                p.pid = child.id().and_then(|p| i32::try_from(p).ok());
+            }
             g.dirty.insert(id.clone());
         }
         self.dirty.notify_one();
@@ -440,6 +542,22 @@ impl ProcessManager {
         for f in fires {
             let _ = self.out.send(SupervisorToRunner::WatchFired(f)).await;
         }
+    }
+
+    /// (FIX-114) SIGTERM to the process group of every running process (shutdown, `docs/12`
+    /// §Process model); returns how many groups were signalled.
+    pub fn terminate_all(&self) -> usize {
+        let pids: Vec<i32> = self
+            .lock()
+            .procs
+            .values()
+            .filter(|p| p.state == ProcessStatus::Running)
+            .filter_map(|p| p.pid)
+            .collect();
+        for pid in &pids {
+            signal_group(*pid, Signal::TERM);
+        }
+        pids.len()
     }
 
     /// SIGTERM to the group, SIGKILL after the grace period.

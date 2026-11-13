@@ -326,9 +326,14 @@ impl Ctx<'_> {
         }
     }
 
-    fn new_flow(&self, method: &str, client: Option<Uuid>, level: Option<String>) -> Flow {
-        Flow {
-            nonce: flow::random(16),
+    fn new_flow(
+        &self,
+        method: &str,
+        client: Option<Uuid>,
+        level: Option<String>,
+    ) -> Result<Flow, ApiError> {
+        Ok(Flow {
+            nonce: flow::random(16)?,
             app_id: self.app.app_id.clone(),
             method_id: method.to_owned(),
             scope: if self.t.ws.is_some() {
@@ -350,7 +355,7 @@ impl Ctx<'_> {
             tenant_host: None,
             metadata: Map::new(),
             exp: Flow::expiry(),
-        }
+        })
     }
 
     /// Validate, probe, persist.
@@ -719,7 +724,7 @@ pub async fn start(
                 &h.id,
                 client.as_ref().map(|c| c.id),
                 req.access_level.clone(),
-            );
+            )?;
             if h.authorize {
                 let sealed = flow
                     .seal(state)
@@ -906,7 +911,7 @@ async fn start_oauth(
             "a tenant host is required for this connect method",
         ));
     }
-    let mut flow = ctx.new_flow(&o.id, Some(client.id), level.map(|l| l.id.clone()));
+    let mut flow = ctx.new_flow(&o.id, Some(client.id), level.map(|l| l.id.clone()))?;
     flow.scopes = o.default_scopes.clone();
     flow.tenant_host = tenant;
     flow.metadata = parsed.metadata;
@@ -915,7 +920,7 @@ async fn start_oauth(
         params.extend(l.authorize_params.clone());
     }
     if ce.pkce {
-        let v = flow::random(32);
+        let v = flow::random(32)?;
         params.insert("code_challenge".into(), flow::challenge(&v));
         params.insert("code_challenge_method".into(), "S256".into());
         flow.pkce_verifier = Some(v);

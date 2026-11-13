@@ -138,8 +138,15 @@ impl BootDocument {
         if self.v != 1 {
             return Err(BootError::Invalid("unsupported version"));
         }
-        if !self.runner_url.starts_with("ws://") && !self.runner_url.starts_with("wss://") {
-            return Err(BootError::Invalid("runner_url must be ws:// or wss://"));
+        // (FIX-114, docs/16 §W6) The supervisor cannot dial `wss://` (no TLS feature in the
+        // WebSocket client): refuse it at boot with a clear error instead of failing to connect.
+        if self.runner_url.starts_with("wss://") {
+            return Err(BootError::Invalid(
+                "runner_url must be ws:// (wss:// is not supported until TLS is implemented)",
+            ));
+        }
+        if !self.runner_url.starts_with("ws://") {
+            return Err(BootError::Invalid("runner_url must be ws://"));
         }
         if !self.gateway.proxy.contains(':') {
             return Err(BootError::Invalid("gateway.proxy must be host:port"));

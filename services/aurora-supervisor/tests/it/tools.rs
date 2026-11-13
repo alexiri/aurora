@@ -8,13 +8,12 @@ use std::time::Duration;
 
 use crate::common::TempDir;
 use aurora_protocol::runner::{GateOutcome, HomeSync};
-use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
+use aurora_protocol::supervisor::SupervisorToRunner;
 use aurora_protocol::tools::{TextContent, ToolContent, ToolResult};
 use aurora_supervisor::channel::ChannelSender;
 use aurora_supervisor::home::{HomeConfig, HomeProjector, PartOutcome};
 use aurora_supervisor::mcp_bridge;
 use aurora_supervisor::process::{ProcessConfig, ProcessManager};
-use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
 use aurora_supervisor::tools::{BridgeRequest, Method, ToolHub, ToolsConfig};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -89,21 +88,10 @@ async fn bridge_supervisor_runner_round_trip() {
     let root = d.path().to_path_buf();
     catalogue(&root, &["memory_save"]);
     let sock = root.join("tools.sock");
-    let (out_tx, mut out_rx) = mpsc::channel(256);
-    let (in_tx, in_rx) = mpsc::channel(256);
-    let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
-    cfg.working_dir = root.clone();
-    cfg.process = ProcessConfig::new(root.clone());
-    cfg.tools.socket = Some(sock.clone());
-    let sup = Supervisor::new(
-        cfg,
-        ChannelSender::from_mpsc(out_tx),
-        Arc::new(aurora_supervisor::fake::FakeHarness),
-        aurora_supervisor::streams::StreamsHandle::noop(),
-        aurora_supervisor::pty::PtyHandle::noop(),
-    );
-    tokio::spawn(sup.run(in_rx));
-    next_matching(&mut out_rx, |m| matches!(m, SupervisorToRunner::Ready(_))).await;
+    // (FIX-110) A tool call needs a running turn: the hub serves the socket with one recorded.
+    let (hub, mut out_rx) = hub(&root, ToolsConfig::default());
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
+    tokio::spawn(hub.clone().serve_owned(sock.clone()));
     timeout(T, async {
         while !sock.exists() {
             tokio::time::sleep(Duration::from_millis(20)).await
@@ -167,15 +155,12 @@ async fn bridge_supervisor_runner_round_trip() {
     assert_eq!(call.conversation_id, Uuid::parse_str(CONV).unwrap());
     assert_eq!(call.tool, "memory_save");
     assert_eq!(call.args, json!({"key":"k"}));
-    in_tx
-        .send(RunnerToSupervisor::ToolResult(ToolResult::success(
-            call.call_id,
-            vec![ToolContent::Text(TextContent {
-                text: "saved".into(),
-            })],
-        )))
-        .await
-        .unwrap();
+    hub.on_result(ToolResult::success(
+        call.call_id,
+        vec![ToolContent::Text(TextContent {
+            text: "saved".into(),
+        })],
+    ));
     let res: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
     assert_eq!(res["id"], 3);
     assert_eq!(res["result"]["content"][0]["text"], "saved");
@@ -195,6 +180,25 @@ async fn bridge_supervisor_runner_round_trip() {
             .unwrap()
             .contains("not available")
     );
+}
+
+/// (FIX-110, SEC-24) With no turn running in the conversation (a process left behind by an
+/// earlier turn) a tool call is refused locally: no frame reaches the runner.
+#[tokio::test]
+async fn no_frame_is_sent_without_a_running_turn() {
+    let d = TempDir::new();
+    catalogue(d.path(), &["memory_get"]);
+    let (hub, mut rx) = hub(d.path(), ToolsConfig::default());
+    let conv = Uuid::parse_str(CONV).unwrap();
+    let r = hub.call(CONV, "memory_get", json!({})).await;
+    assert_eq!(r.error.unwrap().code.as_str(), "no_active_turn");
+    assert!(rx.try_recv().is_err(), "nothing was sent");
+    // After the turn ended the same applies.
+    hub.set_turn(conv, Some(Uuid::now_v7()));
+    hub.set_turn(conv, None);
+    let r = hub.call(CONV, "memory_get", json!({})).await;
+    assert_eq!(r.error.unwrap().code.as_str(), "no_active_turn");
+    assert!(rx.try_recv().is_err(), "nothing was sent");
 }
 
 #[tokio::test]
@@ -227,6 +231,7 @@ async fn breaker_opens_after_two_transport_failures_and_closes_on_success() {
             ..ToolsConfig::default()
         },
     );
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
     for _ in 0..2 {
         let r = hub.call(CONV, "memory_get", json!({})).await;
         assert_eq!(r.error.unwrap().code.as_str(), "tool_timeout");
@@ -259,6 +264,7 @@ async fn oversized_results_are_truncated_with_a_note() {
     let d = TempDir::new();
     catalogue(d.path(), &["memory_get"]);
     let (hub, mut rx) = hub(d.path(), ToolsConfig::default());
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
     let h = hub.clone();
     let task = tokio::spawn(async move { h.call(CONV, "memory_get", json!({})).await });
     let SupervisorToRunner::ToolCall(c) = next_matching(&mut rx, |_| true).await else {
@@ -424,6 +430,184 @@ async fn process_arguments_are_enforced() {
             .is_err()
     );
     assert!(pm.call("process_stop", &json!({"id":"p9"})).is_err());
+}
+
+/// (FIX-114, `12` §Process model) A child nobody waits for (what an orphan reparented to PID 1
+/// looks like) is reaped by the supervisor's reaper instead of staying a zombie. The test process
+/// is the parent here; the real thing runs as PID 1 (hosted e2e).
+#[tokio::test]
+async fn the_reaper_collects_zombie_children_nobody_waits_for() {
+    use aurora_supervisor::process::{parse_proc_stat, spawn_reaper};
+    assert_eq!(parse_proc_stat("12 (a b) c) Z 7 1 1"), Some(('Z', 7)));
+    assert_eq!(parse_proc_stat("garbage"), None);
+    let child = aurora_supervisor::spawn::command("true", std::iter::empty::<(&str, &str)>())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    // Leak the handle: nobody calls wait(), so the exited child stays a zombie.
+    std::mem::forget(child);
+    let state = |pid: u32| {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|s| parse_proc_stat(&s))
+            .map(|(st, _)| st)
+    };
+    timeout(T, async {
+        while state(pid) != Some('Z') {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("the child became a zombie");
+    let reaper = spawn_reaper(Duration::from_millis(100));
+    timeout(T, async {
+        while state(pid).is_some() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("the zombie was reaped");
+    reaper.abort();
+}
+
+/// (FIX-114) Shutdown signals the registered process groups.
+#[tokio::test]
+async fn terminate_all_signals_running_groups() {
+    let d = TempDir::new();
+    let (pm, _rx) = procs(d.path());
+    let id = pm.start("sleeper", "sleep 30", None).unwrap();
+    // pid is recorded right after spawn
+    timeout(T, async {
+        while pm.terminate_all() == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("a running group was signalled");
+    timeout(T, async {
+        while pm.running_ids().contains(&id) {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("the SIGTERM ended the process");
+}
+
+/// (FIX-114) 200 quick starts keep the table bounded (exited records are capped), and N+1
+/// concurrent starts yield at most `max_running` (the slot is reserved under the check's lock).
+#[tokio::test]
+async fn process_table_is_bounded_and_concurrent_starts_respect_max_running() {
+    use aurora_supervisor::process::MAX_EXITED_RECORDS;
+    let d = TempDir::new();
+    let (pm, mut rx) = procs(d.path());
+    // The runner side drains the reports (records not yet reported are never pruned).
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    for i in 0..200 {
+        // Stay below `max_running`: this part is about exited records, not the running cap.
+        while pm.running_ids().len() >= 8 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let id = pm.start(&format!("q{i}"), "true", None);
+        assert!(id.is_ok(), "{id:?}");
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        pm.record_count() <= MAX_EXITED_RECORDS + 20,
+        "{} records",
+        pm.record_count()
+    );
+    // N+1 concurrent starts of long-running processes: at most max_running (16) succeed.
+    let (pm, _rx) = procs(d.path());
+    let mut joins = Vec::new();
+    for i in 0..24 {
+        let pm = pm.clone();
+        joins.push(tokio::task::spawn_blocking(move || {
+            pm.start(&format!("s{i}"), "sleep 30", None).is_ok()
+        }));
+    }
+    let mut ok = 0;
+    for j in joins {
+        ok += usize::from(j.await.unwrap());
+    }
+    assert_eq!(ok, 16, "exactly max_running starts win");
+    for id in pm.running_ids() {
+        let _ = pm.stop(&id);
+    }
+}
+
+/// (FIX-114) Above the per-connection in-flight cap a call is refused `tools_unavailable`, and an
+/// over-long bridge line is refused instead of being buffered.
+#[tokio::test]
+async fn over_cap_calls_and_over_long_bridge_lines_are_refused() {
+    use aurora_supervisor::mcp_bridge::{Line, next_line_bounded};
+    // The reader refuses a line over the bound, resynchronises at the next newline and keeps
+    // the line after it.
+    let mut data = vec![b'x'; 5000];
+    data.extend_from_slice(b"\nshort\n");
+    let mut r = BufReader::new(&data[..]);
+    let (mut buf, mut skipping) = (Vec::new(), false);
+    let first = next_line_bounded(&mut r, &mut buf, &mut skipping, 1000)
+        .await
+        .unwrap();
+    assert!(matches!(first, Some(Line::TooLong)));
+    let second = next_line_bounded(&mut r, &mut buf, &mut skipping, 1000)
+        .await
+        .unwrap();
+    assert!(matches!(second, Some(Line::Ok(ref s)) if s == "short"));
+    assert!(
+        next_line_bounded(&mut r, &mut buf, &mut skipping, 1000)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // In-flight cap on the tools socket: with the cap at 1 and one call waiting for its result,
+    // the second request is refused.
+    let d = TempDir::new();
+    catalogue(d.path(), &["memory_get"]);
+    let (hub, mut rx) = hub(
+        d.path(),
+        ToolsConfig {
+            max_inflight: 1,
+            ..ToolsConfig::default()
+        },
+    );
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
+    let sock: PathBuf = d.path().join("cap.sock");
+    tokio::spawn(hub.clone().serve_owned(sock.clone()));
+    timeout(T, async {
+        while !sock.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .unwrap();
+    let mut s = tokio::net::UnixStream::connect(&sock).await.unwrap();
+    let req = |id: u64| {
+        let r = BridgeRequest {
+            id,
+            session: CONV.into(),
+            method: Method::Call,
+            tool: Some("memory_get".into()),
+            arguments: Some(json!({})),
+        };
+        let mut line = serde_json::to_vec(&r).unwrap();
+        line.push(b'\n');
+        line
+    };
+    s.write_all(&req(1)).await.unwrap();
+    // The first call reaches the runner and waits for its result.
+    let SupervisorToRunner::ToolCall(c) = next_matching(&mut rx, |_| true).await else {
+        panic!()
+    };
+    s.write_all(&req(2)).await.unwrap();
+    let mut r = BufReader::new(s);
+    let mut resp = String::new();
+    r.read_line(&mut resp).await.unwrap();
+    let v: Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["id"], 2, "{v}");
+    assert_eq!(v["error"]["code"], "tools_unavailable", "{v}");
+    hub.on_result(ToolResult::success(c.call_id, vec![]));
 }
 
 #[tokio::test]

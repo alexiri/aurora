@@ -471,18 +471,9 @@ async fn result(
         return Ok(res(r, ReportStatus::Duplicate, None));
     }
     s.conversation_bus.flush_turn(&s.pool, cid, turn).await;
-    let msgs: Vec<Msg> = hosted::answer_buffer_take(tx, turn)
-        .await?
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
-    for m in msgs.iter().filter(|m| !m.text.trim().is_empty()) {
-        let mut p =
-            json!({"turn_id": turn, "message_id": m.id, "text": clip(&m.text, TEXT_MAX_BYTES)});
-        if let Some(rt) = &m.reply_to {
-            p["reply_to"] = json!(rt);
-        }
-        conv::append_event(tx, cid, Some(turn), "text", &p).await?;
-    }
+    // The answer rule: the text buffered since the last tool call becomes durable `text` events
+    // (also on every API-side failure path, `lifecycle::fail`; FIX-115).
+    lifecycle::drain_answer(tx, cid, turn).await?;
     let status = tr.status.as_str();
     let code = tr.error_code.as_ref().map(|c| c.as_str().to_owned());
     let message = tr.error_message.as_deref().map(|m| clip(m, 2000));

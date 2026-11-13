@@ -276,6 +276,11 @@ impl Supervisor {
         }
     }
 
+    /// The background-process manager (FIX-114: `main` forwards SIGTERM to its groups at exit).
+    pub fn process_manager(&self) -> Arc<ProcessManager> {
+        self.procs.clone()
+    }
+
     /// Runs until `inbound` closes or a `shutdown` frame has been handled.
     pub async fn run(mut self, mut inbound: mpsc::Receiver<RunnerToSupervisor>) {
         let ready = SupervisorReady {
@@ -339,6 +344,8 @@ impl Supervisor {
     }
 
     async fn shutdown(&mut self, grace: Duration, done_rx: &mut mpsc::UnboundedReceiver<Uuid>) {
+        // (FIX-114, `12` §Process model) SIGTERM to every registered process group.
+        self.procs.terminate_all();
         for t in self.turns.values() {
             t.aborted.store(true, Ordering::SeqCst);
             t.abort.notify_one();

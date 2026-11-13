@@ -38,15 +38,24 @@ pub fn next_after(expr: &str, tz: &str, after: DateTime<Utc>) -> Result<DateTime
         .map_err(|_| bad("/cron", "the expression never fires"))
 }
 
-/// Validate the pair and enforce the minimum interval over the next few occurrences; returns
-/// the first occurrence after `now`.
+/// (FIX-110) How far the minimum interval is checked: a full week of occurrences (an hourly
+/// minute list like `0,5,10,15,20,21 * * * *` repeats every hour, a weekday list every week) or
+/// this many occurrences, whichever comes first.
+const SCAN_SPAN: Duration = Duration::days(8);
+const SCAN_MAX: usize = 2_100;
+
+/// Validate the pair and enforce the minimum interval over a full cycle of occurrences (a week);
+/// returns the first occurrence after `now`.
 pub fn validate(expr: &str, tz: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>, ApiError> {
     let first = next_after(expr, tz, now)?;
     let mut prev = first;
-    for _ in 0..4 {
+    for _ in 0..SCAN_MAX {
         let Ok(n) = next_after(expr, tz, prev) else {
             break;
         };
+        if n - first > SCAN_SPAN {
+            break;
+        }
         if n - prev < MIN_INTERVAL {
             return Err(bad(
                 "/cron",
@@ -80,6 +89,19 @@ mod tests {
         assert!(validate("* * * * *", "UTC", Utc::now()).is_err());
         assert!(validate("*/4 * * * *", "UTC", Utc::now()).is_err());
         assert!(validate("*/5 * * * *", "UTC", Utc::now()).is_ok());
+    }
+
+    /// (FIX-110) The gap is checked over a full cycle, not the next four occurrences.
+    #[test]
+    fn minimum_interval_holds_over_a_full_cycle() {
+        // Created at :20:30, the next occurrences are :21 then 39 and 5-minute gaps; the 21→0
+        // pair is not the problem, 20→21 is, one hour later in the cycle.
+        assert!(validate("0,5,10,15,20,21 * * * *", "UTC", at("2026-03-02T12:20:30Z")).is_err());
+        assert!(validate("0,5,10,15,20,21 * * * *", "UTC", at("2026-03-02T12:22:30Z")).is_err());
+        // Day-of-week lists repeat weekly.
+        assert!(validate("0,3 9 * * 1", "UTC", at("2026-03-02T12:22:30Z")).is_err());
+        assert!(validate("0 9 * * 1-5", "UTC", at("2026-03-02T12:22:30Z")).is_ok());
+        assert!(validate("*/5 * * * *", "UTC", at("2026-03-02T12:22:30Z")).is_ok());
     }
 
     #[test]

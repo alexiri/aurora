@@ -31,7 +31,14 @@ fn respond(body: String, nonce: Option<&str>) -> Response {
 
 /// Success: post `aurora:connected` to the opener (target = external origin) and close.
 pub fn connected(connection_id: uuid::Uuid, missing_scopes: &[String], origin: &str) -> Response {
-    let nonce = flow::random(16);
+    // (FIX-115) Never post the result to an empty target origin (the popup would drop it
+    // silently): say what is wrong instead.
+    if origin.is_empty() {
+        return error("external_url_without_origin");
+    }
+    let Ok(nonce) = flow::random(16) else {
+        return error("server_error");
+    };
     let missing_js = serde_json::to_string(missing_scopes)
         .unwrap_or_else(|_| "[]".into())
         .replace('<', "\\u003c");
@@ -72,7 +79,9 @@ pub fn error(code: &str) -> Response {
 
 /// Fragment-mode bridge: re-submits the URL fragment as a query string.
 pub fn bridge() -> Response {
-    let nonce = flow::random(16);
+    let Ok(nonce) = flow::random(16) else {
+        return error("server_error");
+    };
     let mut r = respond(
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><title>Connecting</title></head><body>\
@@ -98,4 +107,23 @@ fn html_escape(s: &str) -> String {
             c => c.to_string(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (FIX-115) The success page never posts to an empty target origin (the opener would drop
+    /// the result silently): it fails explicitly instead.
+    #[tokio::test]
+    async fn connected_without_an_origin_fails_explicitly() {
+        let r = connected(uuid::Uuid::nil(), &[], "");
+        let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("external_url_without_origin"), "{html}");
+        assert!(!html.contains("aurora:connected"), "{html}");
+        let r = connected(uuid::Uuid::nil(), &[], "https://aurora.example");
+        let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("aurora:connected"));
+    }
 }

@@ -20,6 +20,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 const ARM_LIMIT: i64 = 16;
+/// (FIX-115) Pages of `ARM_LIMIT` agents the `no_model_key` sweep walks per poll (128 agents).
+const NO_KEY_PAGES: usize = 8;
 /// Lease on a home sync / abort delivery before it is re-sent.
 const SYNC_LEASE_SECS: f64 = 60.0;
 const ABORT_LEASE_SECS: f64 = 30.0;
@@ -51,7 +53,22 @@ pub async fn sweep_no_model_key(
     tx: &mut PgConnection,
     after: &mut After,
 ) -> Result<(), ApiError> {
-    for (turn, conversation, agent) in hosted::queued_hosted_turns(tx, ARM_LIMIT).await? {
+    // (FIX-115) Walk the agents with queued turns page by page (bounded), not just the sixteen
+    // oldest turns: a keyless agent behind turns that wait for capacity is still found.
+    let mut cursor = None;
+    let mut agents_seen: Vec<Uuid> = Vec::new();
+    for _ in 0..NO_KEY_PAGES {
+        let page = hosted::queued_hosted_agents(tx, cursor, ARM_LIMIT).await?;
+        let Some(last) = page.last().copied() else {
+            break;
+        };
+        cursor = Some((last.1, last.0));
+        agents_seen.extend(page.iter().map(|p| p.0));
+        if (page.len() as i64) < ARM_LIMIT {
+            break;
+        }
+    }
+    for agent in agents_seen {
         let Some(a) = agents::get(&mut *tx, agent).await? else {
             continue;
         };
@@ -80,12 +97,15 @@ pub async fn sweep_no_model_key(
                 .failure()
         };
         if let Some((code, message)) = failure {
-            convs::lock(tx, conversation).await?;
-            if lifecycle::fail(tx, turn, conversation, code, &message)
-                .await?
-                .is_some()
-            {
-                after.flush.push((conversation, turn));
+            // Every queued turn of the agent ends with the reason (the verdict is per agent).
+            for (turn, conversation) in hosted::queued_turns_of_agent(tx, agent).await? {
+                convs::lock(tx, conversation).await?;
+                if lifecycle::fail(tx, turn, conversation, code, &message)
+                    .await?
+                    .is_some()
+                {
+                    after.flush.push((conversation, turn));
+                }
             }
         }
     }

@@ -281,6 +281,21 @@ rendered on the Computer tab.
 Automatic retries stop after 3 failures (`start_failures`); a message sent
 after the last failure retries once the backoff has passed.
 
+(FIX-093) Every start attempt is bounded from its claim, whether or not a turn
+is waiting (due schedules, preview and terminal demand claim starts too): the
+sweep fails a `starting` sandbox whose lease expired with its runner no longer
+live (`runner_unavailable`, `runner_id` cleared so another runner can claim the
+next start) and one whose attempt is older than the deadline
+(`sandbox_start_failed`). The sweep works from a snapshot and re-checks under
+the locks: a sandbox that became ready is left alone and a turn is failed only
+while still `queued`. A runner's late `failed` report for a boot the API already
+gave up lands the sandbox in `failed` without a second count or a new code.
+Member-facing failure text never contains an address; the runner endpoint is
+shown in the admin start log only. (D-178, Q-R5-5) Members who can use the
+agent see a start failure's class and a hint; pod/volume warning events, the
+image reference and the start-attempt detail go to instance admins and the
+agent's workspace owners.
+
 **Retry after a failure** (FIX-029, D-160, C-610): `POST
 /v1/agents/{agent}/sandbox/retry` (same authority as restart, `can_use`), only
 from `failed` (409 `sandbox_not_failed` otherwise; 423 `frozen`; (FIX-049, D-164) a

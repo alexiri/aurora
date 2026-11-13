@@ -654,6 +654,63 @@ async fn no_model_key_fails_before_any_sandbox_start() {
     );
 }
 
+/// (FIX-115) The `no_model_key` check walks agents, not the sixteen oldest turns: seventeen
+/// queued turns of a keyed agent ahead of a keyless agent's turn do not hide it, and no start is
+/// claimed for the keyless agent.
+#[tokio::test]
+async fn keyless_agent_behind_many_queued_turns_still_fails_before_any_start() {
+    let r = rig().await;
+    let keyed = r.agent("keyed", true).await;
+    let conv = r.direct(keyed).await;
+    let v = r.say(conv, "hi").await;
+    let first = v["turn"]["id"].as_str().unwrap().to_owned();
+    // Sixteen more queued turns of the same agent, each in its own conversation.
+    for _ in 0..16 {
+        let c = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+             VALUES ($1,$2,$3,'api',$1::text, now())",
+        )
+        .bind(c)
+        .bind(keyed)
+        .bind(r.ws)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text)
+             VALUES ($1,$2,$3,'turn','queued','{}','system','s','hi')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(c)
+        .bind(keyed)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    let keyless = r.agent("keyless2", false).await;
+    let conv = r.direct(keyless).await;
+    let v = r.say(conv, "hi").await;
+    let turn = v["turn"]["id"].as_str().unwrap().to_owned();
+    let _items = r.work().await;
+    assert_eq!(
+        r.turn_status(&turn).await,
+        ("failed".into(), Some("no_model_key".into()))
+    );
+    let state: Option<String> =
+        sqlx::query_scalar("SELECT state FROM sandboxes WHERE agent_id = $1")
+            .bind(keyless)
+            .fetch_optional(r.h.pool())
+            .await
+            .unwrap();
+    assert!(
+        matches!(state.as_deref(), None | Some("unprovisioned")),
+        "no start was claimed for the keyless agent: {state:?}"
+    );
+    // The keyed agent's turns are untouched.
+    assert_eq!(r.turn_status(&first).await.0, "queued");
+}
+
 #[tokio::test]
 async fn sandbox_restart_and_models_routes() {
     let r = rig().await;
@@ -666,8 +723,21 @@ async fn sandbox_restart_and_models_routes() {
         )
         .await;
     assert_eq!((s, v["state"].as_str()), (200, Some("running")));
-    // The runner-advertised image is the single source of truth (`runner.image`).
-    assert_eq!(v["image"], "registry.example/aurora-sandbox:9.9.9", "{v}");
+    // (D-178 Q-R5-5) A plain member does not see the image reference; a workspace owner does:
+    // the runner-advertised image is the single source of truth (`runner.image`).
+    assert!(v["image"].is_null(), "{v}");
+    let owner = r.h.user("ws-owner@x.io", false).await;
+    r.h.member(r.org, owner, "member", "active").await;
+    r.h.bind_ws(r.ws, owner, "owner").await;
+    let (_, osess) = r.h.good_session(owner).await;
+    let ocookie = cookie(&osess);
+    let (_, ov) =
+        r.h.get(
+            &format!("/v1/agents/{}/sandbox", lv.agent),
+            &[("cookie", &ocookie)],
+        )
+        .await;
+    assert_eq!(ov["image"], "registry.example/aurora-sandbox:9.9.9", "{ov}");
     assert_eq!(v["keep_awake_reasons"][0], "turn");
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();

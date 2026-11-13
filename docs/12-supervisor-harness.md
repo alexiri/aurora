@@ -19,8 +19,24 @@ platform's agent inside the agent's computer. It:
 ## Process model and startup
 
 1. Runs as PID 1 (uid 1000), reaps children, forwards SIGTERM to process groups.
-2. Reads `AURORA_BOOT`, calls `prctl(PR_SET_DUMPABLE, 0)`, scrubs the variable
-   from its environment.
+   (FIX-114) Tokio reaps the children it spawned; a SIGCHLD/1 s loop reaps the zombie
+   children of PID 1 that are still there on the next scan (orphans reparented to it:
+   tool subprocesses of an aborted turn, `sh -c 'server &'`), so they cannot eat the
+   sandbox's pid budget; shutdown (the runner's `shutdown` frame or SIGTERM) sends
+   SIGTERM to every registered process group first.
+2. Reads `AURORA_BOOT`, makes the process non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`) so
+   `/proc/<pid>/environ` is unreadable to the agent, and never passes the variable to a
+   child (every child starts from a rebuilt environment, `SEC-34`). The supervisor cannot
+   remove the variable from its own environment (no `unsafe`).
+   (FIX-114) The child-environment filter drops values with any platform token prefix
+   (`aug_ aub_ auc_ auk_ auo_ aur_ aun_ aut_ auw_ aus_ aui_ aup_ auh_ aud_ aul_ auv_ aux_
+   auy_`) and secret-shaped names (`*_TOKEN *_SECRET *_PASSWORD *_KEY *_CREDENTIAL(S) *_DSN
+   *_PASS *_PWD *_AUTH *_APIKEY`, `DATABASE_URL`) unless the value is the placeholder.
+   Reads of agent-writable files are bounded (memory files at 4 × the content limit, with a
+   notice; `tools.json`, staged sync parts and `render_inputs.json` at a few MiB), the
+   process table keeps at most 64 exited records and reserves a slot under the same lock
+   as the `max_running` check, and each tools-socket connection and MCP bridge has an
+   in-flight cap (32; over it `tools_unavailable`) and a request-line bound (1 MiB).
 3. Writes boot `files` (`only_if_absent_or_sentinel` honoured: never overwrite a
    file lacking the `aurora-managed` sentinel), writes `/run/aurora/ca.pem`.
 4. Starts the loopback proxies (the open proxy only with the `browser` capability, `11`).
@@ -308,6 +324,9 @@ socket `/run/aurora/tools.sock` → supervisor → `tool.call` frame (stamped wi
 conversation and current turn) → runner (stamps sandbox and boot) →
 `POST /v1/runner/tool-calls` → **tool registry** → result back.
 
+- (FIX-110) `turn_id` is required and must be an active turn of the calling agent;
+  a call without one is refused `no_active_turn` (the supervisor refuses it locally
+  when no turn is running in the conversation, and the API refuses it again).
 - End-to-end budget `TOOL_CALL_TIMEOUT` (below typical harness MCP timeouts so
   the model sees Aurora's error text). After `TOOL_CONSECUTIVE_FAILURES`
   consecutive transport failures in a session the bridge answers immediately

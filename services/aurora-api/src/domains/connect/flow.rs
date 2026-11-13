@@ -1,5 +1,6 @@
 //! Encrypted connect state (`oauth-state` purpose, SEC-23) and the browser-binding cookie.
 use crate::app::AppState;
+use aurora_core::ApiError;
 use aurora_crypto::Purpose;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -40,14 +41,13 @@ pub struct Flow {
     pub exp: i64,
 }
 
-pub fn random(n: usize) -> String {
+/// `n` random bytes, base64url. (FIX-115) A failing OS generator is an error, never a
+/// time-derived substitute: this feeds the PKCE verifier, the flow nonce and CSP nonces.
+pub fn random(n: usize) -> Result<String, ApiError> {
     let mut b = vec![0u8; n];
-    if aws_lc_rs::rand::fill(&mut b).is_err() {
-        // Fall back to a time-seeded value rather than panicking; the sealed state is
-        // still authenticated, so predictability only affects the nonce.
-        b = Uuid::now_v7().as_bytes().to_vec();
-    }
-    B64.encode(b)
+    aws_lc_rs::rand::fill(&mut b)
+        .map_err(|_| ApiError::internal("The system random generator is unavailable."))?;
+    Ok(B64.encode(b))
 }
 
 pub fn challenge(verifier: &str) -> String {

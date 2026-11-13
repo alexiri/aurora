@@ -718,7 +718,7 @@ the share lifecycle: `11 §Port previews`.
 | PUT `/v1/schedules/{id}/creator`, PUT `/v1/webhooks/{id}/creator` | S/K | (phase 2, RFE-021) `{ user_id, re_enable? }`; `can_own`; 422 `new_creator_unauthorized`; audited `automation.reassign` |
 | POST `/v1/workspaces/{ws}/automations/reassign` | S/K | (phase 2, RFE-021) `{ from_user_id, to: <user_id> \| "workspace", kinds?: [schedule,webhook], ids? }` → `{ reassigned: n }`; `can_own`; one transaction, one audit row per item |
 | GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once; (phase 2, RFE-021) same `creator`/`anchor` fields as schedules |
-| POST `/v1/hooks/{token}` | P | webhook receive |
+| POST `/v1/hooks/{token}` | P | webhook receive (D-178 Q-R5-20: replay protection of a signed delivery without a delivery id is the sender's; 60 s dedup only) |
 | GET `/v1/agents/{agent}/links`; PUT `/v1/agent-links/{id}/policy`; GET `/v1/agents/{agent}/peer-tasks` | S/K | |
 
 ### Skill libraries (phase 4, P4-GSL, D-148, D-149; C-570..C-579)

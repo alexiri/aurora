@@ -39,6 +39,8 @@ pub const DEFAULT_SOCKET: &str = "/run/aurora/tools.sock";
 /// Serialized results larger than this are truncated (`12 §Path`).
 pub const MAX_RESULT_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+/// (FIX-114) Largest `.aurora/tools.json` read.
+const CATALOGUE_READ_MAX: u64 = 4 * 1024 * 1024;
 /// Upload ceiling: the runner's API call allows 120 s, plus headroom for queueing.
 const FILE_RESULT_TIMEOUT: Duration = Duration::from_secs(150);
 /// Name of the supervisor-local file tool (`12 §Platform tools`).
@@ -58,11 +60,14 @@ pub struct ToolsConfig {
     pub home: PathBuf,
     /// How long `send_file` waits for the runner's `file.result` after the last chunk.
     pub file_timeout: Duration,
+    /// (FIX-114) Tool calls in flight per socket connection; above it `tools_unavailable`.
+    pub max_inflight: usize,
 }
 
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
+            max_inflight: 32,
             socket: None,
             call_timeout: limits::TOOL_CALL_TIMEOUT,
             max_failures: limits::TOOL_CONSECUTIVE_FAILURES,
@@ -252,7 +257,9 @@ impl ToolHub {
 
     /// Remote tools from `.aurora/tools.json` (the API catalogue never holds `process_*`).
     fn remote_catalogue(&self) -> Vec<ToolDescriptor> {
-        let Ok(bytes) = std::fs::read(&self.catalogue) else {
+        // (FIX-114) The agent can write this file: bounded read, an oversized one is ignored.
+        let Ok(Some(bytes)) = crate::harvest::read_bounded(&self.catalogue, CATALOGUE_READ_MAX)
+        else {
             return Vec::new();
         };
         let Ok(Value::Array(items)) = serde_json::from_slice::<Value>(&bytes) else {
@@ -431,13 +438,21 @@ impl ToolHub {
                 "platform tools temporarily unavailable; try again shortly",
             );
         }
-        let turn_id = self.st().turns.get(&conversation_id).copied();
+        // (FIX-110, SEC-24) No frame without a running turn of this conversation: a process left
+        // behind by an earlier turn cannot use platform tools later, unattributed.
+        let Some(turn_id) = self.st().turns.get(&conversation_id).copied() else {
+            return fail(
+                &call_id,
+                "no_active_turn",
+                "platform tools can only be used while a turn is running",
+            );
+        };
         let (tx, rx) = oneshot::channel();
         self.st().pending.insert(call_id.clone(), tx);
         let frame = SupervisorToRunner::ToolCall(ToolCallBody {
             call_id: call_id.clone(),
             conversation_id,
-            turn_id,
+            turn_id: Some(turn_id),
             tool: tool.to_owned(),
             args,
         });
@@ -520,6 +535,7 @@ impl ToolHub {
         let (r, mut w) = conn.into_split();
         let mut r = BufReader::new(r);
         let (tx, mut rx) = mpsc::channel::<BridgeResponse>(32);
+        let inflight = Arc::new(tokio::sync::Semaphore::new(self.cfg.max_inflight));
         let writer = tokio::spawn(async move {
             while let Some(resp) = rx.recv().await {
                 let Ok(mut line) = serde_json::to_vec(&resp) else {
@@ -554,9 +570,25 @@ impl ToolHub {
                     .await;
                 continue;
             };
+            // (FIX-114) In-flight cap per connection: above it the call is refused with
+            // `tools_unavailable` instead of spawning one more task per request line.
+            let Ok(permit) = inflight.clone().try_acquire_owned() else {
+                let _ = tx
+                    .send(BridgeResponse {
+                        id: req.id,
+                        result: None,
+                        error: Some(BridgeError {
+                            code: "tools_unavailable".into(),
+                            message: "too many tool calls in flight; try again shortly".into(),
+                        }),
+                    })
+                    .await;
+                continue;
+            };
             let hub = self.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
+                let _permit = permit;
                 let _ = tx.send(hub.handle(req).await).await;
             });
         }

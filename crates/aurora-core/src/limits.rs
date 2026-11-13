@@ -112,6 +112,12 @@ pub const SKILL_NAME_MAX: usize = 64;
 pub const SKILL_DESCRIPTION_MAX: usize = 500;
 pub const SKILL_BODY_MAX: usize = 24_000;
 pub const SKILL_TOTAL_MAX: usize = 32_000;
+/// (FIX-110, docs/02 §Limits) Own (non-library) skills per agent and files per skill: a looping
+/// `skill_create` cannot grow what every home sync projects without bound.
+pub const SKILL_PER_AGENT_MAX: i64 = 50;
+pub const SKILL_FILES_MAX: i64 = 50;
+/// (FIX-110) Queued peer tasks per ordered (sender, target) pair.
+pub const PEER_TASK_QUEUE_MAX: i64 = 10;
 // Git skill library (phase 4, P4-GSL, D-148, D-149; docs/02 §Limits).
 pub const LIBRARIES_PER_ORG: usize = 10;
 /// Library-sourced bytes (body + files, binary as base64 length) and skill counts per tier.

@@ -240,6 +240,8 @@ overridden by the named configuration key (`15`).
 | `MEMORY_SEARCH_HITS` | 8 | — | 10 |
 | `SKILL_NAME_MAX` / `SKILL_DESCRIPTION_MAX` | 64 / 500 chars | — | 10 |
 | `SKILL_BODY_MAX` / `SKILL_TOTAL_MAX` | 24 000 / 32 000 chars | — | 10 |
+| `SKILL_PER_AGENT_MAX` / `SKILL_FILES_MAX` | 50 own skills per agent / 50 files per skill (409 `skill_limit_reached`, `skill_files_limit_reached`; checked under the agent / skill row lock; FIX-110). The other per-agent caps: 50 schedules, 20 webhooks, 100 memories | — | 10 |
+| `PEER_TASK_QUEUE_MAX` | 10 queued tasks per ordered (sender, target) pair; the 11th `message_agent` is refused (FIX-110) | — | 10 |
 | `ATTACH_IN_FILE_MAX` / `ATTACH_IN_COUNT` | 10 MiB / 10 per message | — | 10 |
 | `ATTACH_OUT_FILE_MAX` / `ATTACH_OUT_COUNT` | 25 MiB / 10 per turn | — | 10 |
 | `ATTACH_OUT_DAILY_PER_CONVERSATION` | 200 MiB | — | 10 |

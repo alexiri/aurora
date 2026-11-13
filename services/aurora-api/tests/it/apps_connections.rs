@@ -280,6 +280,52 @@ async fn connection_patch_and_delete() {
     assert_eq!(w.call(&w.owner, Method::GET, &u, None).await.0, 404);
 }
 
+/// (FIX-115) OAuth client PATCH is compare-and-set: two updates built from the same read cannot
+/// both win. The loser gets 409 `conflict` and the first writer's change is kept.
+#[tokio::test]
+async fn oauth_client_patch_from_a_stale_read_is_a_409() {
+    use aurora_api::audit::AuditActor;
+    use aurora_api::domains::oauth_clients::{dto::PatchOAuthClientRequest, service};
+    let w = world().await;
+    let p = format!("/v1/orgs/{}/oauth-clients", w.org);
+    let ok = json!({"package_id": "acme", "client_key": "goog",
+        "fields": {"client_id": "cid", "client_secret": "s3cret"}});
+    let (s, v) = w.call(&w.owner, Method::POST, &p, Some(ok)).await;
+    assert_eq!(s, 201, "{v}");
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // Two writers read the same row.
+    let seen = aurora_db::repo::oauth_clients::get(w.h.pool(), id)
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = AuditActor::system("test");
+    let req = |secret: &str| PatchOAuthClientRequest {
+        fields: Some([("client_secret".to_owned(), secret.to_owned())].into()),
+        enabled: None,
+    };
+    service::patch(&w.h.state, &seen, req("first-secret"), &actor)
+        .await
+        .unwrap();
+    let ref_after_first: String =
+        sqlx::query_scalar("SELECT secret_ref FROM app_oauth_clients WHERE id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    let lost = service::patch(&w.h.state, &seen, req("second-secret"), &actor)
+        .await
+        .unwrap_err();
+    assert_eq!(lost.code(), "conflict");
+    // The winner's reference is untouched.
+    let ref_now: String =
+        sqlx::query_scalar("SELECT secret_ref FROM app_oauth_clients WHERE id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(ref_now, ref_after_first);
+}
+
 #[tokio::test]
 async fn oauth_clients_validated_sealed_and_protected() {
     let w = world().await;

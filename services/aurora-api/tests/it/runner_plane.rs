@@ -902,11 +902,24 @@ async fn supervisor_that_never_connects_fails_the_turn_as_supervisor_unreachable
     assert_eq!(status, "failed");
     assert_eq!(code.as_deref(), Some("supervisor_unreachable"));
     let msg = msg.unwrap();
+    // (FIX-093) The turn text (member-facing) carries no address; the admin record does.
     assert!(
-        msg.contains("aurora-runner.aurora (10.0.0.9):4105"),
+        !msg.contains("10.0.0.9") && !msg.contains("aurora-runner.aurora"),
         "{msg}"
     );
     assert!(msg.contains("networkPolicy.cilium.enabled"), "{msg}");
+    let admin_msg: String = sqlx::query_scalar(
+        "SELECT message FROM sandbox_start_failures WHERE sandbox_id = $1::uuid
+           AND code = 'supervisor_unreachable'",
+    )
+    .bind(&sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(
+        admin_msg.contains("aurora-runner.aurora (10.0.0.9):4105"),
+        "{admin_msg}"
+    );
     // The chat shows it as an error event.
     let ev: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM transcript_events WHERE turn_id = $1 AND type = 'error'
@@ -1889,4 +1902,226 @@ async fn fail_attempt_leaves_a_sandbox_that_became_ready() {
         .await
         .unwrap();
     assert_eq!(st, "stopping");
+}
+
+/// Make a claimed `starting` sandbox ready for dispatch (supervisor, channel, harness, home).
+async fn make_ready(r: &Rig, sb: Uuid, rep: Uuid) {
+    sqlx::query(
+        "UPDATE sandboxes SET state = 'running', running_at = now(), bootstrap_used_at = now(),
+             channel_replica_id = $2, resource_profile = '{\"harness\": {}}',
+             home_applied_generation = 1000000 WHERE id = $1",
+    )
+    .bind(sb)
+    .bind(rep)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+}
+
+/// (FIX-093) The sweep works from a snapshot. A sandbox that became ready — and a turn dispatch
+/// handed to it — between the snapshot and the transaction is not failed: not when the turn is
+/// already `dispatched`, and not when it is still `queued` (dispatch owns it now).
+#[tokio::test]
+async fn sweep_never_fails_a_turn_a_ready_sandbox_took() {
+    for dispatched in [true, false] {
+        let r = rig().await;
+        let rep = r.register("runner-a", 4).await;
+        let agent = r.agent("snap").await;
+        let (sb, _boot, turn) = claimed_start(&r, rep, agent).await;
+        sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+            .bind(turn)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        let snapshot = aurora_api::domains::hosted::readiness::overdue_snapshot(&r.h.state)
+            .await
+            .unwrap();
+        assert_eq!(snapshot.len(), 1, "the starting attempt is overdue");
+        // Between the snapshot and the transaction: the sandbox becomes ready, dispatch runs.
+        make_ready(&r, sb, rep).await;
+        if dispatched {
+            sqlx::query("UPDATE turns SET status = 'dispatched' WHERE id = $1")
+                .bind(turn)
+                .execute(r.h.pool())
+                .await
+                .unwrap();
+        }
+        let mut out = aurora_api::domains::hosted::readiness::Swept::default();
+        let mut woke = false;
+        aurora_api::domains::hosted::readiness::sweep_turns(
+            &r.h.state, snapshot, &mut out, &mut woke,
+        )
+        .await
+        .unwrap();
+        let (status, code, _) = turn_error(&r, turn).await;
+        assert_eq!(
+            (status.as_str(), code),
+            (if dispatched { "dispatched" } else { "queued" }, None),
+            "dispatched = {dispatched}"
+        );
+        assert_eq!(out.turns_failed, 0);
+        assert_eq!(r.sandbox_state(&sb.to_string()).await, "running");
+    }
+}
+
+/// (FIX-093, C-580) A start with no queued turn (a preview or terminal demand, a due schedule) is
+/// bounded too. Runner gone: failed with `runner_unavailable` and the runner pin cleared, so
+/// another runner can claim the next start; runner live past the deadline: given up as
+/// `sandbox_start_failed`.
+#[tokio::test]
+async fn starting_without_a_turn_is_bounded_and_the_pin_is_cleared() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("demand").await;
+    let (sb, _boot, turn) = claimed_start(&r, rep, agent).await;
+    // No waiting turn: the start was claimed for some other demand.
+    sqlx::query("UPDATE turns SET status = 'aborted' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    // Within the deadline nothing happens.
+    assert_eq!(sweep(&r).await.starts_failed, 0);
+    assert_eq!(r.sandbox_state(&sb.to_string()).await, "starting");
+    // The runner dies and the lease lapses.
+    sqlx::query("UPDATE runner_replicas SET last_seen_at = now() - interval '1 hour'")
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE sandboxes SET lifecycle_lease_until = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(sweep(&r).await.starts_failed, 1);
+    let (state, code, runner, failures): (String, Option<String>, Option<Uuid>, i32) =
+        sqlx::query_as(
+            "SELECT state, failure_code, runner_id, start_failures FROM sandboxes WHERE id = $1",
+        )
+        .bind(sb)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        (state.as_str(), code.as_deref(), runner, failures),
+        ("failed", Some("runner_unavailable"), None, 1)
+    );
+    // Another runner claims the next start (demand again, backoff over).
+    let rep_b = r.register("runner-b", 4).await;
+    sqlx::query("UPDATE sandboxes SET lifecycle_lease_until = NULL WHERE id = $1")
+        .bind(sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let _turn2 = r.turn(agent).await;
+    let w = r.work(rep_b, 0).await;
+    assert_eq!(first(&w, "sandbox.start")["sandbox_id"], sb.to_string());
+
+    // A live runner that never progresses: the attempt is older than the deadline.
+    sqlx::query(
+        "UPDATE sandboxes SET start_attempt_at = now() - interval '301 seconds' WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE turns SET status = 'aborted' WHERE agent_id = $1")
+        .bind(agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.starts_failed, 1);
+    let code: Option<String> =
+        sqlx::query_scalar("SELECT failure_code FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(code.as_deref(), Some("sandbox_start_failed"));
+}
+
+/// (FIX-115, `10` §The answer rule) A turn the API ends (here the readiness sweep) keeps the
+/// answer text buffered after its last tool call: a durable `text` event before the `error`,
+/// and no buffer row left behind.
+#[tokio::test]
+async fn failed_turn_keeps_its_buffered_answer_text() {
+    let r = rig().await;
+    let agent = r.agent("answerer").await;
+    let turn = r.turn(agent).await;
+    sqlx::query("INSERT INTO turn_answer_buffers (turn_id, msgs) VALUES ($1, $2)")
+        .bind(turn)
+        .bind(json!([{"id": "m1", "text": "Here is what I found so far.", "reply_to": null}]))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.turns_failed, 1);
+    let (status, ..) = turn_error(&r, turn).await;
+    assert_eq!(status, "failed");
+    let kinds: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT type, payload->>'text' FROM transcript_events WHERE turn_id = $1
+           AND type IN ('text', 'error') ORDER BY seq",
+    )
+    .bind(turn)
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        kinds,
+        vec![
+            (
+                "text".to_owned(),
+                Some("Here is what I found so far.".to_owned())
+            ),
+            ("error".to_owned(), None)
+        ]
+    );
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM turn_answer_buffers WHERE turn_id = $1")
+            .bind(turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+}
+
+/// (FIX-093) After the API's give-up, the runner's late `failed` for the same boot lands the
+/// sandbox in `failed` without counting a second failure or overwriting the specific reason.
+#[tokio::test]
+async fn late_runner_failed_report_after_give_up_counts_once() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("late").await;
+    let (sb, boot, turn) = claimed_start(&r, rep, agent).await;
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.turns_failed, 1);
+    assert_eq!(r.sandbox_state(&sb.to_string()).await, "stopping");
+    post_reports(
+        &r,
+        rep,
+        json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+            "sandbox_id": sb, "boot_id": boot, "state": "failed",
+            "reason_code": "pod_failed", "message": "the pod crashed"}]),
+    )
+    .await;
+    let (state, code, failures): (String, Option<String>, i32) =
+        sqlx::query_as("SELECT state, failure_code, start_failures FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (state.as_str(), code.as_deref(), failures),
+        ("failed", Some("sandbox_start_failed"), 1)
+    );
 }
