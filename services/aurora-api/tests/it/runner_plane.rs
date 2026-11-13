@@ -1611,6 +1611,69 @@ async fn give_up_on_a_dead_runner_keeps_runner_unavailable_and_ends_failed() {
     }
 }
 
+/// (FIX-071) The hello-overdue give-up goes through `fail_attempt`: a sandbox selected as
+/// hello-overdue whose supervisor then connected and became ready before the update is not
+/// failed, and is no longer selected on the next pass.
+#[tokio::test]
+async fn hello_overdue_selection_that_became_ready_is_not_failed() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("late-hello").await;
+    let (sb, boot, _turn) = claimed_start(&r, rep, agent).await;
+    sqlx::query(
+        "UPDATE sandboxes SET state = 'running', running_at = now() - interval '1 hour',
+             bootstrap_used_at = NULL WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let overdue = aurora_db::repo::sandboxes::hello_overdue(&mut conn, 60.0, 10)
+        .await
+        .unwrap();
+    assert!(
+        overdue.iter().any(|(s, b, _)| (*s, *b) == (sb, boot)),
+        "selected"
+    );
+    // Between the selection and the update the supervisor connects and the sandbox is ready.
+    sqlx::query(
+        "UPDATE sandboxes SET bootstrap_used_at = now(), channel_replica_id = $2,
+             resource_profile = '{\"harness\": {}}', home_applied_generation = 1000000
+         WHERE id = $1",
+    )
+    .bind(sb)
+    .bind(rep)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let ran = aurora_db::repo::sandboxes::fail_attempt(
+        &mut conn,
+        sb,
+        boot,
+        "supervisor_unreachable",
+        "x",
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(ran.is_none(), "a sandbox that became ready is not failed");
+    let (st, failures): (String, i32) =
+        sqlx::query_as("SELECT state, start_failures FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((st.as_str(), failures), ("running", 0));
+    let overdue = aurora_db::repo::sandboxes::hello_overdue(&mut conn, 60.0, 10)
+        .await
+        .unwrap();
+    assert!(
+        overdue.iter().all(|(s, _, _)| *s != sb),
+        "no longer selected"
+    );
+}
+
 /// (FIX-058) A sandbox the sweep selected as overdue that became ready before the update is left
 /// alone: `fail_attempt` returns `None` and counts no failure; a not-yet-ready one is failed.
 #[tokio::test]

@@ -112,14 +112,34 @@ pub async fn open(
 }
 
 /// `POST /v1/runner/preview-streams/closed`: advisory accounting; refreshes
-/// `preview_shares.last_accessed_at` and the awake stamp. Never fails a stream.
+/// `preview_shares.last_accessed_at` and the awake stamp. Never fails a stream. (FIX-071) Only
+/// the runner that holds the share's agent's running sandbox may refresh them: a report from any
+/// other runner is ignored (`Ok`, nothing written), so one runner cannot keep another's agents
+/// awake or skew their share stamps.
 pub async fn closed(
     s: &AppState,
-    _runner: &runners::RunnerRow,
+    runner: &runners::RunnerRow,
     req: PreviewStreamClosedRequest,
 ) -> Result<(), ApiError> {
     if let Some(row) = shares_repo::get(&s.pool, req.share_id).await? {
         let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+        let held: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM sandboxes \
+             WHERE agent_id = $1 AND state = 'running' AND runner_id = $2)",
+        )
+        .bind(row.agent_id)
+        .bind(runner.id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(DbError::from)?;
+        if !held {
+            tracing::debug!(
+                runner_id = %runner.id,
+                share_id = %req.share_id,
+                "preview stream closed report from a runner not holding the sandbox; ignored"
+            );
+            return Ok(());
+        }
         shares_repo::touch_accessed(&mut conn, row.id).await?;
         relay_repo::keep_preview_awake(&mut *conn, row.agent_id).await?;
     }
