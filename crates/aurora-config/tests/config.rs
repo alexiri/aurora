@@ -492,6 +492,44 @@ fn unknown_key_origin_method_suggests_nearest() {
     assert_eq!(nearest_origin_method("zzzzzzzzzzzz"), None);
 }
 
+/// (D-177, FIX-105) `allowed_paths`: absolute paths, one trailing `/*` at most, bounded.
+#[test]
+fn llm_endpoint_allowed_paths_are_validated() {
+    let ep = |provider: &str, paths: &str| {
+        format!(
+            "{BASE}[[llm.endpoints]]\nid = \"e\"\nprovider = \"{provider}\"\nbase_url = \"https://aigw.example.org\"\nallowed_paths = {paths}\n"
+        )
+    };
+    let good = ep("litellm", r#"["/health/liveliness", "/model/*", "/*"]"#);
+    assert!(load_with(&good, &[]).unwrap().api_config().is_ok());
+    for bad in [
+        r#"["health"]"#,
+        r#"["/a/../b"]"#,
+        r#"["/a//b"]"#,
+        r#"["/a*"]"#,
+        r#"["/*/a"]"#,
+        r#"["/a?x=1"]"#,
+        r#"["/**"]"#,
+    ] {
+        let e = load_with(&ep("litellm", bad), &[])
+            .unwrap()
+            .api_config()
+            .unwrap_err();
+        assert!(e.has_key("llm.endpoints[0].allowed_paths[0]"), "{bad}: {e}");
+    }
+    let many = format!("[{}]", vec!["\"/a\""; 33].join(","));
+    let e = load_with(&ep("litellm", &many), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
+    let e = load_with(&ep("anthropic", r#"["/a"]"#), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
+}
+
 #[test]
 fn known_hosts_extra_and_endpoint_removal() {
     let raw = load_with(

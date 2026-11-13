@@ -82,6 +82,7 @@ impl ProviderRegistry {
                 models: vec![],
                 allowed_models: vec![],
                 key_origin: None,
+                allowed_paths: vec![],
             });
         }
         Ok(Self {
@@ -120,6 +121,17 @@ impl ProviderRegistry {
             }
         }
         out
+    }
+
+    /// (D-177, SEC-65) Whether the sanctioned key of endpoint `endpoint_id` may be injected into
+    /// this request. Endpoints of providers without an inference-path set (`anthropic` until
+    /// phase 5) and unknown endpoints are not restricted here.
+    pub fn path_permitted(&self, endpoint_id: &str, method: &http::Method, path: &str) -> bool {
+        let Some(ep) = self.endpoint(endpoint_id) else {
+            return true;
+        };
+        !matches!(ep.provider.as_str(), "litellm" | "openai_compatible")
+            || crate::inference_path_permitted(method, path, &ep.allowed_paths)
     }
 
     /// (FIX-104, D-180) Whether a key of `provider` (and `endpoint_id` when the secret names
@@ -233,6 +245,7 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
         models: e.models.clone(),
         allowed_models: e.allowed_models.clone(),
         key_origin,
+        allowed_paths: e.allowed_paths.clone(),
     })
 }
 

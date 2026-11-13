@@ -2068,6 +2068,44 @@ pub fn llm_endpoint_warnings(l: &LlmSection) -> Vec<String> {
         .collect()
 }
 
+/// Most `allowed_paths` entries of one endpoint (D-177).
+const ALLOWED_PATHS_MAX: usize = 32;
+
+/// (D-177, FIX-105) `allowed_paths` of a `litellm` / `openai_compatible` endpoint: absolute paths,
+/// no query, no `..` or empty segment, no wildcard except one trailing `/*`, a bounded count.
+fn check_allowed_paths(c: &mut Ctx, key: &str, provider: &str, paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    if !matches!(provider, "litellm" | "openai_compatible") {
+        c.err(
+            key,
+            "only `litellm` and `openai_compatible` endpoints have an inference-path set",
+        );
+        return;
+    }
+    if paths.len() > ALLOWED_PATHS_MAX {
+        c.err(key, format!("at most {ALLOWED_PATHS_MAX} entries"));
+    }
+    for (i, p) in paths.iter().enumerate() {
+        let body = p.strip_suffix("/*").unwrap_or(p);
+        let bad = !p.starts_with('/')
+            || p.len() > 200
+            || body.contains(['*', '?', '#', ' ', '\\'])
+            || body
+                .trim_end_matches('/')
+                .split('/')
+                .skip(1)
+                .any(|s| s.is_empty() || s == "..");
+        if bad {
+            c.err(
+                format!("{key}[{i}]"),
+                "an absolute path without query, `..` or empty segments; the only wildcard is a trailing `/*`",
+            );
+        }
+    }
+}
+
 fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
     let mut ids = BTreeSet::new();
     for (i, e) in l.endpoints.iter().enumerate() {
@@ -2081,6 +2119,7 @@ fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
             c.err(k("provider"), "required");
         }
         check_url(c, &k("base_url"), e.base_url.as_deref());
+        check_allowed_paths(c, &k("allowed_paths"), &e.provider, &e.allowed_paths);
         match &e.key_origin {
             Some(o) => {
                 if !matches!(

@@ -146,6 +146,16 @@ pub trait LlmProvider: Send + Sync {
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<Vec<ModelInfo>>;
+    /// (FIX-105, CRED-6) The provider's own answer, without the static-list fallback of
+    /// [`Self::list_models`]: key verification must see an unreachable endpoint as unreachable.
+    async fn list_models_strict(
+        &self,
+        ep: &Endpoint,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<Vec<ModelInfo>> {
+        self.list_models(ep, key, http).await
+    }
     fn default_model(&self, ep: &Endpoint) -> Option<String>;
     /// Placeholder-only environment for a sandboxed client.
     fn client_env(&self, ep: &Endpoint, dialect: Dialect, mode: &AuthMode)

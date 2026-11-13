@@ -148,6 +148,14 @@ impl LlmProvider for AnthropicProvider {
             other => other,
         }
     }
+    async fn list_models_strict(
+        &self,
+        _ep: &Endpoint,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<Vec<ModelInfo>> {
+        self.fetch_models(http, key).await
+    }
     fn default_model(&self, ep: &Endpoint) -> Option<String> {
         ep.default_model.clone()
     }

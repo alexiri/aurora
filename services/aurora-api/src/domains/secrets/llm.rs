@@ -55,7 +55,8 @@ pub async fn check_key(
 ) -> Result<StoredOrigin, KeyFail> {
     let rule = eff.origin_rule.as_ref();
     let default_method = rule.map_or("endpoint", |r| r.method.as_str());
-    match provider.list_models(ep, key, http).await {
+    // (FIX-105, CRED-6) The strict call: an endpoint that did not answer is not a verified key.
+    match provider.list_models_strict(ep, key, http).await {
         Ok(_) => {}
         Err(LlmError::InvalidKey) => return Err(KeyFail::InvalidKey),
         Err(_) if rule.is_none() => {

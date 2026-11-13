@@ -353,6 +353,9 @@ pub struct LlmEndpoint {
     pub models: Vec<String>,
     pub allowed_models: Vec<String>,
     pub key_origin: Option<KeyOrigin>,
+    /// (D-177, FIX-105) `litellm` / `openai_compatible`: paths beyond the inference set that the
+    /// sanctioned key may be injected on. Absolute; a trailing `/*` admits the subtree.
+    pub allowed_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
