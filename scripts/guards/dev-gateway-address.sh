@@ -11,10 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-if ! command -v helm >/dev/null 2>&1; then
-  echo "dev-gateway-address: helm not installed; skipping" >&2
-  exit 0
-fi
+# shellcheck source=scripts/guards/lib.sh
+source scripts/guards/lib.sh
+require_helm dev-gateway-address || exit 0
 
 check() {
   local label="$1"; shift

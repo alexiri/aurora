@@ -739,6 +739,13 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Edge configuration covers all route prefixes (`15`).
 - Every table in `03` exists in migrations and vice versa (schema introspection
   diff against a machine-readable extract of `03`).
+- **A guard must not pass vacuously (FIX-068).** The Helm guards (`edge-routes`, `hook-policies`,
+  `sandbox-network`, `dev-gateway-address`, `no-dev-idp-in-release`) **fail** when `helm` is missing
+  (`scripts/guards/lib.sh` `require_helm`); the only opt-out is `AURORA_GUARDS_SKIP_HELM=1` on a box
+  without helm, and it is ignored when `CI=true`. Render output is captured before it is grepped
+  (`out=$(helm template …)`; `grep -q … <<<"$out"`): `helm … | grep -q` under `pipefail` is green exactly
+  when the forbidden resource rendered (SIGPIPE). `hook-policies` also fails if it inspected no pre-upgrade
+  hook Job with a `serviceAccountName`, and on a `matchExpressions` operator it cannot evaluate.
 
 ## Performance budgets (gateway)
 

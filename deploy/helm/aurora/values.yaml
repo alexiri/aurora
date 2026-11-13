@@ -394,7 +394,10 @@ networkPolicy:
     kubernetes.io/metadata.name: ingress-nginx
   dnsNamespaceSelector:
     kubernetes.io/metadata.name: kube-system
-  # Kubernetes API server CIDRs for runner egress (empty = any:443/6443).
+  # Kubernetes API server CIDRs for runner egress (empty = any:443/6443). The `secrets` hook's
+  # policy (FIX-069) uses these when set; when empty it uses the API server addresses read from
+  # the `kubernetes` Endpoints in `default` at install/upgrade time (Helm `lookup`), and falls back
+  # to any:443/6443 only where lookup returns nothing (`helm template`, --dry-run, no read access).
   kubeApiCidrs: []
   # Ports the API server listens on behind the `kubernetes` Service (its endpoint port).
   kubeApiPorts: [443, 6443]

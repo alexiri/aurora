@@ -45,8 +45,11 @@ m = re.search(r"^devIdp:\n((?:[ \t]+.*\n|\n)*)", t, re.M)
 if not m or not re.search(r"^\s+enabled:\s*false\b", m.group(1), re.M):
     sys.exit(1)
 PY
-if command -v helm >/dev/null 2>&1; then
-  out="$(helm template guard deploy/helm/aurora)"
+# shellcheck source=scripts/guards/lib.sh
+source scripts/guards/lib.sh
+if require_helm no-dev-idp-in-release; then
+  out="$(helm template guard deploy/helm/aurora)" || fail "the default chart render failed"
+  [ -n "$out" ] || fail "the default chart render is empty"
   if grep -q -E 'dev-idp|dev_idp|aurora-dev-idp' <<<"$out"; then
     fail "the chart's default render contains the development IdP"
   fi

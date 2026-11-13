@@ -226,7 +226,8 @@ spec:
 ---
 # (P4-PRV-2, docs/15 §Port previews) Relay: previews HTTP/WebSocket on 4112 from the edge,
 # registration/resolve/streams/grants to api:4101, leg-1 WebSocket streams to runner:4108,
-# DNS (the allow-dns policy) and external egress (nothing else).
+# DNS (the allow-dns policy) and nothing else. (FIX-069: no `aurora.external` egress — the relay only
+# talks to the api and the runners, and it is an edge-exposed pod: no internet path.)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: {{ $full }}-relay, namespace: {{ $ns }}}
@@ -246,7 +247,6 @@ spec:
     - to:
         {{- include "aurora.peer" (dict "root" . "c" "runner") | nindent 8 }}
       ports: [{protocol: TCP, port: 4108}]
-    {{- include "aurora.external" . | nindent 4 }}
 {{- end }}
 {{- range .Values.connectors }}
 ---

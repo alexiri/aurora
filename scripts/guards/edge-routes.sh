@@ -11,10 +11,9 @@ cd "$ROOT"
 fail() { echo "edge-routes: FAIL: $*" >&2; exit 1; }
 
 # --- Helm Ingress / HTTPRoute ---
-if ! command -v helm >/dev/null 2>&1; then
-  echo "edge-routes: helm not installed; skipping chart checks" >&2
-  exit 0
-fi
+# shellcheck source=scripts/guards/lib.sh
+source scripts/guards/lib.sh
+require_helm edge-routes || exit 0
 check_render() {
   local label="$1"; shift
   helm template guard deploy/helm/aurora "$@" | python3 -I -c '
@@ -76,13 +75,18 @@ check_render "kind dev profile Ingress" -f deploy/kind/values-dev.yaml
 # (P4-GRP-2) With the SCIM switch on, the edge must route /scim to the API in both edge types.
 check_render "helm Ingress with scim" --set scim.enabled=true
 check_render "helm HTTPRoute with scim" --set ingress.enabled=false --set gatewayApi.enabled=true --set scim.enabled=true
-if helm template guard deploy/helm/aurora 2>/dev/null | grep -q "path: /scim"; then
+# FIX-068: capture the render first. `helm … | grep -q` under pipefail passed exactly when the
+# forbidden resource DID render (grep -q exits on the first match, helm takes SIGPIPE, the
+# pipeline is non-zero, the `if` is false). A failed render must fail the guard too.
+default_render="$(helm template guard deploy/helm/aurora)" || fail "the default chart render failed"
+[ -n "$default_render" ] || fail "the default chart render is empty"
+if grep -q "path: /scim" <<<"$default_render"; then
   fail "/scim route rendered while scim.enabled is false (SEC-72: the surface must 404)"
 fi
 
 # --- (P4-PRV-2) port previews: wildcard host only when enabled, only to the relay ---
 # Defaults (previews off): no relay resource of any kind may render.
-if helm template guard deploy/helm/aurora 2>/dev/null | grep -qE 'component: relay|aurora-relay|-relay,'; then
+if grep -qE 'component: relay|aurora-relay|-relay,' <<<"$default_render"; then
   fail "relay resources rendered while relay.enabled is false (previews off must change nothing)"
 fi
 # Enabled: the wildcard host `*.<domain>` must be the relay and only the relay; the dashboard
