@@ -550,7 +550,9 @@ async fn write_connection_grant(
     actor: AuditActor,
     by: Option<Uuid>,
 ) -> Result<Written<ConnectionGrant>, ApiError> {
-    let conn = connections::get(&state.pool, connection_id)
+    // Everything below runs on the transaction's own connection: a second pool connection taken
+    // while this one is pinned could starve the pool under many concurrent writers.
+    let conn = connections::get(&mut **tx, connection_id)
         .await?
         .filter(|c| {
             c.org_id == agent.org_id
@@ -574,7 +576,11 @@ async fn write_connection_grant(
     .execute(&mut **tx)
     .await
     .map_err(DbError::from)?;
-    let restrictions = app_restrictions(state, &conn.app_id).await?;
+    let snap = crate::domains::plugins::registry::active_typed_on(tx).await?;
+    let restrictions = snap
+        .as_ref()
+        .and_then(|s| s.app(&conn.app_id).map(|a| AppRestrictions::from(a.grants)))
+        .unwrap_or_default();
     if restrictions.custom_only && req.mode == GrantMode::Full {
         return Err(ApiError::unprocessable(
             "full_grant_forbidden",
@@ -621,7 +627,6 @@ async fn write_connection_grant(
                 "A tool cannot be both allowed and set to ask.",
             ));
         }
-        let snap = apps::snapshot(state).await?;
         let known: HashSet<String> = snap
             .as_ref()
             .and_then(|s| s.app(&conn.app_id))

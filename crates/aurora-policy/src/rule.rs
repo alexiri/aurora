@@ -160,9 +160,11 @@ impl Target {
     /// of a `custom_only` app (P4-GRANTS, D-123).
     pub fn inert_for_custom_only(&self, c: &Credential) -> bool {
         match self {
-            Self::Connection { tools, .. } | Self::AppConnections { tools, .. } => {
-                custom_only_inert(c, tools)
-            }
+            // A toolless `app` target allows every tool of the app, the winning connection
+            // included: the same full-style allow as the other two (corpus `p4g_12`).
+            Self::App { tools, .. }
+            | Self::Connection { tools, .. }
+            | Self::AppConnections { tools, .. } => custom_only_inert(c, tools),
             _ => false,
         }
     }
