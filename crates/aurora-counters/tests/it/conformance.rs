@@ -59,7 +59,52 @@ pub async fn suite(store: Arc<dyn CounterStore>) {
     peek_has_no_side_effect(store.clone()).await;
     bucket_burst_refill_and_all_or_nothing(store.clone()).await;
     keys_large_and_unicode(store.clone()).await;
+    refusal_reports_the_longest_wait(store.clone()).await;
     store.health().await.expect("health");
+}
+
+/// Two exhausted units with different time left: every backend reports the one with the
+/// longest `retry_after`, whatever the order in the call (the key sorting first is the short one).
+async fn refusal_reports_the_longest_wait(store: Arc<dyn CounterStore>) {
+    let n = ns();
+    let (short, long, fine) = (format!("{n}:a-min"), format!("{n}:b-day"), format!("{n}:c"));
+    let minute = |key: &str| WindowUnit {
+        period: Period::Minute,
+        ..unit(key, 1, 1)
+    };
+    let day = |key: &str| WindowUnit {
+        period: Period::Day,
+        ..unit(key, 1, 1)
+    };
+    assert!(
+        store
+            .fixed_window_consume(&[minute(&short), day(&long)])
+            .await
+            .expect("fill")
+            .is_allowed()
+    );
+    for units in [
+        vec![minute(&short), day(&long), unit(&fine, 5, 1)],
+        vec![unit(&fine, 5, 1), day(&long), minute(&short)],
+    ] {
+        let v = store.fixed_window_consume(&units).await.expect("refused");
+        let Verdict::Refused { key, retry_after } = v else {
+            panic!("both units are exhausted");
+        };
+        assert_eq!(key, long, "the unit that frees last is reported");
+        assert!(
+            retry_after > Duration::from_secs(60) && retry_after <= Duration::from_secs(86_400),
+            "{retry_after:?}"
+        );
+    }
+    assert_eq!(
+        store
+            .fixed_window_peek(&[probe(&fine)])
+            .await
+            .expect("peek"),
+        vec![0],
+        "the refusal consumed nothing"
+    );
 }
 
 async fn concurrent_consume_never_exceeds_limit(store: Arc<dyn CounterStore>) {
@@ -499,6 +544,34 @@ async fn memory_rollover_uses_the_injected_clock() {
 }
 
 // ---- postgres ------------------------------------------------------------------------
+
+/// Overlapping multi-key takes in different orders must never deadlock (or error): each task
+/// takes the same keys in its own rotation of the call order, with new keys each round too.
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn postgres_overlapping_bucket_takes_never_deadlock(pool: aurora_db::PgPool) {
+    let store: Arc<dyn CounterStore> = Arc::new(PgCounterStore::new(pool));
+    let n = ns();
+    let keys: Vec<String> = (0..6).map(|i| format!("{n}:k{i}")).collect();
+    let mut tasks = Vec::new();
+    for t in 0..24usize {
+        let (s, keys) = (store.clone(), keys.clone());
+        tasks.push(tokio::spawn(async move {
+            for round in 0..15usize {
+                let mut ks: Vec<&String> = keys.iter().collect();
+                ks.rotate_left((t + round) % keys.len());
+                if t % 2 == 1 {
+                    ks.reverse();
+                }
+                let takes: Vec<BucketTake> =
+                    ks.iter().take(4).map(|k| take(k, 1, 1_000_000)).collect();
+                s.bucket_take(&takes).await.expect("no deadlock, no error");
+            }
+        }));
+    }
+    for t in tasks {
+        t.await.expect("join");
+    }
+}
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
 async fn postgres(pool: aurora_db::PgPool) {

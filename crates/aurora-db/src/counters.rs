@@ -93,6 +93,7 @@ impl CounterStore for PgCounterStore {
         }
         let units = normalize_units(units);
         let mut tx = self.pool.begin().await.map_err(|e| unavailable(&e))?;
+        let mut refusing = Vec::new();
         for u in &units {
             let refused = if u.cost > u.limit {
                 true
@@ -108,20 +109,33 @@ impl CounterStore for PgCounterStore {
                 row.is_none()
             };
             if refused {
-                let (now,): (i64,) = sqlx::query_as(NOW_MS)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(|e| unavailable(&e))?;
-                // Nothing of this call is kept.
-                tx.rollback().await.map_err(|e| unavailable(&e))?;
+                refusing.push(u);
+            }
+        }
+        if !refusing.is_empty() {
+            let (now,): (i64,) = sqlx::query_as(NOW_MS)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| unavailable(&e))?;
+            // Nothing of this call is kept (units seen before and after the refusal included).
+            tx.rollback().await.map_err(|e| unavailable(&e))?;
+            // Report the unit with the longest wait (the first one on a tie), like the memory
+            // and Redis stores: a client retrying after it is not refused by another unit.
+            let mut worst: Option<(&str, i64)> = None;
+            for u in refusing {
                 let per = i64_of(u.period.millis());
+                let ms = (per - now.rem_euclid(per)).max(1);
+                if worst.is_none_or(|(_, r)| ms > r) {
+                    worst = Some((u.key.as_str(), ms));
+                }
+            }
+            if let Some((key, ms)) = worst {
                 return Ok(Verdict::Refused {
-                    key: u.key.clone(),
-                    retry_after: Duration::from_millis(
-                        u64::try_from(per - now.rem_euclid(per)).unwrap_or(1).max(1),
-                    ),
+                    key: key.to_owned(),
+                    retry_after: Duration::from_millis(u64::try_from(ms).unwrap_or(1)),
                 });
             }
+            return Err(CounterError::Invalid("refusal without a unit".into()));
         }
         tx.commit().await.map_err(|e| unavailable(&e))?;
         Ok(Verdict::Allowed)
@@ -138,26 +152,35 @@ impl CounterStore for PgCounterStore {
         let mut keys: Vec<&str> = takes.iter().map(|t| t.key.as_str()).collect();
         keys.dedup();
         let mut tx = self.pool.begin().await.map_err(|e| unavailable(&e))?;
-        // Make sure every row exists (a new bucket starts full), then lock them in key order.
-        sqlx::query(
-            "INSERT INTO rate_limit_buckets (key, tat, expires_at) \
-             SELECT k, clock_timestamp(), clock_timestamp() + interval '1 minute' \
-             FROM unnest($1::text[]) AS k ORDER BY k ON CONFLICT (key) DO NOTHING",
-        )
-        .bind(&keys)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| unavailable(&e))?;
-        let rows: Vec<(String, i64, i64)> = sqlx::query_as(
-            "SELECT key, (floor(extract(epoch from tat) * 1000))::bigint, \
-                    (floor(extract(epoch from clock_timestamp()) * 1000))::bigint \
-             FROM rate_limit_buckets WHERE key = ANY($1) ORDER BY key FOR UPDATE",
-        )
-        .bind(&keys)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(|e| unavailable(&e))?;
-        let Some(now) = rows.first().map(|r| r.2) else {
+        // Make sure every row exists (a new bucket starts full) and lock it, **one statement per
+        // key in the sorted order of `keys`**: the order in which a multi-row `FOR UPDATE` takes
+        // its row locks is not guaranteed, so overlapping takes could deadlock. Locking key by
+        // key in one global order cannot.
+        let mut rows: Vec<(String, i64, i64)> = Vec::with_capacity(keys.len());
+        for key in &keys {
+            sqlx::query(
+                "INSERT INTO rate_limit_buckets (key, tat, expires_at) \
+                 VALUES ($1, clock_timestamp(), clock_timestamp() + interval '1 minute') \
+                 ON CONFLICT (key) DO NOTHING",
+            )
+            .bind(key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| unavailable(&e))?;
+            let row: (String, i64, i64) = sqlx::query_as(
+                "SELECT key, (floor(extract(epoch from tat) * 1000))::bigint, \
+                        (floor(extract(epoch from clock_timestamp()) * 1000))::bigint \
+                 FROM rate_limit_buckets WHERE key = $1 FOR UPDATE",
+            )
+            .bind(key)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| unavailable(&e))?;
+            rows.push(row);
+        }
+        // The clock of the last statement: a bucket created above has `tat` = its insert time,
+        // which must not be later than `now` (a new bucket starts full).
+        let Some(now) = rows.last().map(|r| r.2) else {
             return Err(CounterError::Invalid("bucket rows missing".into()));
         };
         let mut tat: HashMap<String, i64> = rows.into_iter().map(|(k, t, _)| (k, t)).collect();

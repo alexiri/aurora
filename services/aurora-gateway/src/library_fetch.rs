@@ -476,8 +476,13 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
             let (parts, mut body) = resp.into_parts();
             let mut buf: Vec<u8> = Vec::new();
             let mut too_big = false;
+            let mut broken = false;
             while let Some(frame) = body.frame().await {
-                let Ok(frame) = frame else { break };
+                // A reset mid-body is a failure, never a short "complete" file.
+                let Ok(frame) = frame else {
+                    broken = true;
+                    break;
+                };
                 if let Some(d) = frame.data_ref() {
                     if buf.len() + d.len() > cap {
                         too_big = true;
@@ -486,10 +491,10 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
                     buf.extend_from_slice(d);
                 }
             }
-            Ok::<_, aurora_core::ApiError>((parts, buf, too_big))
+            Ok::<_, aurora_core::ApiError>((parts, buf, too_big, broken))
         })
         .await;
-        let (parts, buf, too_big) = match sent {
+        let (parts, buf, too_big, broken) = match sent {
             Err(_) => {
                 return err(
                     StatusCode::GATEWAY_TIMEOUT,
@@ -507,6 +512,14 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
             }
             Ok(Ok(v)) => v,
         };
+        if broken {
+            tracing::debug!("library fetch: the upstream body ended in an error");
+            return err(
+                StatusCode::BAD_GATEWAY,
+                "library_upstream",
+                "the git host's response was interrupted",
+            );
+        }
         if too_big {
             return err(
                 StatusCode::PAYLOAD_TOO_LARGE,
