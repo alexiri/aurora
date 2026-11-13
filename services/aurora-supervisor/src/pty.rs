@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
 
 use aurora_core::limits::{TERMINAL_CHUNK, TERMINAL_STREAM_WINDOW, TERMINALS_PER_SANDBOX};
@@ -521,9 +522,15 @@ impl PtySession {
         rustix::pty::unlockpt(&master)?;
         let name = rustix::pty::ptsname(&master, Vec::new())?;
         let name = name.to_string_lossy().into_owned();
+        // `O_NOCTTY` (FIX-091 item 7, production outage 2026-11-13): the supervisor runs as PID 1,
+        // a session leader without a controlling terminal, so opening the slave without it made
+        // the slave the *supervisor's* ctty — and the FIX-054 bootstrap's `TIOCSCTTY` then failed
+        // `EPERM` ("__pty-exec: Operation not permitted"). The slave must become the shell's ctty
+        // only, in the bootstrap's own new session.
         let slave = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(rustix::fs::OFlags::NOCTTY.bits() as i32)
             .open(&name)?;
         // Seed `TIOCSWINSZ` before the shell starts so nothing reads a 0×0 window.
         winsize(&master, cols, rows);
