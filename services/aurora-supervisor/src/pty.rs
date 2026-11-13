@@ -625,8 +625,10 @@ async fn pty_task(
                         credit -= n;
                         bytes_out += n as u64;
                     }
-                    // `EAGAIN` (spurious readiness) waits for the next readiness event.
-                    Err(rustix::io::Errno::AGAIN) => continue,
+                    // `EAGAIN`: the kernel buffer is empty (stale readiness, e.g. a
+                    // credit-capped read drained it exactly). Clear readiness or
+                    // `readable()` returns at once and the loop busy-spins.
+                    Err(rustix::io::Errno::AGAIN) => { guard.clear_ready(); continue }
                     Err(_) => { pty.reap().await; break PtyCloseReason::Hangup; }
                 }
             }
@@ -648,7 +650,8 @@ async fn pty_task(
                                     guard.clear_ready();
                                     written += n;
                                 }
-                                Err(rustix::io::Errno::AGAIN) => continue,
+                                // Same as the read arm: clear stale readiness, no spin.
+                                Err(rustix::io::Errno::AGAIN) => { guard.clear_ready(); continue }
                                 Err(_) => { failed = true; break; }
                             }
                         }
