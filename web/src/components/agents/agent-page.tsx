@@ -164,7 +164,7 @@ export function AgentPage() {
           <AgentChannelsTab agentId={agent.id} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
         ) : null}
         {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
-        {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} /> : null}
+        {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
         {tab === "terminal" && !byo && terminalEnabled ? (
           <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} />
         ) : null}

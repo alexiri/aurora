@@ -186,4 +186,34 @@ describe("Computer tab start log and retry (FIX-029)", () => {
     await screen.findByText("Start log");
     expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
   });
+
+  const renderTab = (sandbox: Record<string, unknown>, frozen = false) => {
+    mockFetch(routes(sandbox));
+    return render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ComputerTab agentId="a1" frozen={frozen} />
+      </QueryClientProvider>,
+    );
+  };
+
+  // FIX-049 (C-626): Restart answers 409 where there is nothing to restart, so the button is disabled
+  // there; from `failed` it performs the retry recovery, so it is enabled.
+  it.each(["stopping", "stopped", "unprovisioned"])("disables Restart when the computer is %s", async (state) => {
+    renderTab({ state });
+    await screen.findByText("State:", { exact: false });
+    expect((screen.getByRole("button", { name: "Restart" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it.each(["starting", "running", "failed"])("enables Restart when the computer is %s", async (state) => {
+    renderTab({ state, failure_code: state === "failed" ? "pod_failed" : null });
+    await screen.findByText("State:", { exact: false });
+    expect((screen.getByRole("button", { name: "Restart" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("hides Retry now and disables Restart on a failed computer of a frozen agent", async () => {
+    renderTab({ state: "failed", failure_code: "pod_failed", retryable: true }, true);
+    await screen.findByText("State:", { exact: false });
+    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Restart" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });
