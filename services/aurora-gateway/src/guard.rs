@@ -24,14 +24,54 @@ enum Allow {
 #[derive(Debug, Clone)]
 pub struct Guard {
     allow: Vec<Allow>,
-    /// Gateway listeners and database (address, port); unspecified address
-    /// means every loopback/unspecified address.
+    /// Gateway listeners and database (address, port); an unspecified address
+    /// means every loopback, unspecified and local interface address.
     own: Vec<(IpAddr, u16)>,
+    /// (FIX-106) This host's own interface addresses, for a wildcard bind: with the default
+    /// `0.0.0.0` bind the gateway's pod address is as much "own" as loopback is.
+    local: Vec<IpAddr>,
 }
 
-const METADATA_V4: Ipv4Addr = Ipv4Addr::new(169, 254, 169, 254);
-fn metadata_v6() -> Ipv6Addr {
-    Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
+/// (FIX-106) The addresses of this host's network interfaces. Linux reads `/proc/net`; where it
+/// is unreadable the list is empty and only loopback and unspecified count as local.
+#[must_use]
+pub fn local_addresses() -> Vec<IpAddr> {
+    let mut out = Vec::new();
+    if let Ok(t) = std::fs::read_to_string("/proc/net/fib_trie") {
+        out.extend(parse_fib_trie(&t).into_iter().map(IpAddr::V4));
+    }
+    if let Ok(t) = std::fs::read_to_string("/proc/net/if_inet6") {
+        out.extend(parse_if_inet6(&t).into_iter().map(IpAddr::V6));
+    }
+    out
+}
+
+/// `/proc/net/fib_trie`: an address is local where its `|-- a.b.c.d` line is followed by
+/// `/32 host LOCAL`.
+fn parse_fib_trie(text: &str) -> Vec<Ipv4Addr> {
+    let mut last = None;
+    let mut out = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if let Some(a) = line.strip_prefix("|--") {
+            last = a.trim().parse::<Ipv4Addr>().ok();
+        } else if line.starts_with("/32 host LOCAL") {
+            out.extend(last);
+        }
+    }
+    out
+}
+
+/// `/proc/net/if_inet6`: 32 hex digits first on every line.
+fn parse_if_inet6(text: &str) -> Vec<Ipv6Addr> {
+    text.lines()
+        .filter_map(|l| {
+            let h = l.split_whitespace().next()?;
+            u128::from_str_radix(h, 16)
+                .ok()
+                .filter(|_| h.len() == 32)
+                .map(Ipv6Addr::from)
+        })
+        .collect()
 }
 
 pub fn normalize_host(host: &str) -> String {
@@ -70,42 +110,22 @@ fn cidr_contains(net: IpAddr, bits: u8, ip: IpAddr) -> bool {
     }
 }
 
-fn is_metadata(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4 == METADATA_V4,
-        IpAddr::V6(v6) => v6 == metadata_v6(),
-    }
-}
-
-/// Addresses that are not publicly routable unicast.
-fn is_special(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            let o = v4.octets();
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_multicast()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || o[0] == 0
-                || (o[0] == 100 && (o[1] & 0xc0) == 64)
-                || o[0] >= 240
-        }
-        IpAddr::V6(v6) => {
-            let s = v6.segments();
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || (s[0] & 0xfe00) == 0xfc00
-                || (s[0] & 0xffc0) == 0xfe80
-        }
-    }
-}
+// The refused-range table is shared with the API's probe guard: `aurora_core::ranges`.
+use aurora_core::ranges::{is_metadata, is_special};
 
 impl Guard {
-    /// `allowed` entries: CIDR, IP, hostname or `*.suffix`.
+    /// `allowed` entries: CIDR, IP, hostname or `*.suffix`. A wildcard `own` address covers this
+    /// host's interface addresses ([`local_addresses`]).
     pub fn new(allowed: &[String], own: Vec<SocketAddr>) -> Result<Self, String> {
+        Self::with_local(allowed, own, local_addresses())
+    }
+
+    /// [`Guard::new`] with the host's interface addresses given (tests inject one).
+    pub fn with_local(
+        allowed: &[String],
+        own: Vec<SocketAddr>,
+        local: Vec<IpAddr>,
+    ) -> Result<Self, String> {
         let mut allow = Vec::new();
         for e in allowed {
             let e = e.trim();
@@ -128,14 +148,16 @@ impl Guard {
             }
         }
         let own = own.into_iter().map(|a| (canon(a.ip()), a.port())).collect();
-        Ok(Self { allow, own })
+        let local = local.into_iter().map(canon).collect();
+        Ok(Self { allow, own, local })
     }
 
     fn is_own(&self, ip: IpAddr, port: u16) -> bool {
         self.own.iter().any(|&(oip, oport)| {
             oport == port
                 && (oip == ip
-                    || (oip.is_unspecified() && (ip.is_loopback() || ip.is_unspecified())))
+                    || (oip.is_unspecified()
+                        && (ip.is_loopback() || ip.is_unspecified() || self.local.contains(&ip))))
         })
     }
 
@@ -181,12 +203,36 @@ impl Guard {
         if ok { Ok(()) } else { Err(refused()) }
     }
 
-    /// Name-only check: judges IP literals, accepts names (they are judged at
-    /// dial time, or at the egress proxy's resolution).
+    /// Name-only check: judges IP literals, accepts names (they are judged at dial time).
     pub fn check_name(&self, host: &str, port: u16) -> Result<(), DialError> {
         match normalize_host(host).parse::<IpAddr>() {
             Ok(ip) => self.check_ip(ip, host, port),
             Err(_) => Ok(()),
+        }
+    }
+
+    /// (FIX-106, `06` §Destination guard) The local name check of egress-proxy mode: the name is
+    /// resolved here (with the system resolver, so decimal and hex IP spellings resolve to what a
+    /// dial would reach) and refused if **any** address it resolves to is refused. The egress
+    /// proxy then resolves the name again; that window (DNS rebinding between the two lookups) is
+    /// accepted and documented.
+    pub async fn judge_name(&self, host: &str, port: u16) -> Result<(), DialError> {
+        let h = normalize_host(host);
+        if let Ok(ip) = h.parse::<IpAddr>() {
+            return self.check_ip(ip, host, port);
+        }
+        let addrs = tokio::net::lookup_host((h.as_str(), port))
+            .await
+            .map_err(|e| DialError::Resolution(e.to_string()))?;
+        let mut any = false;
+        for a in addrs {
+            any = true;
+            self.check_ip(a.ip(), host, port)?;
+        }
+        if any {
+            Ok(())
+        } else {
+            Err(DialError::Resolution("no addresses".into()))
         }
     }
 
@@ -299,6 +345,98 @@ mod tests {
         let g = g(&["127.0.0.0/8"]);
         assert!(g.check_ip(ip("127.0.0.1"), "x", 4102).is_err());
         assert!(g.check_ip(ip("127.0.0.1"), "x", 4103).is_ok());
+    }
+
+    /// (FIX-106) With the default wildcard bind the gateway's routable (pod) address is "own" as
+    /// well, even when the operator allow-lists the pod network for in-cluster LLMs.
+    #[test]
+    fn wildcard_bind_covers_the_local_interface_addresses() {
+        let allow = vec!["10.0.0.0/8".to_owned()];
+        let own: Vec<SocketAddr> = vec![
+            "0.0.0.0:4102".parse().unwrap(),
+            "0.0.0.0:4103".parse().unwrap(),
+        ];
+        let g =
+            Guard::with_local(&allow, own.clone(), vec![ip("10.42.1.7"), ip("fd00::7")]).unwrap();
+        for port in [4102, 4103] {
+            assert!(g.check_ip(ip("10.42.1.7"), "x", port).is_err(), "{port}");
+            assert!(g.check_ip(ip("fd00::7"), "x", port).is_err(), "{port}");
+            assert!(
+                g.check_ip(ip("::ffff:10.42.1.7"), "x", port).is_err(),
+                "{port}"
+            );
+        }
+        // Other ports of the pod network, and other pods, stay reachable.
+        assert!(g.check_ip(ip("10.42.1.7"), "x", 8080).is_ok());
+        assert!(g.check_ip(ip("10.42.1.8"), "x", 4103).is_ok());
+        // Without the injected address the pod IP is allowed (the defect this fixes).
+        let blind = Guard::with_local(&allow, own, vec![]).unwrap();
+        assert!(blind.check_ip(ip("10.42.1.7"), "x", 4103).is_ok());
+    }
+
+    #[test]
+    fn interface_addresses_are_parsed_from_proc() {
+        let trie = "Main:\n  +-- 0.0.0.0/0 3 0 5\n     |-- 0.0.0.0\n        /0 universe UNICAST\n     +-- 10.42.0.0/24 2 0 2\n        |-- 10.42.0.0\n           /32 link BROADCAST\n           /24 link UNICAST\n        |-- 10.42.0.5\n           /32 host LOCAL\n     |-- 127.0.0.1\n        /32 host LOCAL\n";
+        assert_eq!(
+            parse_fib_trie(trie),
+            vec![Ipv4Addr::new(10, 42, 0, 5), Ipv4Addr::LOCALHOST]
+        );
+        let v6 = "fd000000000000000000000000000007 02 40 00 80 eth0\nnot-an-address\n";
+        assert_eq!(
+            parse_if_inet6(v6),
+            vec!["fd00::7".parse::<Ipv6Addr>().unwrap()]
+        );
+    }
+
+    /// (FIX-106) Translated and reserved forms are refused unless an explicit entry covers them;
+    /// an allowed IPv4 CIDR does not open its translated forms.
+    #[test]
+    fn translated_forms_are_refused() {
+        let strict = g(&[]);
+        let lax = g(&["10.0.0.0/8", "127.0.0.0/8"]);
+        for p in [
+            "64:ff9b::a00:1",
+            "64:ff9b::7f00:1",
+            "2002:a00:1::1",
+            "::10.0.0.1",
+            "fec0::1",
+            "198.18.0.1",
+            "198.19.1.1",
+            "192.0.0.9",
+            "240.0.0.1",
+            "64:ff9b::a9fe:a9fe",
+        ] {
+            assert!(strict.check_ip(ip(p), "x", 80).is_err(), "{p}");
+            assert!(
+                lax.check_ip(ip(p), "x", 80).is_err(),
+                "{p} via allowed CIDR"
+            );
+        }
+        assert!(strict.check_ip(ip("64:ff9b::808:808"), "x", 80).is_ok());
+    }
+
+    /// (FIX-106) The local name check of egress-proxy mode resolves and judges every address.
+    #[tokio::test]
+    async fn judge_name_resolves_locally_and_refuses_any_bad_address() {
+        let allow_localhost = g(&["localhost"]);
+        let strict = g(&[]);
+        assert!(matches!(
+            strict.judge_name("localhost", 443).await,
+            Err(DialError::Refused(_))
+        ));
+        // A decimal spelling of 169.254.169.254 is a "name" to the CONNECT parser; the system
+        // resolver turns it into the metadata address.
+        assert!(matches!(
+            strict.judge_name("2852039166", 443).await,
+            Err(DialError::Refused(_))
+        ));
+        assert!(matches!(
+            strict.judge_name("10.0.0.1", 443).await,
+            Err(DialError::Refused(_))
+        ));
+        assert!(strict.judge_name("93.184.216.34", 443).await.is_ok());
+        // An allow-listed name passes.
+        assert!(allow_localhost.judge_name("localhost", 443).await.is_ok());
     }
 
     /// SEC-06: the addresses returned for dialling are exactly the judged ones

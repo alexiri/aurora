@@ -58,6 +58,10 @@ struct Env {
 }
 
 async fn start(limits: TunnelLimits) -> Env {
+    start_with(limits, None).await
+}
+
+async fn start_with(limits: TunnelLimits, egress_proxy: Option<String>) -> Env {
     let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let up = silent.local_addr().unwrap();
     tokio::spawn(async move {
@@ -85,7 +89,7 @@ async fn start(limits: TunnelLimits) -> Env {
             guard,
             header_timeout: Duration::from_secs(5),
             extra_ca_pem: None,
-            egress_proxy: None,
+            egress_proxy,
         },
         ByoParts {
             tunnel_limits: limits,
@@ -271,4 +275,65 @@ async fn the_total_tunnel_cap_applies_across_credentials() {
     assert_eq!(st, 200);
     let (st, _s) = connect(&env, "open", "aub_b").await;
     assert_eq!(st, 429);
+}
+
+/// (FIX-106, GWT-5) With `gateway.egress_proxy` set, a name is judged locally before the proxy is
+/// contacted: a decimal spelling of the metadata address, and a name resolving to loopback, are
+/// refused and the egress proxy sees no connection.
+#[tokio::test]
+async fn egress_proxy_mode_judges_names_before_contacting_the_proxy() {
+    let egress = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let egress_addr = egress.local_addr().unwrap();
+    let contacted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = contacted.clone();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = egress.accept().await {
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+        }
+    });
+    let env = start_with(limits(), Some(egress_addr.to_string())).await;
+    for target in ["2852039166:443", "localhost:443", "10.1.2.3:443"] {
+        let mut s = crate::common::connect(env.proxy).await;
+        let auth = base64::engine::general_purpose::STANDARD.encode("open:aub_a");
+        s.write_all(
+            format!(
+                "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {auth}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut buf = vec![0u8; 2048];
+        let n = tokio::time::timeout(Duration::from_secs(10), s.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+        assert!(text.starts_with("HTTP/1.1 403"), "{target}: {text}");
+        assert!(text.contains("destination_refused"), "{target}: {text}");
+    }
+    assert_eq!(
+        contacted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the egress proxy was contacted for a refused name"
+    );
+    // Control: a public destination does reach the egress proxy.
+    let mut s = crate::common::connect(env.proxy).await;
+    let auth = base64::engine::general_purpose::STANDARD.encode("open:aub_a");
+    s.write_all(
+        format!(
+            "CONNECT 93.184.216.34:443 HTTP/1.1\r\nHost: 93.184.216.34:443\r\nProxy-Authorization: Basic {auth}\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut buf = vec![0u8; 2048];
+    let n = tokio::time::timeout(Duration::from_secs(10), s.read(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+    assert_eq!(contacted.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

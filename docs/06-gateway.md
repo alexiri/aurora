@@ -442,13 +442,30 @@ minted.
    Drop hop-by-hop headers and `Proxy-*`.
 2. **Destination guard.** IP-literal hosts are judged immediately; names are
    resolved through the guarded resolver at dial time. Refuse (403
-   `destination_refused`) private, loopback, link-local, CGNAT, multicast,
-   unspecified and IPv6 ULA ranges unless covered by `gateway.allowed_private`
-   (CIDRs, IPs, hostnames, `*.suffix`); cloud-metadata addresses
-   (169.254.169.254, fd00:ec2::254) only by exact-IP entry. The gateway's own
-   database and internal services are refused by address+port regardless of the
-   allow-list. When `gateway.egress_proxy` is set, the name check runs locally
-   and resolution happens at the egress proxy.
+   `destination_refused`) every address in this table unless covered by
+   `gateway.allowed_private` (CIDRs, IPs, hostnames, `*.suffix`); the table is one
+   function (`aurora_core::ranges`) shared by the gateway and the API's connect/probe
+   guard (FIX-106):
+
+   | Family | Refused |
+   |--------|---------|
+   | IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (CGNAT), `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.168.0.0/16`, `198.18.0.0/15` (benchmarking), `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4` (multicast), `240.0.0.0/4` (reserved, includes broadcast) |
+   | IPv6 | `::`, `::1`, `::/96` (IPv4-compatible), `fc00::/7` (ULA), `fe80::/10`, `fec0::/10` (site-local), `ff00::/8`, `2001::/32` (Teredo), `2001:db8::/32`, `64:ff9b:1::/48` |
+   | Translated | an address that **embeds** an IPv4 address is judged by the embedded address: IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` (so `64:ff9b::a00:1` is `10.0.0.1`; one embedding a public IPv4 address is public). An IPv4 CIDR in `allowed_private` does not open the translated forms of its range |
+
+   Cloud-metadata addresses (169.254.169.254, fd00:ec2::254, and their translated
+   forms) only by exact-IP entry. The gateway's own listeners and database are
+   refused by address+port regardless of the allow-list: a listener bound to the
+   wildcard address covers loopback, the unspecified address **and every address of
+   the host's own interfaces** (read at start-up, `/proc/net` on Linux), so the pod
+   address on 4103 (`/metrics`, `/healthz`) is refused even when
+   `allowed_private` covers the pod network. When `gateway.egress_proxy` is set,
+   the **local name check** is: resolve the name here with the system resolver
+   (decimal and hex IP spellings included) and refuse (403) if **any** resolved
+   address is refused, before the egress proxy is contacted; resolution that fails
+   locally answers 502 `resolution_failed`. The egress proxy then resolves the
+   name itself, so a DNS-rebinding window between the two lookups remains; it is
+   accepted, and the proxy's own policy is the second line.
 3. **Method-override and path hygiene.** Requests carrying
    `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override` or a
    `_method` query parameter are refused (400 `method_override_refused`):

@@ -16,33 +16,10 @@ pub struct Env {
     pub override_origin: Option<reqwest::Url>,
 }
 
-/// Publicly routable unicast addresses only.
+/// Publicly routable unicast addresses only (FIX-106: the gateway's destination-guard table,
+/// `aurora_core::ranges`, including the translated forms that embed a private IPv4 address).
 pub fn is_public(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v) => {
-            let o = v.octets();
-            !(v.is_private()
-                || v.is_loopback()
-                || v.is_link_local()
-                || v.is_unspecified()
-                || v.is_broadcast()
-                || v.is_multicast()
-                || v.is_documentation()
-                || (o[0] == 100 && (o[1] & 0xc0) == 64)
-                || o[0] == 0)
-        }
-        IpAddr::V6(v) => match v.to_ipv4_mapped() {
-            Some(m) => is_public(IpAddr::V4(m)),
-            None => {
-                let s = v.segments();
-                !(v.is_loopback()
-                    || v.is_unspecified()
-                    || v.is_multicast()
-                    || (s[0] & 0xfe00) == 0xfc00
-                    || (s[0] & 0xffc0) == 0xfe80)
-            }
-        },
-    }
+    !aurora_core::ranges::is_special(ip)
 }
 
 struct Guarded;
@@ -104,12 +81,7 @@ fn cidr_contains(net: IpAddr, bits: u8, ip: IpAddr) -> bool {
     }
 }
 
-fn is_metadata(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4 == std::net::Ipv4Addr::new(169, 254, 169, 254),
-        IpAddr::V6(v6) => v6 == std::net::Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254),
-    }
-}
+use aurora_core::ranges::is_metadata;
 
 impl PrivateAllow {
     /// Malformed entries are skipped (the gateway refuses to start on them; the API only narrows).
@@ -234,6 +206,26 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    /// (FIX-106) Translated and reserved forms that embed or stand for a private IPv4 address are
+    /// refused by the probe guard exactly as by the gateway's.
+    #[test]
+    fn translated_and_reserved_forms_are_not_public() {
+        for p in [
+            "64:ff9b::a00:1",
+            "64:ff9b::a9fe:a9fe",
+            "2002:a00:1::1",
+            "::10.0.0.1",
+            "fec0::1",
+            "198.18.0.1",
+            "192.0.0.1",
+            "240.0.0.1",
+        ] {
+            assert!(!is_public(ip(p)), "{p}");
+            assert!(!PrivateAllow::new(&[]).permits(ip(p), "x.example"), "{p}");
+        }
+        assert!(is_public(ip("64:ff9b::808:808")));
     }
 
     /// SEC-06 / SEC-59: a registered instance is dialled through the destination guard; private
