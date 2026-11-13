@@ -418,6 +418,14 @@ pub async fn create_user(
                     .await
                     .map_err(scim_of_api)?;
             }
+            // (FIX-080) A pending invitation of an adopted, inactive person is cancelled
+            // like on the update and move paths (also when the suspension stays human-owned:
+            // an invitation for a person the directory says is inactive is not honoured).
+            if !active {
+                deprovision::cancel_invitations(&mut tx, org.org_id, &email, user_id)
+                    .await
+                    .map_err(scim_of_api)?;
+            }
         }
     }
     // A revived tombstone is updated in place (its `scim_users.id` survives); otherwise a
@@ -1001,8 +1009,17 @@ async fn apply_update(
         tracing::error!(scim_id = %id, "scim: unremoved link without a membership");
         return Err(ScimError::internal());
     } else if !want_active && row.state != "suspended" {
-        // Suspend (deprovisioning matrix, D-135).
-        repo::set_user_state(&mut tx, org.org_id, id, "suspended", true)
+        // Suspend (deprovisioning matrix, D-135). (FIX-080) Under the org lock, so a sign-in
+        // deciding on this link serializes with the state change, and `suspended_by_scim` is
+        // set only when SCIM is the one suspending: a membership an admin already suspended
+        // stays human-owned (SEC-73: the IdP never lifts a human suspension), exactly like
+        // `move_link` records it.
+        groups::lock_org(&mut tx, org.org_id).await.map_err(db)?;
+        let already_suspended = members::get(&mut *tx, org.org_id, row.user_id)
+            .await
+            .map_err(db)?
+            .is_some_and(|m| m.status == "suspended");
+        repo::set_user_state(&mut tx, org.org_id, id, "suspended", !already_suspended)
             .await
             .map_err(db)?;
         deprovision::suspend_membership(
@@ -1243,6 +1260,10 @@ pub async fn delete_user(
     use axum::http::StatusCode;
     let org = caller.org.clone();
     let mut tx = state.pool.begin().await.map_err(sq)?;
+    // (FIX-080) The org lock first (org → group → link): a sign-in that decided on this link
+    // under the same lock has committed its membership before the removal reads it, and one
+    // that has not yet sees the tombstone.
+    groups::lock_org(&mut tx, org.org_id).await.map_err(db)?;
     let row = repo::user_by_id(&mut *tx, org.org_id, id)
         .await
         .map_err(db)?

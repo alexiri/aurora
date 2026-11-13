@@ -21,7 +21,9 @@ false every `/scim/v2` path answers 404 and the dashboard shows no Directory syn
 2. **Per-org switch.** An org **owner** opens *Organization settings → Directory sync*,
    lists the org's e-mail domains (at least one; exact, case-insensitive, no subdomains),
    optionally turns on *Directory-managed membership (exclusive)* — which refuses
-   sign-ins and invitations of people the directory did not provision — and saves. Turning
+   invitations, JIT, role-claim and new-user placement memberships of people the directory
+   did not provision (a refused role claim or placement lets the person sign in without
+   that membership; a refused JIT fails the sign-in) — and saves. Turning
    SCIM on asks for a fresh sign-in (step-up re-authentication).
 3. **Token.** On the same page the owner creates a provisioning token, names it after the
    IdP ("Entra ID"), and copies the **base URL** (`<your-aurora>/scim/v2`) and the

@@ -1369,3 +1369,73 @@ async fn fix064_a_database_error_in_a_starter_grant_is_not_reported_as_unavailab
         "a database error is not a vanished credential"
     );
 }
+
+/// FIX-080 (SEC-73, docs/04 §SCIM exclusive, §Invitations seat cap): placement creates an
+/// `org_members` row, so it passes the same admission gate and seat cap as JIT and
+/// invitations. A refusal is audited as a denied `member.add` and the sign-in goes on.
+#[tokio::test]
+async fn fix080_placement_obeys_the_exclusive_gate_and_the_seat_cap() {
+    let e = env(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    let denied = |email: &'static str, reason: &'static str| {
+        let e = &e;
+        async move {
+            let u = e.user(email).await;
+            e.n(&format!(
+                "SELECT count(*) FROM audit_log WHERE org_id = '{org}' AND action = 'member.add' \
+                 AND outcome = 'denied' AND target_id = '{u}' AND metadata->>'path' = 'placement' \
+                 AND metadata->>'reason' = '{reason}'"
+            ))
+            .await
+        }
+    };
+    let member_of = |email: &'static str| {
+        let e = &e;
+        async move {
+            e.n(&format!(
+                "SELECT count(*) FROM org_members m JOIN users u ON u.id = m.user_id \
+                 WHERE m.org_id = '{org}' AND u.email = '{email}'"
+            ))
+            .await
+        }
+    };
+    // `exclusive`: the directory never provisioned this person.
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || '{\"scim\": {\"exclusive\": true}}'::jsonb WHERE id = $1",
+    )
+    .bind(org)
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    e.who("s-bob", "bob@example.com", Some("bobj"));
+    e.sign_in().await.expect("the sign-in itself goes on");
+    assert_eq!(member_of("bob@example.com").await, 0, "no membership");
+    assert_eq!(denied("bob@example.com", "scim_exclusive").await, 1);
+    // Seat cap: not exclusive any more, but every seat is taken.
+    let seats = e
+        .n(&format!(
+            "SELECT count(*) FROM org_members WHERE org_id = '{org}' AND status = 'active'"
+        ))
+        .await;
+    sqlx::query(
+        "UPDATE organizations SET settings = jsonb_build_object('max_members', $2::int) WHERE id = $1",
+    )
+    .bind(org)
+    .bind(seats as i32)
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    e.who("s-ada", "ada@example.com", Some("ada"));
+    e.sign_in().await.expect("the sign-in itself goes on");
+    assert_eq!(member_of("ada@example.com").await, 0, "seat cap holds");
+    assert_eq!(denied("ada@example.com", "member_limit_reached").await, 1);
+    // Room again: the next person is placed as before.
+    sqlx::query("UPDATE organizations SET settings = '{}'::jsonb WHERE id = $1")
+        .bind(org)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    e.who("s-cy", "cy@example.com", Some("cy"));
+    e.sign_in().await.unwrap();
+    assert_eq!(member_of("cy@example.com").await, 1);
+}

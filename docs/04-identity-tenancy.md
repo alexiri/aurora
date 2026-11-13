@@ -114,6 +114,11 @@ interface"); stored in the database, audited):
   the old `personal_org` behaviour stay; their owner can delete them (`§Deletion
   semantics`). The admin page lists them ("12 personal orgs from before") so the admin
   can tell people.
+- Placement creates an org membership, so it passes the default org's SCIM admission gate
+  and seat cap like every other membership-creating path (`§SCIM`, "Admission gate and
+  seat cap", D-179): in an `exclusive` org, or one at `max_members`, a new person is not
+  placed, the refusal is audited (denied `member.add`, `path = placement`) and the
+  sign-in goes on without a membership.
 - Under `open`, mode `none` admits only users with an invitation, a mapped role claim or a
   `jit` org; others get `signup_closed`. Starter grants whose credential has gone away are
   skipped and audited; they never fail a sign-in (D-151, `API_CONTRACTS` C-524..C-527).
@@ -896,9 +901,23 @@ invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and 
 SCIM never deletes a `users` row or an account and never touches other orgs: a person in two
 orgs deprovisioned by one remains a user of the other.
 
-**`exclusive` mode** (org setting, default `false`). When on, JIT and invitation acceptance for
-this org are refused for people without an `active` SCIM link: the IdP is then the only way in.
-It never changes existing members.
+**`exclusive` mode** (org setting, default `false`). When on, JIT, invitation acceptance,
+new-user placement and IdP role-claim sync for this org are refused for people without an
+`active` SCIM link: the IdP is then the only way in. It never changes existing members.
+
+**Admission gate and seat cap (D-179, FIX-080).** *Every* path that creates an `org_members`
+row — invitation acceptance, JIT, new-user placement and IdP role-claim sync — passes the
+admission gate of that org (a `removed` or `suspended` link refuses, `exclusive` without an
+`active` link refuses, SEC-73) and then its seat cap (`max_members`), decided under the org
+lock the SCIM writers take, so a directory removal that has committed is always seen and one
+that has not waits. A refusal writes a denied `member.add` audit row (`metadata.path` =
+`invitation` | `jit` | `placement` | `idp_sync`, `metadata.reason` = `scim_removed` |
+`scim_suspended` | `scim_exclusive` | `member_limit_reached`) **on its own connection**, so it
+survives a rolled-back request or an abandoned savepoint. A refused role claim, placement or
+seat-capped JIT never fails the sign-in itself (the person signs in without that
+membership); a JIT refused by the directory gate (`removed`, `suspended`, `exclusive`) still
+fails it with `scim_refused`, and a refused invitation answers 403 `scim_refused` (seat cap:
+422 `member_limit_reached`) and stays pending.
 
 **Rate limits and size.** Per token `SCIM_RATE` (600 requests/min, burst 120) through the
 `CounterStore` (class `management`, `05 §Conventions`), request bodies ≤ `SCIM_BODY_MAX` (1 MiB),

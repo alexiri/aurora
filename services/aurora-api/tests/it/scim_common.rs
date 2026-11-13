@@ -76,7 +76,7 @@ impl ScimFx {
         .await
     }
 
-    async fn with_config(
+    pub async fn with_config(
         mutate: impl FnOnce(&mut aurora_config::ApiConfig),
         domains: &[&str],
     ) -> Self {
