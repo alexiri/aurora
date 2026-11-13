@@ -1049,6 +1049,30 @@ fn connector_host_config_defaults_token_and_overrides() {
     assert!(!format!("{c:?}").contains("auh_abc123"));
 }
 
+/// `relay.trusted_proxies` (FIX-090): empty by default, strict CIDRs, `/0` refused.
+#[test]
+fn relay_trusted_proxies_default_empty_and_validated() {
+    let env = [("AURORA_RELAY_TOKEN", "aul_abc123")];
+    let base = format!("{BASE}\n[relay]\npreviews_domain = \"preview.example.org\"\n");
+    let c = load_with(&base, &env).unwrap().relay_config().unwrap();
+    assert!(c.trusted_proxies.is_empty());
+    let c = load_with(
+        &format!("{base}trusted_proxies = [\"10.0.0.0/8\", \"fd00::/8\"]\n"),
+        &env,
+    )
+    .unwrap()
+    .relay_config()
+    .unwrap();
+    assert_eq!(c.trusted_proxies, ["10.0.0.0/8", "fd00::/8"]);
+    for bad in ["0.0.0.0/0", "10.0.0.1/8", "not-a-cidr", "10.0.0.0"] {
+        let e = load_with(&format!("{base}trusted_proxies = [\"{bad}\"]\n"), &env)
+            .unwrap()
+            .relay_config()
+            .unwrap_err();
+        assert!(e.has_key("relay.trusted_proxies[0]"), "{bad}: {e}");
+    }
+}
+
 #[test]
 fn relay_config_defaults_token_domain_and_overrides() {
     let toml = format!("{BASE}\n[relay]\npreviews_domain = \"preview.example.org\"\n");

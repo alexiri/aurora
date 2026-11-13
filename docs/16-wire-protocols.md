@@ -50,7 +50,7 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 
 | Call | Request → Response |
 |------|--------------------|
-| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners; optional `stream_tls`: the stream listener speaks TLS, default false — the API derives the endpoint scheme it hands the relay from it, `§W18`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
+| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners; optional `stream_tls`: the stream listener speaks TLS, default false — the API derives the endpoint scheme it hands the relay from it, `§W18`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }`; `advertised_host` is a host name or an IP literal (`[v6]` in brackets) with an optional port and nothing else — a scheme, path, userinfo, query or whitespace is refused with 400 `invalid_request` (the relay dials it with a live stream grant, FIX-090) |
 | `POST /work` | `{ wait_secs ≤ 25, capacity: { running, max } }` → `{ items: [WorkItem], reconciler: bool }` (also the heartbeat; `reconciler` is true only for the oldest live replica of this runner, computed at poll time — spec fix S-08) |
 | `POST /reports` | `{ reports: [Report] }` (≤ 200, ≤ 1 MiB) → `{ results: [{ report_id, status: "applied"|"duplicate"|"fenced"|"invalid", detail? }] }` |
 | `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404; idempotent for the same `(sandbox, boot)` while the boot has never held a channel (`channel_held_at` is NULL), spent afterwards (SEC-25) |
@@ -378,8 +378,13 @@ in `relay_tokens`, like `auh_`); it opens **only** these routes. The relay needs
 
 Machine-plane conventions apply (typed bodies, bounded batches, idempotent where repeated);
 the relay-plane routes are exempt from the management rate limiter and have their own per-replica
-class (`PREVIEW_API_RATE`, 100 req/s/replica, burst 200). An unknown, expired or malformed `aul_`
-is 401 with the same body for every cause.
+class (`PREVIEW_API_RATE`, 100 req/s/replica, burst 200): a live `aul_` is charged to that class only,
+keyed by the registered replica (by the token before registration). An unknown, expired, rotated-away
+or malformed `aul_` is 401 with the same body for every cause and is charged like any rejected bearer.
+**Rotation** (FIX-090): the token presented at bootstrap is the only valid anchor — bootstrapping with
+a new token deletes every other `relay_tokens` row and its replicas, so the old `aul_` answers 401.
+The relay retries `validate` and `report` with backoff on 429 and 5xx and answers a visitor's request with
+a try-later page (503, `Retry-After`) when `resolve` fails the same way, never a bare 502.
 
 ### Runner plane additions (`/v1/runner`)
 
@@ -456,7 +461,8 @@ another; a compromised runner cannot make the supervisor dial a port that is not
 agent cannot add to the list.
 
 **Limits** (`02 §Limits`): concurrent streams per share 32, per sandbox 64, per user and per relay
-replica 64; idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
+replica 64 (**the relay's caps count per replica**: with N relay replicas an operator should expect up
+to N × the cap in total; the runner and supervisor caps below are the global bound per sandbox); idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
 lifetime 4 h; connect 10 s; response header timeout 60 s (an app that has not sent its response head
 by then gets 504 and the stream is closed); request body 100 MiB, counted as the bytes stream, so a
 chunked upload past it gets 413 and the leg is closed; bytes per share per day
@@ -483,9 +489,16 @@ limit. `pty.resize` from the browser is coalesced to the latest size.
 releases it on every exit; over a cap a plain request answers 429 `preview_streams_limit` and a WebSocket
 upgrade is accepted and closed `4409`. Grant redemptions at `/_aurora/grant` are limited to
 `PREVIEW_GRANT_RATE` (30/min per client address, 10/min per share; fixed window per replica) with 429
-`grant_rate_limited` and `Retry-After`. The daily quota is one **shared counter per share and UTC day**
-(`aurora-counters`, class `management`; never fails open — `local` counts in the API replica, `closed`
-answers 503 `counter_unavailable`): relays add the bytes they moved (both directions, batched per stream in
+`grant_rate_limited` and `Retry-After`; the check runs only for a request that carries a well-formed
+state cookie (a request without one never reaches the API and spends no budget). The **client address**
+is the socket peer, or — when the peer is inside `relay.trusted_proxies` (same semantics and default
+as `server.trusted_proxies`, FIX-090) — the rightmost untrusted `X-Forwarded-For` entry; the same
+address is the outbound `X-Forwarded-For`. The relay also caps the **negative resolves** per client
+address (30/min): past it, a request whose credential is not already cached is answered locally
+(login redirect, or 401 for a subrequest) without asking the API, so a flood of random cookies cannot
+spend the relay plane's rate class. The daily quota is one **shared counter per share and UTC day**
+(`aurora-counters`, class `management`; does not fail open — `local` counts per API replica, so under
+`local` the effective limit is up to replicas × the limit; `closed` answers 503 `counter_unavailable`): relays add the bytes they moved (both directions, batched per stream in
 units of ≥ 64 KiB and sent with each 15 s heartbeat) and `resolve` answers `deny`/`preview_quota` once the
 counter reaches the limit, so the relay answers 429 with `Retry-After` to the next UTC midnight. A stream
 that has started may finish its response; no new stream opens. The quota can be exceeded by at most what the

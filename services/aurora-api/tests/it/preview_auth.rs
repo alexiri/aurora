@@ -1801,6 +1801,107 @@ async fn stream_grant_waits_for_the_port_then_refuses() {
     );
 }
 
+/// FIX-090: `aurora_preview_shares` is labelled by `state` only — a tenant's slug is not a
+/// metric label.
+#[tokio::test]
+async fn preview_shares_gauge_has_no_tenant_label() {
+    let p = prv_rig().await;
+    let (share, _tok, _) = p.share_with_session(3000).await;
+    let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
+        .bind(p.r.org)
+        .fetch_one(p.r.h.pool())
+        .await
+        .unwrap();
+    // This test binary's only metrics recorder.
+    let handle = aurora_core::service::install_metrics("test")
+        .expect("no other test installs a recorder in this process");
+    aurora_api::jobs::preview_housekeeping(p.r.h.pool())
+        .await
+        .unwrap();
+    let text = handle.render();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("aurora_preview_shares"))
+        .collect();
+    assert!(
+        lines.contains(&"aurora_preview_shares{state=\"active\"} 1"),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"aurora_preview_shares{state=\"paused\"} 0"),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|l| !l.contains("org=") && !l.contains(&slug)),
+        "no tenant identifier in the labels: {lines:?}"
+    );
+    let _ = share_id;
+}
+
+/// Rotation (FIX-090): bootstrapping with a new `aul_` makes it the only anchor — the old
+/// token answers 401 and its replicas are gone; the new one registers.
+#[tokio::test]
+async fn bootstrapping_a_new_relay_token_ends_the_old_one() {
+    use aurora_api::domains::relay::service::bootstrap_relay_token;
+    let new_tok = token::generate(TokenPrefix::Relay).expose().to_owned();
+    let n = new_tok.clone();
+    let p = prv_rig_with(move |c| {
+        c.bootstrap_relay_token = Some(aurora_config::Redacted::new(n));
+    })
+    .await;
+    // Before: the rig's token (inserted by hand, as an older bootstrap would have) works.
+    let label = format!("p{}", "0".repeat(24));
+    let (s, v) = p.resolve(&label, None, true).await;
+    assert_eq!(s, 200, "{v}");
+    let replicas_before: i64 = sqlx::query_scalar("SELECT count(*) FROM relay_replicas")
+        .fetch_one(p.r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(replicas_before, 1);
+    bootstrap_relay_token(&p.r.h.state).await.unwrap();
+    // The old token: 401, and its replica is gone.
+    let (s, v) = p.resolve(&label, None, true).await;
+    assert_eq!(s, 401, "{v}");
+    let tokens: i64 = sqlx::query_scalar("SELECT count(*) FROM relay_tokens")
+        .fetch_one(p.r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(tokens, 1, "only the presented token remains");
+    let replicas: i64 = sqlx::query_scalar("SELECT count(*) FROM relay_replicas")
+        .fetch_one(p.r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(replicas, 0, "the old token's replicas went with it");
+    // The new token registers; running the bootstrap again changes nothing (idempotent).
+    let (s, _, v) =
+        p.r.h
+            .send(
+                Method::POST,
+                "/v1/relay/register",
+                &[("authorization", &bearer(&new_tok))],
+                Some(json!({"version": "test/2"})),
+            )
+            .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    bootstrap_relay_token(&p.r.h.state).await.unwrap();
+    let tokens: i64 = sqlx::query_scalar("SELECT count(*) FROM relay_tokens")
+        .fetch_one(p.r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(tokens, 1);
+    let replicas: i64 = sqlx::query_scalar("SELECT count(*) FROM relay_replicas")
+        .fetch_one(p.r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        replicas, 1,
+        "re-running the bootstrap keeps the live token's replicas"
+    );
+}
+
 /// The relay plane itself: 401 without/with a wrong `aul_`, 426 on a newer protocol,
 /// 403 `replica_unknown` without or with a foreign replica.
 #[tokio::test]

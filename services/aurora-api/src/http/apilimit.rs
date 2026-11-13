@@ -569,8 +569,23 @@ enum Who {
     Anonymous { rejected: bool },
 }
 
-async fn resolve(state: &AppState, headers: &http::HeaderMap, ip: ClientIp) -> Who {
+async fn resolve(state: &AppState, headers: &http::HeaderMap, ip: ClientIp, path: &str) -> Who {
     let had_bearer = bearer(headers);
+    // (FIX-090) A relay-plane request carries an `aul_` bearer, which none of the management
+    // extractors accepts: without this branch every relay call was charged as a rejected bearer
+    // to the relay pod's address (30/min). A live relay token is a `Principal` of its own
+    // preview-class bucket; a dead one stays on the rejected-bearer path.
+    if path.starts_with("/v1/relay/")
+        && let Some(Some(tok)) = had_bearer
+        && tok.starts_with(TokenPrefix::Relay.as_str())
+    {
+        use crate::domains::relay::auth::{LimiterIdentity, limiter_identity};
+        return match limiter_identity(state, headers).await {
+            LimiterIdentity::Live(key) => Who::Principal(key, None),
+            LimiterIdentity::Dead => Who::Anonymous { rejected: true },
+            LimiterIdentity::Unknown => Who::Anonymous { rejected: false },
+        };
+    }
     let has_cookie =
         crate::http::auth::cookie_value(headers, crate::http::auth::SESSION_COOKIE).is_some();
     if had_bearer.is_none() && !has_cookie {
@@ -620,7 +635,7 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
         .copied()
         .unwrap_or_default();
     let headers = req.headers().clone();
-    match resolve(&state, &headers, ip).await {
+    match resolve(&state, &headers, ip, &path).await {
         Who::Anonymous { rejected } => {
             let ip = ip_key(&req);
             let charge = if rejected {

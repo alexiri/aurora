@@ -77,7 +77,7 @@
 {{- $pv = default (dict) $cfg.previews -}}
 {{- $_ := set $pv "domain" .Values.relay.domain -}}
 {{- $_ := set $cfg "previews" $pv -}}
-{{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) -}}
+{{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) "trusted_proxies" (default (list) .Values.relay.trusted_proxies) -}}
 {{- $_ := set $cfg "relay" (merge $rl (default (dict) $cfg.relay)) -}}
 {{- end -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}

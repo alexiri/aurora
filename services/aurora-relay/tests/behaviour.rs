@@ -520,7 +520,8 @@ async fn redeem_denials_render_their_pages() {
         "GET /_aurora/grant?g=x HTTP/1.1\r\nhost: {HOST}\r\nconnection: close\r\n\
          cookie: __Host-aurora_pstate=nonce.Lw\r\n\r\n"
     );
-    for (api, page) in [(404, 404), (423, 423), (403, 403), (400, 400), (500, 502)] {
+    // A failing API (500) is a try-later page (503), not "unavailable" (502): a retry fixes it.
+    for (api, page) in [(404, 404), (423, 423), (403, 403), (400, 400), (500, 503)] {
         r.script.redeem_status.store(api, SeqCst);
         let mut c = connect(&r).await;
         c.write_all(raw.as_bytes()).await.unwrap();

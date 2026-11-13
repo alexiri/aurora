@@ -380,7 +380,77 @@ impl Streams {
 pub type LegWs =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+/// Whether `endpoint` is `ws[s]://<host-name | IP literal>[:port]/v1/preview-stream` and nothing
+/// else (FIX-090). The relay sends `Authorization: Bearer aux_…` to whatever the API names; an
+/// endpoint with userinfo (`ws://user@evil/…`), a query, a stray character or another path is
+/// refused before a live grant leaves the process. Same rule as the API's registration check
+/// of `advertised_host` (`runner_plane::preview_streams::advertised_host_ok`).
+pub fn endpoint_ok(endpoint: &str) -> bool {
+    let Some(rest) = endpoint
+        .strip_prefix("wss://")
+        .or_else(|| endpoint.strip_prefix("ws://"))
+    else {
+        return false;
+    };
+    let Some((authority, path)) = rest.split_once('/') else {
+        return false;
+    };
+    path == "v1/preview-stream" && authority_ok(authority)
+}
+
+/// A host name or IP literal (`[v6]` bracketed) with an optional port.
+fn authority_ok(h: &str) -> bool {
+    if h.is_empty() || h.len() > 255 {
+        return false;
+    }
+    let (host, port) = if let Some(rest) = h.strip_prefix('[') {
+        let Some((v6, tail)) = rest.split_once(']') else {
+            return false;
+        };
+        if v6.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        match tail {
+            "" => return true,
+            t => (None, t.strip_prefix(':')),
+        }
+    } else {
+        match h.split_once(':') {
+            Some((host, port)) => (Some(host), Some(port)),
+            None => (Some(h), None),
+        }
+    };
+    if let Some(p) = port
+        && (p.is_empty()
+            || p.len() > 5
+            || !p.bytes().all(|b| b.is_ascii_digit())
+            || p.parse::<u32>().is_ok_and(|n| n == 0 || n > 65_535))
+    {
+        return false;
+    }
+    let Some(host) = host else {
+        return true;
+    };
+    if host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return true;
+    }
+    !host.is_empty()
+        && host.split('.').all(|l| {
+            (1..=63).contains(&l.len())
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+}
+
 pub async fn dial(_state: &State, sa: &StreamsAnswer) -> Result<LegWs, u16> {
+    if !endpoint_ok(&sa.runner_endpoint) {
+        tracing::warn!("the API named a runner endpoint that is not host[:port]; not dialling");
+        metrics::counter!("aurora_relay_stream_dial_errors_total", "kind" => "endpoint")
+            .increment(1);
+        return Err(502);
+    }
     let mut req = sa
         .runner_endpoint
         .as_str()

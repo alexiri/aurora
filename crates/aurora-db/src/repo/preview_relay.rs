@@ -206,6 +206,20 @@ pub async fn upsert_relay_token<'e, E: PgExecutor<'e>>(
     Ok(id)
 }
 
+/// Rotation (FIX-090): every relay token other than `keep` is deleted, and with it (cascade)
+/// the replicas that registered with it. The token presented at bootstrap is the only anchor.
+/// Returns how many tokens were removed.
+pub async fn delete_other_relay_tokens<'e, E: PgExecutor<'e>>(
+    exec: E,
+    keep: Uuid,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query("DELETE FROM relay_tokens WHERE id <> $1")
+        .bind(keep)
+        .execute(exec)
+        .await?
+        .rows_affected())
+}
+
 pub async fn find_relay_token<'e, E: PgExecutor<'e>>(
     exec: E,
     token_hash: &[u8],

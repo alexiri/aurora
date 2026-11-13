@@ -411,6 +411,75 @@ async fn unauthenticated_and_rejected_bearer_requests_are_limited_per_ip() {
     assert_eq!(v["error"]["code"], "rate_limited");
 }
 
+/// FIX-090: a relay replica's `aul_` bearer is charged to its own preview class (100/s, burst
+/// 200), never as a rejected bearer to the relay pod's address (30/min): 200 calls in a row with a
+/// live token are not refused; the same calls with a dead token hit the rejected-bearer limit.
+#[tokio::test]
+async fn relay_plane_calls_are_charged_to_the_preview_class_not_as_rejected_bearers() {
+    use aurora_core::token::{self, TokenPrefix};
+    let w = world(real_limits).await;
+    let live = token::generate(TokenPrefix::Relay).expose().to_owned();
+    let token_id = Uuid::now_v7();
+    sqlx::query("INSERT INTO relay_tokens (id, token_hash) VALUES ($1,$2)")
+        .bind(token_id)
+        .bind(&token::hash(&live)[..])
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let replica = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO relay_replicas (id, token_id, version, last_seen_at) VALUES ($1,$2,'t',now())",
+    )
+    .bind(replica)
+    .bind(token_id)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let call = |tok: String, rep: Option<Uuid>| {
+        let h = &w.h;
+        async move {
+            let b = bearer(&tok);
+            let r = rep.map(|r| r.to_string());
+            let mut hd = vec![
+                ("authorization", b.as_str()),
+                ("x-aurora-protocol", "relay/1"),
+            ];
+            if let Some(r) = &r {
+                hd.push(("x-aurora-replica", r.as_str()));
+            }
+            h.send(
+                Method::POST,
+                "/v1/relay/resolve",
+                &hd,
+                Some(json!({"label": "p0000000000000000000000000"})),
+            )
+            .await
+            .0
+        }
+    };
+    // 200 calls with the live token (previews are off in this rig: the handler answers 404, which
+    // is not the point — the limiter must let every one of them through).
+    for i in 0..200 {
+        let s = call(live.clone(), Some(replica)).await;
+        assert_ne!(
+            s,
+            StatusCode::TOO_MANY_REQUESTS,
+            "live relay call {i} was throttled"
+        );
+    }
+    // A dead token (rotated away, never issued) is an ordinary rejected bearer: 30 per minute.
+    let dead = token::generate(TokenPrefix::Relay).expose().to_owned();
+    let mut first_429 = None;
+    for i in 0..100 {
+        if call(dead.clone(), None).await == StatusCode::TOO_MANY_REQUESTS {
+            first_429 = Some(i);
+            break;
+        }
+    }
+    let n = first_429.expect("a dead relay token must hit the rejected-bearer limit");
+    assert!((29..=40).contains(&n), "refused after {n} dead-token calls");
+}
+
 #[tokio::test]
 async fn disabled_limiter_lets_everything_through() {
     let w = world(|c| {

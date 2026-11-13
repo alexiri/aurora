@@ -337,6 +337,36 @@ fn spoken_deny(reason: &str, retry_after_secs: Option<u32>) -> Option<hyper::Res
     })
 }
 
+/// The answer for a failed API call (FIX-090): a throttled (429), overloaded or briefly
+/// unreachable API is a reason to try again, not a visitor-facing 502 — the 503 try-later page
+/// with `Retry-After`. A refusal that no retry fixes (the token no longer accepted, say) stays 502.
+fn api_unavailable(e: &crate::api::ApiError) -> hyper::Response<RelayBody> {
+    use crate::api::ApiError;
+    let retryable = match e {
+        ApiError::Transport(_) | ApiError::Decode(_) => true,
+        ApiError::Status(s) => matches!(*s, 429 | 500 | 502 | 503 | 504),
+    };
+    if retryable {
+        let mut r = retry_after(
+            status_page(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Preview",
+                "The preview service is busy. Try again in a moment.",
+            ),
+            5,
+        );
+        r.headers_mut()
+            .insert("refresh", HeaderValue::from_static("5"));
+        r
+    } else {
+        simple(
+            StatusCode::BAD_GATEWAY,
+            "The preview service is unavailable.\n",
+            &[],
+        )
+    }
+}
+
 /// Adds `Retry-After: <secs>` to a response.
 fn retry_after(mut r: hyper::Response<RelayBody>, secs: u64) -> hyper::Response<RelayBody> {
     if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
@@ -605,7 +635,7 @@ pub async fn handle(
     let hash = token.as_deref().map(session_hash);
     let mut who: Option<(uuid::Uuid, String)> = None;
     let allowed = match &hash {
-        Some(h) => match state.resolve(&label, Some(h), false).await {
+        Some(h) => match state.resolve(&label, Some(h), false, client_ip).await {
             Ok(a) => {
                 if a.decision == "allow" {
                     // The share (per-share cap) and the user (per-user cap; the session hash
@@ -618,19 +648,15 @@ pub async fn handle(
                     false
                 }
             }
-            Err(_) => {
+            Err(e) => {
                 outcome("upstream_error");
-                return simple(
-                    StatusCode::BAD_GATEWAY,
-                    "The preview service is unavailable.\n",
-                    &[],
-                );
+                return api_unavailable(&e);
             }
         },
         None => false,
     };
     if !allowed {
-        return login_or_wait(state, &label, req, nav, &token, outcome).await;
+        return login_or_wait(state, &label, req, nav, &token, client_ip, outcome).await;
     }
     // ---- 4. proxy (an `allow` without a share cannot be capped: refuse it, never skip the cap)
     let Some(who) = who else {
@@ -654,13 +680,14 @@ async fn login_or_wait(
     req: Request,
     nav: Nav,
     token: &Option<String>,
+    client_ip: Option<std::net::IpAddr>,
     outcome: impl Fn(&'static str),
 ) -> hyper::Response<RelayBody> {
     if token.is_some() {
         // A credential that resolve denied: `deny` (uniform not_found / spoken reasons) or a
         // session past its idle limit → login (restart the flow silently).
         let h = token.as_deref().map(session_hash).unwrap_or_default();
-        let answer = state.resolve(label, Some(&h), false).await.ok();
+        let answer = state.resolve(label, Some(&h), false, client_ip).await.ok();
         let decision = answer
             .as_ref()
             .map(|a| a.decision.clone())
@@ -741,16 +768,6 @@ async fn aurora_path(
     if req.method != Method::GET {
         return simple(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed.\n", &[]);
     }
-    // `PREVIEW_GRANT_RATE` (30/min per client address, 10/min per share) counts every
-    // redemption attempt, valid or not: grant guessing is bounded before the API sees it.
-    if let Err((why, secs)) = state.grant_rate.check(client_ip, label) {
-        metrics::counter!("aurora_relay_refused_total", "reason" => why.reason()).increment(1);
-        metrics::counter!("aurora_relay_grants_total", "result" => "rate_limited").increment(1);
-        return retry_after(
-            simple(StatusCode::TOO_MANY_REQUESTS, "grant_rate_limited\n", &[]),
-            secs,
-        );
-    }
     let Some(pstate) = req.cookie(PSTATE_COOKIE) else {
         metrics::counter!("aurora_relay_grants_total", "result" => "no_state").increment(1);
         return simple(StatusCode::BAD_REQUEST, "grant_invalid\n", &[]);
@@ -780,6 +797,19 @@ async fn aurora_path(
     let outcome = |r: &'static str| {
         metrics::counter!("aurora_relay_grants_total", "result" => r).increment(1)
     };
+    // `PREVIEW_GRANT_RATE` (30/min per client address, 10/min per share) counts every
+    // redemption attempt that would reach the API, valid or not: grant guessing is bounded
+    // before the API sees it. It runs after the cheap shape checks above (FIX-090): a request
+    // without a well-formed state cookie never reaches the API and so spends nobody's budget —
+    // anonymous noise must not lock the share's real redemptions out.
+    if let Err((why, secs)) = state.grant_rate.check(client_ip, label) {
+        metrics::counter!("aurora_relay_refused_total", "reason" => why.reason()).increment(1);
+        outcome("rate_limited");
+        return retry_after(
+            simple(StatusCode::TOO_MANY_REQUESTS, "grant_rate_limited\n", &[]),
+            secs,
+        );
+    }
     match state.api.redeem(&grant, label, nonce).await {
         Ok(a) => {
             outcome("redeemed");
@@ -825,9 +855,11 @@ async fn aurora_path(
             outcome("denied");
             spoken_deny("paused", None).unwrap_or_else(|| simple(StatusCode::FORBIDDEN, "", &[]))
         }
-        Err(_) => {
+        // A throttled, overloaded or unreachable API: try again (the grant is single use, but
+        // the authorize redirect that brings the visitor back is free).
+        Err(e) => {
             outcome("invalid");
-            simple(StatusCode::BAD_GATEWAY, "grant service unavailable.\n", &[])
+            api_unavailable(&e)
         }
     }
 }
@@ -1333,12 +1365,20 @@ async fn serve_conn(
                 headers: parts.headers,
                 cookies,
             };
+            // The visitor's address: the socket peer, or behind a trusted edge proxy the
+            // rightmost untrusted `X-Forwarded-For` entry (FIX-090).
+            let xff: Vec<&str> = headers
+                .get_all("x-forwarded-for")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect();
+            let client = crate::limits::client_address(ip, &xff, &state.trusted_proxies);
             let mut res = handle(
                 state,
                 streams,
                 req,
                 raw_head,
-                ip,
+                client,
                 body_max,
                 body,
                 Some(upgrade),

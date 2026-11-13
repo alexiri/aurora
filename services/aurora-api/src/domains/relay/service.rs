@@ -204,11 +204,22 @@ async fn access_of(
 
 // ---------------------------------------------------------------- register
 
-/// `AURORA_BOOTSTRAP_RELAY_TOKEN`: upsert the relay anchor token's hash. Idempotent.
+/// `AURORA_BOOTSTRAP_RELAY_TOKEN`: upsert the relay anchor token's hash and make it the only
+/// one: every other `relay_tokens` row (and, by cascade, its replicas) is deleted, so changing
+/// the secret ends the old token's access (rotation, FIX-090). Idempotent.
 pub async fn bootstrap_relay_token(s: &AppState) -> Result<(), DbError> {
     if let Some(t) = &s.config.bootstrap_relay_token {
         let t = t.expose();
-        relay_repo::upsert_relay_token(&s.pool, &token::hash(t)).await?;
+        let mut tx = s.pool.begin().await?;
+        let keep = relay_repo::upsert_relay_token(&mut *tx, &token::hash(t)).await?;
+        let gone = relay_repo::delete_other_relay_tokens(&mut *tx, keep).await?;
+        tx.commit().await?;
+        if gone > 0 {
+            tracing::info!(
+                removed = gone,
+                "relay anchor token rotated: older tokens removed"
+            );
+        }
     }
     Ok(())
 }
