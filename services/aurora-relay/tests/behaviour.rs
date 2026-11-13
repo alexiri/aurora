@@ -23,6 +23,7 @@ fn tm() -> Timeouts {
         idle_ws: QUIET,
         lifetime: QUIET,
         validate_every: QUIET,
+        close: Duration::from_secs(2),
     }
 }
 

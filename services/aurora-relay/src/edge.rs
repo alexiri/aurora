@@ -24,25 +24,45 @@ use crate::api::session_hash;
 use crate::state::State;
 use crate::stream::{StreamKey, Streams};
 
+mod wire;
+
 /// Response body: streamed (never fully buffered beyond one chunk). `exact` is set for
 /// pre-loaded bodies (status pages) so hyper answers with `content-length` instead of
 /// chunked framing; proxied bodies stream with an unknown size.
 pub struct RelayBody {
     rx: mpsc::Receiver<Result<Frame<Bytes>, std::io::Error>>,
     exact: Option<u64>,
+    /// Set by the producer when the answer ended before it was complete (malformed framing,
+    /// a leg that dropped mid-body): once the queued frames are delivered the body fails with
+    /// an error instead of ending cleanly, so the browser sees a transport error, never a
+    /// silently truncated document. A flag, not a queued error, because the queue may be full
+    /// behind a viewer that stopped reading.
+    aborted: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl RelayBody {
     /// A body driven by a sender held elsewhere (the proxy's pump task).
-    pub(crate) fn new(rx: mpsc::Receiver<Result<Frame<Bytes>, std::io::Error>>) -> Self {
-        Self { rx, exact: None }
+    pub(crate) fn new(
+        rx: mpsc::Receiver<Result<Frame<Bytes>, std::io::Error>>,
+        aborted: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            rx,
+            exact: None,
+            aborted: Some(aborted),
+        }
     }
 
     /// A body whose bytes are already queued (one frame, sender gone).
     pub(crate) fn ready(bytes: Bytes) -> Self {
         let (tx, rx) = mpsc::channel(1);
         let _ = tx.try_send(Ok(Frame::data(bytes)));
-        Self { rx, exact: None }.with_exact_len()
+        Self {
+            rx,
+            exact: None,
+            aborted: None,
+        }
+        .with_exact_len()
     }
 
     /// Peeks the queued frame to learn the exact length (the sender is gone, so nothing
@@ -69,7 +89,19 @@ impl Body for RelayBody {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        std::pin::Pin::new(&mut self.rx).poll_recv(cx)
+        let polled = std::pin::Pin::new(&mut self.rx).poll_recv(cx);
+        if let std::task::Poll::Ready(None) = polled
+            && self
+                .aborted
+                .as_ref()
+                .is_some_and(|a| a.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            return std::task::Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "the preview answer was cut short",
+            ))));
+        }
+        polled
     }
 
     fn size_hint(&self) -> hyper::body::SizeHint {
@@ -90,7 +122,11 @@ fn string_body(b: &str) -> RelayBody {
     RelayBody::ready(Bytes::from(b.to_owned()))
 }
 
-/// Hop-by-hop headers (RFC 9110 §7.6.1) plus the ones the relay owns.
+/// Request headers the relay removes before the app sees the request (SEC-85): hop-by-hop
+/// (RFC 9110 §7.6.1), `Host` (rewritten to the runner endpoint), and every client-supplied
+/// forwarding header (the relay owns the chain: it adds its own `X-Forwarded-For`). Not here,
+/// because they are filtered by value: `Cookie` (only Aurora's cookies go,
+/// [`strip_aurora_cookies`]) and `Authorization` (only an Aurora token goes).
 const DROP_REQUEST: &[&str] = &[
     "connection",
     "keep-alive",
@@ -100,22 +136,27 @@ const DROP_REQUEST: &[&str] = &[
     "trailer",
     "transfer-encoding",
     "upgrade",
-    // Aurora credentials never reach the app (SEC-81 rule 3, SEC-85).
-    "authorization",
-    "cookie",
     "host",
-    // The relay owns the forwarding chain; a client-supplied chain is dropped.
+    // Client-supplied forwarding chain (`x-forwarded-*` also matches by prefix below).
     "forwarded",
     "x-forwarded-for",
     "x-forwarded-host",
     "x-forwarded-proto",
+    "x-forwarded-port",
+    "x-forwarded-prefix",
+    "x-real-ip",
+    "true-client-ip",
+    "via",
     // Aurora's own names: a browser cannot legitimately send these to a preview.
     "x-aurora-replica",
     "x-aurora-protocol",
     "x-aurora-runner",
 ];
 
-/// Response headers the relay never forwards as-is: hop-by-hop plus the ones it rewrites.
+/// Response headers the relay never forwards as-is (SEC-85): hop-by-hop, the ones it sets
+/// itself, and the ones that would act on the browser beyond the app (`clear-site-data`,
+/// `alt-svc`, `service-worker-allowed`). The app's `content-security-policy` is passed through
+/// unchanged: the preview origin is the app's own, so its policy is its own to set.
 const DROP_RESPONSE: &[&str] = &[
     "connection",
     "keep-alive",
@@ -128,7 +169,10 @@ const DROP_RESPONSE: &[&str] = &[
     // Security headers are set by the relay, never trusted from the app.
     "strict-transport-security",
     "x-robots-tag",
-    "content-security-policy",
+    // Acts on the browser's storage or routing beyond this preview.
+    "clear-site-data",
+    "alt-svc",
+    "service-worker-allowed",
 ];
 
 const PSTATE_COOKIE: &str = "__Host-aurora_pstate";
@@ -464,12 +508,14 @@ pub enum Nav {
 }
 
 /// One request's full handling. `raw_head` is the exact bytes the parser saw (smuggling checks).
+#[allow(clippy::too_many_arguments)]
 pub async fn handle(
     state: Arc<State>,
     streams: Arc<Streams>,
     req: Request,
     raw_head: Arc<[u8]>,
     client_ip: Option<std::net::IpAddr>,
+    body_max: usize,
     body: hyper::body::Incoming,
     upgrade: Option<hyper::upgrade::OnUpgrade>,
 ) -> hyper::Response<RelayBody> {
@@ -545,7 +591,7 @@ pub async fn handle(
         );
     };
     proxy(
-        state, streams, label, who, req, hash, nav, client_ip, body, upgrade, outcome,
+        state, streams, label, who, req, hash, nav, client_ip, body_max, body, upgrade, outcome,
     )
     .await
 }
@@ -745,6 +791,7 @@ async fn proxy(
     hash: Option<String>,
     nav: Nav,
     client_ip: Option<std::net::IpAddr>,
+    body_max: usize,
     body: hyper::body::Incoming,
     upgrade: Option<hyper::upgrade::OnUpgrade>,
     outcome: impl Fn(&'static str),
@@ -868,9 +915,21 @@ async fn proxy(
     };
     // The rebuilt request head plus the body and the browser's pending upgrade ride the
     // same leg-1 stream; the target keeps the query string.
+    // A plain request asks the app to close after its answer, so the loopback socket and the
+    // supervisor stream are not held by a keep-alive app; an upgrade needs its own handshake.
+    if !req.headers.contains_key("upgrade") {
+        out_headers.insert("connection", HeaderValue::from_static("close"));
+    }
     let head = crate::proxy::build_request_head(&req.method, req.target(), &out_headers, body_len);
     let _ = nav;
-    match crate::proxy::forward(state, streams, key, sa, head, body_len, body, upgrade, slot).await
+    let exchange = crate::proxy::Exchange {
+        head_request: req.method == Method::HEAD,
+        body_max,
+    };
+    match crate::proxy::forward(
+        state, streams, key, sa, head, body_len, body, upgrade, slot, exchange,
+    )
+    .await
     {
         Ok(r) => {
             outcome("ok");
@@ -890,12 +949,19 @@ async fn proxy(
             let text = match code {
                 502 => "The sandbox refused the connection.\n",
                 504 => "The sandbox timed out.\n",
+                413 => "Request body too large.\n",
                 _ => "The preview is unavailable.\n",
+            };
+            // An oversized upload leaves unread body bytes on the connection: close it.
+            let extra: &[(&'static str, String)] = if code == 413 {
+                &[("connection", "close".to_owned())]
+            } else {
+                &[]
             };
             simple(
                 StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
                 text,
-                &[],
+                extra,
             )
         }
     }
@@ -998,15 +1064,60 @@ pub fn ip_text(ip: Option<std::net::IpAddr>) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
+/// True for a credential of Aurora's token format (`au<letter>_…`, `aurora-core` `token.rs`).
+fn is_aurora_token(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() > 4 && b.starts_with(b"au") && b[2].is_ascii_lowercase() && b[3] == b'_'
+}
+
+/// The browser's `Cookie` headers without Aurora's own cookies (`__Host-aurora_*`,
+/// `aurora_*`: the preview, state and session cookies), as one header; `None` when nothing
+/// else remains. The app's cookies keep their order.
+fn strip_aurora_cookies(headers: &HeaderMap) -> Option<HeaderValue> {
+    let mut kept: Vec<&str> = Vec::new();
+    for v in headers.get_all("cookie") {
+        let Ok(s) = v.to_str() else { continue };
+        for pair in s.split(';') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let name = pair.split_once('=').map_or(pair, |(k, _)| k).trim();
+            if name.starts_with("__Host-aurora_") || name.starts_with("aurora_") {
+                continue;
+            }
+            kept.push(pair);
+        }
+    }
+    if kept.is_empty() {
+        return None;
+    }
+    HeaderValue::from_str(&kept.join("; ")).ok()
+}
+
 /// Builds the outbound `Request` headers once (tests assert on this exact set).
 pub fn outbound_headers(req_headers: &HeaderMap, host_value: &str, client_ip: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
     for (name, value) in req_headers {
         let n = name.as_str();
-        if DROP_REQUEST.iter().any(|d| d.eq_ignore_ascii_case(n)) {
+        if DROP_REQUEST.iter().any(|d| d.eq_ignore_ascii_case(n))
+            || n.starts_with("x-forwarded-")
+            || n == "cookie"
+        {
             continue;
         }
-        h.insert(name, value.clone());
+        // An Aurora token never reaches the app; the app's own `Authorization` does.
+        if n == "authorization"
+            && value
+                .to_str()
+                .map_or(true, |v| v.split_whitespace().any(is_aurora_token))
+        {
+            continue;
+        }
+        h.append(name, value.clone());
+    }
+    if let Some(c) = strip_aurora_cookies(req_headers) {
+        h.insert("cookie", c);
     }
     h.insert(
         "host",
@@ -1108,14 +1219,27 @@ async fn serve_conn(
 ) {
     let state2 = state.clone();
     let streams2 = streams.clone();
+    // The wire-level smuggling guard sees the bytes before hyper normalises them.
+    let wire = wire::Wire::default();
+    let guarded = wire.guard(tcp);
+    let wire2 = wire.clone();
     let svc = hyper::service::service_fn(move |mut req: hyper::Request<Incoming>| {
         let state = state2.clone();
         let streams = streams2.clone();
+        let wire = wire2.clone();
         async move {
+            if wire.is_bad() {
+                metrics::counter!("aurora_relay_requests_total", "outcome" => "bad_request")
+                    .increment(1);
+                return Ok::<_, std::convert::Infallible>(simple(
+                    StatusCode::BAD_REQUEST,
+                    "Bad request.\n",
+                    &[("connection", "close".to_owned())],
+                ));
+            }
             let headers = req.headers().clone();
-            // hyper does not expose the raw head; the smuggling checks run on the parsed
-            // header map (duplicate Content-Length survives there; obsolete line folding and
-            // bad TE make hyper's own parser fail with 400 first — defense in depth).
+            // The wire guard refuses ambiguous framing before this point; this second check
+            // runs on the parsed header map (defense in depth).
             let mut raw = Vec::new();
             for (n, v) in headers.iter() {
                 raw.extend_from_slice(n.as_str().as_bytes());
@@ -1155,7 +1279,24 @@ async fn serve_conn(
                 headers: parts.headers,
                 cookies,
             };
-            Ok(handle(state, streams, req, raw_head, ip, body, Some(upgrade)).await)
+            let mut res = handle(
+                state,
+                streams,
+                req,
+                raw_head,
+                ip,
+                body_max,
+                body,
+                Some(upgrade),
+            )
+            .await;
+            // After an upgrade request the guard no longer inspects the connection: only a
+            // `101` may keep it open.
+            if wire.upgrade_seen() && res.status() != StatusCode::SWITCHING_PROTOCOLS {
+                res.headers_mut()
+                    .insert("connection", HeaderValue::from_static("close"));
+            }
+            Ok(res)
         }
     });
     // The request head must arrive within `PREVIEW_HEADER_TIMEOUT` (slow-loris): a connection
@@ -1163,7 +1304,7 @@ async fn serve_conn(
     let _ = hyper::server::conn::http1::Builder::new()
         .header_read_timeout(streams.timeouts().header)
         .timer(hyper_util::rt::TokioTimer::new())
-        .serve_connection(hyper_util::rt::TokioIo::new(tcp), svc)
+        .serve_connection(hyper_util::rt::TokioIo::new(guarded), svc)
         .with_upgrades()
         .await;
 }
@@ -1265,6 +1406,132 @@ mod tests {
         assert_eq!(out.get("host").unwrap(), "runner.example:4108");
         // The client-supplied XFF is dropped, then re-added with the relay's own value.
         assert_eq!(out.get("x-forwarded-for").unwrap(), "10.0.0.1");
+    }
+
+    /// SEC-85, request side: each listed header is removed, the app's own cookies and
+    /// `Authorization` are not.
+    #[test]
+    fn request_header_lists() {
+        for gone in [
+            "connection",
+            "keep-alive",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-forwarded-port",
+            "x-forwarded-prefix",
+            "x-forwarded-anything",
+            "x-real-ip",
+            "true-client-ip",
+            "via",
+            "x-aurora-replica",
+        ] {
+            let out = outbound_headers(&headers(&[(gone, "v")]), "runner:4108", "10.0.0.1");
+            if gone == "x-forwarded-for" {
+                // The relay's own value replaces the client's.
+                assert_eq!(out.get(gone).unwrap(), "10.0.0.1");
+                continue;
+            }
+            assert!(out.get(gone).is_none(), "{gone} must not reach the app");
+        }
+        // The app's own credentials reach the app; an Aurora token does not.
+        let out = outbound_headers(
+            &headers(&[("authorization", "Basic dXNlcjpwdw==")]),
+            "r:1",
+            "10.0.0.1",
+        );
+        assert_eq!(out.get("authorization").unwrap(), "Basic dXNlcjpwdw==");
+        for tok in [
+            "Bearer auv_abc",
+            "Bearer aux_abc",
+            "auk_abc",
+            "Bearer aul_x",
+        ] {
+            let out = outbound_headers(&headers(&[("authorization", tok)]), "r:1", "10.0.0.1");
+            assert!(out.get("authorization").is_none(), "{tok}");
+        }
+        // Not a token: only looks similar.
+        for ok in ["Bearer audit_log", "Bearer authz", "Bearer au_x"] {
+            let out = outbound_headers(&headers(&[("authorization", ok)]), "r:1", "10.0.0.1");
+            assert!(out.get("authorization").is_some(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn aurora_cookies_are_removed_and_the_apps_kept() {
+        let mut h = HeaderMap::new();
+        h.append(
+            "cookie",
+            HeaderValue::from_static("app=1; __Host-aurora_preview=auv_x; theme=dark"),
+        );
+        h.append(
+            "cookie",
+            HeaderValue::from_static("aurora_session=s; __Host-aurora_pstate=n.p; b=2"),
+        );
+        let out = outbound_headers(&h, "r:1", "10.0.0.1");
+        assert_eq!(out.get("cookie").unwrap(), "app=1; theme=dark; b=2");
+        assert_eq!(out.get_all("cookie").iter().count(), 1);
+        // Nothing left: no header at all. A look-alike name is the app's.
+        let h = headers(&[("cookie", "__Host-aurora_preview=auv_x; aurora_session=s")]);
+        assert!(
+            outbound_headers(&h, "r:1", "10.0.0.1")
+                .get("cookie")
+                .is_none()
+        );
+        let h = headers(&[("cookie", "aurorax=1; my_aurora_pref=2")]);
+        assert_eq!(
+            outbound_headers(&h, "r:1", "10.0.0.1")
+                .get("cookie")
+                .unwrap(),
+            "aurorax=1; my_aurora_pref=2"
+        );
+    }
+
+    /// SEC-85, response side: each listed header is removed; the app's CSP passes.
+    #[test]
+    fn response_header_lists() {
+        for gone in [
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "clear-site-data",
+            "alt-svc",
+            "service-worker-allowed",
+        ] {
+            let out = rewrite_response_headers(&headers(&[(gone, "v")]));
+            assert!(out.get(gone).is_none(), "{gone} must not reach the browser");
+        }
+        // The relay's own value replaces the app's.
+        let out = rewrite_response_headers(&headers(&[
+            ("strict-transport-security", "max-age=1"),
+            ("x-robots-tag", "all"),
+        ]));
+        assert_eq!(out.get("x-robots-tag").unwrap(), "noindex");
+        assert!(
+            out.get("strict-transport-security")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("31536000")
+        );
+        let out = rewrite_response_headers(&headers(&[(
+            "content-security-policy",
+            "default-src 'self'",
+        )]));
+        assert_eq!(
+            out.get("content-security-policy").unwrap(),
+            "default-src 'self'"
+        );
     }
 
     #[test]

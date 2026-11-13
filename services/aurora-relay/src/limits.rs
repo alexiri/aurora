@@ -122,6 +122,9 @@ pub struct Timeouts {
     pub lifetime: Duration,
     /// How often open streams are re-validated at the API (`PREVIEW_AUTH_CACHE`, 15 s).
     pub validate_every: Duration,
+    /// How long the closing `Close` frame to the runner may take before the leg is dropped
+    /// anyway (`docs/16 §W18`: 2 s): a stalled runner never holds a stream slot.
+    pub close: Duration,
 }
 
 impl Default for Timeouts {
@@ -138,6 +141,7 @@ impl Timeouts {
             idle_ws: aurora_core::limits::PREVIEW_WS_IDLE_TIMEOUT,
             lifetime: aurora_core::limits::PREVIEW_STREAM_LIFETIME,
             validate_every: aurora_core::limits::PREVIEW_AUTH_CACHE,
+            close: Duration::from_secs(2),
         }
     }
 }

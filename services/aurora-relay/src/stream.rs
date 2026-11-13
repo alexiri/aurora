@@ -426,6 +426,42 @@ fn redact_endpoint(uri: &http::Uri) -> String {
     }
 }
 
+/// Why a guarded wait was cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cut {
+    Revoked,
+    Idle,
+    Lifetime,
+}
+
+impl Cut {
+    /// The leg's close code and the `aurora_relay_stream_closed_total` reason.
+    fn close(self) -> (u16, &'static str) {
+        match self {
+            Self::Revoked => (4403, "revoked"),
+            Self::Idle => (4504, "idle"),
+            Self::Lifetime => (4504, "lifetime"),
+        }
+    }
+}
+
+/// Runs `fut` (a send to a peer that may have stopped reading) but gives up when the stream is
+/// revoked or its idle or lifetime limit passes: the pump never awaits a peer without these
+/// still being watched (SEC-81: revocation closes within `PREVIEW_AUTH_CACHE`).
+async fn guarded<F: std::future::Future>(
+    fut: F,
+    revoked: &mut watch::Receiver<bool>,
+    idle: std::pin::Pin<&mut tokio::time::Sleep>,
+    lifetime: std::pin::Pin<&mut tokio::time::Sleep>,
+) -> Result<F::Output, Cut> {
+    tokio::select! {
+        r = fut => Ok(r),
+        Ok(_) = revoked.wait_for(|v| *v) => Err(Cut::Revoked),
+        () = idle => Err(Cut::Idle),
+        () = lifetime => Err(Cut::Lifetime),
+    }
+}
+
 /// Hands the bytes moved since the last flush to the share's report counter once at least
 /// `BYTES_FLUSH` accumulated (or `last`): the quota overshoot per stream is below that.
 fn flush(
@@ -491,10 +527,27 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs, slot: Sl
                         idle.as_mut().reset(tokio::time::Instant::now() + idle_len());
                         bytes_to_app += b.len() as u64;
                         flush(&streams, &slot, &bytes_to_app, &bytes_from_app, &mut flushed, false);
-                        if sink.send(Message::binary(b)).await.is_err() {
-                            close_code = 1000;
-                            reason = "closed";
-                            break;
+                        // Never wait on the runner past revocation or the timers: a runner
+                        // that stopped reading must not keep the stream open.
+                        match guarded(
+                            sink.send(Message::binary(b)),
+                            &mut pump_rx,
+                            idle.as_mut(),
+                            lifetime.as_mut(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => {
+                                close_code = 1000;
+                                reason = "closed";
+                                break;
+                            }
+                            Err(cut) => {
+                                (close_code, reason) = cut.close();
+                                revoked = cut == Cut::Revoked;
+                                break;
+                            }
                         }
                     }
                     None => {
@@ -508,9 +561,26 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs, slot: Sl
                         idle.as_mut().reset(tokio::time::Instant::now() + idle_len());
                         bytes_from_app += b.len() as u64;
                         flush(&streams, &slot, &bytes_to_app, &bytes_from_app, &mut flushed, false);
-                        if from_app_tx.send(b).await.is_err() {
-                            reason = "closed";
-                            break;
+                        // A viewer that stopped reading fills this queue: the wait on it is
+                        // bounded by revocation and the timers like every other.
+                        match guarded(
+                            from_app_tx.send(b),
+                            &mut pump_rx,
+                            idle.as_mut(),
+                            lifetime.as_mut(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => {
+                                reason = "closed";
+                                break;
+                            }
+                            Err(cut) => {
+                                (close_code, reason) = cut.close();
+                                revoked = cut == Cut::Revoked;
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Close(c))) => {
@@ -539,24 +609,42 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs, slot: Sl
                 _ = &mut idle => { close_code = 4504; reason = "idle"; break; }
                 _ = &mut lifetime => { close_code = 4504; reason = "lifetime"; break; }
                 _ = ping.tick() => {
-                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
-                        reason = "closed";
-                        break;
+                    match guarded(
+                        sink.send(Message::Ping(Vec::new().into())),
+                        &mut pump_rx,
+                        idle.as_mut(),
+                        lifetime.as_mut(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => {
+                            reason = "closed";
+                            break;
+                        }
+                        Err(cut) => {
+                            (close_code, reason) = cut.close();
+                            revoked = cut == Cut::Revoked;
+                            break;
+                        }
                     }
                 }
             }
         }
-        if revoked {
-            let _ = sink
-                .send(Message::Close(Some(
-                    tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                        code: 4403.into(),
-                        reason: "revoked".into(),
-                    },
-                )))
-                .await;
+        // The closing frame is bounded: a stalled runner must not hold the slot.
+        let closing = if revoked {
+            Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                code: 4403.into(),
+                reason: "revoked".into(),
+            }))
         } else {
-            let _ = sink.send(Message::Close(None)).await;
+            Message::Close(None)
+        };
+        if tokio::time::timeout(tm.close, sink.send(closing))
+            .await
+            .is_err()
+        {
+            tracing::debug!(budget = ?tm.close, "relay: the runner did not take the close frame");
         }
         tracing::debug!(
             reason,

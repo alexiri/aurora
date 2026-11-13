@@ -457,8 +457,18 @@ agent cannot add to the list.
 
 **Limits** (`02 §Limits`): concurrent streams per share 32, per sandbox 64, per user and per relay
 replica 64; idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
-lifetime 4 h; connect 10 s; response header timeout 60 s; request body 100 MiB; bytes per share per day
+lifetime 4 h; connect 10 s; response header timeout 60 s (an app that has not sent its response head
+by then gets 504 and the stream is closed); request body 100 MiB, counted as the bytes stream, so a
+chunked upload past it gets 413 and the leg is closed; bytes per share per day
 (`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day).
+**The relay's pump never awaits a peer** (FIX-088): every send toward the runner or toward the viewer
+is raced against revocation and the idle and lifetime timers, so a viewer that stopped reading or a
+runner that stopped reading cannot hold a stream open past revocation (SEC-81: ≤ 15 s); the closing
+`Close` frame to the runner is bounded to 2 s and the stream slot is released whether or not it was
+taken. The relay asks the app to close after each plain exchange (`Connection: close` on the
+forwarded head; an upgrade is exempt) and ends a response that is cut short (malformed chunk framing,
+or a leg that ends before the terminal chunk or the declared `Content-Length`) with a transport error
+toward the browser, never a clean end.
 **Runner-side bounds** (FIX-092): the stream listener closes a connection that has not delivered its
 whole request head within 10 s (a total deadline, not a per-read one) and holds at most 256
 unauthenticated connections per runner replica (further ones are closed at once; a connection leaves the
