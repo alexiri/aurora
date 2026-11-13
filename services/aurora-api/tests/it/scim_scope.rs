@@ -362,3 +362,143 @@ async fn per_token_rate_limit_429_with_retry_after() {
     }
     assert_eq!(last.0, 429, "the bucket must refuse within 6 requests");
 }
+
+/// FIX-070: the seat cap holds under concurrent `POST /Users` — with one seat left, parallel
+/// provisions serialize on the org lock before counting: exactly one is created, the others
+/// answer 403 `member_limit_reached`, and the org never exceeds `max_members`.
+#[tokio::test]
+async fn concurrent_posts_at_the_last_seat_create_exactly_one() {
+    const N: usize = 6;
+    let fx = ScimFx::new().await;
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM org_members WHERE org_id = $1 AND status = 'active'",
+    )
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    let cap = active + 1;
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || jsonb_build_object('max_members', $2::int8) \
+         WHERE id = $1",
+    )
+    .bind(fx.org)
+    .bind(cap)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(N));
+    let rs = futures::future::join_all((0..N).map(|i| {
+        let barrier = barrier.clone();
+        let fx = &fx;
+        async move {
+            barrier.wait().await;
+            fx.scim(
+                Method::POST,
+                USERS,
+                Some(json!({"userName": format!("seat-{i}@x.io")})),
+            )
+            .await
+        }
+    }))
+    .await;
+    let created = rs.iter().filter(|(s, _, _)| *s == 201).count();
+    for (s, _, v) in &rs {
+        assert!(
+            *s == 201 || (*s == 403 && v["detail"] == "member_limit_reached"),
+            "{s}: {v}"
+        );
+    }
+    assert_eq!(created, 1, "exactly the last seat is taken");
+    let after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM org_members WHERE org_id = $1 AND status = 'active'",
+    )
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(after, cap, "never above max_members");
+}
+
+/// FIX-062 (C-473, SEC-72): a `PUT` of an owner's link is refused 403 whatever its body —
+/// a harmless attribute change and an e-mail change alike — before anything is written: the
+/// link row, the membership and the account stay exactly as they were.
+#[tokio::test]
+async fn owner_link_put_refused_nothing_written() {
+    let fx = ScimFx::new().await;
+    let owner_user = fx.h.user("put-owner@x.io", false).await;
+    fx.h.member(fx.org, owner_user, "owner", "active").await;
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            USERS,
+            Some(json!({"userName": "put-owner@x.io", "displayName": "Owner"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let sid = v["id"].as_str().unwrap().to_owned();
+    type Snap = (Uuid, String, Option<String>, String, Option<String>, String);
+    let snap = || async {
+        let link: Snap = sqlx::query_as(
+            "SELECT s.user_id, s.user_name::text, s.display_name, s.state, s.external_id, \
+                    s.updated_at::text \
+             FROM scim_users s WHERE s.id = $1",
+        )
+        .bind(sid.parse::<Uuid>().unwrap())
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+        let seat: (String, String) = sqlx::query_as(
+            "SELECT role, status FROM org_members WHERE org_id = $1 AND user_id = $2",
+        )
+        .bind(fx.org)
+        .bind(owner_user)
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+        let acct: (String, String) =
+            sqlx::query_as("SELECT email::text, display_name FROM users WHERE id = $1")
+                .bind(owner_user)
+                .fetch_one(fx.h.pool())
+                .await
+                .unwrap();
+        (link, seat, acct)
+    };
+    let before = snap().await;
+    for body in [
+        json!({"userName": "put-owner@x.io", "displayName": "Renamed"}),
+        json!({"userName": "elsewhere@x.io"}),
+        json!({"userName": "put-owner@x.io", "active": true}),
+    ] {
+        let (s, _, v) = fx
+            .scim(Method::PUT, &format!("{USERS}/{sid}"), Some(body.clone()))
+            .await;
+        assert_eq!(s, 403, "{body}: {v}");
+        assert_eq!(
+            v["detail"], "Organization owners are managed in Aurora.",
+            "{v}"
+        );
+        assert_eq!(snap().await, before, "{body}: nothing written");
+    }
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE email = 'elsewhere@x.io'")
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    // A PATCH that does not deactivate stays allowed (docs/04: PATCH active=false, PUT and
+    // DELETE are the refused mutations) and lands on the link only.
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{"op": "replace", "path": "displayName", "value": "Link only"}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let after = snap().await;
+    assert_eq!(after.1, before.1, "membership untouched");
+    assert_eq!(after.2, before.2, "account untouched");
+}

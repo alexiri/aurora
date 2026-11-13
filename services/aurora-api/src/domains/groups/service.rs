@@ -299,6 +299,34 @@ pub async fn patch(
     Ok(row.into())
 }
 
+/// The gateway invalidation set of a deleted group (SEC-71: a removal is effective for the
+/// next request, not after `IDENTITY_TTL`), shared by the dashboard delete and SCIM's
+/// `DELETE /Groups/{id}` (FIX-062). Call inside the deleting transaction (the NOTIFYs are
+/// delivered on commit) with what the group had before the delete: its bound `workspaces`,
+/// its `members` (scope `user` each, or one `org` scope above 200) and whether it carried
+/// an `org_role` mapping (scope `org`). Rules naming the group are never rewritten: its dead
+/// id is simply in no principal set once every cached identity that carried it is dropped.
+pub async fn notify_group_deleted(
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+    workspaces: &[Uuid],
+    members: &[Uuid],
+    had_org_role: bool,
+) -> Result<(), DbError> {
+    repo::notify_workspaces_changed(&mut *conn, org, workspaces).await?;
+    if had_org_role {
+        repo::notify_org_changed(&mut *conn, org).await?;
+    }
+    if members.len() > 200 {
+        aurora_db::repo::credentials::notify_gateway_invalidate(&mut *conn, "org", org).await?;
+    } else {
+        for m in members {
+            repo::notify_member_changed(&mut *conn, org, *m).await?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> {
     let g = load_admin(s, c, id).await?;
     if g.source == "scim" {
@@ -317,19 +345,14 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
     let workspaces = repo::bound_workspaces(&mut *tx, id).await?;
     let members = repo::member_ids(&mut *tx, id).await?;
     repo::delete(&mut tx, id).await?;
-    // Rules naming the group are never rewritten (SEC-71): their dead id is simply in no
-    // principal set once every cached identity that carried it is dropped.
-    repo::notify_workspaces_changed(&mut tx, g.org_id, &workspaces).await?;
-    if g.org_role.is_some() {
-        repo::notify_org_changed(&mut tx, g.org_id).await?;
-    }
-    if members.len() > 200 {
-        aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "org", g.org_id).await?;
-    } else {
-        for m in &members {
-            repo::notify_member_changed(&mut tx, g.org_id, *m).await?;
-        }
-    }
+    notify_group_deleted(
+        &mut tx,
+        g.org_id,
+        &workspaces,
+        &members,
+        g.org_role.is_some(),
+    )
+    .await?;
     let ev = event(c, "group.delete")
         .org(g.org_id)
         .target("group", id)

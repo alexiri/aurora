@@ -98,20 +98,20 @@ fn render(
 
 /// The SCIM user ids of `members[].value` (SCIM ids, not Aurora ids) resolved to Aurora
 /// user ids of **this org's links** (an unknown id, a removed link, or another org → 400
-/// `invalidValue`).
+/// `invalidValue`). Runs inside the writing transaction.
 async fn resolve_members(
-    exec: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     org: Uuid,
-    members: &[dto::MemberInput],
+    members: &[String],
 ) -> ScimResult<Vec<Uuid>> {
     let mut out = Vec::with_capacity(members.len());
     for m in members {
-        let Ok(id) = Uuid::parse_str(m.value.trim()) else {
+        let Ok(id) = Uuid::parse_str(m.trim()) else {
             return Err(ScimError::invalid_value(
                 "A member `value` is not a user id of this organization.",
             ));
         };
-        let row = repo::user_by_id(exec, org, id)
+        let row = repo::user_by_id(&mut *conn, org, id)
             .await
             .map_err(db)?
             .ok_or_else(|| {
@@ -130,7 +130,11 @@ async fn resolve_members(
 }
 
 /// `GROUPS_PER_USER` (400 `invalidValue` with a detail, `02 §Limits`; SCIM adds members
-/// through the same cap as the dashboard).
+/// through the same cap as the dashboard). The count is only a cap under concurrency when
+/// the caller holds the org lock ([`grepo::lock_org`], `organizations` row `FOR UPDATE`),
+/// taken as the transaction's first lock, before any group row lock (FIX-062): every SCIM
+/// write that adds group members takes it, so two requests adding one user to different
+/// groups cannot both pass the count.
 async fn ensure_member_limit(
     exec: impl sqlx::PgExecutor<'_>,
     org: Uuid,
@@ -184,7 +188,8 @@ pub async fn create_group(
             "This organization has reached its group limit.",
         ));
     }
-    let user_ids = resolve_members(&state.pool, org.org_id, &members_in).await?;
+    let values: Vec<String> = members_in.iter().map(|m| m.value.clone()).collect();
+    let user_ids = resolve_members(&mut tx, org.org_id, &values).await?;
     for uid in &user_ids {
         ensure_member_limit(&mut *tx, org.org_id, *uid).await?;
     }
@@ -363,17 +368,81 @@ fn member_evs(
     evs
 }
 
-/// The shared body of `PUT` and the folded `PATCH` operations: rename and/or replace
+/// One member operation of a `PUT` (one `Replace`) or a `PATCH` (in request order), as SCIM
+/// user ids. Folded over the members read **inside** the writing transaction after the group
+/// row lock, so concurrent PATCHes compose instead of overwriting each other (FIX-062).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MemberOp {
+    Replace(Vec<String>),
+    Add(Vec<String>),
+    Remove(Vec<String>),
+}
+
+impl MemberOp {
+    fn values(&self) -> &[String] {
+        match self {
+            Self::Replace(v) | Self::Add(v) | Self::Remove(v) => v,
+        }
+    }
+}
+
+/// A SCIM id as compared while folding (a UUID's canonical form; anything else verbatim —
+/// it is refused by [`resolve_members`] if it survives the fold).
+fn norm_id(v: &str) -> String {
+    let v = v.trim();
+    Uuid::parse_str(v).map_or_else(|_| v.to_owned(), |u| u.to_string())
+}
+
+/// Apply the operations in order over `current` (SCIM ids).
+fn fold_ops(current: Vec<String>, ops: &[MemberOp]) -> Vec<String> {
+    let mut out = current;
+    for op in ops {
+        match op {
+            MemberOp::Replace(v) => {
+                out = Vec::with_capacity(v.len());
+                for m in v {
+                    let m = norm_id(m);
+                    if !out.contains(&m) {
+                        out.push(m);
+                    }
+                }
+            }
+            MemberOp::Add(v) => {
+                for m in v {
+                    let m = norm_id(m);
+                    if !out.contains(&m) {
+                        out.push(m);
+                    }
+                }
+            }
+            MemberOp::Remove(v) => {
+                let gone: Vec<String> = v.iter().map(|m| norm_id(m)).collect();
+                out.retain(|e| !gone.contains(e));
+            }
+        }
+    }
+    out
+}
+
+fn group_full() -> ScimError {
+    ScimError::invalid_value(format!(
+        "A group can have at most {} members.",
+        grepo::GROUP_MEMBERS_MAX
+    ))
+}
+
+/// The shared body of `PUT` and the folded `PATCH` operations: rename and/or change
 /// members, atomically, one critical audit row per change plus `group.update` when the
 /// name/externalId actually changed (C-478: a no-op — the request asserts the stored
-/// values — writes nothing, no `revision` bump and no audit row).
+/// values — writes nothing, no `revision` bump and no audit row). `None` leaves that part
+/// as stored (read under the lock, never from a pre-transaction snapshot).
 async fn apply_group_change(
     state: &AppState,
     caller: &ScimToken,
     id: Uuid,
     name: Option<String>,
     external_id: Option<Option<String>>,
-    members_in: Option<Vec<dto::MemberInput>>,
+    member_ops: Option<Vec<MemberOp>>,
 ) -> ScimResult<dto::GroupResource> {
     if let Some(n) = &name {
         if n.is_empty() {
@@ -385,8 +454,9 @@ async fn apply_group_change(
             ));
         }
     }
-    if let Some(ms) = &members_in
-        && ms.len() > limits::SCIM_MAX_MEMBERS_PER_REQUEST
+    if let Some(ops) = &member_ops
+        && ops.iter().map(|o| o.values().len()).sum::<usize>()
+            > limits::SCIM_MAX_MEMBERS_PER_REQUEST
     {
         return Err(ScimError::too_many(format!(
             "At most {} members per request.",
@@ -395,6 +465,11 @@ async fn apply_group_change(
     }
     let org = caller.org.clone();
     let mut tx = state.pool.begin().await.map_err(sq)?;
+    // Lock order: the org first (the `GROUPS_PER_USER` cap, see `ensure_member_limit`),
+    // then the group row.
+    if member_ops.is_some() {
+        grepo::lock_org(&mut tx, org.org_id).await.map_err(db)?;
+    }
     let row = grepo::lock(&mut tx, id)
         .await
         .map_err(db)?
@@ -428,10 +503,29 @@ async fn apply_group_change(
             "A group with this name already exists in this organization.",
         ));
     }
+    // Current members, read under the group row lock: a concurrent change has committed
+    // (or is waiting behind us), never half-seen.
     let before: Vec<Uuid> = grepo::member_ids(&mut *tx, id).await.map_err(db)?;
-    let target: Vec<Uuid> = match &members_in {
+    let target: Vec<Uuid> = match &member_ops {
         None => before.clone(),
-        Some(ms) => resolve_members(&state.pool, org.org_id, ms).await?,
+        Some(ops) => {
+            let current: Vec<String> = sqlx::query_scalar(
+                "SELECT s.id::text FROM group_members m
+                 JOIN scim_users s ON s.org_id = m.org_id AND s.user_id = m.user_id
+                 WHERE m.org_id = $1 AND m.group_id = $2
+                 ORDER BY s.created_at, s.id",
+            )
+            .bind(org.org_id)
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(sq)?;
+            let folded = fold_ops(current, ops);
+            if folded.len() as i64 > grepo::GROUP_MEMBERS_MAX {
+                return Err(group_full());
+            }
+            resolve_members(&mut tx, org.org_id, &folded).await?
+        }
     };
     for uid in &target {
         if !before.contains(uid) {
@@ -530,7 +624,11 @@ pub async fn put_group(
         id,
         Some(name),
         Some(ext),
-        input.members.clone(),
+        input.members.as_ref().map(|ms| {
+            vec![MemberOp::Replace(
+                ms.iter().map(|m| m.value.clone()).collect(),
+            )]
+        }),
     )
     .await?;
     Ok(axum::Json(out))
@@ -556,18 +654,14 @@ pub async fn patch_group(
             limits::SCIM_MAX_PATCH_OPS
         )));
     }
-    let current = scim_group(&state.pool, caller.org.org_id, id).await?;
-    let mut name = current.name.clone();
-    let mut ext = current.external_id.clone();
-    let mut members: Vec<dto::MemberInput> = members_of(&state.pool, caller.org.org_id, id)
-        .await?
-        .into_iter()
-        .map(|m| dto::MemberInput {
-            value: m.value,
-            type_: None,
-            display: None,
-        })
-        .collect();
+    // 404 before parsing for an unknown/foreign group (the authoritative check is repeated
+    // under the lock). Nothing of the group's current state is read here: the operations are
+    // folded inside the writing transaction (FIX-062 — a pre-transaction snapshot of the
+    // members made two concurrent `add`s overwrite each other).
+    scim_group(&state.pool, caller.org.org_id, id).await?;
+    let mut name: Option<String> = None;
+    let mut ext: Option<Option<String>> = None;
+    let mut member_ops: Vec<MemberOp> = Vec::new();
     let mut saw_members_op = false;
     for op in &patch.operations {
         let kind = op.op.trim().to_ascii_lowercase();
@@ -593,17 +687,17 @@ pub async fn patch_group(
                 return Err(ScimError::invalid_value(format!("`{a}` is not supported.")));
             }
             if let Some(v) = obj.get("displayName") {
-                name = v
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| ScimError::invalid_value("`displayName` must be a string."))?;
+                name =
+                    Some(v.as_str().map(str::to_owned).ok_or_else(|| {
+                        ScimError::invalid_value("`displayName` must be a string.")
+                    })?);
             }
             if let Some(v) = obj.get("externalId") {
-                ext = v.as_str().map(str::to_owned);
+                ext = Some(v.as_str().map(str::to_owned));
             }
             if let Some(v) = obj.get("members") {
                 saw_members_op = true;
-                members = fold_members(members, v, &kind)?;
+                member_ops.push(member_op(v, &kind)?);
             }
             continue;
         }
@@ -614,21 +708,23 @@ pub async fn patch_group(
             let Some(v) = &op.value else {
                 return Err(ScimError::invalid_value("The operation carries no value."));
             };
-            name = v
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| ScimError::invalid_value("`displayName` must be a string."))?;
+            name = Some(
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| ScimError::invalid_value("`displayName` must be a string."))?,
+            );
             continue;
         }
         if lower == "externalid" {
             if kind == "remove" {
-                ext = None;
+                ext = Some(None);
             } else {
-                ext = op
-                    .value
-                    .as_ref()
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned);
+                ext = Some(
+                    op.value
+                        .as_ref()
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned),
+                );
             }
             continue;
         }
@@ -637,7 +733,7 @@ pub async fn patch_group(
             let Some(v) = &op.value else {
                 return Err(ScimError::invalid_value("The operation carries no value."));
             };
-            members = fold_members(members, v, &kind)?;
+            member_ops.push(member_op(v, &kind)?);
             continue;
         }
         if lower.starts_with("members[value") && lower.ends_with(']') {
@@ -652,7 +748,7 @@ pub async fn patch_group(
                 .split('"')
                 .nth(1)
                 .ok_or_else(|| ScimError::invalid_path("Malformed `members[value eq …]` path."))?;
-            members.retain(|m| m.value != id_str);
+            member_ops.push(MemberOp::Remove(vec![id_str.to_owned()]));
             continue;
         }
         return Err(ScimError::invalid_path(format!(
@@ -663,48 +759,30 @@ pub async fn patch_group(
         state,
         &caller,
         id,
-        Some(name),
-        Some(ext),
-        saw_members_op.then_some(members),
+        name,
+        ext,
+        saw_members_op.then_some(member_ops),
     )
     .await?;
     Ok(axum::Json(out))
 }
 
-/// Fold a `members` value (`add` appends, `replace` overwrites, `remove` deletes).
-fn fold_members(
-    current: Vec<dto::MemberInput>,
-    v: &serde_json::Value,
-    kind: &str,
-) -> ScimResult<Vec<dto::MemberInput>> {
+/// One `members` value as an operation (`add` appends, `replace` overwrites, `remove`
+/// deletes), folded later under the group lock.
+fn member_op(v: &serde_json::Value, kind: &str) -> ScimResult<MemberOp> {
     let list = v
         .as_array()
         .ok_or_else(|| ScimError::invalid_value("`members` must be a list."))?;
-    let parsed: Vec<dto::MemberInput> = list
+    let parsed: Vec<String> = list
         .iter()
-        .map(|m| serde_json::from_value(m.clone()))
+        .map(|m| serde_json::from_value::<dto::MemberInput>(m.clone()).map(|m| m.value))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| ScimError::invalid_value(format!("`members`: {e}")))?;
-    match kind {
-        "replace" => Ok(parsed),
-        "add" => {
-            let mut out = current;
-            for m in parsed {
-                if !out.iter().any(|e| e.value == m.value) {
-                    out.push(m);
-                }
-            }
-            Ok(out)
-        }
-        // remove
-        _ => {
-            let mut out = current;
-            for m in parsed {
-                out.retain(|e| e.value != m.value);
-            }
-            Ok(out)
-        }
-    }
+    Ok(match kind {
+        "replace" => MemberOp::Replace(parsed),
+        "add" => MemberOp::Add(parsed),
+        _ => MemberOp::Remove(parsed),
+    })
 }
 
 /// `DELETE /Groups/{id}`: deletes the group with its bindings and membership rows
@@ -723,19 +801,21 @@ pub async fn delete_group(
     if row.org_id != org.org_id || row.source != "scim" {
         return Ok(StatusCode::NO_CONTENT);
     }
-    // The workspaces the bindings touched, for the invalidation.
-    let wss: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT workspace_id FROM group_workspace_access WHERE group_id = $1 AND org_id = $2",
-    )
-    .bind(id)
-    .bind(org.org_id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(sq)?;
+    // What the group carried, read under its lock before the delete cascades it away: the
+    // workspaces its bindings touched, its members and its org-role mapping — exactly the
+    // dashboard delete's invalidation set (SEC-71: effective for the next request, FIX-062).
+    let wss: Vec<Uuid> = grepo::bound_workspaces(&mut *tx, id).await.map_err(db)?;
+    let members: Vec<Uuid> = grepo::member_ids(&mut *tx, id).await.map_err(db)?;
     grepo::delete(&mut tx, id).await.map_err(db)?;
-    grepo::notify_workspaces_changed(&mut tx, org.org_id, &wss)
-        .await
-        .map_err(db)?;
+    crate::domains::groups::service::notify_group_deleted(
+        &mut tx,
+        org.org_id,
+        &wss,
+        &members,
+        row.org_role.is_some(),
+    )
+    .await
+    .map_err(db)?;
     let ev = AuditEvent::new(
         service::actor(&caller.token.name),
         "group.delete",
@@ -743,7 +823,7 @@ pub async fn delete_group(
     )
     .org(org.org_id)
     .target("group", id)
-    .metadata(json!({"via": VIA, "bindings": wss.len()}));
+    .metadata(json!({"via": VIA, "bindings": wss.len(), "members": members.len()}));
     crate::audit::commit_critical(tx, &ev)
         .await
         .map_err(|_| ScimError::audit_unavailable())?;

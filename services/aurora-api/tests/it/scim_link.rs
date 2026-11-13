@@ -238,13 +238,13 @@ async fn put_rejects_email_domain_outside_org_allow_list() {
     assert_eq!(name, "linked@x.io");
 }
 
-/// FIX-036: PUT (or PATCH) re-pointing a link at an existing global user with no membership
-/// in this org inserts the membership (role `member`, seat-capped) instead of answering 500:
-/// the e-mail is free here but taken globally (another org provisioned, invited or JIT'd the
-/// person — a state this code creates itself). A membership that already exists is adopted
-/// as it is.
+/// D-167(b) (was FIX-036's re-point for every user): the link of a still-unbound placeholder
+/// whose new e-mail belongs to another global user moves to that user exactly like a POST
+/// would link it — a missing membership is inserted (role `member`, seat-capped, audited), an
+/// existing one adopted — and the placeholder's membership in this org is removed while its
+/// `users` row stays (SCIM never deletes a user, SEC-73).
 #[tokio::test]
-async fn put_adopting_global_user_without_membership_inserts_member() {
+async fn put_unbound_placeholder_onto_existing_global_user_moves_link() {
     let fx = ScimFx::new().await;
     let other = other_org(&fx.h).await;
     // Org A provisions a@x.io (the shared global user); org B provisions b@x.io — org B's
@@ -275,6 +275,7 @@ async fn put_adopting_global_user_without_membership_inserts_member() {
             .await
             .unwrap();
     assert_eq!(n, 0, "org B has no membership for a@x.io yet");
+    let b_placeholder = link_user(&fx.h, b_link).await;
     // Org B PUTs its link to a@x.io: 200, the response reflects the link — and org B gains
     // a member seat for the shared user.
     let (s, _, v) = fx
@@ -320,6 +321,13 @@ async fn put_adopting_global_user_without_membership_inserts_member() {
     .await
     .unwrap();
     assert_eq!(n, 1, "org B audited the adopted member.add");
+    // The placeholder left org B; its user row stays, still unbound, with its own e-mail.
+    assert_eq!(membership(&fx.h, other.org, b_placeholder).await, None);
+    assert_eq!(
+        account(&fx.h, b_placeholder).await,
+        Some(("b@x.io".to_owned(), false)),
+        "the placeholder user is never deleted or rewritten"
+    );
 
     // PATCH inherits the same path: org C provisions its own d@x.io link, then PATCHes it
     // onto c@x.io — a global user org A provisioned, with no seat in org C.
@@ -364,4 +372,474 @@ async fn put_adopting_global_user_without_membership_inserts_member() {
             .await
             .unwrap();
     assert_eq!(seat, ("member".into(), "active".into()));
+}
+
+// ---- D-167 helpers ------------------------------------------------------------------
+
+const PATCH_SCHEMA: &str = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
+
+/// The Aurora user a link points at.
+async fn link_user(h: &crate::common::Harness, link: Uuid) -> Uuid {
+    sqlx::query_scalar("SELECT user_id FROM scim_users WHERE id = $1")
+        .bind(link)
+        .fetch_one(h.pool())
+        .await
+        .unwrap()
+}
+
+/// `(users.email, signed in)` of a user, `None` when the row is gone.
+async fn account(h: &crate::common::Harness, user: Uuid) -> Option<(String, bool)> {
+    sqlx::query_as(
+        "SELECT email::text, (email_verified_at IS NOT NULL \
+             OR EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = users.id)) \
+         FROM users WHERE id = $1",
+    )
+    .bind(user)
+    .fetch_optional(h.pool())
+    .await
+    .unwrap()
+}
+
+/// `(role, status)` of a membership, `None` when absent.
+async fn membership(h: &crate::common::Harness, org: Uuid, user: Uuid) -> Option<(String, String)> {
+    sqlx::query_as("SELECT role, status FROM org_members WHERE org_id = $1 AND user_id = $2")
+        .bind(org)
+        .bind(user)
+        .fetch_optional(h.pool())
+        .await
+        .unwrap()
+}
+
+async fn users_with_email(h: &crate::common::Harness, email: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM users WHERE email = $1::citext")
+        .bind(email)
+        .fetch_one(h.pool())
+        .await
+        .unwrap()
+}
+
+fn patch_user_name(v: &str) -> serde_json::Value {
+    json!({
+        "schemas": [PATCH_SCHEMA],
+        "Operations": [{"op": "replace", "path": "userName", "value": v}],
+    })
+}
+
+/// D-167(a), the FIX-062 finding: after the person signed in, PUT and PATCH of a new
+/// `userName` land on the link only — the link keeps its user, `users.email` is untouched,
+/// no other account is created or adopted (also when the new address belongs to another
+/// global user) — and a later `active=false` suspends **the person's** membership (C-474).
+/// Before FIX-062 the PUT re-pointed the link at a new pre-provisioned `pa2@x.io` user and
+/// the suspend then hit that user while the real person stayed active.
+#[tokio::test]
+async fn signed_in_user_name_change_lands_on_link_and_deprovisioning_hits_the_person() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("pa@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let link: Uuid = sid.parse().unwrap();
+    let person = fx.aurora_user(&sid).await;
+    let signed = fx.h.sign_in("pa@x.io").await;
+    assert_eq!(signed.user_id, person, "the sign-in bound the placeholder");
+    assert_eq!(
+        account(&fx.h, person).await,
+        Some(("pa@x.io".to_owned(), true))
+    );
+
+    // PUT a new, globally free address.
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({"userName": "pa2@x.io", "displayName": "Renamed"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["userName"], "pa2@x.io",
+        "the response shows the link's value: {v}"
+    );
+    assert_eq!(
+        link_user(&fx.h, link).await,
+        person,
+        "PUT never moves the link"
+    );
+    assert_eq!(
+        account(&fx.h, person).await,
+        Some(("pa@x.io".to_owned(), true)),
+        "users.email untouched"
+    );
+    assert_eq!(
+        users_with_email(&fx.h, "pa2@x.io").await,
+        0,
+        "no new account"
+    );
+
+    // PATCH onto an address another global user owns: still the link only.
+    let other = fx.h.user("pa-other@x.io", false).await;
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(patch_user_name("pa-other@x.io")),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["userName"], "pa-other@x.io", "{v}");
+    assert_eq!(
+        link_user(&fx.h, link).await,
+        person,
+        "PATCH never moves the link"
+    );
+    assert_eq!(
+        membership(&fx.h, fx.org, other).await,
+        None,
+        "the other account is not adopted"
+    );
+    assert_eq!(
+        account(&fx.h, person).await,
+        Some(("pa@x.io".to_owned(), true))
+    );
+    assert_eq!(
+        membership(&fx.h, fx.org, person).await,
+        Some(("member".to_owned(), "active".to_owned()))
+    );
+
+    // Deprovisioning acts on the person who signed in.
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(json!({
+                "schemas": [PATCH_SCHEMA],
+                "Operations": [{"op": "replace", "path": "active", "value": false}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["active"], false, "{v}");
+    assert_eq!(
+        membership(&fx.h, fx.org, person).await,
+        Some(("member".to_owned(), "suspended".to_owned())),
+        "the original membership is suspended"
+    );
+    // Sessions per the C-474 matrix: revoked only when no other active membership remains.
+    let other_active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM org_members WHERE user_id = $1 AND status = 'active'",
+    )
+    .bind(person)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    let live_sessions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(person)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    if other_active == 0 {
+        assert_eq!(live_sessions, 0, "no other membership: sessions revoked");
+    } else {
+        assert!(
+            live_sessions > 0,
+            "another active membership: sessions kept"
+        );
+    }
+}
+
+/// D-167(b): an unbound placeholder of this org alone whose new e-mail is free globally is
+/// renamed in place (same user id, `users.email` updated, still unverified).
+#[tokio::test]
+async fn unbound_placeholder_free_email_renamed_in_place() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("pb@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let link: Uuid = sid.parse().unwrap();
+    let placeholder = fx.aurora_user(&sid).await;
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({"userName": "pb2@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["userName"], "pb2@x.io", "{v}");
+    assert_eq!(link_user(&fx.h, link).await, placeholder, "same user id");
+    assert_eq!(
+        account(&fx.h, placeholder).await,
+        Some(("pb2@x.io".to_owned(), false)),
+        "users.email updated in place, still unverified"
+    );
+    assert_eq!(users_with_email(&fx.h, "pb@x.io").await, 0);
+    assert_eq!(
+        membership(&fx.h, fx.org, placeholder).await,
+        Some(("member".to_owned(), "active".to_owned()))
+    );
+    // The person can now sign in with the new address and lands on the same account.
+    let signed = fx.h.sign_in("pb2@x.io").await;
+    assert_eq!(signed.user_id, placeholder);
+}
+
+/// D-167(b): the new e-mail belongs to another global user → the link moves to it (its
+/// existing membership adopted as it is), the placeholder's membership in this org is
+/// removed, its user row kept, and the link's SCIM groups follow it.
+#[tokio::test]
+async fn unbound_placeholder_onto_existing_member_moves_link_and_groups() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("pc@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let link: Uuid = sid.parse().unwrap();
+    let placeholder = fx.aurora_user(&sid).await;
+    let (s, _, g) = fx
+        .scim(
+            Method::POST,
+            "/scim/v2/Groups",
+            Some(json!({"displayName": "pc-group", "members": [{"value": sid}]})),
+        )
+        .await;
+    assert_eq!(s, 201, "{g}");
+    let gid: Uuid = g["id"].as_str().unwrap().parse().unwrap();
+    // The target: a person already in the org (an admin, adopted as is).
+    let target = fx.h.user("pc-real@x.io", false).await;
+    fx.h.member(fx.org, target, "admin", "active").await;
+
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(patch_user_name("pc-real@x.io")),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["id"], sid, "{v}");
+    assert_eq!(link_user(&fx.h, link).await, target, "the link moved");
+    assert_eq!(
+        membership(&fx.h, fx.org, target).await,
+        Some(("admin".to_owned(), "active".to_owned())),
+        "adopted as it is"
+    );
+    assert_eq!(membership(&fx.h, fx.org, placeholder).await, None);
+    assert_eq!(
+        account(&fx.h, placeholder).await,
+        Some(("pc@x.io".to_owned(), false)),
+        "the placeholder row stays"
+    );
+    // The group still lists the link (now backed by the target).
+    let (s, _, g) = fx
+        .scim(Method::GET, &format!("/scim/v2/Groups/{gid}"), None)
+        .await;
+    assert_eq!(s, 200, "{g}");
+    let ids: Vec<&str> = g["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["value"].as_str())
+        .collect();
+    assert_eq!(ids, vec![sid.as_str()], "{g}");
+    let in_group: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)",
+    )
+    .bind(gid)
+    .bind(target)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert!(in_group);
+}
+
+/// D-167(b), shared placeholder: org A provisioned p@x.io, org B linked the same unbound
+/// user. Org B's PUT of a free address must not rename the account org A links: org B's link
+/// moves to a new pre-provisioned user, only org B's membership of the placeholder is
+/// removed, and org A's link, membership and the placeholder row are untouched.
+#[tokio::test]
+async fn shared_placeholder_rename_in_one_org_leaves_the_other_untouched() {
+    let fx = ScimFx::new().await;
+    let other = other_org(&fx.h).await;
+    let a = fx.provision_ok("ps@x.io").await;
+    let a_link: Uuid = a["id"].as_str().unwrap().parse().unwrap();
+    let placeholder = link_user(&fx.h, a_link).await;
+    let (s, _, b) = fx
+        .scim_with(
+            Method::POST,
+            USERS,
+            &bearer(&other.token),
+            Some(json!({"userName": "ps@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{b}");
+    let b_link: Uuid = b["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        link_user(&fx.h, b_link).await,
+        placeholder,
+        "org B linked it"
+    );
+
+    let (s, _, v) = fx
+        .scim_with(
+            Method::PUT,
+            &format!("{USERS}/{b_link}"),
+            &bearer(&other.token),
+            Some(json!({"userName": "ps-new@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["userName"], "ps-new@x.io", "{v}");
+    let fresh = link_user(&fx.h, b_link).await;
+    assert_ne!(fresh, placeholder, "org B's link moved to a new user");
+    assert_eq!(
+        account(&fx.h, fresh).await,
+        Some(("ps-new@x.io".to_owned(), false)),
+        "a new pre-provisioned user"
+    );
+    assert_eq!(
+        membership(&fx.h, other.org, fresh).await,
+        Some(("member".to_owned(), "active".to_owned()))
+    );
+    assert_eq!(membership(&fx.h, other.org, placeholder).await, None);
+    // Org A: untouched.
+    assert_eq!(
+        account(&fx.h, placeholder).await,
+        Some(("ps@x.io".to_owned(), false)),
+        "the shared account is not renamed"
+    );
+    assert_eq!(link_user(&fx.h, a_link).await, placeholder);
+    assert_eq!(
+        membership(&fx.h, fx.org, placeholder).await,
+        Some(("member".to_owned(), "active".to_owned()))
+    );
+    let a_name: String = sqlx::query_scalar("SELECT user_name::text FROM scim_users WHERE id = $1")
+        .bind(a_link)
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(a_name, "ps@x.io");
+}
+
+/// D-167 consequence: a link whose `userName` differs from the person's `users.email` (an
+/// IdP rename after sign-in) is removed and POSTed again under that `userName`: the
+/// tombstone is revived on its pinned user — no 500, no new account, no re-point.
+#[tokio::test]
+async fn post_revives_renamed_tombstone_on_its_person() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("pr@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let person = fx.aurora_user(&sid).await;
+    fx.h.sign_in("pr@x.io").await;
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({"userName": "pr2@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    assert_eq!(membership(&fx.h, fx.org, person).await, None);
+
+    let (s, _, v) = fx
+        .scim(Method::POST, USERS, Some(json!({"userName": "pr2@x.io"})))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["id"], sid, "the tombstone is revived: {v}");
+    assert_eq!(v["userName"], "pr2@x.io", "{v}");
+    assert_eq!(
+        link_user(&fx.h, sid.parse().unwrap()).await,
+        person,
+        "no re-point"
+    );
+    assert_eq!(
+        users_with_email(&fx.h, "pr2@x.io").await,
+        0,
+        "no new account"
+    );
+    assert_eq!(
+        account(&fx.h, person).await,
+        Some(("pr@x.io".to_owned(), true))
+    );
+    assert_eq!(
+        membership(&fx.h, fx.org, person).await,
+        Some(("member".to_owned(), "active".to_owned()))
+    );
+}
+
+/// FIX-070: a SCIM in-place rename of a pre-provisioned user (D-167(b)) racing the OIDC
+/// sign-in that verified the **old** address. Interleaving, driven deterministically on
+/// separate connections: the rename transaction (SCIM's `lock_account` + `UPDATE users SET
+/// email`) holds the row; the sign-in of `old@` starts and blocks on it; the rename commits.
+/// The sign-in must not bind to — or mark verified — the account that now carries the new,
+/// unverified address: the old address is free again and resolves afresh. Before FIX-070 the
+/// sign-in read the pre-rename row, its `mark_email_verified` waited and then verified the
+/// renamed account and linked the identity to it.
+#[tokio::test]
+async fn signin_racing_a_placeholder_rename_never_binds_the_renamed_account() {
+    use sqlx::{ConnectOptions, Connection};
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("race-old@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let placeholder = fx.aurora_user(&sid).await;
+    let opts = fx.h.pool().connect_options();
+    // The rename, exactly SCIM's statements, left uncommitted.
+    let mut rename = opts.connect().await.unwrap();
+    let mut tx = rename.begin().await.unwrap();
+    let rename_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(placeholder)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET email = 'race-new@x.io', updated_at = now() WHERE id = $1")
+        .bind(placeholder)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let mut watcher = opts.connect().await.unwrap();
+    let (signed, ()) = tokio::join!(fx.h.sign_in("race-old@x.io"), async {
+        // Wait (bounded) until the sign-in is blocked behind the rename, then commit it.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                 WHERE $1 = ANY (pg_blocking_pids(pid)))",
+            )
+            .bind(rename_pid)
+            .fetch_one(&mut watcher)
+            .await
+            .unwrap();
+            if blocked {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the sign-in never reached the renamed row"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tx.commit().await.unwrap();
+    });
+    assert_ne!(
+        signed.user_id, placeholder,
+        "the sign-in of the old address never binds the renamed account"
+    );
+    assert_eq!(
+        account(&fx.h, placeholder).await,
+        Some(("race-new@x.io".to_owned(), false)),
+        "the renamed placeholder is not verified and has no identity"
+    );
+    assert_eq!(
+        account(&fx.h, signed.user_id).await,
+        Some(("race-old@x.io".to_owned(), true)),
+        "the verified old address resolved afresh"
+    );
+    assert_eq!(
+        link_user(&fx.h, sid.parse().unwrap()).await,
+        placeholder,
+        "the link stays on its placeholder"
+    );
 }

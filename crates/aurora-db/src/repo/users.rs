@@ -58,17 +58,39 @@ pub async fn set_default_org<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
-/// Set `email_verified_at` if unset; returns the updated user.
+/// Case-insensitive lookup that row-locks the user (`FOR UPDATE`) for the rest of the
+/// caller's transaction — the OIDC sign-in's bind-by-verified-e-mail (FIX-070). A concurrent
+/// writer that changes the e-mail (SCIM's in-place placeholder rename, D-167(b)) either
+/// waits for the bind, or committed first — then Postgres re-checks the predicate on the
+/// new row version and the lookup returns `None` (the address is free again) instead of a
+/// row that no longer carries the verified e-mail.
+pub async fn find_by_email_for_update<'e, E: PgExecutor<'e>>(
+    exec: E,
+    email: &str,
+) -> Result<Option<UserRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM users WHERE email = $1::citext FOR UPDATE"
+    ))
+    .bind(email.trim())
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// Set `email_verified_at` if unset — **only while the row still carries `email`** (the
+/// address the provider verified, FIX-070): a row whose e-mail changed is never marked
+/// verified. Returns the updated user, or `None` when the e-mail no longer matches.
 pub async fn mark_email_verified<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
-) -> Result<UserRow, DbError> {
+    email: &str,
+) -> Result<Option<UserRow>, DbError> {
     Ok(sqlx::query_as(&format!(
         "UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
-         WHERE id = $1 RETURNING {COLS}"
+         WHERE id = $1 AND email = $2::citext RETURNING {COLS}"
     ))
     .bind(id)
-    .fetch_one(exec)
+    .bind(email.trim())
+    .fetch_optional(exec)
     .await?)
 }
 

@@ -245,6 +245,49 @@ async fn token_lifecycle_rules() {
     assert_eq!(v["error"]["code"], "scim_token_limit_reached", "{v}");
 }
 
+/// FIX-062: the token cap holds under concurrency — creates serialize on the org lock
+/// before counting, so parallel requests never push the org past `SCIM_TOKENS_PER_ORG`.
+#[tokio::test]
+async fn concurrent_token_creates_respect_the_cap() {
+    const N: usize = 8;
+    let fx = ScimFx::new().await; // one live token already
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(N));
+    let rs = futures::future::join_all((0..N).map(|i| {
+        let barrier = barrier.clone();
+        let fx = &fx;
+        async move {
+            barrier.wait().await;
+            fx.mgmt(
+                Method::POST,
+                &format!("/v1/orgs/{}/scim/tokens", fx.org),
+                Some(json!({"name": format!("race-{i}")})),
+            )
+            .await
+        }
+    }))
+    .await;
+    let created = rs.iter().filter(|(s, _)| *s == 201).count();
+    for (s, v) in &rs {
+        assert!(
+            *s == 201 || (*s == 422 && v["error"]["code"] == "scim_token_limit_reached"),
+            "{s}: {v}"
+        );
+    }
+    assert_eq!(
+        created,
+        aurora_core::limits::SCIM_TOKENS_PER_ORG - 1,
+        "{rs:?}"
+    );
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM scim_tokens WHERE org_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, aurora_core::limits::SCIM_TOKENS_PER_ORG as i64);
+}
+
 #[tokio::test]
 async fn token_expiring_notices_14d_and_1d() {
     let fx = ScimFx::new().await;

@@ -461,3 +461,128 @@ async fn put_same_body_twice_writes_nothing_the_second_time() {
         "no group.update for a members-only change"
     );
 }
+
+/// FIX-062 (SEC-71: a removal is effective for the next request, not after a TTL): an IdP
+/// `DELETE /Groups/{id}` of a group with an `org_role` mapping and members sends exactly the
+/// dashboard delete's invalidation set — scope `user` for each member and scope `org` for
+/// the mapping — on `aurora_gateway_invalidate`. Before FIX-062 only the workspace scopes
+/// were sent and the gateway kept the deleted group's grants cached.
+#[tokio::test]
+async fn idp_delete_invalidates_member_and_org_identities() {
+    let fx = ScimFx::new().await;
+    let a = fx.provision_ok("gd-a@x.io").await;
+    let b = fx.provision_ok("gd-b@x.io").await;
+    let (sa, sb) = (
+        a["id"].as_str().unwrap().to_owned(),
+        b["id"].as_str().unwrap().to_owned(),
+    );
+    let (ua, ub) = (fx.aurora_user(&sa).await, fx.aurora_user(&sb).await);
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            GROUPS,
+            Some(json!({
+                "schemas": [GROUP_SCHEMA],
+                "displayName": "gd-admins",
+                "members": [{"value": sa}, {"value": sb}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let gid = v["id"].as_str().unwrap().to_owned();
+    // An admin maps the SCIM group to an org role in the dashboard.
+    let (s, v) = fx
+        .mgmt(
+            Method::PATCH,
+            &format!("/v1/groups/{gid}"),
+            Some(json!({"org_role": "admin"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    let mut l = sqlx::postgres::PgListener::connect_with(fx.h.pool())
+        .await
+        .unwrap();
+    l.listen("aurora_gateway_invalidate").await.unwrap();
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{GROUPS}/{gid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    let want: Vec<(String, String)> = vec![
+        ("user".into(), ua.to_string()),
+        ("user".into(), ub.to_string()),
+        ("org".into(), fx.org.to_string()),
+    ];
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !want.iter().all(|w| seen.contains(w)) {
+        let n = tokio::time::timeout_at(deadline, l.recv())
+            .await
+            .unwrap_or_else(|_| panic!("missing invalidations: want {want:?}, seen {seen:?}"))
+            .unwrap();
+        let p: Value = serde_json::from_str(n.payload()).unwrap();
+        seen.push((
+            p["scope"].as_str().unwrap_or("").to_owned(),
+            p["id"].as_str().unwrap_or("").to_owned(),
+        ));
+    }
+}
+
+/// FIX-062: concurrent `PATCH add` operations on one group (Entra/Okta send one per member)
+/// compose — the members are read inside the transaction after the group row lock, so no
+/// request overwrites another's addition. Before FIX-062 the members were read before the
+/// transaction and the whole set written back: parallel adds lost members.
+#[tokio::test]
+async fn concurrent_patch_adds_keep_every_member() {
+    const N: usize = 8;
+    let fx = ScimFx::new().await;
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            GROUPS,
+            Some(json!({"schemas": [GROUP_SCHEMA], "displayName": "race"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let gid = v["id"].as_str().unwrap().to_owned();
+    let mut sids = Vec::with_capacity(N);
+    for i in 0..N {
+        let u = fx.provision_ok(&format!("race-{i}@x.io")).await;
+        sids.push(u["id"].as_str().unwrap().to_owned());
+    }
+    // Every request waits at the barrier, then all are sent at once.
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(N));
+    let rs = futures::future::join_all(sids.iter().map(|sid| {
+        let barrier = barrier.clone();
+        let fx = &fx;
+        let gid = gid.clone();
+        async move {
+            barrier.wait().await;
+            fx.scim(
+                Method::PATCH,
+                &format!("{GROUPS}/{gid}"),
+                Some(json!({
+                    "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                    "Operations": [{"op": "add", "path": "members", "value": [{"value": sid}]}],
+                })),
+            )
+            .await
+        }
+    }))
+    .await;
+    for (s, _, v) in &rs {
+        assert_eq!(*s, 200, "{v}");
+    }
+    let (s, _, v) = fx.scim(Method::GET, &format!("{GROUPS}/{gid}"), None).await;
+    assert_eq!(s, 200, "{v}");
+    let mut members: Vec<String> = v["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["value"].as_str().map(str::to_owned))
+        .collect();
+    members.sort();
+    let mut want = sids.clone();
+    want.sort();
+    assert_eq!(members, want, "every concurrent add kept");
+}

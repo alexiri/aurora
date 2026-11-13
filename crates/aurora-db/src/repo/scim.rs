@@ -384,14 +384,133 @@ pub async fn insert_user<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Full update of the stored link attributes (`PUT`); `state` changes go through
-/// [`set_user_state`] so `suspended_by_scim` is decided there. Returns the row.
+/// The org's link with one SCIM id, row-locked (`FOR UPDATE`) for the `PUT`/`PATCH`
+/// transaction: two updates of one link serialize instead of racing on its `user_id`.
+pub async fn lock_user(
+    conn: &mut PgConnection,
+    org: Uuid,
+    id: Uuid,
+) -> Result<Option<UserRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND id = $2 FOR UPDATE"
+    ))
+    .bind(org)
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// The global account behind a link, row-locked (`FOR UPDATE`) so a concurrent sign-in's
+/// binding (identity insert + `email_verified_at`) and a SCIM e-mail change serialize.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct LinkedAccount {
+    pub email: String,
+    /// An identity or a verified e-mail: a person signed in (or a verified bootstrap admin).
+    /// SCIM never changes such an account (D-167(a), SEC-73).
+    pub signed_in: bool,
+}
+
+pub async fn lock_account(
+    conn: &mut PgConnection,
+    user: Uuid,
+) -> Result<Option<LinkedAccount>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT u.email::text AS email, \
+                (u.email_verified_at IS NOT NULL \
+                 OR EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id)) AS signed_in \
+         FROM users u WHERE u.id = $1 FOR UPDATE",
+    )
+    .bind(user)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// Does `user` belong to any org other than `org` — a membership or a SCIM link in any
+/// state (tombstones included)? Then a placeholder is shared and its account is never
+/// rewritten from this org (D-167(b)).
+pub async fn user_elsewhere(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members WHERE user_id = $2 AND org_id <> $1) \
+             OR EXISTS (SELECT 1 FROM scim_users WHERE user_id = $2 AND org_id <> $1)",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+/// A pre-provisioned global user (`04 §SCIM` Users step 2a): unverified e-mail, no identity.
+/// The only `users` insert of the SCIM plane (POST, and an update moving a placeholder's
+/// link, D-167(b)).
+pub async fn insert_preprovisioned_user(
+    conn: &mut PgConnection,
+    id: Uuid,
+    email: &str,
+    display_name: &str,
+) -> Result<(), DbError> {
+    sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2::citext, $3)")
+        .bind(id)
+        .bind(email)
+        .bind(display_name)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Rename a still-unbound placeholder's e-mail in place (D-167(b)). Guarded in the
+/// statement itself: never a user with a verified e-mail or an identity. Returns whether
+/// the row was changed (`false` = it is no longer unbound; the caller refuses).
+pub async fn set_placeholder_email(
+    conn: &mut PgConnection,
+    user: Uuid,
+    email: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE users SET email = $2::citext, updated_at = now() \
+         WHERE id = $1 AND email_verified_at IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = users.id)",
+    )
+    .bind(user)
+    .bind(email)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// Move a link to another global user (D-167(b) only: the link's user is a still-unbound
+/// placeholder and the new e-mail belongs to another user). Every other update keeps the
+/// link's `user_id` (D-167). Returns the row.
+pub async fn move_user(
+    conn: &mut PgConnection,
+    org: Uuid,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<UserRow>, DbError> {
+    sqlx::query(
+        "UPDATE scim_users SET user_id = $3, updated_at = now() \
+         WHERE org_id = $1 AND id = $2 AND state <> 'removed'",
+    )
+    .bind(org)
+    .bind(id)
+    .bind(user_id)
+    .execute(&mut *conn)
+    .await?;
+    user_by_id(&mut *conn, org, id).await
+}
+
+/// Full update of the stored link attributes (`PUT`/`PATCH`); `state` changes go through
+/// [`set_user_state`] so `suspended_by_scim` is decided there. The link's `user_id` is
+/// immutable here (D-167; the one exception is [`move_user`]). Returns the row.
 #[allow(clippy::too_many_arguments)]
 pub async fn update_user(
     conn: &mut PgConnection,
     org: Uuid,
     id: Uuid,
-    user_id: Uuid,
     external_id: Option<&str>,
     user_name: &str,
     display_name: Option<&str>,
@@ -399,13 +518,12 @@ pub async fn update_user(
     family_name: Option<&str>,
 ) -> Result<Option<UserRow>, DbError> {
     sqlx::query(
-        "UPDATE scim_users SET user_id = $3, external_id = $4, user_name = $5, \
-             display_name = $6, given_name = $7, family_name = $8, updated_at = now() \
+        "UPDATE scim_users SET external_id = $3, user_name = $4, \
+             display_name = $5, given_name = $6, family_name = $7, updated_at = now() \
          WHERE org_id = $1 AND id = $2",
     )
     .bind(org)
     .bind(id)
-    .bind(user_id)
     .bind(external_id)
     .bind(user_name)
     .bind(display_name)
@@ -443,16 +561,16 @@ pub async fn set_user_state(
 }
 
 /// Revive a tombstoned link (`POST /Users` of a removed user, C-474 "re-provisions"): the
-/// row keeps its id and its `user_id` — `UNIQUE (org_id, user_id)` is never re-inserted —
-/// and the attributes plus state are overwritten in place (`removed_at` cleared). Guarded
-/// on `state = 'removed'` so only a genuine tombstone is revived; returns the row, or
-/// `None` when the link is not a removed one (the caller then creates fresh).
+/// row keeps its id and its pinned `user_id` (D-167: a revival never re-resolves the
+/// e-mail, so it never moves the link either; `UNIQUE (org_id, user_id)` is never
+/// re-inserted) and the attributes plus state are overwritten in place (`removed_at`
+/// cleared). Guarded on `state = 'removed'` so only a genuine tombstone is revived;
+/// returns the row, or `None` when the link is not a removed one.
 #[allow(clippy::too_many_arguments)]
 pub async fn revive_user(
     conn: &mut PgConnection,
     org: Uuid,
     id: Uuid,
-    user_id: Uuid,
     external_id: Option<&str>,
     user_name: &str,
     display_name: Option<&str>,
@@ -462,14 +580,13 @@ pub async fn revive_user(
     by_scim: bool,
 ) -> Result<Option<UserRow>, DbError> {
     sqlx::query(
-        "UPDATE scim_users SET user_id = $3, external_id = $4, user_name = $5, \
-             display_name = $6, given_name = $7, family_name = $8, state = $9, \
-             suspended_by_scim = $10, removed_at = NULL, updated_at = now() \
+        "UPDATE scim_users SET external_id = $3, user_name = $4, \
+             display_name = $5, given_name = $6, family_name = $7, state = $8, \
+             suspended_by_scim = $9, removed_at = NULL, updated_at = now() \
          WHERE org_id = $1 AND id = $2 AND state = 'removed'",
     )
     .bind(org)
     .bind(id)
-    .bind(user_id)
     .bind(external_id)
     .bind(user_name)
     .bind(display_name)

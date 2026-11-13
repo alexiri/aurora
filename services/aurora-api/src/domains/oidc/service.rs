@@ -571,20 +571,36 @@ async fn sign_in(
     let mut user = match identities::find_user(&mut *tx, &p.id, &v.sub).await? {
         Some(u) => u,
         None => {
-            let existing = users::find_by_email(&mut *tx, &v.email).await?;
-            let user = match existing {
-                // Link only on a provider-verified email.
-                Some(u) if v.email_verified => {
-                    if u.email_verified_at.is_none() {
-                        users::mark_email_verified(&mut *tx, u.id).await?
-                    } else {
-                        u
+            // Bind by the verified e-mail (FIX-070): the user found is row-locked until the
+            // sign-in commits, so a concurrent SCIM rename of a pre-provisioned user
+            // (D-167(b)) cannot slip between this lookup and the verification — it either
+            // waits for us, or it committed first and the address now resolves to nobody
+            // (the lock re-checks the e-mail) or to whoever holds it now. The verification
+            // itself also matches the e-mail; a mismatch looks up again once and never binds
+            // the row it found.
+            let mut retried = false;
+            let user = loop {
+                let existing = users::find_by_email_for_update(&mut *tx, &v.email).await?;
+                match existing {
+                    // Link only on a provider-verified email.
+                    Some(u) if v.email_verified => {
+                        if u.email_verified_at.is_some() {
+                            break u;
+                        }
+                        match users::mark_email_verified(&mut *tx, u.id, &v.email).await? {
+                            Some(u) => break u,
+                            None if !retried => retried = true,
+                            None => {
+                                tracing::warn!("oidc: bind target e-mail changed twice");
+                                return Err(Fail("oidc_failed"));
+                            }
+                        }
                     }
-                }
-                Some(_) => return Err(Fail("email_unverified")),
-                None => {
-                    created = true;
-                    create_user(state, &mut tx, p, v, listed, &desired).await?
+                    Some(_) => return Err(Fail("email_unverified")),
+                    None => {
+                        created = true;
+                        break create_user(state, &mut tx, p, v, listed, &desired).await?;
+                    }
                 }
             };
             identities::insert(&mut *tx, user.id, &p.id, &v.sub, &v.email)
