@@ -541,13 +541,18 @@ fn dial_error(e: &DialError) -> ApiError {
 /// [`aurora_core::limits::BYO_REFUSAL_LOG_INTERVAL`]; the metric counts every refusal.
 #[derive(Default)]
 pub struct SourceLimiter {
-    last: std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, std::time::Instant>>,
+    /// Keyed by source address and reason class: every class stays observable (FIX-050, C-630)
+    /// while a flood of one class from one address writes one line per interval.
+    last: std::sync::Mutex<
+        std::collections::HashMap<(std::net::IpAddr, &'static str), std::time::Instant>,
+    >,
     counted: std::sync::atomic::AtomicU64,
     logged: std::sync::atomic::AtomicU64,
 }
 
 impl SourceLimiter {
-    fn should_log(&self, source: std::net::IpAddr) -> bool {
+    fn should_log(&self, source: std::net::IpAddr, reason: &'static str) -> bool {
+        let key = (source, reason);
         self.counted.fetch_add(1, Ordering::Relaxed);
         let interval = aurora_core::limits::BYO_REFUSAL_LOG_INTERVAL;
         let now = std::time::Instant::now();
@@ -556,10 +561,10 @@ impl SourceLimiter {
                 if m.len() > 10_000 {
                     m.retain(|_, t| now.duration_since(*t) < interval);
                 }
-                match m.get(&source) {
+                match m.get(&key) {
                     Some(t) if now.duration_since(*t) < interval => false,
                     _ => {
-                        m.insert(source, now);
+                        m.insert(key, now);
                         true
                     }
                 }
@@ -599,7 +604,7 @@ impl Proxy {
         kind: Option<&'static str>,
     ) {
         metrics::counter!("aurora_gateway_connect_refused_total", "reason" => reason).increment(1);
-        if self.connect_log.should_log(client) {
+        if self.connect_log.should_log(client, reason) {
             tracing::warn!(
                 reason,
                 kind = kind.unwrap_or(""),

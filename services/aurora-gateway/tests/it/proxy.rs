@@ -399,7 +399,10 @@ async fn refused_connect_authentications_are_logged_at_a_bounded_rate() {
     }
     let (counted, logged) = env.handle.connect_refusal_stats();
     assert_eq!(counted, 50, "every refusal is counted");
-    assert_eq!(logged, 1, "one log line for one source within the interval");
+    assert_eq!(
+        logged, 1,
+        "one log line for one source and reason within the interval"
+    );
 }
 
 #[tokio::test]
