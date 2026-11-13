@@ -78,6 +78,12 @@ pub trait Retry: Send + 'static {
 
 /// Post-response hook (pipeline steps 14-15): guidance replacement and request log.
 pub trait PostHook: Send + 'static {
+    /// (FIX-104, SEC-01) Forms of every injected value that was placed in the request URL: a
+    /// response carrying one (headers, or the first 64 KiB of the body) is replaced by 502
+    /// `upstream_echoed_credential`. Empty when nothing was placed in the URL.
+    fn echo_needles(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
     /// Upstream answered. Return `Some` to replace the response (status is the
     /// caller's to preserve).
     fn on_response(

@@ -307,14 +307,17 @@ pub(crate) async fn start_with(
             // RFE-011a: tests use second-scale rule timeouts, below the production lower bound.
             .with_min_timeout(Duration::from_secs(1)),
     );
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver: resolver.clone(),
-        plaintext,
-        log: log.clone(),
-        external_url: "https://aurora.test/".into(),
-        holds: Some(holds),
-        touch_pool: None,
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver: resolver.clone(),
+            plaintext,
+            log: log.clone(),
+            external_url: "https://aurora.test/".into(),
+            holds: Some(holds),
+            touch_pool: None,
+        })
+        .with_insecure_loopback_injection(true),
+    );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();

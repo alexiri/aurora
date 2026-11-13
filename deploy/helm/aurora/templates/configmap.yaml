@@ -95,6 +95,8 @@
 {{- $gw := dict "ca_dir" "/var/lib/aurora/ca" "proxy_tls" $pt -}}
 {{- /* (RFE-025) layer-4 load balancers that send a PROXY protocol header (gateway.trusted_proxies) */ -}}
 {{- with .Values.gateway.proxy.trustedProxies }}{{ $_ := set $gw "trusted_proxies" . }}{{ end -}}
+{{- /* (FIX-104, D-180) gateway.insecure_loopback_injection is a test-only key: the chart never renders it, not even through the free-form `config` values */ -}}
+{{- if hasKey (default (dict) $cfg.gateway) "insecure_loopback_injection" }}{{ fail "config.gateway.insecure_loopback_injection is for tests only and cannot be set through the chart (docs/15, docs/23)" }}{{ end -}}
 {{- $_ := set $cfg "gateway" (merge $gw (default (dict) $cfg.gateway)) -}}
 {{- if not (has .Values.plugins.source (list "none" "configMap" "pvc")) }}{{ fail "plugins.source must be none, configMap or pvc" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "configMap") (not .Values.plugins.configMapName) }}{{ fail "plugins.configMapName is required when plugins.source is configMap" }}{{ end -}}

@@ -61,6 +61,9 @@ pub struct PolicyHandler {
     /// (RFE-014) Outage state: churn writes are skipped and refresh failures map to
     /// `gateway_degraded` while the database is unreachable.
     health: Option<Arc<crate::health::Health>>,
+    /// (FIX-104, D-180) `gateway.insecure_loopback_injection`, tests only: package host claims
+    /// are injected over any scheme and port when the destination is a loopback address.
+    insecure_loopback_injection: bool,
 }
 
 pub struct PolicyHandlerParts {
@@ -151,9 +154,15 @@ struct Hook {
     connect_url: String,
     /// Step 14 origin backstop for an injected LLM key.
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
+    /// Injected values placed in the URL (FIX-104).
+    echo: Vec<Vec<u8>>,
 }
 
 impl PostHook for Hook {
+    fn echo_needles(&self) -> Vec<Vec<u8>> {
+        self.echo.clone()
+    }
+
     fn on_response(
         self: Box<Self>,
         status: StatusCode,
@@ -327,7 +336,15 @@ impl PolicyHandler {
             summarizer: None,
             condition_body_limit: CONDITION_BODY_BUFFER,
             health: None,
+            insecure_loopback_injection: false,
         }
+    }
+
+    /// (FIX-104, D-180) `gateway.insecure_loopback_injection`: tests and development only.
+    #[must_use]
+    pub fn with_insecure_loopback_injection(mut self, on: bool) -> Self {
+        self.insecure_loopback_injection = on;
+        self
     }
 
     /// (P4-CNT, D-119) Count rule quotas in the shared store of the `gateway` class.
@@ -427,6 +444,21 @@ impl PolicyHandler {
             Verdict::Block {
                 reason: BlockReason::Rule,
             } => {
+                // (D-178, Q-R5-14) Workspace rules are named, with the workspace policy URL; an
+                // organization-level rule is answered generically: no rule name, no policy URL.
+                if d.trace.decided_by == Some(aurora_policy::eval::ScopeKind::Organization) {
+                    return Some((
+                        ApiError::new(
+                            StatusCode::FORBIDDEN,
+                            "blocked_by_policy",
+                            "An organization policy blocks this request. Ask an organization admin if you need it allowed.".to_owned(),
+                        )
+                        .with_details(json!({
+                            "scope": "organization", "method": method, "path": path
+                        })),
+                        "blocked",
+                    ));
+                }
                 let name = d.deciding_rule().map(|r| r.name.clone()).unwrap_or_default();
                 Some((
                     ApiError::new(
@@ -671,6 +703,29 @@ impl PolicyHandler {
                 same
             };
             cands.extend(bound.into_iter().map(Cand::App));
+        }
+        // (FIX-104, D-180, SEC-04) Transport rule: a package's or secret's host claim is injected
+        // only over TLS to the claimed port; an operator-configured LLM endpoint only to the exact
+        // scheme, host and port the operator configured. Otherwise the request is an
+        // uncredentialed one to that destination, decided by policy as such.
+        let https = scheme == crate::pipeline::Scheme::Https;
+        if !(self.insecure_loopback_injection && mechanisms::route::is_loopback_host(&host)) {
+            let app_claim_port = app_match
+                .as_ref()
+                .and_then(|m| mechanisms::route::claim_port(&m.entry.host));
+            cands.retain(|c| match c {
+                Cand::App(_) => mechanisms::route::claim_transport_ok(app_claim_port, https, port),
+                Cand::Secret(s) if s.kind == aurora_policy::facts::SecretKind::Llm => {
+                    self.resolver.llm().accepts_injection(
+                        s.llm_endpoint.as_deref(),
+                        s.provider.as_deref(),
+                        https,
+                        &host,
+                        port,
+                    )
+                }
+                Cand::Secret(s) => mechanisms::route::claim_transport_ok(s.claim_port, https, port),
+            });
         }
         let creds: Vec<Credential> = cands.iter().map(Cand::credential).collect();
         let selected: HashSet<_> = selected_candidates(rv.all_rules(), &fi, &creds);
@@ -1137,7 +1192,12 @@ impl PolicyHandler {
             self.touch(conn.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let passthrough = pass_challenge(app_match.as_ref());
-            let hook = self.hook(&rv, ctx, fb, passthrough, None);
+            let echo = inject::url_needles(
+                exec.string_values().map(str::as_bytes),
+                &new_path,
+                query.as_deref(),
+            );
+            let hook = self.hook(&rv, ctx, fb, passthrough, None, echo);
             let retry = match (pre, &self.tokens, &registry) {
                 (Some((h0, q0)), Some(t), Some(l)) => Some(Box::new(StaleRetry {
                     tokens: t.clone(),
@@ -1229,7 +1289,9 @@ impl PolicyHandler {
             ctx.injected = 1;
             self.touch(c.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
-            let hook = self.hook(&rv, ctx, fb, false, backstop);
+            let echo =
+                inject::url_needles([value.expose().as_slice()], &new_path, query.as_deref());
+            let hook = self.hook(&rv, ctx, fb, false, backstop, echo);
             return Outcome::Forward(PreparedRequest {
                 scheme,
                 host,
@@ -1247,7 +1309,7 @@ impl PolicyHandler {
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
         let passthrough = pass_challenge(app_match.as_ref());
-        let hook = self.hook(&rv, ctx, fb, passthrough, None);
+        let hook = self.hook(&rv, ctx, fb, passthrough, None, Vec::new());
         Outcome::Forward(PreparedRequest {
             scheme,
             host,
@@ -1715,6 +1777,7 @@ impl PolicyHandler {
         fallback: Fallback,
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
+        echo: Vec<Vec<u8>>,
     ) -> Box<dyn PostHook> {
         let connect_url = match &ctx.app_id {
             Some(a) => self.url(rv, &format!("apps/{a}")),
@@ -1729,6 +1792,7 @@ impl PolicyHandler {
             manage_url: self.url(rv, "policy"),
             connect_url,
             backstop,
+            echo,
         })
     }
 }

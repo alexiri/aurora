@@ -23,6 +23,11 @@ pub fn trust_anchor(proxy: SocketAddr, ca_pem: &str) {
     trust().lock().unwrap().insert(proxy, ca_pem.to_owned());
 }
 
+/// The trust anchor recorded for `proxy` (the gateway CA certificate).
+pub fn trust_pem(proxy: SocketAddr) -> String {
+    trust().lock().unwrap().get(&proxy).cloned().unwrap()
+}
+
 /// The gateway CA and its proxy listener TLS (leaf for `127.0.0.1` and `localhost`); records the
 /// CA as the trust anchor for clients of `proxy`.
 pub fn gateway_tls(gw: &GeneratedCa, proxy: SocketAddr) -> (Arc<Ca>, Arc<ProxyTls>) {

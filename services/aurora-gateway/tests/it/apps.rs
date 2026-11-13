@@ -156,6 +156,11 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
         out.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
     }
     out.push_str(&format!("body={}\n", String::from_utf8_lossy(&body)));
+    // (FIX-104) The gateway withholds a response that echoes a value it put in the URL; a test
+    // that wants to see the whole request asks for it hex-encoded (`x-echo-hex`).
+    if parts.headers.contains_key("x-echo-hex") {
+        out = out.bytes().map(|b| format!("{b:02x}")).collect();
+    }
     let mut r = Response::new(Full::new(Bytes::from(out)));
     if parts.uri.path().ends_with("/401") {
         *r.status_mut() = http::StatusCode::UNAUTHORIZED;
@@ -279,14 +284,17 @@ async fn start(
     );
     let resolver = Arc::new(Resolver::new(src.clone(), llm).with_snapshots(store.clone()));
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver,
-        plaintext,
-        log: RequestLog::new(Arc::new(Null)),
-        external_url: "https://aurora.test/".into(),
-        holds: None,
-        touch_pool: None,
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver,
+            plaintext,
+            log: RequestLog::new(Arc::new(Null)),
+            external_url: "https://aurora.test/".into(),
+            holds: None,
+            touch_pool: None,
+        })
+        .with_insecure_loopback_injection(true),
+    );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
@@ -417,10 +425,19 @@ async fn inject_mechanisms_overwrite_and_escape() {
     let r = get(
         &env,
         "/botX/send?api_key=agent&z=1",
-        "Authorization: Bearer agent\r\nX-Key: agent\r\nX-Remove: yes\r\n",
+        "Authorization: Bearer agent\r\nX-Key: agent\r\nX-Remove: yes\r\nX-Echo-Hex: 1\r\n",
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.body);
+    let r = Reply {
+        body: String::from_utf8_lossy(
+            &(0..r.body.trim().len() / 2)
+                .filter_map(|i| u8::from_str_radix(&r.body.trim()[2 * i..2 * i + 2], 16).ok())
+                .collect::<Vec<u8>>(),
+        )
+        .into_owned(),
+        ..r
+    };
     assert!(r.body.contains("authorization: Bearer a b/&"), "{}", r.body);
     assert!(r.body.contains("x-key: k-a b/&"), "{}", r.body);
     assert!(

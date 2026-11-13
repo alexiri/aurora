@@ -539,7 +539,11 @@ minted.
     pinned per protocol version by strict (non-hyper) oracles in
     `services/aurora-gateway/tests/it/proxy_wire.rs`, and reviewers point
     there for any future header the gateway must add.
-14. **Post-response.**
+14. **Post-response.** (FIX-104, SEC-01) When an injected value was placed in the request
+    URL (`path_template`, `path_regex`, `query` recipes, app templates), the response headers and
+    the first 64 KiB of its body are searched for it (raw and percent-encoded); a match replaces
+    the response with 502 `upstream_echoed_credential`. Bytes beyond 64 KiB of a streamed body are
+    not searched.
     - Upstream 401 and the app opted into stale-token detection (manifest
       `token.stale_codes`) on a body-less request → refresh once and resend
       with only the credential replaced.
@@ -558,7 +562,19 @@ minted.
 connection becomes a byte pipe with `WEBSOCKET_IDLE_TIMEOUT` idle limit across
 both directions.
 
-**Plain HTTP (absolute-form)**: same pipeline without TLS termination.
+**Plain HTTP (absolute-form)**: same pipeline without TLS termination. (FIX-104, D-180)
+**No credential is injected into a plain-HTTP request**, nor into one to a port other
+than the claimed one: a package's host claim, or a generic secret's host pattern, injects only
+into a request that leaves **over TLS to the claimed port** (443 when the claim names none);
+anything else is an uncredentialed request to that destination, decided by policy as such
+(`09 §7`). A governed LLM key and every other **operator-configured endpoint** (an LLM
+endpoint's `base_url`, `litellm_base`, an instance-configured upstream) is injected only to
+the **exact scheme, host and port the operator configured** — plain `http://` in-cluster is
+legitimate there because the operator chose it — and any other scheme or port of that host
+is uncredentialed. Tests only: `gateway.insecure_loopback_injection` (default `false`,
+never rendered by the Helm chart, `15`, `23`) relaxes the rule for package claims when the
+destination is a loopback address (`127.0.0.0/8`, `::1`, `localhost`), so that plain-HTTP mock
+upstreams on random ports keep working.
 
 ## Approval holds
 
@@ -641,7 +657,7 @@ dashboard URL to fix the problem when one exists.
 | `destination_refused` | 403 | destination guard | `host` |
 | `method_override_refused` | 400 | step 3 | — |
 | `ambiguous_path` | 400 | step 3 | — |
-| `blocked_by_policy` | 403 | rule block (open lane, phase 1: `connect_time: true`; an approval-requiring rule matched at CONNECT time adds `reason: "approval_required"`) | `rule_name`, `method`, `path`, `manage_url` |
+| `blocked_by_policy` | 403 | rule block (open lane, phase 1: `connect_time: true`; an approval-requiring rule matched at CONNECT time adds `reason: "approval_required"`) | `rule_name`, `method`, `path`, `manage_url` for a **workspace** rule; for an **organization** rule the answer is generic (D-178, Q-R5-14): `scope: "organization"`, `method`, `path`, no rule name and no policy URL |
 | `blocked_by_default_policy` | 403 | default-deny | `manage_url` |
 | `blocked_by_egress_policy` | 403 | uncredentialed default (`credentialed_only`) | `host`, `manage_url` (org egress allow-list) |
 | `llm_provider_not_permitted` | 403 | governed LLM host not permitted for the org | `host` |
@@ -673,6 +689,7 @@ dashboard URL to fix the problem when one exists.
 | `host_mismatch` | 421 | tenant-bound (or, phase 2 D-74, instance-bound) credential on wrong host | `expected_host` |
 | `upstream_timeout` | 504 | step 13 | — |
 | `bad_gateway` / `resolution_failed` | 502 | upstream connect/DNS failure | — |
+| `upstream_echoed_credential` | 502 | step 14: the response carries a credential injected into the request URL (FIX-104, SEC-01) | — |
 
 The guidance decision list for upstream 401/403 without injection, in order:
 (1) a granted tenant-bound connection on the wrong host → `host_mismatch`;

@@ -295,14 +295,17 @@ async fn start_with(
             Some(rx),
         ))
     });
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver,
-        plaintext,
-        log: log.clone(),
-        external_url: "https://aurora.test/".into(),
-        holds,
-        touch_pool: None,
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver,
+            plaintext,
+            log: log.clone(),
+            external_url: "https://aurora.test/".into(),
+            holds,
+            touch_pool: None,
+        })
+        .with_insecure_loopback_injection(true),
+    );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();

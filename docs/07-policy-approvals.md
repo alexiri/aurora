@@ -252,7 +252,10 @@ carve-out is deliberate and was undocumented until phase 3:
    count), whatever the backend.
 5. The evaluator returns a **trace** (per scope: rules considered, the matching
    rule, why) used by simulation and the request log (`rule_logical_id`,
-   `rule_name`).
+   `rule_name`). (D-178, Q-R5-14) The block response to the agent names the deciding rule
+   and the workspace policy URL only for a **workspace** rule; for an **organization**
+   rule it answers generically (no rule name, no organization policy URL). The request
+   log and the dashboard keep both.
 
 Performance: rules are part of the cached ResolvedHost; **the per-request
 decision never touches the database**.

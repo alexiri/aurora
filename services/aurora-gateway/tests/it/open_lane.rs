@@ -247,7 +247,8 @@ async fn start(o: Opts) -> Env {
             holds: None,
             touch_pool: None,
         })
-        .with_governance(gov),
+        .with_governance(gov)
+        .with_insecure_loopback_injection(true),
     );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();

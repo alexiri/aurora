@@ -415,7 +415,8 @@ async fn start_with(
         holds: None,
         touch_pool: Some(p.clone()),
     })
-    .with_tokens(Arc::new(tokens));
+    .with_tokens(Arc::new(tokens))
+    .with_insecure_loopback_injection(true);
     if let Some(h) = health {
         handler = handler.with_health(h);
     }

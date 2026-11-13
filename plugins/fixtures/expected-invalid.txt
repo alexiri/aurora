@@ -34,3 +34,4 @@ fixture-invalid-custom-only-block-untooled custom_only_needs_block_untooled
 fixture-invalid-params-shadowed-by-params params_tool_shadowed
 fixture-invalid-form-without-body-methods params_invalid
 fixture-invalid-positive-fixture-claim params_fixture_missing
+fixture-invalid-host-claim-too-broad zone_too_broad

@@ -650,6 +650,14 @@ connections show "not injecting on <host> (lost to <app>)". Decisions survive
 upgrades while `claim_fingerprint` is unchanged; a changed claim requires a new
 decision. Reversing a decision is allowed and audited.
 
+**A credential is injected only into a request that leaves over TLS to the port the claim
+names (443 when it names none)** (FIX-104, D-180, SEC-04). A request to a claimed host over
+plain HTTP, or on another port, is handled as an uncredentialed request to that destination
+and is subject to policy as such. A registered instance host (below) is claimed the same
+way: TLS to the claimed port. **A wildcard in a host claim must leave a registrable domain
+to its right** (public-suffix check, as for zones, SEC-17): `*.herokuapp.com` and
+`*.github.io` are refused with `zone_too_broad`, `s3.*.amazonaws.com` is accepted.
+
 (phase 2, D-74) A registered app instance host (`§3.4 Instance-bound hosts`) is
 a claim of its app. Registration refuses a host that conflicts with an existing
 static claim; a static claim activated later that overlaps a registered

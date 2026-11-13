@@ -534,7 +534,8 @@ async fn start(o: Opts) -> Gw {
             holds: Some(holds.clone()),
             touch_pool: None,
         })
-        .with_health(health.clone()),
+        .with_health(health.clone())
+        .with_insecure_loopback_injection(true),
     );
 
     tokio::spawn(hub.clone().run(lpool, rx.clone()));

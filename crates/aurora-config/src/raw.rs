@@ -678,6 +678,11 @@ pub struct GatewaySection {
     /// (phase 2, RFE-025) CIDRs of layer-4 load balancers that send a PROXY protocol header on
     /// the proxy port (docs/06 §BYO admission). Not `server.trusted_proxies`.
     pub trusted_proxies: Vec<String>,
+    /// (FIX-104, D-180) **Tests and development only; the Helm chart never renders it.** When
+    /// `true`, a package's host claim is injected over any scheme and port if the destination is
+    /// a loopback address (`127.0.0.0/8`, `::1`, `localhost`), so that plain-HTTP mock upstreams
+    /// on random ports work. Default `false`: injection only over TLS to the claimed port.
+    pub insecure_loopback_injection: bool,
 }
 
 /// `[byo]` (phase 2, RFE-025, D-59).
@@ -728,6 +733,7 @@ impl Default for GatewaySection {
             hookhost_url: "http://aurora-hookhost:4104".into(),
             proxy_tls: ProxyTlsSection::default(),
             trusted_proxies: vec![],
+            insecure_loopback_injection: false,
         }
     }
 }

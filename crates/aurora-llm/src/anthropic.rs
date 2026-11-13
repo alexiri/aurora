@@ -121,6 +121,9 @@ impl LlmProvider for AnthropicProvider {
     fn hosts(&self, _ep: &Endpoint) -> Vec<String> {
         host_of(&self.base).into_iter().collect()
     }
+    fn base_url(&self, _ep: &Endpoint) -> String {
+        self.base.clone()
+    }
     fn injection(&self, _mode: &AuthMode) -> LlmInjection {
         LlmInjection {
             header: InjectionHeader::XApiKey,

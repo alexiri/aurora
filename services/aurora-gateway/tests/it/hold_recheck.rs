@@ -286,14 +286,17 @@ async fn start(pool: sqlx::PgPool) -> Env {
         Duration::from_secs(30),
         Some(rx),
     ));
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver,
-        plaintext,
-        log: RequestLog::new(Arc::new(Null)),
-        external_url: "https://aurora.test/".into(),
-        holds: Some(holds),
-        touch_pool: None,
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver,
+            plaintext,
+            log: RequestLog::new(Arc::new(Null)),
+            external_url: "https://aurora.test/".into(),
+            holds: Some(holds),
+            touch_pool: None,
+        })
+        .with_insecure_loopback_injection(true),
+    );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();

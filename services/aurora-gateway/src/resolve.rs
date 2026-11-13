@@ -37,6 +37,9 @@ pub struct SecretCand {
     pub scope: Level,
     pub kind: SecretKind,
     pub path: Option<PathPattern>,
+    /// The port the secret's host pattern names (FIX-104: a generic secret is injected only
+    /// over TLS to this port, 443 when the pattern names none).
+    pub claim_port: Option<u16>,
     pub injection: Injection,
     pub vref: SecretRef,
     pub version: i32,
@@ -271,6 +274,7 @@ fn to_candidate(r: SecretMetaRow, org: Uuid, llm: &ProviderRegistry) -> Result<S
             .map(PathPattern::parse)
             .transpose()
             .map_err(|e| format!("path pattern: {e:?}"))?,
+        claim_port: HostPattern::lenient(&r.host_pattern).port(),
         injection,
         vref: r
             .value_ref

@@ -364,7 +364,9 @@ impl Proxy {
                     Ok(r2) => {
                         // The first response is dropped unread.
                         drop(replay);
-                        return self.finish(r2, hook, response_headers, upgrade_fut, kill);
+                        return self
+                            .finish(r2, hook, response_headers, upgrade_fut, kill)
+                            .await;
                     }
                     Err(e) => {
                         if let Some(h) = hook {
@@ -375,6 +377,17 @@ impl Proxy {
                 }
             }
             let mut resp = Response::from_parts(parts, replay);
+            if let Some(h) = &hook {
+                match echo_check(&h.echo_needles(), resp).await {
+                    Ok(r) => resp = r,
+                    Err(e) => {
+                        if let Some(h) = hook {
+                            h.on_error(&e);
+                        }
+                        return guidance::response(&e);
+                    }
+                }
+            }
             if let Some(h) = hook
                 && let Some(replacement) = h.on_response(resp.status(), resp.headers())
             {
@@ -387,10 +400,11 @@ impl Proxy {
             return resp;
         }
         self.finish(resp, hook, response_headers, upgrade_fut, kill)
+            .await
     }
 
     /// 14-15. guidance replacement, request log, upgrade bridging, response hygiene.
-    fn finish(
+    async fn finish(
         &self,
         mut resp: Response<hyper::body::Incoming>,
         hook: Option<Box<dyn crate::pipeline::PostHook>>,
@@ -398,6 +412,31 @@ impl Proxy {
         upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
         kill: Option<watch::Receiver<bool>>,
     ) -> Response<Body> {
+        // (FIX-104, SEC-01) A credential placed in the URL never comes back to the agent.
+        let needles = hook.as_ref().map(|h| h.echo_needles()).unwrap_or_default();
+        if !needles.is_empty() && resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            let (parts, inc) = resp.into_parts();
+            let body: Body = inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
+            let mut checked = match echo_check(&needles, Response::from_parts(parts, body)).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if let Some(h) = hook {
+                        h.on_error(&e);
+                    }
+                    return guidance::response(&e);
+                }
+            };
+            if let Some(h) = hook
+                && let Some(replacement) = h.on_response(checked.status(), checked.headers())
+            {
+                return replacement;
+            }
+            for (k, v) in &response_headers {
+                checked.headers_mut().insert(k.clone(), v.clone());
+            }
+            hygiene::strip_hop_by_hop(checked.headers_mut());
+            return checked;
+        }
         if let Some(h) = hook
             && let Some(replacement) = h.on_response(resp.status(), resp.headers())
         {
@@ -442,6 +481,38 @@ impl Proxy {
         hygiene::strip_hop_by_hop(resp.headers_mut());
         resp.map(|b| b.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync())
     }
+}
+
+/// Bytes of a response body searched for an injected value (docs/17 SEC-01); what follows is
+/// streamed on unchecked.
+const ECHO_BODY_CHECK: usize = 64 * 1024;
+
+/// (FIX-104, SEC-01) 502 `upstream_echoed_credential` when the response headers or the first
+/// 64 KiB of its body carry one of `needles`; otherwise the response with its body intact.
+async fn echo_check(needles: &[Vec<u8>], resp: Response<Body>) -> Result<Response<Body>, ApiError> {
+    if needles.is_empty() {
+        return Ok(resp);
+    }
+    let echoed = || {
+        ApiError::new(
+            http::StatusCode::BAD_GATEWAY,
+            "upstream_echoed_credential",
+            "The upstream answered with a credential Aurora injected into the request URL, so the response was withheld.",
+        )
+    };
+    if resp
+        .headers()
+        .values()
+        .any(|v| crate::inject::echoes(needles, v.as_bytes()))
+    {
+        return Err(echoed());
+    }
+    let (parts, body) = resp.into_parts();
+    let (prefix, _, rest) = crate::decide::buffer_prefix(body, ECHO_BODY_CHECK).await;
+    if crate::inject::echoes(needles, &prefix[..prefix.len().min(ECHO_BODY_CHECK)]) {
+        return Err(echoed());
+    }
+    Ok(Response::from_parts(parts, rest))
 }
 
 fn dial_error(e: &DialError) -> ApiError {

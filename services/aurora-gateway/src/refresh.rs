@@ -66,21 +66,35 @@ pub fn expiring(expires_at: Option<DateTime<Utc>>, margin: Duration) -> bool {
 }
 
 impl TokenManager {
+    /// Tests: a client that cannot be built is a bug there.
+    #[allow(clippy::expect_used)]
     pub fn new(pool: PgPool, vault: Arc<SecretVault>, minter: Option<Arc<dyn Minter>>) -> Self {
-        Self {
+        Self::try_new(pool, vault, minter).expect("token client")
+    }
+
+    /// (FIX-104) The token client is built with its timeout and without redirects, or not at
+    /// all: there is no fallback to a default client (no timeout, redirects followed), so a
+    /// failure here is a startup error.
+    pub fn try_new(
+        pool: PgPool,
+        vault: Arc<SecretVault>,
+        minter: Option<Arc<dyn Minter>>,
+    ) -> Result<Self, String> {
+        let http = reqwest::Client::builder()
+            .timeout(TOKEN_CALL_WALL)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| format!("token client: {e}"))?;
+        Ok(Self {
             pool,
             vault,
-            http: reqwest::Client::builder()
-                .timeout(TOKEN_CALL_WALL)
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap_or_default(),
+            http,
             minter,
             stripes: (0..STRIPES).map(|_| tokio::sync::Mutex::new(())).collect(),
             lock_wait: REFRESH_LOCK_WAIT,
             margin: REFRESH_MARGIN,
             health: None,
-        }
+        })
     }
 
     /// (RFE-014) Refuse refreshes while the database is unreachable.

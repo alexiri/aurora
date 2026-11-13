@@ -246,6 +246,24 @@ fn zone_breadth() {
     }
 }
 
+/// (FIX-104, SEC-17) A wildcard host claim must leave a registrable domain to its right.
+#[test]
+fn host_claim_wildcard_breadth() {
+    for (host, bad) in [
+        ("\"*.herokuapp.com\"", true),
+        ("\"*.github.io\"", true),
+        ("\"*.com\"", true),
+        ("\"*\"", true),
+        ("\"s3.*.amazonaws.com\"", false),
+        ("\"*.example.com\"", false),
+        ("\"*.example.com:8443\"", false),
+        ("api.todoist.com", false),
+    ] {
+        let c = unsigned_codes(&manifest("aurora", host));
+        assert_eq!(c.contains(&"zone_too_broad"), bad, "{host}: {c:?}");
+    }
+}
+
 #[test]
 fn reserved_hosts() {
     for h in ["api.anthropic.com", "x.aurora.internal", "\"*.internal\""] {
