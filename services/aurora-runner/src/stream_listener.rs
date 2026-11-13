@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use aurora_core::limits::{
@@ -27,8 +28,8 @@ use aurora_core::limits::{
 use aurora_protocol::common::SecretString;
 use aurora_protocol::runner::{
     ChannelRef, PreviewStreamClosedRequest, PreviewStreamOpenRequest, PreviewStreamOpenResponse,
-    PtyClose, PtyCloseReason, PtyOpen, PtyRefuseReason, PtyResize, StreamCloseReason, StreamOpen,
-    StreamRefuseReason,
+    PtyClose, PtyCloseReason, PtyCredit, PtyOpen, PtyRefuseReason, PtyResize, StreamCloseReason,
+    StreamCredit, StreamOpen, StreamRefuseReason,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use futures::{SinkExt, StreamExt};
@@ -61,10 +62,27 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// Total lifetime of one stream (`PREVIEW_STREAM_LIFETIME`).
 const LIFETIME: Duration = aurora_core::limits::PREVIEW_STREAM_LIFETIME;
 
-/// Per-connection queues (bounded; the credit window bounds actual in-flight bytes).
-const DATA_Q: usize = 16;
+/// Per-leg queue from the channel pump to the leg task. The supervisor's credit window bounds
+/// the in-flight *bytes* (128 KiB), not the number of chunks, so the depth must cover a
+/// conforming supervisor that sends small chunks (FIX-060: 128 KiB in 512-byte pieces = 256).
+/// The pump never waits on this queue (see [`StreamListener::deliver`]): a full queue means the
+/// leg is not draining, and that leg is closed.
+const DATA_Q: usize = 256;
+
+/// One write toward the browser may not stall longer than this: a client that stops reading
+/// would otherwise hold its leg task (and socket) forever, unable to observe a close.
+const WS_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 type Ws = WebSocketStream<TcpStream>;
+type WsSink = futures::stream::SplitSink<Ws, Message>;
+
+/// One bounded write to the browser; `Err` on a failed or timed-out (stalled client) write.
+async fn ws_send(sink: &mut WsSink, msg: Message) -> Result<(), ()> {
+    match tokio::time::timeout(WS_WRITE_TIMEOUT, sink.send(msg)).await {
+        Ok(Ok(())) => Ok(()),
+        _ => Err(()),
+    }
+}
 
 /// Traffic from the supervisor side to a leg. Terminal frames (`pty.refused`/`pty.close`)
 /// never arrive here: the listener removes the route and answers the leg's `close_rx`
@@ -86,6 +104,20 @@ struct RouteEnd {
     /// (P4-TERM, C-620) Set on a terminal leg: bytes in either direction stamp this
     /// sandbox's `terminal_active_until` (keep-awake reason `terminal`).
     terminal: bool,
+    /// Sandbox → browser bytes the supervisor has sent and the runner has not yet credited
+    /// back (FIX-060: its own counter, separate from the browser → sandbox window). The pump
+    /// raises it on arrival, the leg lowers it when it returns credit after writing onward.
+    from_sandbox: Arc<AtomicUsize>,
+    /// The window the runner announced for that direction (`stream.open`/`pty.open`).
+    recv_window: usize,
+}
+
+/// What the pump needs to deliver to one leg (cloned out of `routes` under the lock).
+struct Target {
+    to_leg: mpsc::Sender<LegIn>,
+    terminal: bool,
+    from_sandbox: Arc<AtomicUsize>,
+    recv_window: usize,
 }
 
 /// The listener: owns the routes, accepts connections, enforces the binding.
@@ -122,18 +154,22 @@ impl StreamListener {
         frame: SupervisorToRunner,
     ) {
         use SupervisorToRunner as M;
-        let mut routes = self.routes.lock().await;
+        // Every kind that looks up or removes a leg goes through `deliver`/`take_owned`, which
+        // bind the leg to the sending `(sandbox, boot)` (FIX-060: ids are sequential and
+        // guessable; a supervisor may only touch its own legs) and never hold `routes`
+        // across an await on a leg queue.
         match frame {
             M::StreamOpened(o) => {
-                if let Some(end) = routes.legs.get(&o.stream_id)
-                    && end.sandbox == sandbox
-                    && end.boot == boot
-                {
-                    let _ = end.to_leg.send(LegIn::Opened { window: o.window }).await;
-                }
+                self.deliver(
+                    o.stream_id,
+                    sandbox,
+                    boot,
+                    LegIn::Opened { window: o.window },
+                )
+                .await;
             }
             M::StreamRefused(r) => {
-                if let Some(end) = routes.legs.remove(&r.stream_id) {
+                if let Some(end) = self.take_owned(r.stream_id, sandbox, boot).await {
                     let code = match r.reason {
                         StreamRefuseReason::NotShared => CLOSE_NOT_FOUND,
                         StreamRefuseReason::Refused => CLOSE_REFUSED,
@@ -145,12 +181,11 @@ impl StreamListener {
                 }
             }
             M::StreamCredit(c) => {
-                if let Some(end) = routes.legs.get(&c.stream_id) {
-                    let _ = end.to_leg.send(LegIn::Credit(c.bytes)).await;
-                }
+                self.deliver(c.stream_id, sandbox, boot, LegIn::Credit(c.bytes))
+                    .await;
             }
             M::StreamClose(c) => {
-                if let Some(end) = routes.legs.remove(&c.stream_id) {
+                if let Some(end) = self.take_owned(c.stream_id, sandbox, boot).await {
                     let code = match c.reason {
                         StreamCloseReason::Eof => CLOSE_NORMAL,
                         StreamCloseReason::Reset | StreamCloseReason::Error => CLOSE_REFUSED,
@@ -163,15 +198,11 @@ impl StreamListener {
             }
             // (P4-TERM, C-619, `16 §W19`) The PTY answers, same shape as the stream ones.
             M::PtyOpened(o) => {
-                if let Some(end) = routes.legs.get(&o.pty_id)
-                    && end.sandbox == sandbox
-                    && end.boot == boot
-                {
-                    let _ = end.to_leg.send(LegIn::Opened { window: o.window }).await;
-                }
+                self.deliver(o.pty_id, sandbox, boot, LegIn::Opened { window: o.window })
+                    .await;
             }
             M::PtyRefused(r) => {
-                if let Some(end) = routes.legs.remove(&r.pty_id) {
+                if let Some(end) = self.take_owned(r.pty_id, sandbox, boot).await {
                     let code = match r.reason {
                         PtyRefuseReason::Disabled | PtyRefuseReason::Error => CLOSE_REFUSED,
                         PtyRefuseReason::Limit => CLOSE_LIMIT,
@@ -181,12 +212,11 @@ impl StreamListener {
                 }
             }
             M::PtyCredit(c) => {
-                if let Some(end) = routes.legs.get(&c.pty_id) {
-                    let _ = end.to_leg.send(LegIn::Credit(c.bytes)).await;
-                }
+                self.deliver(c.pty_id, sandbox, boot, LegIn::Credit(c.bytes))
+                    .await;
             }
             M::PtyClose(c) => {
-                if let Some(end) = routes.legs.remove(&c.pty_id) {
+                if let Some(end) = self.take_owned(c.pty_id, sandbox, boot).await {
                     let code = match c.reason {
                         PtyCloseReason::Eof => CLOSE_NORMAL,
                         PtyCloseReason::Hangup | PtyCloseReason::Error => CLOSE_REFUSED,
@@ -211,13 +241,8 @@ impl StreamListener {
         stream_id: u32,
         payload: Vec<u8>,
     ) {
-        let routes = self.routes.lock().await;
-        if let Some(end) = routes.legs.get(&stream_id)
-            && end.sandbox == sandbox
-            && end.boot == boot
-        {
-            let _ = end.to_leg.send(LegIn::Data(payload)).await;
-        }
+        self.deliver(stream_id, sandbox, boot, LegIn::Data(payload))
+            .await;
     }
 
     /// (P4-TERM, W19) Terminal data from a supervisor `[0x02][pty_id BE][payload]`: routed
@@ -230,16 +255,10 @@ impl StreamListener {
         pty_id: u32,
         payload: Vec<u8>,
     ) {
-        let terminal = {
-            let routes = self.routes.lock().await;
-            match routes.legs.get(&pty_id) {
-                Some(end) if end.sandbox == sandbox && end.boot == boot => {
-                    let _ = end.to_leg.send(LegIn::Data(payload)).await;
-                    end.terminal
-                }
-                _ => false,
-            }
-        };
+        let terminal = self
+            .deliver(pty_id, sandbox, boot, LegIn::Data(payload))
+            .await
+            .unwrap_or(false);
         if terminal {
             // Best effort and off the hot path: a keep-awake stamp per data chunk would
             // hammer the API; at most one per grace per sandbox (the grace outlives the gap).
@@ -296,6 +315,116 @@ impl StreamListener {
         }
     }
 
+    /// The leg `id` **if** it belongs to `(sandbox, boot)`: what is needed to deliver to it,
+    /// cloned under the lock so the caller sends with the lock released.
+    async fn owned_target(&self, id: u32, sandbox: Uuid, boot: Uuid) -> Option<Target> {
+        let routes = self.routes.lock().await;
+        routes
+            .legs
+            .get(&id)
+            .filter(|end| end.sandbox == sandbox && end.boot == boot)
+            .map(|end| Target {
+                to_leg: end.to_leg.clone(),
+                terminal: end.terminal,
+                from_sandbox: end.from_sandbox.clone(),
+                recv_window: end.recv_window,
+            })
+    }
+
+    /// Removes and returns leg `id` only when it belongs to `(sandbox, boot)`; another
+    /// sandbox's id is left untouched (and unanswered).
+    async fn take_owned(&self, id: u32, sandbox: Uuid, boot: Uuid) -> Option<RouteEnd> {
+        let mut routes = self.routes.lock().await;
+        if routes
+            .legs
+            .get(&id)
+            .is_some_and(|end| end.sandbox == sandbox && end.boot == boot)
+        {
+            routes.legs.remove(&id)
+        } else {
+            None
+        }
+    }
+
+    /// Hands one message to the leg `id` of `(sandbox, boot)` without ever waiting
+    /// (FIX-060). Returns whether the leg is a terminal leg when the message was queued.
+    ///
+    /// **Design: `try_send`, and close the leg on `Full`** — not "clone the sender and
+    /// `send().await` outside the lock". This function runs on the sandbox's channel pump,
+    /// which is shared by every stream and terminal of that sandbox: awaiting a full queue
+    /// there, lock or no lock, lets one browser tab that stops reading freeze the sandbox's
+    /// whole stream plane (and, before this change, with the lock held, the runner's).
+    /// A conforming supervisor cannot fill the queue: it is bounded by the credit window,
+    /// which the leg only returns after writing onward ([`DATA_Q`] covers a full window of
+    /// small chunks). A full queue therefore means the leg is not draining (a stalled
+    /// client) or the supervisor ignores credit; closing exactly that leg is correct and
+    /// leaves every other leg, and the pump, untouched. Waiting outside the lock instead
+    /// would only move the stall from the runner to the sandbox and give a malicious or
+    /// stalled peer an unbounded hold on the pump.
+    ///
+    /// Data is also checked against the window the runner announced for sandbox → browser
+    /// (`from_sandbox`, counted on **arrival**, so a supervisor that ignores credit is caught
+    /// even while the leg is busy or stalled): exceeding it closes the leg like a full queue.
+    async fn deliver(&self, id: u32, sandbox: Uuid, boot: Uuid, msg: LegIn) -> Option<bool> {
+        let t = self.owned_target(id, sandbox, boot).await?;
+        let terminal = t.terminal;
+        if let LegIn::Data(b) = &msg {
+            let after = t.from_sandbox.fetch_add(b.len(), Ordering::AcqRel) + b.len();
+            if after > t.recv_window {
+                tracing::warn!(
+                    id,
+                    "stream data beyond the announced window; closing the leg"
+                );
+                self.overflow(id, sandbox, boot, terminal).await;
+                return None;
+            }
+        }
+        match t.to_leg.try_send(msg) {
+            Ok(()) => Some(terminal),
+            // The leg task is ending; its own release path frees the route.
+            Err(mpsc::error::TrySendError::Closed(_)) => None,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(id, "stream leg queue full; closing the leg");
+                self.overflow(id, sandbox, boot, terminal).await;
+                None
+            }
+        }
+    }
+
+    /// Closes one leg whose queue overflowed: route removed, the browser side told
+    /// `CLOSE_REFUSED` (a flow-control violation), the supervisor told `error`. Non-blocking:
+    /// both notifications are a oneshot send and a synchronous push to the channel queue.
+    async fn overflow(&self, id: u32, sandbox: Uuid, boot: Uuid, terminal: bool) {
+        let Some(end) = self.take_owned(id, sandbox, boot).await else {
+            return;
+        };
+        let _ = end.close_tx.send(CLOSE_REFUSED);
+        let frame = if terminal {
+            RunnerToSupervisor::PtyClose(PtyClose {
+                pty_id: id,
+                reason: PtyCloseReason::Error,
+                bytes_in: None,
+                bytes_out: None,
+            })
+        } else {
+            RunnerToSupervisor::StreamClose(aurora_protocol::runner::StreamClose {
+                stream_id: id,
+                reason: StreamCloseReason::Error,
+                bytes_in: None,
+                bytes_out: None,
+            })
+        };
+        let _ = self
+            .send_to_supervisor(
+                &ChannelRef {
+                    sandbox_id: sandbox,
+                    boot_id: boot,
+                },
+                frame,
+            )
+            .await;
+    }
+
     async fn alloc_id(&self) -> u32 {
         let mut routes = self.routes.lock().await;
         routes.next_id = routes.next_id.wrapping_add(1).max(1);
@@ -308,6 +437,7 @@ impl StreamListener {
         binding: &PreviewStreamOpenResponse,
         terminal: bool,
         to_leg: mpsc::Sender<LegIn>,
+        from_sandbox: Arc<AtomicUsize>,
     ) -> oneshot::Receiver<u16> {
         let (close_tx, close_rx) = oneshot::channel();
         let mut routes = self.routes.lock().await;
@@ -319,6 +449,12 @@ impl StreamListener {
                 sandbox: binding.sandbox_id,
                 boot: binding.boot_id,
                 terminal,
+                from_sandbox,
+                recv_window: if terminal {
+                    TERMINAL_STREAM_WINDOW
+                } else {
+                    PREVIEW_STREAM_WINDOW
+                },
             },
         );
         close_rx
@@ -619,7 +755,7 @@ async fn open_and_serve(
     // grant the PTY (`P4-TERM`, C-617); then complete the handshake and copy.
     let terminal = binding.port.is_none();
     if let Some(port) = binding.port {
-        let Some((stream_id, leg_rx, credit_tx, close_rx)) =
+        let Some((stream_id, leg_rx, close_rx, from_sandbox)) =
             open_supervisor_stream(&state, &binding, port, &r).await
         else {
             http_close(&mut tcp, CLOSE_REFUSED).await;
@@ -638,14 +774,14 @@ async fn open_and_serve(
             share_id,
             ws,
             leg_rx,
-            credit_tx,
             close_rx,
+            from_sandbox,
         )
         .await;
     } else {
         // (P4-TERM, C-617, `16 §W19`) terminal leg: `pty.open` beside `stream.open`, tag
         // `0x02` data, keep-awake stamping; the supervisor's PTY posture is `12 §Terminal`.
-        let Some((pty_id, leg_rx, credit_tx, close_rx)) =
+        let Some((pty_id, leg_rx, close_rx, from_sandbox)) =
             open_supervisor_pty(&state, &binding, &r).await
         else {
             http_close(&mut tcp, CLOSE_REFUSED).await;
@@ -662,12 +798,21 @@ async fn open_and_serve(
             binding.boot_id,
             ws,
             leg_rx,
-            credit_tx,
             close_rx,
+            from_sandbox,
         )
         .await;
     }
 }
+
+/// A leg the supervisor accepted: id, its queue, its close signal, and the sandbox → browser
+/// unreturned-bytes counter shared with the pump.
+type OpenedLeg = (
+    u32,
+    mpsc::Receiver<LegIn>,
+    oneshot::Receiver<u16>,
+    Arc<AtomicUsize>,
+);
 
 /// Completes the WebSocket handshake (101) after the supervisor accepted the open. The relay
 /// (or the API) is the WebSocket *client* and its upgrade request was already consumed by
@@ -757,17 +902,14 @@ async fn open_supervisor_stream(
     binding: &PreviewStreamOpenResponse,
     port: u16,
     r: &ChannelRef,
-) -> Option<(
-    u32,
-    mpsc::Receiver<LegIn>,
-    mpsc::Sender<u32>,
-    oneshot::Receiver<u16>,
-)> {
+) -> Option<OpenedLeg> {
     let id = state.alloc_id().await;
     let (leg_tx, leg_rx) = mpsc::channel(DATA_Q);
-    let (credit_tx, credit_rx) = mpsc::channel::<u32>(8);
+    let from_sandbox = Arc::new(AtomicUsize::new(0));
     // Register the route before sending `stream.open` so the answer cannot race us.
-    let close_rx = state.register_route(id, binding, false, leg_tx).await;
+    let close_rx = state
+        .register_route(id, binding, false, leg_tx, from_sandbox.clone())
+        .await;
     let open = StreamOpen {
         stream_id: id,
         port,
@@ -798,9 +940,8 @@ async fn open_supervisor_stream(
         }
     })
     .await;
-    drop(credit_rx);
     match opened {
-        Ok(true) => Some((id, wait_rx, credit_tx, close_rx)),
+        Ok(true) => Some((id, wait_rx, close_rx, from_sandbox)),
         _ => {
             state
                 .release_stream(id, binding.sandbox_id, binding.boot_id)
@@ -822,18 +963,15 @@ async fn open_supervisor_pty(
     state: &Arc<StreamListener>,
     binding: &PreviewStreamOpenResponse,
     r: &ChannelRef,
-) -> Option<(
-    u32,
-    mpsc::Receiver<LegIn>,
-    mpsc::Sender<u32>,
-    oneshot::Receiver<u16>,
-)> {
+) -> Option<OpenedLeg> {
     let id = state.alloc_id().await;
     let (leg_tx, leg_rx) = mpsc::channel(DATA_Q);
-    let (credit_tx, credit_rx) = mpsc::channel::<u32>(8);
+    let from_sandbox = Arc::new(AtomicUsize::new(0));
     // Register the route before sending `pty.open` so the answer cannot race us; the leg is
     // stamped terminal so its bytes drive the keep-awake (`C-620`).
-    let close_rx = state.register_route(id, binding, true, leg_tx).await;
+    let close_rx = state
+        .register_route(id, binding, true, leg_tx, from_sandbox.clone())
+        .await;
     let open = PtyOpen {
         pty_id: id,
         window: TERMINAL_STREAM_WINDOW as u32,
@@ -865,9 +1003,8 @@ async fn open_supervisor_pty(
         }
     })
     .await;
-    drop(credit_rx);
     match opened {
-        Ok(true) => Some((id, wait_rx, credit_tx, close_rx)),
+        Ok(true) => Some((id, wait_rx, close_rx, from_sandbox)),
         _ => {
             state
                 .release_pty(id, binding.sandbox_id, binding.boot_id)
@@ -892,16 +1029,23 @@ async fn serve_terminal_leg(
     boot: Uuid,
     ws: Ws,
     mut leg_rx: mpsc::Receiver<LegIn>,
-    credit_tx: mpsc::Sender<u32>,
     mut close_rx: oneshot::Receiver<u16>,
+    from_pty_outstanding: Arc<AtomicUsize>,
 ) {
     let (mut ws_sink, mut ws_stream) = ws.split();
     let r = ChannelRef {
         sandbox_id: sandbox,
         boot_id: boot,
     };
-    // Credit accounting, both directions (`16 §W19` on `16 §W18`): the same shape as the
-    // port-stream leg with the terminal limits.
+    // Credit accounting, **one window per direction** (`16 §W19` on `16 §W18`; FIX-060):
+    // - browser → PTY: `to_pty_credit`, the supervisor's announced window; browser data
+    //   decrements it, `pty.credit` from the supervisor (sent after it wrote to the PTY)
+    //   replenishes it. Nothing else touches it.
+    // - PTY → browser: the supervisor may have at most `TERMINAL_STREAM_WINDOW` (the window
+    //   we announced in `pty.open`) unreturned. `from_pty_outstanding` is shared with the
+    //   pump, which raises it on arrival and closes the leg when it exceeds the window
+    //   (`StreamListener::deliver`); this leg lowers it when it returns credit after writing
+    //   onward to the WebSocket (`from_pty_unacked`, at least every `window / 4`).
     let mut window = TERMINAL_STREAM_WINDOW;
     let mut to_pty_credit: usize = window;
     let mut from_pty_unacked: usize = 0;
@@ -966,23 +1110,22 @@ async fn serve_terminal_leg(
                 match chunk {
                     Some(LegIn::Data(b)) => {
                         idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
-                        if to_pty_credit < b.len() {
-                            // Over-window data from the supervisor is a protocol violation;
-                            // close the leg (the release tells the supervisor `error`).
-                            break CLOSE_REFUSED;
-                        }
-                        to_pty_credit -= b.len();
                         bytes_to_pty += b.len() as u64;
                         from_pty_unacked += b.len();
-                        if ws_sink.send(Message::binary(b)).await.is_err() {
+                        if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                             break CLOSE_NORMAL;
                         }
                         state.stamp_awake(sandbox).await;
                         // Return credit after writing onward, at least every `window / 4`.
-                        if from_pty_unacked >= window / 4 {
+                        if from_pty_unacked >= TERMINAL_STREAM_WINDOW / 4 {
                             let n = from_pty_unacked as u32;
                             from_pty_unacked = 0;
-                            if credit_tx.send(n).await.is_err() {
+                            from_pty_outstanding.fetch_sub(n as usize, Ordering::AcqRel);
+                            let credit = RunnerToSupervisor::PtyCredit(PtyCredit {
+                                pty_id,
+                                bytes: n,
+                            });
+                            if state.send_to_supervisor(&r, credit).await.is_err() {
                                 break CLOSE_CHANNEL_LOST;
                             }
                         }
@@ -1016,7 +1159,7 @@ async fn serve_terminal_leg(
                     match chunk {
                         LegIn::Data(b) => {
                             idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
-                            if ws_sink.send(Message::binary(b)).await.is_err() {
+                            if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                                 break;
                             }
                         }
@@ -1038,7 +1181,7 @@ async fn serve_terminal_leg(
                 break CLOSE_TIMEOUT;
             }
             _ = ping.tick() => {
-                if ws_sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                if ws_send(&mut ws_sink, Message::Ping(Vec::new().into())).await.is_err() {
                     break CLOSE_NORMAL;
                 }
             }
@@ -1046,13 +1189,15 @@ async fn serve_terminal_leg(
     };
     // Every leg exit sends the WS close frame before the socket is dropped (the same closing
     // handshake as the port-stream leg).
-    if ws_sink
-        .send(Message::Close(Some(CloseFrame {
+    if ws_send(
+        &mut ws_sink,
+        Message::Close(Some(CloseFrame {
             code: CloseCode::from(reason),
             reason: "".into(),
-        })))
-        .await
-        .is_ok()
+        })),
+    )
+    .await
+    .is_ok()
     {
         let _ = ws_sink.flush().await;
         let _ = tokio::time::timeout(Duration::from_secs(2), async {
@@ -1063,10 +1208,6 @@ async fn serve_terminal_leg(
             }
         })
         .await;
-    }
-    // Flush the outstanding credit back so the supervisor's window does not leak.
-    if from_pty_unacked > 0 {
-        let _ = credit_tx.send(from_pty_unacked as u32).await;
     }
     // Tell the supervisor the PTY ended (or release the route if it ended it first). Byte
     // totals are informational (metrics only) and never logged (SEC-87).
@@ -1101,19 +1242,23 @@ async fn serve_leg(
     share_id: Option<Uuid>,
     ws: Ws,
     mut leg_rx: mpsc::Receiver<LegIn>,
-    credit_tx: mpsc::Sender<u32>,
     mut close_rx: oneshot::Receiver<u16>,
+    from_app_outstanding: Arc<AtomicUsize>,
 ) {
     let (mut ws_sink, mut ws_stream) = ws.split();
     let r = ChannelRef {
         sandbox_id: sandbox,
         boot_id: boot,
     };
-    // Credit accounting, both directions (`16 §W18`):
+    // Credit accounting, **one window per direction** (`16 §W18`; FIX-060):
     // - `to_app`: the runner may send at most the supervisor's announced window of
     //   unacknowledged bytes; the supervisor returns credit after writing to the loopback app.
-    // - `from_app`: the runner returns credit to the supervisor only after the bytes were
-    //   written onward (to the leg-1 WebSocket), at least every `window / 4`.
+    //   Only browser→app data decrements it.
+    // - `from_app`: the supervisor may have at most `PREVIEW_STREAM_WINDOW` (what we announced
+    //   in `stream.open`) unreturned. `from_app_outstanding` is shared with the pump (raised
+    //   on arrival; exceeding the window closes the leg, `StreamListener::deliver`); the
+    //   runner returns credit only after the bytes were written onward (to the leg-1
+    //   WebSocket, `from_app_unacked`), at least every `window / 4`.
     let mut window = PREVIEW_STREAM_WINDOW;
     let mut to_app_credit: usize = window;
     let mut from_app_unacked: usize = 0;
@@ -1160,22 +1305,21 @@ async fn serve_leg(
                     Some(LegIn::Data(b)) => {
                         // Same absolute-deadline reset as the relay→app arm above.
                         idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
-                        if to_app_credit < b.len() {
-                            // Over-window data from the supervisor is a protocol violation;
-                            // close the leg (the release tells the supervisor `error`).
-                            break CLOSE_REFUSED;
-                        }
-                        to_app_credit -= b.len();
                         bytes_to_app += b.len() as u64;
                         from_app_unacked += b.len();
-                        if ws_sink.send(Message::binary(b)).await.is_err() {
+                        if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                             break CLOSE_NORMAL;
                         }
                         // Return credit after writing onward, at least every `window / 4`.
-                        if from_app_unacked >= window / 4 {
+                        if from_app_unacked >= PREVIEW_STREAM_WINDOW / 4 {
                             let n = from_app_unacked as u32;
                             from_app_unacked = 0;
-                            if credit_tx.send(n).await.is_err() {
+                            from_app_outstanding.fetch_sub(n as usize, Ordering::AcqRel);
+                            let credit = RunnerToSupervisor::StreamCredit(StreamCredit {
+                                stream_id,
+                                bytes: n,
+                            });
+                            if state.send_to_supervisor(&r, credit).await.is_err() {
                                 break CLOSE_CHANNEL_LOST;
                             }
                         }
@@ -1210,7 +1354,7 @@ async fn serve_leg(
                     match chunk {
                         LegIn::Data(b) => {
                             idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
-                            if ws_sink.send(Message::binary(b)).await.is_err() {
+                            if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                                 break;
                             }
                         }
@@ -1232,7 +1376,7 @@ async fn serve_leg(
                 break CLOSE_TIMEOUT;
             }
             _ = ping.tick() => {
-                if ws_sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                if ws_send(&mut ws_sink, Message::Ping(Vec::new().into())).await.is_err() {
                     break CLOSE_NORMAL;
                 }
             }
@@ -1243,13 +1387,15 @@ async fn serve_leg(
     // peer (`ResetWithoutClosingHandshake`), not a close it can interpret. The closing
     // handshake then completes by reading until the peer's close arrives (bounded): a
     // socket dropped with the reply unread resets the connection mid-handshake.
-    if ws_sink
-        .send(Message::Close(Some(CloseFrame {
+    if ws_send(
+        &mut ws_sink,
+        Message::Close(Some(CloseFrame {
             code: CloseCode::from(reason),
             reason: "".into(),
-        })))
-        .await
-        .is_ok()
+        })),
+    )
+    .await
+    .is_ok()
     {
         let _ = ws_sink.flush().await;
         let _ = tokio::time::timeout(Duration::from_secs(2), async {
@@ -1260,10 +1406,6 @@ async fn serve_leg(
             }
         })
         .await;
-    }
-    // Flush the outstanding credit back so the supervisor's window does not leak.
-    if from_app_unacked > 0 {
-        let _ = credit_tx.send(from_app_unacked as u32).await;
     }
     // Tell the supervisor the leg ended (or release the route if it ended it first).
     let close_reason = match reason {
@@ -1294,5 +1436,99 @@ async fn serve_leg(
             reason: wire_reason,
         };
         tokio::spawn(async move { api.preview_stream_closed(&api_req).await });
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::channel::ChannelSettings;
+
+    fn listener() -> Arc<StreamListener> {
+        StreamListener::new(ChannelServer::new(ChannelSettings::new([7; 32])))
+    }
+
+    /// Registers a terminal leg with a tiny queue; returns its queue and close signal.
+    async fn leg(
+        l: &StreamListener,
+        id: u32,
+        sandbox: Uuid,
+        boot: Uuid,
+        depth: usize,
+    ) -> (mpsc::Receiver<LegIn>, oneshot::Receiver<u16>) {
+        let (tx, rx) = mpsc::channel(depth);
+        let (close_tx, close_rx) = oneshot::channel();
+        l.routes.lock().await.legs.insert(
+            id,
+            RouteEnd {
+                to_leg: tx,
+                close_tx,
+                sandbox,
+                boot,
+                terminal: true,
+                from_sandbox: Arc::new(AtomicUsize::new(0)),
+                recv_window: TERMINAL_STREAM_WINDOW,
+            },
+        );
+        (rx, close_rx)
+    }
+
+    /// A full leg queue never makes the pump wait (FIX-060: no await on the queue, no lock
+    /// held across it): the delivery returns at once, only that leg is closed `4502`, and
+    /// every other leg keeps receiving.
+    #[tokio::test]
+    async fn a_full_queue_closes_that_leg_without_waiting() {
+        let l = listener();
+        let (sb, boot) = (Uuid::new_v4(), Uuid::new_v4());
+        let (_rx_a, mut close_a) = leg(&l, 1, sb, boot, 1).await;
+        let (mut rx_b, mut close_b) = leg(&l, 2, sb, boot, 1).await;
+
+        assert_eq!(
+            l.deliver(1, sb, boot, LegIn::Data(vec![1])).await,
+            Some(true)
+        );
+        // The queue (depth 1) is full and nobody drains it: must return, not block.
+        let second = tokio::time::timeout(
+            Duration::from_secs(2),
+            l.deliver(1, sb, boot, LegIn::Data(vec![2])),
+        )
+        .await
+        .expect("the pump waited on a full leg queue");
+        assert_eq!(second, None);
+        assert_eq!(close_a.try_recv(), Ok(CLOSE_REFUSED));
+        assert!(!l.routes.lock().await.legs.contains_key(&1));
+
+        // The neighbour is untouched and still deliverable.
+        assert_eq!(
+            l.deliver(2, sb, boot, LegIn::Data(vec![3])).await,
+            Some(true)
+        );
+        assert!(matches!(rx_b.recv().await, Some(LegIn::Data(d)) if d == [3]));
+        assert!(close_b.try_recv().is_err());
+    }
+
+    /// Frames from a supervisor of another sandbox or boot never find the leg: nothing is
+    /// delivered, nothing removed.
+    #[tokio::test]
+    async fn legs_are_bound_to_their_sandbox_and_boot() {
+        let l = listener();
+        let (sb, boot) = (Uuid::new_v4(), Uuid::new_v4());
+        let (mut rx, mut close) = leg(&l, 1, sb, boot, 4).await;
+        for (other_sb, other_boot) in [
+            (Uuid::new_v4(), boot),
+            (sb, Uuid::new_v4()),
+            (Uuid::new_v4(), Uuid::new_v4()),
+        ] {
+            assert_eq!(
+                l.deliver(1, other_sb, other_boot, LegIn::Credit(5)).await,
+                None
+            );
+            assert!(l.take_owned(1, other_sb, other_boot).await.is_none());
+        }
+        assert!(rx.try_recv().is_err());
+        assert!(close.try_recv().is_err());
+        assert!(l.routes.lock().await.legs.contains_key(&1));
+        assert!(l.take_owned(1, sb, boot).await.is_some());
     }
 }
