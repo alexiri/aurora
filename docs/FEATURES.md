@@ -11,7 +11,7 @@ every open row is in `PROGRESS.md` §Remaining work plan (by feature).
 
 Status: `todo` · `planned` (briefs written) · `in-progress` · `done` (acceptance evidence in PROGRESS.md) · `blocked` · `deferred` (owner).
 Last reconciled with git history: 2026-11-13 (REVIEW-4: phase-4 rows checked against PROGRESS §Phase 4 at master 0e112dc7+).
-REVIEW-5 (2026-11-13): an independent review of the whole codebase found defects behind many rows marked `done` in every phase. Those rows keep their status (the feature exists and its evidence ran); the corrections are the `P4/R5§…` rows at the end of the table, status `planned`, one per brief FIX-080..FIX-119 (`docs/tasks/REVIEW-5.md`). A `done` row whose invariant a REVIEW-5 row reopens is listed in that row's Dependencies column.
+REVIEW-5 (2026-11-13): an independent review of the whole codebase found defects behind many rows marked `done` in every phase. Those rows keep their status (the feature exists and its evidence ran); the corrections are the `P4/R5§…` rows at the end of the table, status `planned`, one per brief FIX-080..FIX-119 (`docs/tasks/REVIEW-5.md`; owner decisions D-175..D-177 of the same day are reflected in the rows for FIX-082, FIX-098 and FIX-105). A `done` row whose invariant a REVIEW-5 row reopens is listed in that row's Dependencies column.
 
 | Requirement ID | Feature | Priority | Backend tasks | Frontend tasks | Dependencies | Status | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -223,7 +223,7 @@ REVIEW-5 (2026-11-13): an independent review of the whole codebase found defects
 | P4/23§values-docs-guard | docs/23 matches the chart (relay keys), enforced by a values↔docs guard; one relay token key; relay and hook egress narrowed (`docs/tasks/FIX-069.md`) | P4 | FIX-069 | — | — | done | merged 6652fe04; `helm-values-docs.sh` guard; kind.sh --fresh with previews + upgrade legs green |
 | P4/R5§admission-gates | Every path that creates an org membership passes the SCIM admission gate and the seat cap; SCIM never takes over a human suspension (`docs/tasks/FIX-080.md`) | P4 | FIX-080 | — | reopens SEC-73 (P4-GRP-2) | planned | — |
 | P4/R5§scim-protocol | SCIM lists report true totals, concurrent PATCHes keep every attribute, authentication precedes the body, owners get the expiry notice, management routes are in OpenAPI (`FIX-081`) | P4 | FIX-081 | — | FIX-080, FIX-083 | planned | — |
-| P4/R5§scim-adoption | An existing signed-in account does not become an active member on a SCIM-asserted e-mail (`FIX-082`, Q-R5-1) | P4 | FIX-082 | FIX-082 (state label) | Q-R5-1; reopens SEC-73 | blocked | — |
+| P4/R5§scim-adoption | An existing account that SCIM names gets a `pending` membership (no access) that only that person's next verified sign-in activates (`FIX-082`, D-175) | P4 | FIX-082 | FIX-082 (state label) | FIX-080; reopens SEC-73 | planned | — |
 | P4/R5§group-access-removal | IdP-linked group access ends when the membership leaves active and is reported truthfully (`FIX-083`) | P4 | FIX-083 | — | reopens SEC-71 (P4-GRP-1) | planned | — |
 | P4/R5§approval-recheck | A released approval never forwards what current policy refuses; a missing app fails closed (`FIX-084`) | P4 | FIX-084 | — | reopens SEC-67 | planned | — |
 | P4/R5§params-doubt | Parameter matching refuses `;`, case-variant names and duplicate JSON keys; `custom_only` implies `block_untooled`; linter catches shadowed params tools (`FIX-085`) | P4 | FIX-085 | — | reopens SEC-67, SEC-68 | planned | — |
@@ -239,14 +239,14 @@ REVIEW-5 (2026-11-13): an independent review of the whole codebase found defects
 | P4/R5§harness-adapters | Codex configuration not alterable by the agent; session refs validated; bounded stream lines (`FIX-095`) | P4 | FIX-095 | — | reopens SEC-66 | planned | — |
 | P4/R5§skill-library-hardening | Bounded frontmatter parsing, full re-validation on approval, refresh races, git-host throttling (`FIX-096`) | P4 | FIX-096 | — | reopens SEC-83, SEC-84 | planned | — |
 | P4/R5§deletion-completeness | Orgs with groups/SCIM rows delete; account deletion purges session files; sign-out ends preview access; tenant deletion discards secret material; retention suspended while frozen (`FIX-097`) | P4 | FIX-097 | — | reopens SEC-47, SEC-80/81 | planned | — |
-| P4/R5§terminal-tab | Terminal colours render in production and both themes; close codes handled as specified (`FIX-098`) | P4 | — | FIX-098 | Q-R5-2 (one item) | planned | — |
+| P4/R5§terminal-tab | Terminal colours render in production and both themes; close codes handled as specified (`FIX-098`; CSP `style-src-attr 'unsafe-inline'`, D-176) | P4 | — | FIX-098 | — | planned | — |
 | P4/R5§dashboard-agent-chat | Agent page, chat and onboarding defects (`FIX-099`) | P4 | FIX-099 (approvals stream) | FIX-099 | — | planned | — |
 | P4/R5§dashboard-directory | Directory sync, groups and skill-library screens match the contract (`FIX-100`) | P4 | FIX-100 (impact parameter) | FIX-100 | FIX-081, FIX-083 | planned | — |
 | P4/R5§ci-truthful | CI runs the suites the documents cite; a skipped suite fails; matrix and schema guards can fail (`FIX-101`) | P4 | FIX-101 | FIX-101 | FIX-098 | planned | — |
 | P4/R5§chart-hardening | Gateway API preview route, ops ports, readiness probes, half-enabled switches, hook privileges (`FIX-102`) | P4 | FIX-102 | — | — | planned | — |
 | P4/R5§images-tooling | Truthful sandbox capability label, pinned image inputs, quick gate runs affected tests, test-database hygiene (`FIX-103`) | P4 | FIX-103 | — | — | planned | — |
 | P4/R5§credential-confinement | Credentials injected only over TLS to the claimed port; wildcard claims bounded; injected values never echoed (`FIX-104`) | P4 | FIX-104 | — | FIX-084, FIX-085; reopens SEC-01, SEC-04, SEC-17 | planned | — |
-| P4/R5§llm-paths | Sanctioned LLM key only on inference paths; key verification requires an answer (`FIX-105`, Q-R5-4) | P4 | FIX-105 | — | Q-R5-4 (one item); SEC-65 | planned | — |
+| P4/R5§llm-paths | Sanctioned LLM key only on inference paths; key verification requires an answer (`FIX-105`; SEC-65's path clause in phase 4 for `litellm`/`openai_compatible`, D-177) | P4 | FIX-105 | — | FIX-104; SEC-65 | planned | — |
 | P4/R5§gateway-transport | Tunnel timeouts and caps, own-address refusal, translated ranges, egress-proxy names, database lane errors (`FIX-106`) | P4 | FIX-106 | — | FIX-086, FIX-104 | planned | — |
 | P4/R5§plugin-trust | Publisher change, downgrade, token-endpoint change and credential-vocabulary change need approval; canonical key ids; hook host per-digest loading (`FIX-107`) | P4 | FIX-107 | FIX-107 (approval reasons) | FIX-104; reopens SEC-15, SEC-17, SEC-57 | planned | — |
 | P4/R5§signin-sessions | JIT does not re-admit removed members; re-authentication requires `auth_time`; revocations reach every replica; CLI approval shows the request (`FIX-108`) | P4 | FIX-108 | FIX-108 | FIX-080, FIX-083 | planned | — |

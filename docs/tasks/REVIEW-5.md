@@ -66,10 +66,16 @@ Patterns that recur across areas, worth keeping in mind when reviewing the fixes
 ## Specification changes made with this review
 - `docs/04` §IdP-linked groups (Sync) and C-462: IdP-linked rows are deleted when the org membership leaves `active` (FIX-083).
 - `docs/15` §Shared rate-limit counters: the complete Redis ACL (FIX-087).
+- The owner's three decisions: `docs/90` D-175..D-177; `docs/04` §SCIM Users step 3, SEC-73 and C-473 (pending membership); `docs/14` §Security headers and C-622 (style attributes); SEC-65's phase tag (LiteLLM path restriction in phase 4). `docs/03` gains the `pending` status with FIX-082's migration, not before (the schema guard compares `03` with the migrations).
 - Every other specification change is written out in the brief that implements it ("Spec change (apply with the fix)"), so text and code land together.
 
 ## Questions for the owner
-`docs/PROGRESS.md` §Decisions needed from the owner, Q-R5-1 … Q-R5-23. Briefs that depend on one say so; everything else can start.
+`docs/PROGRESS.md` §Decisions needed from the owner, Q-R5-1 … Q-R5-23. The three that gated work were answered on 2026-11-13 and are recorded as decisions:
+- **D-175** (Q-R5-1, FIX-082): an existing account that SCIM names gets a `pending` membership that confers nothing; only that person's next verified sign-in activates it.
+- **D-176** (Q-R5-2, FIX-098): terminal colours must work; the CSP gains `style-src-attr 'unsafe-inline'` and nothing else.
+- **D-177** (Q-R5-4, FIX-105): the inference-path restriction of SEC-65 applies to `litellm` and `openai_compatible` endpoints in phase 4.
+
+The other twenty are open; none blocks a brief.
 
 ## Findings rejected by the coordinator
 - **RoleBinding subject without a namespace** (`sandboxes.yaml`, runner Services binding): a namespaced RoleBinding's ServiceAccount subject defaults to the binding's namespace, and the kind e2e passes. Kept as hygiene in FIX-102.

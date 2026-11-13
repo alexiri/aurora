@@ -820,8 +820,18 @@ data, or change a global attribute of a person who has signed in (*Users*).
    80); it can do nothing until its first OIDC sign-in binds it (*OIDC step 3*); (b) a user
    exists → link it and leave the `users` row **untouched**; (c) an unremoved link of this
    org exists → 409.
-3. Create the `org_members` row (role `member`, status `active`; `active: false` → `suspended`),
-   or adopt an existing membership as it is (an invited admin keeps their role). The seat
+3. Create the `org_members` row (role `member`; `active: false` → `suspended`), or adopt an
+   existing membership as it is (an invited admin keeps their role). Its status depends on
+   who the user is (D-175, REVIEW-5; implemented by FIX-082): for a **new pre-provisioned
+   user** (2a) it is `active`, and inert until the first sign-in; for an **existing account
+   that is not yet a member of this org** (2b) it is **`pending`** — it counts against the
+   seat cap and can be placed in SCIM groups, but confers no access of any kind (every
+   check treats `pending` as a non-member) until that person's **next verified OIDC
+   sign-in**, which makes it `active` in the sign-in transaction and writes the
+   `member.add` audit row (`via: "scim"`). The directory's assertion prepares a membership;
+   only the person's own sign-in grants it (SEC-73). `active: false` or `DELETE` before
+   that sign-in removes the pending membership. SCIM responses carry the IdP's own
+   `active` value throughout. The seat
    cap `max_members` applies (403 with `detail` `member_limit_reached`). Group membership
    comes from SCIM groups, never from the user resource. No e-mail is sent, no session or
    key is created, a pending invitation is left alone.

@@ -25,7 +25,11 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   `Referrer-Policy: same-origin`, host pin (only the configured external host
   serves the UI). (`'wasm-unsafe-eval'` exists for the Terminal tab's WASM
   instantiation — wterm's Ghostty core, phase 4, P4-TERM, D-161; it enables
-  nothing else.)
+  nothing else.) Styles: `style-src 'self' 'nonce-…'` for stylesheets and
+  `<style>` elements, plus `style-src-attr 'unsafe-inline'` so the terminal's
+  DOM renderer can colour cells through `style` attributes (D-176, FIX-098;
+  a style attribute cannot run script, and `img-src`/`connect-src` keep it
+  from loading anything from another origin).
 - Untrusted text (model output, plugin text, platform names, labels) is
   rendered with the markdown renderer in safe mode (no raw HTML, links show
   their target, `rel="noopener noreferrer nofollow"`); never
