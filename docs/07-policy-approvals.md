@@ -467,7 +467,7 @@ latest approval resolved_at) ≥ TURN_STALL`. The exemption never extends `TURN_
 agent was refused and is not blocked, so a turn that keeps running after a parked
 refusal is subject to stall detection like any other.
 
-**Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`. (phase 2, RFE-006) Freezing the agent, its workspace or its org marks its `pending` approvals `abandoned` and pending action approvals `rejected` (reason `frozen`); unfreezing does not revive them.
+**Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`. (phase 2, RFE-006) Freezing the agent, its workspace or its org marks its `pending` approvals `abandoned` and pending action approvals `rejected` (reason `frozen`); unfreezing does not revive them. **An approval authorizes the held request only under the policy in force when it is released.** Deleting or narrowing the grant the request would use, disabling or deleting its connection or secret, and activating a snapshot under which the request would be blocked each mark the affected pending approvals `abandoned` in the same transaction (as freezing does). Independently, the gateway re-resolves the credential and re-evaluates policy after `approved`; if the request would now be blocked or has no usable credential it is refused as it would be on arrival, and a request that would still need approval is released (the approval stands). (FIX-084)
 First decision wins (`UPDATE approvals SET status=… WHERE id=$1 AND
 status='pending'`); a losing decider gets 409 `already_decided`.
 

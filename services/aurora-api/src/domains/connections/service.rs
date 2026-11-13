@@ -4,6 +4,7 @@ use crate::domains::plugins::registry;
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::{ApiError, FieldError};
+use aurora_db::repo::approvals;
 use aurora_db::repo::connections::{self as repo, ConnectionRow};
 use aurora_db::repo::credentials;
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
@@ -182,6 +183,17 @@ pub async fn patch(
     };
     let mut tx = crate::audit::begin(state).await?;
     repo::update(&mut *tx, row.id, label, status).await?;
+    if status == Some("disabled") {
+        // (FIX-084) A held request that would use this credential must not be released.
+        approvals::abandon_pending_depending_on(
+            &mut tx,
+            approvals::Dependency::Connection {
+                connection_id: row.id,
+                agent_id: None,
+            },
+        )
+        .await?;
+    }
     credentials::notify_gateway_invalidate(&mut *tx, "connection", row.id).await?;
     let updated = repo::get(&mut *tx, row.id)
         .await?
@@ -209,6 +221,17 @@ pub async fn delete(
     repo::delete_derived_rules(&mut tx, &ids).await?;
     let refs = repo::credential_refs(&mut tx, &ids).await?;
     repo::delete_many(&mut tx, &ids).await?;
+    for id in &ids {
+        // (FIX-084) Held requests that would use the deleted credential must not be released.
+        approvals::abandon_pending_depending_on(
+            &mut tx,
+            approvals::Dependency::Connection {
+                connection_id: *id,
+                agent_id: None,
+            },
+        )
+        .await?;
+    }
     for id in &ids {
         credentials::notify_gateway_invalidate(&mut *tx, "connection", *id).await?;
     }

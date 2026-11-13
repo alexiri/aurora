@@ -572,7 +572,16 @@ both directions.
 3. Wait on the instance's LISTEN connection for `decided` of that id, with a
    2 s poll fallback reading the row. Keep the client connection open; do not
    read further body bytes.
-4. `approved` → continue at step 9. `denied` → 403 `manual_approval_denied`
+4. `approved` → **re-resolve and re-evaluate, then continue at step 9** (FIX-084,
+   `07 §Lifecycle`): candidate selection and policy run again against the current
+   snapshot and rules with the same request facts (the buffered body is the one
+   held; rate counts are neither checked nor charged again, the hold consumed them).
+   A request that would now be blocked is refused as on arrival (its ordinary
+   `blocked_by_*` or `app_unavailable` answer), one with no usable credential gets
+   `credential_unavailable`, and one that would still need approval is released
+   (the approval stands; no second hold). The same holds for a database statement.
+   `approvals.connection_id` records the connection the request would use, so the
+   API can abandon the hold when that access is removed. `denied` → 403 `manual_approval_denied`
    (`details.approval_id`). Deadline reached → the gateway sets
    `status='expired'` (`WHERE status='pending'`; phase 2: and `resolved_at`) and answers 403
    `manual_approval_expired`. Client disconnect → `status='abandoned'`.

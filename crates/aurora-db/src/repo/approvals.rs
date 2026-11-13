@@ -305,6 +305,70 @@ pub async fn decide_batch(
     Ok(rows)
 }
 
+/// What a pending gateway approval depends on (FIX-084): an approval authorizes the held request
+/// only under the policy in force when it is released, so the writers that remove or narrow the
+/// access it would use end it in their own transaction, as freezing does.
+#[derive(Debug, Clone, Copy)]
+pub enum Dependency<'a> {
+    /// Holds that would use this app connection's credential; `agent` narrows them to one agent
+    /// (a grant of that agent), `None` is every agent (the connection itself goes away).
+    Connection {
+        connection_id: Uuid,
+        agent_id: Option<Uuid>,
+    },
+    /// Holds of this agent that would use a generic secret rather than an app connection (the
+    /// row names no secret; revoking one secret ends them all, which is the safe side).
+    AgentSecrets { agent_id: Uuid },
+    /// Holds that would use any connection of this app (a snapshot that restricts the app).
+    App { app_id: &'a str },
+}
+
+/// `pending` approvals depending on `dep` -> `abandoned`, notifying the waiting gateways.
+/// Runs inside the caller's transaction. Returns `(id, workspace_id)`.
+pub async fn abandon_pending_depending_on(
+    tx: &mut sqlx::PgConnection,
+    dep: Dependency<'_>,
+) -> Result<Vec<(Uuid, Uuid)>, DbError> {
+    let set = "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
+               updated_at = now() WHERE status = 'pending' AND ";
+    let rows: Vec<(Uuid, Uuid)> = match dep {
+        Dependency::Connection {
+            connection_id,
+            agent_id,
+        } => {
+            sqlx::query_as(&format!(
+                "{set} connection_id = $1 AND ($2::uuid IS NULL OR agent_id = $2) \
+                 RETURNING id, workspace_id"
+            ))
+            .bind(connection_id)
+            .bind(agent_id)
+            .fetch_all(&mut *tx)
+            .await?
+        }
+        Dependency::AgentSecrets { agent_id } => {
+            sqlx::query_as(&format!(
+                "{set} agent_id = $1 AND connection_id IS NULL RETURNING id, workspace_id"
+            ))
+            .bind(agent_id)
+            .fetch_all(&mut *tx)
+            .await?
+        }
+        Dependency::App { app_id } => {
+            sqlx::query_as(&format!(
+                "{set} connection_id IN (SELECT id FROM app_connections WHERE app_id = $1) \
+                 RETURNING id, workspace_id"
+            ))
+            .bind(app_id)
+            .fetch_all(&mut *tx)
+            .await?
+        }
+    };
+    for (id, ws) in &rows {
+        notify_tx(&mut *tx, *id, *ws, "expired").await?;
+    }
+    Ok(rows)
+}
+
 /// `pending` past `deadline + grace` -> `expired`. Returns `(id, workspace_id)`.
 pub async fn expire_overdue(pool: &PgPool, grace_secs: f64) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     let mut tx = pool.begin().await?;

@@ -92,6 +92,34 @@ impl W {
         v["id"].as_str().unwrap().parse().unwrap()
     }
 
+    /// Installs the package of `acme_app` (FIX-084, SEC-67): an app the active snapshot does not
+    /// hold is `custom_only`, so a test that grants `full` needs its app to be there.
+    async fn install_acme(&self) {
+        let yaml = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: Acme }
+apps:
+  - about: { id: acme_app, name: Acme }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    hosts:
+      - match: { host: api.acme.example }
+        inject:
+          - bearer: "{credentials.api_token}"
+"#;
+        let a = crate::plugins_lifecycle::setup(&self.h).await;
+        let v = a.upload(yaml).await;
+        let v = if v["status"] == "pending_approval" {
+            let (s, b) = a.act(&v["id"], "approve").await;
+            assert_eq!(s, 200, "{b}");
+            b
+        } else {
+            v
+        };
+        assert_eq!(v["status"], "active", "{v}");
+    }
+
     async fn conn(&self, ws: Option<Uuid>) -> Uuid {
         let id = Uuid::now_v7();
         sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'acme_app','acme','1.0.0','c','active','x')")
@@ -371,6 +399,7 @@ async fn bulk_size_and_duplicates_are_rejected_with_400() {
 #[tokio::test]
 async fn connection_bulk_grants_check_like_the_agent_side_and_never_modify_existing() {
     let w = world().await;
+    w.install_acme().await;
     let conn = w.conn(None).await;
     let u = format!("/v1/connections/{conn}/grants");
 
@@ -518,6 +547,7 @@ async fn connection_bulk_grants_check_like_the_agent_side_and_never_modify_exist
 #[tokio::test]
 async fn lists_show_only_agents_of_workspaces_the_caller_can_own() {
     let w = world().await;
+    w.install_acme().await;
     let secret = w.secret(None, "org-key").await;
     let conn = w.conn(None).await;
     let (s, v) = w

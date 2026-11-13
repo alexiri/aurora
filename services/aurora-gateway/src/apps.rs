@@ -78,13 +78,15 @@ impl ConnCand {
         })
     }
 
-    /// Copies the app's `grants` flags from the snapshot (SEC-67). An app missing from the
-    /// snapshot keeps both `false`: such a connection has no serving app to restrict.
+    /// Copies the app's `grants` flags from the snapshot (SEC-67). (FIX-084) An app missing from
+    /// the snapshot is `custom_only` with `block_untooled`: no manifest says otherwise, and
+    /// "no restrictions" is never the reading of a missing app.
     pub fn with_app_restrictions(mut self, app: Option<&AppEntry>) -> Self {
-        if let Some(a) = app {
-            self.custom_only = a.grants.custom_only;
-            self.block_untooled = a.grants.block_untooled;
-        }
+        let (custom_only, block_untooled) = app.map_or((true, true), |a| {
+            (a.grants.custom_only, a.grants.block_untooled)
+        });
+        self.custom_only = custom_only;
+        self.block_untooled = block_untooled;
         self
     }
 

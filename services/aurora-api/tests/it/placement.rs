@@ -1327,8 +1327,24 @@ async fn fix064_a_database_error_in_a_starter_grant_is_not_reported_as_unavailab
         .shared(json!({"personal_workspace": {"enabled": true,
             "name_template": "{preferred_username}|{email_local}"}}))
         .await;
+    // The package also carries a plain app (FIX-084, SEC-67: an app the snapshot does not hold
+    // is `custom_only`, so the second starter's app must be installed for its grant to be tried).
+    let plain_app = r#"  - about: { id: plain_app, name: Plain }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    hosts:
+      - match: { host: "api.plain.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
+"#;
     let conn = e
-        .fix038_connection(&fix038_yaml("1.0.0", FIX038_CUSTOM_ONLY))
+        .fix038_connection(&format!(
+            "{}{plain_app}",
+            fix038_yaml("1.0.0", FIX038_CUSTOM_ONLY)
+        ))
         .await;
     let key = Uuid::now_v7();
     sqlx::query("UPDATE instance_placement SET starter_grants = $2 WHERE default_org_id = $1")
@@ -1339,7 +1355,7 @@ async fn fix064_a_database_error_in_a_starter_grant_is_not_reported_as_unavailab
         .unwrap();
     // The second starter: a live connection of a plain app whose grant insert fails in the
     // database (an injected trigger), i.e. a real `Db` error, not a refusal.
-    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,NULL,'plain_app','plain','1.0.0','pc','active','x')")
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,NULL,'plain_app','pkg','1.0.0','pc','active','x')")
         .bind(key)
         .bind(org)
         .execute(e.h.pool())
