@@ -621,7 +621,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |
+| GET `/v1/workspaces/{ws}/approvals?status=` | S/K | (phase 5, P5-AGENT-1, C-700) optional `agent_id`: only that agent's approvals, applied in the query with the visibility predicate; another workspace's or an unknown agent gives an empty page (as on `action-approvals`) |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
 | GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
 | POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 5 (D-138, moved from phase 4), RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at` (never the fingerprint or salt) |

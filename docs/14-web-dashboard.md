@@ -248,14 +248,86 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   A batch group header carries "Approve all N" / "Deny all". The "already
   decided" conflict renders inline as a `pending` notice and disables both
   buttons.
-- **Agent page**: header with a 44 px avatar, then name, `@handle`,
+- **Agent page** (phases 2–4): header with a 44 px avatar, then name, `@handle`,
   kind/default badges and a sandbox-state pill on one wrapping line, with the
   header actions (Freeze) on the right; an underline tab strip below it.
+  Replaced in phase 5 by **Agent page (phase 5)** below.
   (FIX-025, D-158) The pill never sits on "Sandbox starting" forever: while
   starting it says "Sandbox starting" (with the live phase on the Computer
   tab); on a failed start it reads "Sandbox failed" with the sanitised reason
   (message and code) as the pill's tooltip, and the Computer tab holds the
   full start attempt plus **Retry now** (FIX-029, D-160, C-615).
+- **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
+  redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
+  and "A · Phone"; its "New conversation" button is not part of the design).
+  - **Header**, one line that wraps: 40 px avatar; "Agents /" breadcrumb above
+    the name (20 px Space Grotesk 600) and `@handle` (mono, `muted`); for a hosted
+    agent the sandbox state as a `StatusDot` (labels and failure tooltip as in
+    the FIX-025 rule above); on the right the **section switcher** (segmented
+    `Tabs`, label "Agent sections") and the **Agent actions** menu (`MoreIcon`,
+    accessible name "Agent actions"): Freeze / Unfreeze (same confirm dialog and
+    permission as before) and "Delete agent…" (the existing delete flow and
+    typed confirmation, `can_own`). The kind and Default badges move to the
+    rail's About part; a BYO agent (no rail) keeps them in the header. A frozen
+    agent's banner stays full width under the header.
+  - **Sections**, in this order: **Chat** (hosted only) · **Behaviour**
+    (Instructions, Memory, Skills) · **Triggers** (Schedules, Webhooks, Channels,
+    Peers) · **Computer** (Computer, Terminal, Previews; BYO: Computer: Connect) ·
+    **Access**. Pages keep today's availability rules (Terminal and Previews only
+    where enabled; BYO has only Instructions, Computer: Connect and Access); a
+    section with no available page is hidden; a section with several pages shows
+    them as a segmented `Tabs` row under the header. The URL keeps
+    `?tab=<page>` with the existing page ids, so `?tab=access`, `?tab=instructions`
+    (C-506) and `?c=<id>` open what they open today; the section is derived from
+    the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
+    Delete zone under Instructions is removed (Delete is in Agent actions).
+  - **Chat panel**, from 768 px: conversation list (232 px) · thread · status
+    rail, in one card; the page still does not scroll at 1280×800 (the list,
+    transcript and rail scroll inside). The conversation list keeps its filter,
+    Active/Archived switch and rows; for approvers a row whose conversation has a
+    pending approval shows "Waiting on you" (`pending` dot) instead of its kind
+    line. The thread is unchanged; the inline approval card carries an anchor the
+    rail can link to.
+  - **Status rail** (D-201): five parts, in this order, each with a fixed icon:
+    - **Needs you** (`CheckCircleIcon`), approvers only: pending gateway approvals
+      (`GET …/approvals?status=pending&agent_id=`, C-700) and action approvals
+      (`GET …/action-approvals?status=pending&agent_id=`) of this agent, soonest
+      expiry first, refreshed on `approvals/stream` events. Each item: the
+      conversation's title, the summary, "N left" (tabular) and the mono request
+      line. An item of the open conversation shows "Show in conversation" (scrolls
+      to and focuses the inline card); others show Approve and Deny (409
+      `already_decided` → "Already decided." and a refresh). More than five → a
+      link "N more on Approvals".
+    - **Doing now** (`ActivityIcon`): each conversation with an `active_turn`
+      ("<title> · working", selects it), plus, for the open conversation, the
+      running tool from its stream; none → "Idle".
+    - **Recent tool calls** (`WrenchIcon`): the last five request-log rows of the
+      agent (`GET …/activity?agent_id=&limit=5`): decision `Badge` (Allow, Held,
+      Deny; an `error_code` reads "Failed"), `tool_id` or method and host in
+      mono, latency; link "All activity" to the workspace Activity page filtered
+      to the agent. Refetched when a turn ends and every 30 s while visible.
+    - **Computer** (`MonitorIcon`): the sandbox state (same labels and tooltip as
+      the header), "Open computer" (Computer section) and, where the Terminal page
+      is available, "Terminal".
+    - **About** (`BookIcon`): kind and Default badges, the agent's brief, "Edit
+      instructions" (Behaviour › Instructions).
+  - **Rail states.** Expanded: 288 px, heading "Status" and a collapse button
+    ("Collapse status panel"). Collapsed: a 56 px strip with an expand button
+    ("Expand status panel") and the five icons; state on the icons: Needs you a
+    `pending-ink` count, Doing now an `accent` dot while any turn runs, Recent
+    tool calls a `danger-ink` dot when one of the five was denied or failed,
+    Computer a dot in the sandbox state's tone; every icon's accessible name says
+    the state in words. The Needs you icon opens a pop-over (`Popover`
+    primitive) with the same items and "Open the status panel"; the other icons
+    expand the rail at their part. The choice is stored per browser (as the
+    theme, never sent to the API); unset, the rail starts expanded at a viewport
+    of 1440 px or more and collapsed below. While the chat panel is narrower than
+    1024 px the expanded rail overlays the thread (focus-trapped, Esc closes)
+    instead of pushing it.
+  - **Below 768 px**: no rail. Under the header, approvers with pending items see
+    a full-width `pending` banner "N approvals waiting" (44 px), and the header
+    has a "Status" button; both open the five parts in a sheet (`Dialog`). The
+    list/thread two-view behaviour of **Agent chat** is unchanged.
 - **Agent chat** (D-102, task P2-UI-5; mock-ups `Agent.html`, `AgentDark.html`,
   `AgentPhone.html`). The chat is a messaging layout. It is not a stack of
   cards, banners and button rows.
@@ -264,7 +336,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     window. For that, the Chat tab (only) uses a compact agent header: a
     32 px avatar, the name, `@handle` and badges on one line, and Freeze in
     the header's overflow menu ("Agent actions", same confirm dialog and
-    permission). The other tabs keep the full header. The conversation list
+    permission). The other tabs keep the full header. (Phase 5, D-200: every
+    section uses the one-line header of **Agent page (phase 5)**, and the panel
+    gains the status rail.) The conversation list
     and the transcript scroll inside the panel, and the composer stays pinned
     to the bottom of the thread.
     - From 768 px the panel has two panes: the list (272–320 px, `line`
@@ -557,7 +631,9 @@ again" and "Show the getting-started guide again".
   say hello), agents, pending approvals, recent activity. (phase 4, P4-ONB-2) The
   checklist becomes the **getting-started guide** of `§Onboarding` (same component,
   collapsed to one line once complete).
-- **Agents** list → **agent page** tabs:
+- **Agents** list → **agent page** tabs (phase 5, D-200: grouped into the sections
+  Chat · Behaviour · Triggers · Computer · Access of **Agent page (phase 5)**; each
+  page below keeps its content and `?tab=` id):
   - **Chat** — (phase 2, RFE-010) per-conversation menu: Archive, Delete (typed
     confirmation; explains that platform copies and agent memory remain), Export
     (JSON / zip), and per-message **Redact** (reason, "also reset the agent's
