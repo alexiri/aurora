@@ -88,14 +88,21 @@ database:
   # migrate Job read that one key; the gateway too, unless gatewayRole/gatewayExistingSecret are set.
   existingSecret: ""     # default name when empty: <release>-aurora-database (you must create it)
   maxConnections: {api: 20, gateway: 10}
-  # Least-privilege gateway login (FIX-016). Set BOTH or neither (helm fails if only one is set).
+  # Least-privilege gateway login (FIX-016, FIX-106). Set BOTH or neither (helm fails if only one is set).
   # The DBA creates the role first (CREATE ROLE <r> LOGIN PASSWORD '...'; docs/operator/install-helm.md,
   # Database); `aurora-api migrate` only grants it exactly what 03 lists (rendered as database.gateway_role).
+  # With an EXTERNAL database the pair is REQUIRED: helm refuses to render without it unless
+  # allowSharedLogin is set. With the bundled evaluation Postgres (postgres.enabled) and neither the pair
+  # nor allowSharedLogin, the chart creates the role `aurora_gateway` itself (a generated password, a hook
+  # Job on install and upgrade) and the gateway connects as it.
   gatewayRole: ""
   # A Secret you create, with key AURORA_DATABASE_URL, that logs in as gatewayRole. The gateway
-  # Deployment reads its AURORA_DATABASE_URL from it. Without the pair, the gateway runs as the main
-  # database user (not least privilege).
+  # Deployment reads its AURORA_DATABASE_URL from it.
   gatewayExistingSecret: ""
+  # Explicit opt-in to the NOT recommended setup: the gateway shares the main database login (every
+  # privilege the API has). Needed only with an external database and no role pair; with the bundled
+  # Postgres it switches the automatic role off. Mutually exclusive with the pair.
+  allowSharedLogin: false
   # Egress CIDRs of the external database, used by NetworkPolicies (ignored if postgres.enabled).
   cidrs: []               # e.g. ["10.20.0.0/24"]
   port: 5432

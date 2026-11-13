@@ -84,7 +84,13 @@
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}
 {{- if ne (not (not .Values.database.gatewayRole)) (not (not .Values.database.gatewayExistingSecret)) }}{{ fail "database.gatewayRole and database.gatewayExistingSecret go together: set both (the gateway then connects as that least-privilege role) or neither (the gateway uses the main database user). See docs/operator/install-helm.md, Database." }}{{ end -}}
+{{- /* (FIX-106, D-178 Q-R5-11) The gateway's least-privilege role is the rule: the bundled evaluation Postgres creates it
+      automatically; with an external database the chart refuses to render without the pair unless the operator says,
+      explicitly, that the gateway may share the main login (database.allowSharedLogin). */ -}}
+{{- if and .Values.database.allowSharedLogin (or .Values.database.gatewayRole .Values.database.gatewayExistingSecret) }}{{ fail "database.allowSharedLogin and the least-privilege pair (database.gatewayRole + database.gatewayExistingSecret) contradict each other: set the pair (recommended) or allowSharedLogin, not both. See docs/operator/install-helm.md, Database." }}{{ end -}}
+{{- if and (not .Values.postgres.enabled) (not .Values.database.gatewayRole) (not .Values.database.allowSharedLogin) }}{{ fail "the gateway needs its own least-privilege database role with an external database. Create the role and a Secret that logs in as it, then set database.gatewayRole and database.gatewayExistingSecret (docs/operator/install-helm.md, Database); or, knowing that the gateway then runs with the main database login and every privilege it has, set database.allowSharedLogin=true." }}{{ end -}}
 {{- if .Values.database.gatewayRole }}{{ $_ := set $cfg.database "gateway_role" .Values.database.gatewayRole }}{{ end -}}
+{{- if include "aurora.gatewayRoleAuto" . }}{{ $_ := set $cfg.database "gateway_role" (include "aurora.gatewayAutoRole" .) }}{{ end -}}
 {{- /* (RFE-002) proxy listener certificate: the Service names, the external host and extra names */ -}}
 {{- $px := printf "%s-gateway-proxy" $full -}}
 {{- $ptNames := list "aurora-gateway" $px (printf "%s.%s" $px .Release.Namespace) (printf "%s.%s.svc" $px .Release.Namespace) (printf "%s.%s.svc.cluster.local" $px .Release.Namespace) -}}

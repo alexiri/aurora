@@ -20,13 +20,16 @@ fail() { echo "helm-vault: FAIL: $*" >&2; exit 1; }
 has() { grep -Eq -- "$2" "$1" || fail "$3 (missing /$2/)"; }
 lacks() { ! grep -Eq -- "$2" "$1" || fail "$3 (unexpected /$2/)"; }
 
-helm lint "$CHART" >/dev/null || fail "lint (default values)"
-helm template aurora "$CHART" -n aurora >"$WORK/default.yaml" || fail "template (default values)"
+# (FIX-106) An external database needs the gateway role pair or this explicit value to render at all;
+# these cases are about Vault, so they take the explicit value (deploy/helm/check-gateway-role.sh covers the rest).
+DB=(--set database.allowSharedLogin=true)
+helm lint "$CHART" "${DB[@]}" >/dev/null || fail "lint (default values)"
+helm template aurora "$CHART" -n aurora "${DB[@]}" >"$WORK/default.yaml" || fail "template (default values)"
 lacks "$WORK/default.yaml" 'aurora-gateway\.toml|vault-token|extra-ca|hashicorp-vault' "default values must render no Vault or extra CA"
 
 for c in vault-kubernetes vault-approle; do
-  helm lint "$CHART" -f "$CASES/$c.yaml" >/dev/null || fail "lint ($c)"
-  helm template aurora "$CHART" -n aurora -f "$CASES/$c.yaml" >"$WORK/$c.yaml" || fail "template ($c)"
+  helm lint "$CHART" "${DB[@]}" -f "$CASES/$c.yaml" >/dev/null || fail "lint ($c)"
+  helm template aurora "$CHART" -n aurora "${DB[@]}" -f "$CASES/$c.yaml" >"$WORK/$c.yaml" || fail "template ($c)"
   has "$WORK/$c.yaml" 'aurora-gateway\.toml' "$c: the gateway reads its own config"
   has "$WORK/$c.yaml" 'kind = "hashicorp-vault"' "$c: the store is rendered"
   has "$WORK/$c.yaml" 'extra_ca_bundle = "/etc/aurora-tls/' "$c: tls.extra_ca_bundle"
@@ -62,7 +65,7 @@ lacks "$a" 'vault-token|projected' "approle needs no projected token"
 expect_fail() {
   local what="$1" msg="$2"; shift 2
   local out
-  if out=$(helm template aurora "$CHART" -n aurora "$@" 2>&1); then fail "$what: render should have failed"; fi
+  if out=$(helm template aurora "$CHART" -n aurora "${DB[@]}" "$@" 2>&1); then fail "$what: render should have failed"; fi
   grep -q -- "$msg" <<<"$out" || fail "$what: expected '$msg', got: $out"
 }
 expect_fail "no address" "vault.address is required" --set vault.enabled=true

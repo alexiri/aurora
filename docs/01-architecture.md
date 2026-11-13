@@ -94,7 +94,14 @@ database, no keys, no ambient network. It is called only on slow paths.
 4. **Gateway ↔ database.** The gateway uses a least-privilege database role:
    read on configuration tables; write only on approvals, request log,
    refreshed connection credentials (compare-and-set), reauth flags and its own
-   instance rows.
+   instance rows (nothing on `api_keys`). The role is **required** (FIX-106,
+   D-178 Q-R5-11): the Helm chart's bundled evaluation Postgres creates it
+   automatically; with an external database the chart refuses to render without
+   `database.gatewayRole` + `database.gatewayExistingSecret` unless
+   `database.allowSharedLogin` explicitly lets the gateway share the main login
+   (`15`, `23`). A non-Helm install configures `database.gateway_role` and gives the
+   gateway its own `AURORA_DATABASE_URL`; sharing the login there is the
+   operator's explicit exception.
 5. **Gateway control port (4103)** is internal: reachable from API replicas
    only (network policy), authenticated with the internal secret. It is never
    on the sandbox network. (phase 4, P4-GSL) It also serves `POST /internal/v1/library-fetch`,

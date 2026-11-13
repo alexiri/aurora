@@ -30,6 +30,16 @@ app.kubernetes.io/component: {{ .component }}
 {{- if .Values.postgres.enabled -}}{{ include "aurora.secretName" . }}{{- else -}}{{ default (printf "%s-database" (include "aurora.fullname" .)) .Values.database.existingSecret }}{{- end -}}
 {{- end -}}
 
+{{- /* (FIX-106, D-178 Q-R5-11) The chart-bundled evaluation Postgres creates the gateway's
+       least-privilege role itself: renders "true" when postgres.enabled and the operator set
+       neither the explicit role pair nor database.allowSharedLogin. */ -}}
+{{- define "aurora.gatewayRoleAuto" -}}
+{{- if and .Values.postgres.enabled (not .Values.database.gatewayRole) (not .Values.database.gatewayExistingSecret) (not .Values.database.allowSharedLogin) -}}true{{- end -}}
+{{- end -}}
+
+{{/* The role the chart creates in the bundled Postgres (the name is fixed; its password is generated). */}}
+{{- define "aurora.gatewayAutoRole" -}}aurora_gateway{{- end -}}
+
 {{- define "aurora.caSecretName" -}}
 {{- default (printf "%s-gateway-ca" (include "aurora.fullname" .)) .Values.gateway.ca.existingSecret -}}
 {{- end -}}
@@ -59,8 +69,13 @@ securityContext:
 - {name: AURORA_CONFIG, value: /etc/aurora/{{ default "aurora.toml" .configFile }}}
 {{- if .db }}
 - name: AURORA_DATABASE_URL
-  {{- /* FIX-016: with database.gatewayExistingSecret set, the gateway (gatewayDb) logs in as its least-privilege role. */}}
+  {{- /* FIX-016: with database.gatewayExistingSecret set, the gateway (gatewayDb) logs in as its least-privilege role.
+         FIX-106: with the bundled Postgres and no explicit choice, it logs in as the role the chart creates (key AURORA_GATEWAY_DATABASE_URL of the generated Secret). */}}
+  {{- if and .gatewayDb (include "aurora.gatewayRoleAuto" .root) }}
+  valueFrom: {secretKeyRef: {name: {{ include "aurora.secretName" .root }}, key: AURORA_GATEWAY_DATABASE_URL}}
+  {{- else }}
   valueFrom: {secretKeyRef: {name: {{ if and .gatewayDb .root.Values.database.gatewayExistingSecret }}{{ .root.Values.database.gatewayExistingSecret }}{{ else }}{{ include "aurora.dbSecretName" .root }}{{ end }}, key: AURORA_DATABASE_URL}}
+  {{- end }}
 {{- end }}
 {{- range $k := .keys }}
 - name: {{ $k }}

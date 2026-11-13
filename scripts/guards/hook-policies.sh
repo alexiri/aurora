@@ -26,7 +26,8 @@ require_helm hook-policies || exit 0
 
 check_render() {
   local label="$1"; shift
-  helm template guard deploy/helm/aurora "$@" | python3 -I -c '
+  # (FIX-106) allowSharedLogin: these checks are about hooks, not the gateway's database role.
+  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | python3 -I -c '
 import sys, yaml
 label = sys.argv[1]
 HOOK_KEY = "helm.sh/hook"

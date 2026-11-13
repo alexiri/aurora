@@ -1,6 +1,11 @@
 Aurora {{ .Chart.AppVersion }} installed. Public URL: {{ .Values.externalUrl }}
 Upgrade order is enforced by the migrate hook (runs before any new api replica); roll api, hookhost, gateway, runner, web, connectors.
 Secrets: {{ include "aurora.secretName" . }} (generated once, never overwritten). Gateway CA: {{ include "aurora.caSecretName" . }}.
+{{- if .Values.database.allowSharedLogin }}
+
+WARNING: database.allowSharedLogin is set: the gateway logs in with the main database login (every privilege the API
+has) instead of its own least-privilege role. Set database.gatewayRole and database.gatewayExistingSecret (docs/operator/install-helm.md, Database).
+{{- end }}
 {{- if .Values.postgres.enabled }}
 
 WARNING: postgres.enabled renders an EVALUATION-ONLY database. Its StatefulSet, Service and PVC are
