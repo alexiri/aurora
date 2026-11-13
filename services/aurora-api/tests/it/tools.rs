@@ -290,11 +290,13 @@ async fn identity_comes_from_authenticated_facts() {
     let (s, _) = r.tool(call(&a, "list_agents", json!({}))).await;
     assert_eq!(s, 403);
 
-    // Turn id is optional.
+    // (FIX-110, SEC-24) The turn id is required: a call without one is refused, as is one
+    // naming a finished turn, and neither runs the tool.
     let mut no_turn = call(&a, "list_agents", json!({}));
     no_turn.as_object_mut().unwrap().remove("turn_id");
     let (s, v) = r.tool(no_turn).await;
-    assert_eq!(s, 200, "{v}");
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["error"]["code"], "no_active_turn");
 
     // Unknown sandbox / missing replica / no token.
     let mut unk = call(&a, "list_agents", json!({}));
@@ -308,6 +310,40 @@ async fn identity_comes_from_authenticated_facts() {
         )
         .await;
     assert_eq!(s, 403);
+}
+
+/// (FIX-110, SEC-45) An agent that is itself frozen cannot use its tools: the identity check
+/// refuses (423), so neither `message_agent` nor `schedule_create` runs.
+#[tokio::test]
+async fn a_frozen_agent_cannot_use_platform_tools() {
+    let r = rig().await;
+    let a = r.booted("frozen").await;
+    let _b = r.booted("peer").await;
+    sqlx::query(
+        "UPDATE agents SET frozen_at = now(), frozen_reason = 'drill', frozen_authority = 'workspace_owner' WHERE id = $1",
+    )
+    .bind(a.agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    for (tool, args) in [
+        ("message_agent", json!({"agent": "@peer", "text": "hi"})),
+        (
+            "schedule_create",
+            json!({"name": "n", "prompt": "p", "cron": "0 9 * * *"}),
+        ),
+        ("list_agents", json!({})),
+    ] {
+        let (s, v) = r.tool(call(&a, tool, args)).await;
+        assert_eq!(s, 423, "{tool}: {v}");
+    }
+    sqlx::query("UPDATE agents SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL WHERE id = $1")
+        .bind(a.agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = r.tool(call(&a, "list_agents", json!({}))).await;
+    assert_eq!(s, 200, "{v}");
 }
 
 struct Slow;

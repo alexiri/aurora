@@ -6,6 +6,8 @@
 ## API rate limits
 
 Every authenticated `/v1/**` request passes the API limiter, after the caller is identified and before authorization. The caller is an API key, a signed-in user (all of a user's sessions share one budget) or a BYO agent token.
+Webhook replay: a signed webhook delivery without a delivery id is deduplicated for 60 seconds only, so replay protection of older captured requests belongs to the sender (include a delivery id or a timestamp the receiver of your own agent can check). Signed-timestamp checking is a later item.
+
 Not limited here: `/healthz`, `/readyz`, `/metrics`, the runner, connector and `/internal` planes, and webhook deliveries (which have their own limit). Unauthenticated routes have separate per-IP limits.
 
 A request must get a token from **every** bucket that applies: the caller's `general` bucket, the caller's class bucket and the organization's bucket. Buckets are kept in memory **per API replica**, so with N replicas the effective limit can be up to N times higher.

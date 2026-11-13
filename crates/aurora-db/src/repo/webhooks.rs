@@ -188,7 +188,21 @@ pub async fn lock_by_creator(
     .await?)
 }
 
-/// Full-row edit of the user-controlled fields.
+/// (FIX-110) The row, locked for the rest of the transaction: an edit starts from the current
+/// `verification` (a rotation must not be undone by a stale read), never from a caller's copy.
+pub async fn get_for_update(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<WebhookRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM webhooks w WHERE w.id = $1 FOR UPDATE OF w"
+    ))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
+}
+
+/// Edit of the user-controlled fields, written from a row read with [`get_for_update`].
 pub async fn update(conn: &mut PgConnection, r: &WebhookRow) -> Result<WebhookRow, DbError> {
     sqlx::query(
         "UPDATE webhooks SET name=$2, instructions=$3, verification=$4, enabled=$5,

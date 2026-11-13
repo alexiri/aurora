@@ -259,7 +259,10 @@ No vendor concept may appear in this vocabulary; adapters translate.
 **The answer rule**: a turn's durable `text` events contain *what the agent said
 after its last tool call*; narration between tools streams ephemerally. A tool
 call is a structural break; thinking is not. Within a tool-free stretch the
-harness's message framing decides message boundaries.
+harness's message framing decides message boundaries. (FIX-115) When a turn ends
+without a result (failed, stalled, cancelled, restarted), the text buffered since
+its last tool call is written as durable `text` events before the `error` event and
+`turn.finished`; nothing is discarded silently.
 
 ### Archive, delete, redaction, retention, export (phase 2, RFE-010, D-53)
 
@@ -745,7 +748,17 @@ secret, constant-time compare) → 401 on mismatch.
 - Accepted → turn in the webhook's run conversation with the stored
 instructions + payload; responds `202 { "delivery_id" }` immediately.
 - Rate limit: 60 deliveries/min per webhook (429).
+- (FIX-110) The sender's `Content-Type` is part of the untrusted data: it appears
+  inside the fenced block, never in the preamble.
+- (FIX-110, D-178 Q-R5-20) Replay protection of a signed delivery belongs to the
+  sender: a signed delivery without a delivery id is deduplicated for 60 s only, so
+  a captured request can be replayed later. Optional signed-timestamp checking is a
+  later item, not built now.
 - Auto-disable after 5 consecutive failed turns (`failures`).
+- (FIX-110) Schedule and webhook edits read the row under `FOR UPDATE` and write only
+  the edited columns: an edit never restores a stale `next_fire_at`, clears a live
+  fire lease or undoes a secret rotation. The cron minimum interval (5 minutes) is
+  checked over a full cycle (a week of occurrences).
 
 ## Processes and watches
 

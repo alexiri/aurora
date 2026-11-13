@@ -431,13 +431,21 @@ impl ToolHub {
                 "platform tools temporarily unavailable; try again shortly",
             );
         }
-        let turn_id = self.st().turns.get(&conversation_id).copied();
+        // (FIX-110, SEC-24) No frame without a running turn of this conversation: a process left
+        // behind by an earlier turn cannot use platform tools later, unattributed.
+        let Some(turn_id) = self.st().turns.get(&conversation_id).copied() else {
+            return fail(
+                &call_id,
+                "no_active_turn",
+                "platform tools can only be used while a turn is running",
+            );
+        };
         let (tx, rx) = oneshot::channel();
         self.st().pending.insert(call_id.clone(), tx);
         let frame = SupervisorToRunner::ToolCall(ToolCallBody {
             call_id: call_id.clone(),
             conversation_id,
-            turn_id,
+            turn_id: Some(turn_id),
             tool: tool.to_owned(),
             args,
         });

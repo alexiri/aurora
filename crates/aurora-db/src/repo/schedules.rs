@@ -71,6 +71,20 @@ pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<Sche
     )
 }
 
+/// (FIX-110) The row, locked for the rest of the transaction: a user-facing edit must start from
+/// what a concurrent fire just wrote, not from a stale read.
+pub async fn get_for_update(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<ScheduleRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} {FROM} WHERE s.id = $1 FOR UPDATE OF s"
+    ))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
+}
+
 pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
@@ -116,13 +130,24 @@ pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<Sche
     get(&mut *conn, id).await?.ok_or(DbError::NotFound)
 }
 
-/// Full-row edit of the user-controlled fields; clears the lease and failure state when the
-/// schedule is (re-)enabled.
-pub async fn update(conn: &mut PgConnection, r: &ScheduleRow) -> Result<ScheduleRow, DbError> {
+/// Edit of the user-controlled fields. (FIX-110) The fire-time columns (`enabled`,
+/// `disabled_reason`, `consecutive_failures`, `next_fire_at`, `fire_lease_until`) are written
+/// only with `reschedule` (an enable change or a timing change, which clears the lease); a plain
+/// edit never restores a stale `next_fire_at` or clears a live lease (a double fire). Call on a
+/// row read with [`get_for_update`].
+pub async fn update(
+    conn: &mut PgConnection,
+    r: &ScheduleRow,
+    reschedule: bool,
+) -> Result<ScheduleRow, DbError> {
     sqlx::query(
         "UPDATE schedules SET name=$2, prompt=$3, cron=$4, timezone=$5, gate_command=$6,
-            gate_description=$7, enabled=$8, disabled_reason=$9, consecutive_failures=$10,
-            next_fire_at=$11, fire_lease_until=NULL, updated_at=now()
+            gate_description=$7, updated_at=now(),
+            enabled = CASE WHEN $12 THEN $8 ELSE enabled END,
+            disabled_reason = CASE WHEN $12 THEN $9 ELSE disabled_reason END,
+            consecutive_failures = CASE WHEN $12 THEN $10 ELSE consecutive_failures END,
+            next_fire_at = CASE WHEN $12 THEN $11 ELSE next_fire_at END,
+            fire_lease_until = CASE WHEN $12 THEN NULL ELSE fire_lease_until END
          WHERE id=$1",
     )
     .bind(r.id)
@@ -136,6 +161,7 @@ pub async fn update(conn: &mut PgConnection, r: &ScheduleRow) -> Result<Schedule
     .bind(&r.disabled_reason)
     .bind(r.consecutive_failures)
     .bind(r.next_fire_at)
+    .bind(reschedule)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, r.id).await?.ok_or(DbError::NotFound)

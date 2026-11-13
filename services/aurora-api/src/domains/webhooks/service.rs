@@ -300,10 +300,29 @@ pub fn apply_enabled(r: &mut WebhookRow, enabled: Option<bool>, actor: Option<Uu
 pub async fn patch(
     state: &AppState,
     agent: &AgentRow,
-    mut r: WebhookRow,
+    seen: WebhookRow,
     p: Patch,
     actor: Option<Uuid>,
 ) -> Result<WebhookRow, ApiError> {
+    patch_with(state, agent, seen, p, actor, async {}).await
+}
+
+/// [`patch`] with a hook between the caller's read and the row lock (tests interleave there).
+pub async fn patch_with(
+    state: &AppState,
+    agent: &AgentRow,
+    seen: WebhookRow,
+    p: Patch,
+    actor: Option<Uuid>,
+    between: impl std::future::Future<Output = ()>,
+) -> Result<WebhookRow, ApiError> {
+    between.await;
+    // (FIX-110) Edit the locked current row: a stale `verification.secret_ref` must not undo a
+    // rotation that happened after the caller read the webhook.
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut r = repo::get_for_update(&mut tx, seen.id)
+        .await?
+        .ok_or_else(not_found)?;
     if let Some(v) = p.name {
         check_name(&v)?;
         r.name = v;
@@ -338,7 +357,6 @@ pub async fn patch(
         }
     }
     apply_enabled(&mut r, p.enabled, actor);
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     let res = repo::update(&mut tx, &r).await;
     let row = match res {
         Ok(row) => row,

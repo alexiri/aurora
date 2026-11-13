@@ -497,7 +497,7 @@ Routes/auth: `05 §Conversations and turns` (attachments), `§Approvals` (action
 **Contract decisions**
 - C-27 App-turn cap reset: `POST /v1/conversations/{id}/continue` (S/K, `can_use`) sets `app_turn_streak = 0` and appends a durable `notice` (`code: "app_turn_cap_reset"`); 200 `Conversation`. Refused bot/agent turns append a durable `notice` with `code: "app_turn_cap_reached"`. `Conversation` gains `app_turn_streak: number` and `app_turn_capped: boolean`.
 - C-28 Action-approval decision body mirrors gateway approvals: `{ decision: "approve" | "deny" }`; deciding a non-`pending` row → 409 `already_decided`; unknown `action_key` at decide time → 500 `internal` + error log (07 "fail loud").
-- C-29 Link policy update: `PUT /v1/agent-links/{id}/policy` body `{ agent_id, policy: "ask" | "allow" | "blocked" }` sets **that agent's side**; caller needs `can_use` on that agent's workspace; the other side is read-only to them. Optimistic concurrency via `revision` (409 `stale_revision`).
+- C-29 Link policy update: `PUT /v1/agent-links/{id}/policy` body `{ agent_id, policy: "ask" | "allow" | "blocked" }` sets **that agent's side**; caller needs `can_use` on that agent's workspace to set `ask` or `blocked`, and **`can_approve`** to set `allow` (403 `approver_required`; FIX-110, `07` §Agent links, RFE-012: consent to cross-workspace messaging is an approver's); the other side is read-only to them. Optimistic concurrency via `revision` (409 `stale_revision`).
 - C-30 Attachments: upload response and list items use `Attachment`; downloads are `application/octet-stream` + `Content-Disposition: attachment` + `nosniff` regardless of stored type. Error codes (BE-064): upload over `ATTACH_IN_FILE_MAX` → 413 `payload_too_large`; a message binding more than `ATTACH_IN_COUNT` attachments → 422 `too_many_attachments`; runner plane `POST /runner/attachments` over `ATTACH_OUT_FILE_MAX` → 413 `payload_too_large`, over `ATTACH_OUT_COUNT` per turn → 429 `attachment_count_exceeded`, over `ATTACH_OUT_DAILY_PER_CONVERSATION` → 429 `attachment_quota_exceeded`, stale boot → 409 `fenced`, turn not dispatched/running → 409 `turn_not_active`. Outbound attachments are stored as `application/octet-stream`.
 
 ```ts
@@ -528,7 +528,7 @@ interface PeerTask { id: Uuid; link_id: Uuid; from_agent_id: Uuid; to_agent_id: 
 | GET `/v1/workspaces/{ws}/action-approvals` | S/K can_use | `?status&agent_id&limit&cursor` | 200 `Page<ActionApproval>` | 404 |
 | POST `/v1/action-approvals/{id}/decision` | S/K can_use (on the row's workspace) | `{ decision }` (C-28) | 200 `ActionApproval` | 404; 409 `already_decided` |
 | GET `/v1/agents/{agent}/links` | S/K can_use | — | 200 `{ items: AgentLink[] }` | 404 |
-| PUT `/v1/agent-links/{id}/policy` | S/K can_use (C-29) | `{ agent_id, policy, revision }` | 200 `AgentLink` | 404; 409 `stale_revision` |
+| PUT `/v1/agent-links/{id}/policy` | S/K can_use; `allow` needs can_approve (C-29) | `{ agent_id, policy, revision }` | 200 `AgentLink` | 404; 409 `stale_revision` |
 | GET `/v1/agents/{agent}/peer-tasks` | S/K can_use | `?status&limit&cursor` | 200 `Page<PeerTask>` | 404 |
 
 ### M6 — channels management, connector admin (API-006)

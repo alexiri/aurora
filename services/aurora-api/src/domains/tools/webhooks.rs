@@ -156,7 +156,18 @@ impl PlatformTool for Update {
         args: Value,
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: UpdateArgs = parse(args)?;
-        let mut w = own(ctx, a.id).await?;
+        own(ctx, a.id).await?;
+        // (FIX-110) Edit the locked current row, not a stale read.
+        let mut tx = ctx
+            .agent
+            .pool
+            .begin()
+            .await
+            .map_err(aurora_db::DbError::from)?;
+        let mut w = repo::get_for_update(&mut tx, a.id)
+            .await?
+            .filter(|w| w.agent_id == ctx.agent.agent_id)
+            .ok_or_else(|| ToolError::Failed("Webhook not found.".into()))?;
         if let Some(i) = a.instructions {
             if i.trim().is_empty() || i.chars().count() > INSTRUCTIONS_MAX {
                 return Err(ToolError::Failed(
@@ -176,12 +187,6 @@ impl PlatformTool for Update {
             ));
         }
         crate::domains::webhooks::service::apply_enabled(&mut w, a.enabled, None);
-        let mut tx = ctx
-            .agent
-            .pool
-            .begin()
-            .await
-            .map_err(aurora_db::DbError::from)?;
         let row = repo::update(&mut tx, &w).await?;
         tx.commit().await.map_err(aurora_db::DbError::from)?;
         out(view(&row))

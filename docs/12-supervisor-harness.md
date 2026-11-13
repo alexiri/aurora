@@ -308,6 +308,9 @@ socket `/run/aurora/tools.sock` → supervisor → `tool.call` frame (stamped wi
 conversation and current turn) → runner (stamps sandbox and boot) →
 `POST /v1/runner/tool-calls` → **tool registry** → result back.
 
+- (FIX-110) `turn_id` is required and must be an active turn of the calling agent;
+  a call without one is refused `no_active_turn` (the supervisor refuses it locally
+  when no turn is running in the conversation, and the API refuses it again).
 - End-to-end budget `TOOL_CALL_TIMEOUT` (below typical harness MCP timeouts so
   the model sees Aurora's error text). After `TOOL_CONSECUTIVE_FAILURES`
   consecutive transport failures in a session the bridge answers immediately

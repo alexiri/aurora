@@ -8,13 +8,12 @@ use std::time::Duration;
 
 use crate::common::TempDir;
 use aurora_protocol::runner::{GateOutcome, HomeSync};
-use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
+use aurora_protocol::supervisor::SupervisorToRunner;
 use aurora_protocol::tools::{TextContent, ToolContent, ToolResult};
 use aurora_supervisor::channel::ChannelSender;
 use aurora_supervisor::home::{HomeConfig, HomeProjector, PartOutcome};
 use aurora_supervisor::mcp_bridge;
 use aurora_supervisor::process::{ProcessConfig, ProcessManager};
-use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
 use aurora_supervisor::tools::{BridgeRequest, Method, ToolHub, ToolsConfig};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -89,21 +88,10 @@ async fn bridge_supervisor_runner_round_trip() {
     let root = d.path().to_path_buf();
     catalogue(&root, &["memory_save"]);
     let sock = root.join("tools.sock");
-    let (out_tx, mut out_rx) = mpsc::channel(256);
-    let (in_tx, in_rx) = mpsc::channel(256);
-    let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
-    cfg.working_dir = root.clone();
-    cfg.process = ProcessConfig::new(root.clone());
-    cfg.tools.socket = Some(sock.clone());
-    let sup = Supervisor::new(
-        cfg,
-        ChannelSender::from_mpsc(out_tx),
-        Arc::new(aurora_supervisor::fake::FakeHarness),
-        aurora_supervisor::streams::StreamsHandle::noop(),
-        aurora_supervisor::pty::PtyHandle::noop(),
-    );
-    tokio::spawn(sup.run(in_rx));
-    next_matching(&mut out_rx, |m| matches!(m, SupervisorToRunner::Ready(_))).await;
+    // (FIX-110) A tool call needs a running turn: the hub serves the socket with one recorded.
+    let (hub, mut out_rx) = hub(&root, ToolsConfig::default());
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
+    tokio::spawn(hub.clone().serve_owned(sock.clone()));
     timeout(T, async {
         while !sock.exists() {
             tokio::time::sleep(Duration::from_millis(20)).await
@@ -167,15 +155,12 @@ async fn bridge_supervisor_runner_round_trip() {
     assert_eq!(call.conversation_id, Uuid::parse_str(CONV).unwrap());
     assert_eq!(call.tool, "memory_save");
     assert_eq!(call.args, json!({"key":"k"}));
-    in_tx
-        .send(RunnerToSupervisor::ToolResult(ToolResult::success(
-            call.call_id,
-            vec![ToolContent::Text(TextContent {
-                text: "saved".into(),
-            })],
-        )))
-        .await
-        .unwrap();
+    hub.on_result(ToolResult::success(
+        call.call_id,
+        vec![ToolContent::Text(TextContent {
+            text: "saved".into(),
+        })],
+    ));
     let res: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
     assert_eq!(res["id"], 3);
     assert_eq!(res["result"]["content"][0]["text"], "saved");
@@ -195,6 +180,25 @@ async fn bridge_supervisor_runner_round_trip() {
             .unwrap()
             .contains("not available")
     );
+}
+
+/// (FIX-110, SEC-24) With no turn running in the conversation (a process left behind by an
+/// earlier turn) a tool call is refused locally: no frame reaches the runner.
+#[tokio::test]
+async fn no_frame_is_sent_without_a_running_turn() {
+    let d = TempDir::new();
+    catalogue(d.path(), &["memory_get"]);
+    let (hub, mut rx) = hub(d.path(), ToolsConfig::default());
+    let conv = Uuid::parse_str(CONV).unwrap();
+    let r = hub.call(CONV, "memory_get", json!({})).await;
+    assert_eq!(r.error.unwrap().code.as_str(), "no_active_turn");
+    assert!(rx.try_recv().is_err(), "nothing was sent");
+    // After the turn ended the same applies.
+    hub.set_turn(conv, Some(Uuid::now_v7()));
+    hub.set_turn(conv, None);
+    let r = hub.call(CONV, "memory_get", json!({})).await;
+    assert_eq!(r.error.unwrap().code.as_str(), "no_active_turn");
+    assert!(rx.try_recv().is_err(), "nothing was sent");
 }
 
 #[tokio::test]
@@ -227,6 +231,7 @@ async fn breaker_opens_after_two_transport_failures_and_closes_on_success() {
             ..ToolsConfig::default()
         },
     );
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
     for _ in 0..2 {
         let r = hub.call(CONV, "memory_get", json!({})).await;
         assert_eq!(r.error.unwrap().code.as_str(), "tool_timeout");
@@ -259,6 +264,7 @@ async fn oversized_results_are_truncated_with_a_note() {
     let d = TempDir::new();
     catalogue(d.path(), &["memory_get"]);
     let (hub, mut rx) = hub(d.path(), ToolsConfig::default());
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), Some(Uuid::now_v7()));
     let h = hub.clone();
     let task = tokio::spawn(async move { h.call(CONV, "memory_get", json!({})).await });
     let SupervisorToRunner::ToolCall(c) = next_matching(&mut rx, |_| true).await else {

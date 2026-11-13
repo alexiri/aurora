@@ -180,14 +180,18 @@ Unknown kinds are logged and dropped.
 
 ```
 harness ──MCP stdio──► mcp-bridge ──unix socket (JSON lines)──► supervisor
-   ──tool.call {call_id, conversation_id, turn_id?, tool, args}──► runner
+   ──tool.call {call_id, conversation_id, turn_id, tool, args}──► runner
    ──POST /v1/runner/tool-calls {sandbox_id, boot_id, …}──► API tool registry
 ```
 
-`ToolCall`: `{ sandbox_id, boot_id, call_id, conversation_id, turn_id?, tool,
+`ToolCall`: `{ sandbox_id, boot_id, call_id, conversation_id, turn_id, tool,
 args }`. The API verifies: the boot is current; the conversation belongs to the
-sandbox's agent; when `turn_id` is set it is an active turn of that
-conversation; the tool is available for the agent. `ToolResult`: `{ call_id,
+sandbox's agent; (FIX-110) `turn_id` is **required** and must be an active
+turn of that conversation of the calling agent — a call without one is refused
+`no_active_turn` (403), and the supervisor refuses before sending when no turn
+is running, so a process left behind by an earlier turn cannot act, unattributed,
+later; an effectively frozen agent's own calls are refused (423 `frozen`); the
+tool is available for the agent. `ToolResult`: `{ call_id,
 ok: true, content: [{ type: "text", text } | { type: "json", value }] }` or
 `{ call_id, ok: false, error: { code, message } }`. Local tools (`process_*`)
 never leave the supervisor.

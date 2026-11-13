@@ -252,8 +252,19 @@ pub async fn open_task(
             "The requesting person no longer has access to the sending agent's workspace.",
         ));
     }
-    let id = Uuid::now_v7();
     let queued = repo::open_exists(&mut *conn, r.from.id, r.to.id).await?;
+    // (FIX-110) A task queued behind the open one costs a conversation, a notice of up to
+    // 12,000 characters and, later, a turn on the peer: bounded per ordered pair under the link
+    // lock taken above.
+    if queued
+        && repo::queued_count(&mut *conn, r.from.id, r.to.id).await? >= limits::PEER_TASK_QUEUE_MAX
+    {
+        return Ok(refuse(format!(
+            "Too many tasks are already queued for this agent ({} at most); wait for them to finish.",
+            limits::PEER_TASK_QUEUE_MAX
+        )));
+    }
+    let id = Uuid::now_v7();
     let ext = format!("peer:{id}");
     let title = sanitize::one_line(&format!("Task from {}", r.from.name), 120);
     let (pc, _) = convs::get_or_create(
