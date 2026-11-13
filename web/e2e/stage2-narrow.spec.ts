@@ -78,12 +78,14 @@ test.describe("390 px", () => {
     });
   }
 
-  test("the agent tab strip scrolls within itself", async ({ page }) => {
+  // FIX-129: the strip no longer scrolls sideways; what does not fit is behind a More menu.
+  test("the agent tab strip never scrolls: tabs that do not fit are behind More", async ({ page }) => {
     await mockApi(page);
     await page.goto("/o/acme/w/main/agents/daneel");
     const strip = page.getByRole("tablist", { name: "Agent" });
     await strip.waitFor();
-    expect(await strip.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    expect(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await expect(page.getByRole("button", { name: /^More agent tabs/ })).toBeVisible();
     expect(await noPageScroll(page)).toBe(true);
   });
 });
