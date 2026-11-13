@@ -174,6 +174,152 @@ than the tools did. The gate's gain here is correctness (dependents) not speed.
 `aurora_template_meta` table is gone and the hash is a stable SHA-256 prefix. A testkit test asserts a clone's relation list
 equals the `AURORA_TEST_TEMPLATE_DB=0` path's and that the stamp table is absent.
 
+## aurora-api split (VEL-007 Part A)
+
+Question: with incremental `dev` (§6) merged, does moving part of `aurora-api` (75.5 k LOC, 311 files) into its own
+crate still pay? Measured at `96707ff7` in a lane worktree (own `target/`, sccache on, `rustc 1.99.1`).
+**The host was never idle** (other lanes compiling, 1-minute load 9–25 during the timed runs, recorded per row), so
+read the seconds as loaded numbers. **The coordinator should confirm the absolute numbers on an idle machine.**
+
+### Measurements
+
+Each edit appends, changes or removes a `// comment` line at the end of one file (Edit tool), then runs the command;
+three edits per row, median reported. Load = 1-minute load at start → end of the runs.
+
+| Edit | Command | Runs (s) | Median | Load |
+|---|---|---|---|---|
+| leaf domain `domains/me/service.rs` | `cargo test -p aurora-api --no-run` | 31.8, 44.0, 46.7 | **44.0 s** | 9.6–21 |
+| same, second series | same | 42.5, 32.3, 61.6 | **42.5 s** | 9.5–20 |
+| big domain `domains/scim/resource_users.rs` | same | 68.0, 47.1, 48.3 | **48.3 s** | 18.7–24.9 |
+| `aurora-supervisor/src/harvest.rs`, **before** the dependency fix | same | 52.5, 43.3, 44.6 | **44.6 s** | 13.9–22.7 |
+| same, **after** the fix (below) | same | 16.2, 22.3, 20.7 | **20.7 s** | 10.7–11.5 |
+| `domains/me/service.rs` | `cargo test -p aurora-api --test it --no-run` (the lane gate's build) | 32.1, 35.9, 30.5 | **32.1 s** | 14.6–17 |
+
+`cargo build -p aurora-api --tests --timings`, per unit (one run each; frontend/codegen split from the HTML, which
+shows it for the lib only):
+
+| Edit | `aurora-api` lib (frontend + codegen) | lib-test (`cfg(test)` copy) | `it` test crate | Wall | Load |
+|---|---|---|---|---|---|
+| `domains/me/service.rs` | 29.3 s (23.6 + 5.6) | 29.3 s, **in parallel** with the lib | 11.7 s, after the lib | 42.6 s | 14 |
+| supervisor, before the fix | 13.9 s (10.2 + 3.7) | 14.1 s | 11.4 s | 26.8 s | 20 |
+| supervisor, after the fix | **not rebuilt** | 16.3 s | 9.9 s (starts at once) | 20.0 s | 12 |
+| `aurora-db/src/repo/scim.rs` (proxy for "edit inside an extracted seam") | 21.5 s (16.9 + 4.7) | 22.8 s | 17.5 s | 41.5 s | 10–12.5 |
+| same file, revert | 31.0 s (23.0 + 8.0) | 32.2 s | 25.1 s | 60.9 s | 12.7–15.7 |
+
+Where an incremental rebuild of the api lib goes (`RUSTC_BOOTSTRAP=1 cargo rustc -p aurora-api --lib -- -Z time-passes`
+after a comment edit in `me/service.rs`, load 16–19; a one-off diagnostic — setting `RUSTC_BOOTSTRAP` rebuilds every
+dependency once): total **21.5 s**: `macro_expand_crate` **9.4 s (44 %)**, dep-graph and result-cache persistence 3.3 s,
+`generate_crate_metadata` 2.2 s, monomorphization collection 1.3 s, name resolution 1.0 s, symbol partitioning 0.7 s,
+type check 0.6 s, coherence 0.5 s, borrowck 0.25 s, link 0.3 s, parse ≈ 0. The same for the `it` test crate (63 k LOC,
+92 files) after an api edit: total **14.9 s**, macro expansion **6.1 s**, dep-graph persistence 3.4 s, link 1.8 s, codegen 1.1 s.
+
+`-Z macro-stats` on the api lib: 13.7 MB of expanded code per build, half of it from attribute/derive proc macros.
+Largest: `#[derive(Deserialize)]` 231 uses / 2.66 MB, `#[utoipa::path]` 315 / 1.77 MB, `json!` (479 calls, 7 543
+recursive `json_internal!`) 1.69 MB, `#[derive(ToSchema)]` 479 / 1.24 MB, `utoipa_axum::routes!` 0.82 MB, `tracing`
+macros ≈ 3 MB together, `#[derive(Serialize)]` 408 / 0.62 MB. The 42 `dto.rs` files (7.1 k LOC) carry 240 of the 330
+`Deserialize`, 417 of 483 `Serialize`, 490 of 528 `ToSchema` and 47 of 62 `IntoParams` mentions. `it`: 2 082 `json!`,
+862 `#[tokio::test]`.
+
+What the numbers say:
+
+1. **The cost of an api edit is a per-rebuild floor, not the edit.** Incremental reuses type checking and codegen, but
+   macro expansion (proc macros run again on every build), metadata and dep-graph persistence are paid over the whole
+   crate every time. A change in an *unused* upstream crate (supervisor, before the fix) still rebuilt the api lib in
+   13.9 s, and the 63 k-LOC `it` crate adds 10–12 s after it, on the critical path of every api edit.
+2. **lib-test is not on the critical path.** The lib and its `cfg(test)` copy compile in parallel and `it` waits only
+   for the lib. On a loaded host the second copy competes for CPU, which is why `--test it` (no lib-test) measured
+   32.1 s against 42.5–44.0 s.
+3. **An edit in an upstream crate the api uses was not cheaper end to end** (aurora-db proxy: 41.5 s vs 42.6 s for an
+   in-api edit). The api lib dropped to 21.5 s from 29.3 s, but `it` (which also uses aurora-db directly) grew. An edit
+   *inside* an extracted seam behaves like this: seam crate + api lib (upstream changed) + `it`.
+4. **An edit outside a seam saves only the seam's share of the floor.** The floor scales with the expanded code, so a
+   4.7 k-LOC domain (6 % of the crate) saves ≈ 1–1.5 s of a ≈ 21–29 s lib rebuild — inside the ±50 % noise of this host.
+
+### Why `aurora-api` depended on `aurora-supervisor`
+
+`[dependencies] aurora-supervisor` was **unused**: there is no `aurora_supervisor` path in `services/aurora-api/src`
+(lib or bin). It came in with FIX-005 (`212f75b1`) together with the dev-dependency. The only users are two `it` tests:
+`tests/it/home_render_inputs.rs` (`aurora_supervisor::instructions::{RenderInputs, render}`: the supervisor renders what
+the API sends) and `tests/it/home_checksum.rs` (`harvest::{Harvester, TRAILER_PREFIX, strip_trailer, verify}`,
+`home::{HomeConfig, HomeProjector, PartOutcome}`: real code of both crates around the memory checksum trailer). These are
+supervisor *behaviour*, not shared types, so moving them to `aurora-protocol`/`aurora-core` is not right; only
+`RenderInputs`, a wire shape, could go to `aurora-protocol` (PROGRESS FUP-M4), and that would not remove the
+dev-dependency because the test calls `render`. The normal dependency also broke the "`services/*` depend on `crates/*`"
+rule (`docs/02-engineering-conventions.md`).
+
+**Done** (commit `VEL-007: aurora-api takes aurora-supervisor as a dev-dependency only`): the normal dependency is
+removed, the dev-dependency stays, `Cargo.lock` is unchanged. A supervisor edit no longer rebuilds the api lib and bin:
+**44.6 s → 20.7 s** (medians above). Left: lib-test and the test crates still rebuild on supervisor edits, because
+dev-dependencies apply to every test target. Removing that too needs the two tests in a separate crate (with a copy of,
+or a shared crate for, `tests/it/common`); not worth it for two tests.
+
+### Seam candidates
+
+Inbound = references to the seam from the rest of `aurora-api` (`grep 'domains::<x>'` outside its directory);
+outbound = what the seam uses from the rest of the crate. Savings are per api lib copy, estimated from point 4 above.
+
+| Seam | LOC | Inbound | Outbound | Prerequisite | Edit outside the seam | Edit inside the seam |
+|---|---|---|---|---|---|---|
+| `domains/scim` | 4 705 (13 files) | 7 refs in 3 files: `app.rs` routers; `scim::gates::{admission_gate, audit_denied, Admission}` from `oidc/service.rs` and `invitations/service.rs` | `app::AppState` (7), `audit` (20), `http::{auth, counters, client_ip, apilimit}`, `hosted::lifecycle::{finish, flush_deltas}`, `conversations::service::append_event`, `groups::service::notify_group_deleted`, `me::service::REAUTH_WINDOW_SECS` | kernel crate (below), and those four domain calls moved down or injected | ≈ −1–1.5 s | ≈ 0 (point 3) |
+| `skills` + `skill_libraries` (they reference each other, so they move together) | 4 489 | 11 refs: `app.rs` (`AppState.library: LibraryEnv`, gateway), `main.rs` refresh task, `tools/skills.rs` | `AppState`, `audit`, `http::{auth, json, error, pagination}`, `plugins` | kernel crate, with `LibraryEnv` + gateway in it | ≈ −1–1.5 s | ≈ 0 |
+| `relay` + `previews` + `terminal` | 2 701 | 7 refs: `app.rs`, `main.rs` (`bootstrap_relay_token`), `runners_admin/routes.rs`, `runner_plane/preview_streams.rs` | `runner_plane` (9), `freeze` (4), `conversations` (3), `oidc`, `AppState`, `audit`, `http::{auth, json, ratelimit, csrf, error}` | kernel crate, plus `runner_plane` (1.6 k) or traits | ≈ −0.5–1 s | ≈ 0 |
+| OpenAPI/utoipa layer | — | `#[utoipa::path]` sits on 313 handlers and `ToSchema` on the DTOs; `openapi.rs` is 56 lines | — | not separable from the handlers; its DTO half is the next row | — | — |
+| **DTO layer** → `crates/aurora-api-types` | 7 147 (42 `dto.rs`) | every domain, through `super::dto` | 6 references: `memory/dto.rs:22` `super::service::index_line`; `skills/dto.rs:1` `service::{self, SkillView}`; `agents/dto.rs:31,61` `byo::ByoView`, `avatar::public_path`; `tenancy/dto.rs:169` `agents::byo::ByoPostureView`; `groups/dto.rs:309` `http::pagination::Page` | none (only lower crates: `aurora-db` ×27 files, `aurora-registry`, `aurora-llm`) | **≈ −3–4.5 s** (≈ 26 % of expanded bytes, ≈ 52 % of the proc-macro output) | equal or worse: a derive-dense crate (est. 5–8 s; expansion is not incremental) + api lib (upstream changed) + `it` |
+
+The kernel prerequisite: every domain uses `crate::app::AppState`, `crate::audit` and `crate::http::*`, and `AppState`
+holds types from eight domains (`approvals::{bus, notify}`, `conversations::bus`, `connectors::bus`, `oidc::OidcClients`,
+`connect::Env` + `hooks`, `channels::card_requests::CardRequests`, `skill_libraries::{LibraryEnv, gateway}`,
+`auth::mail::Mailer`; `try_new` also calls `secrets::gov::instance_from_config` and builds `channels::cards::requests::CardsImpl`).
+A domain crate below `aurora-api` therefore first needs an `aurora-api-kernel` crate: `AppState` + `http/` (2.7 k) +
+`audit.rs` + those components (≈ 2 k), ≈ 5–6 k LOC, with router assembly and `CardsImpl` construction staying in
+`aurora-api`. That is two new crates for one domain seam, and every kernel edit still rebuilds everything above it.
+
+### Decision
+
+- **Brief's rule** (one-line api edit → `cargo test -p aurora-api --no-run` ≤ 30 s ⇒ no split): under load the medians are
+  42.5–48.3 s and the best single runs 31.8 s and 32.3 s (load ≈ 10). An idle host will probably land near the threshold,
+  so the rule's outcome is **pending idle confirmation** (rerun rows 1 and 2 of the first table on an idle host).
+- **Recommendation regardless of that number: do not run Part B with a domain seam.** The measured mechanism is a floor
+  over the whole crate (macro expansion, metadata, dep graph) plus the `it` crate. One domain seam removes ≈ 6 % of the floor
+  for edits outside it and nothing for edits inside it, and it needs a kernel crate first; the expected benefit is
+  below this host's noise.
+- If a Part B is still wanted, the **DTO crate is the best single seam**: no kernel needed, and it takes most of the
+  proc-macro output out of every api rebuild. Expected ≈ 3–4.5 s off each lib copy for edits that don't touch DTOs (≈ 10 % of
+  an edit→test cycle); edits that change an API shape (DTO + handler) get no faster, possibly slightly slower. Plan below.
+- **Cheaper levers, by measured yield:**
+  1. Supervisor dependency dev-only — done, 44.6 → 20.7 s for supervisor edits.
+  2. Inner loop `cargo test -p aurora-api --test it [filter]` instead of `cargo test -p aurora-api`: skips lib-test,
+     32.1 s vs 42.5–44.0 s median under load (≈ no gain on an idle host, where lib-test runs in parallel). The lane gate
+     already uses `--test it`; the 67 lib unit tests (24 modules) can run once before the final commit.
+  3. The `it` crate (10–17 s after every api edit, 6.1 s of it macro expansion, on the critical path): splitting it into
+     2–3 binaries that compile in parallel would cut that part roughly proportionally, at the cost of I-34 (more links and
+     disk; its link is 1.8 s). Needs an owner decision on I-34; not measured.
+
+### Part B plan (DTO seam), if chosen
+
+- New crate `crates/aurora-api-types` (lib, no tests of its own) depending on `aurora-core`, `aurora-db`,
+  `aurora-registry`, `aurora-llm`, `serde`, `serde_json`, `utoipa`, `uuid`, `chrono` — whatever the moved files import.
+  In `crates/` because it depends on crates only. Add it to the workspace members and `[workspace.dependencies]`, and
+  to the crate lists in `docs/02-engineering-conventions.md` and `docs/01-architecture.md`.
+- `git mv services/aurora-api/src/domains/<d>/dto.rs crates/aurora-api-types/src/<d>.rs` for all 42; the new `lib.rs`
+  declares `pub mod <d>;`. In `aurora-api` each `domains/<d>/mod.rs` replaces `pub mod dto;` with
+  `pub use aurora_api_types::<d> as dto;` (the three private `mod dto;` become `use aurora_api_types::<d> as dto;`), so
+  every `super::dto::X` and `crate::domains::<d>::dto::X` path keeps compiling unchanged. Inside the new crate,
+  `crate::domains::<x>::dto::` becomes `crate::<x>::`.
+- Also move: `http::pagination::Page` (the response type and its `ToSchema`; the query extractor stays),
+  `http::error::{ErrorEnvelope, ErrorBody}` only if `openapi.rs` cannot reach them otherwise, and the view structs
+  `agents::byo::{ByoView, ByoPostureView}`.
+- The outbound references: `memory/dto.rs` `index_line` and `agents/dto.rs` `avatar::public_path` are pure helpers — move
+  them along (or pass the value in). `skills/dto.rs` builds from `service::SkillView`: keep that conversion in `aurora-api` as
+  `impl From<SkillView> for Dto` (the orphan rule allows it: the local type is the trait parameter) or as a free function.
+  Any inherent `impl Dto` that needs api-internal items becomes a free function in the domain.
+- Visibility: no `pub(crate)` exists in any `dto.rs`, so the types need no change; only moved helpers go `pub(crate)` → `pub`.
+- Risks: (1) OpenAPI drift — utoipa names schemas by type ident, so the document should stay byte-identical;
+  `openapi_matches_checked_in` must pass without `UPDATE_OPENAPI`. (2) No `#[cfg(test)]` module lives in a `dto.rs`, so no
+  unit tests move. (3) Nearly every api lane edits `dto.rs` files: run it alone among api lanes, right after a rebase.
+  (4) The saving is an estimate from expansion byte shares: re-measure the `me/service.rs` row and the `--timings` row after
+  the move, record them here, and revert if the lib saving is below ≈ 2 s.
+
 ## Disk hygiene
 
 - `bash scripts/dev/disk-report.sh [dir…]` (or `just disk-report`): free space, `target/` of every
