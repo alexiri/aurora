@@ -1,6 +1,6 @@
 //! `CONNECT host:port`: MITM lane (TLS termination) and open lane (tunnel).
 
-use super::tunnel::stopped;
+use super::tunnel::{Active, Activity, InFlight, stopped};
 use super::{Proxy, Target, bridge, dial_error};
 use crate::auth::{CAP_BROWSER, Lane};
 use crate::guard::normalize_host;
@@ -11,7 +11,7 @@ use aurora_core::ApiError;
 use http::{Request, Response};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -27,6 +27,7 @@ impl Proxy {
         let Some(auth) = req.uri().authority() else {
             return guidance::response(&guidance::not_a_proxy_request());
         };
+        let limits = self.byo.tunnel_limits;
         let host = normalize_host(auth.host());
         let port = auth.port_u16().unwrap_or(443);
         let (identity, lane) = match self.authenticate(req.headers(), client).await {
@@ -37,6 +38,19 @@ impl Proxy {
         if let Err(e) = self.byo_gate(&identity, client, "CONNECT", &host) {
             return guidance::response(&e);
         }
+        // (FIX-106) Concurrent-tunnel caps, per credential and in total: one authenticated
+        // agent cannot hold the shared gateway's tasks and sockets.
+        let slot = match self
+            .tunnel_caps
+            .acquire(identity.credential_id, &self.byo.tunnel_limits)
+        {
+            Ok(s) => s,
+            Err(scope) => {
+                metrics::counter!("aurora_gateway_tunnel_refused_total", "scope" => scope)
+                    .increment(1);
+                return guidance::response(&guidance::tunnel_limit(scope));
+            }
+        };
         let guard = self
             .byo
             .tunnels
@@ -67,22 +81,35 @@ impl Proxy {
                 {
                     return guidance::response(&e);
                 }
-                let upstream = match dial(&self.guard, self.egress.as_ref(), &t.host, t.port).await
-                {
-                    Ok(s) => s,
-                    Err(e) => return guidance::response(&dial_error(&e)),
+                // (FIX-106) The dial is bounded like the inner handshake of the MITM lane.
+                let dialled = tokio::time::timeout(
+                    limits.handshake,
+                    dial(&self.guard, self.egress.as_ref(), &t.host, t.port),
+                )
+                .await;
+                let upstream = match dialled {
+                    Ok(Ok(s)) => s,
+                    Ok(Err(e)) => return guidance::response(&dial_error(&e)),
+                    Err(_) => return guidance::response(&guidance::upstream_timeout()),
                 };
                 let this = self.clone();
                 let live = self.track();
                 tokio::spawn(async move {
                     let _live = live;
+                    let _slot = slot;
                     // (RFE-006) The open-lane tunnel dies when its agent is frozen (or its BYO
                     // admission tightens): the registry guard is held for the tunnel's life.
                     let guard = guard;
                     let mut kill = guard.as_ref().map(crate::byo::TunnelGuard::killed);
                     let Ok(up) = on_upgrade.await else { return };
                     let started = Instant::now();
-                    let pipe = bridge(TokioIo::new(up), upstream, None, this.stop.subscribe());
+                    // (FIX-106) An open-lane tunnel ends at the idle limit like every other kind.
+                    let pipe = bridge(
+                        TokioIo::new(up),
+                        upstream,
+                        Some(limits.idle),
+                        this.stop.subscribe(),
+                    );
                     let (bytes_up, bytes_down) = match kill.as_mut() {
                         Some(k) => {
                             tokio::select! {
@@ -115,11 +142,18 @@ impl Proxy {
                 let live = self.track();
                 tokio::spawn(async move {
                     let _live = live;
+                    let _slot = slot;
                     let mut kill = guard.as_ref().map(crate::byo::TunnelGuard::killed);
                     let closed_by = guard.as_ref().map(crate::byo::TunnelGuard::closed_by);
                     let work = async {
                         let Ok(up) = on_upgrade.await else { return };
-                        let Ok(tls) = TlsAcceptor::from(cfg).accept(TokioIo::new(up)).await else {
+                        // (FIX-106) A tunnel that never sends its ClientHello is closed.
+                        let accepted = tokio::time::timeout(
+                            limits.handshake,
+                            TlsAcceptor::from(cfg).accept(TokioIo::new(up)),
+                        )
+                        .await;
+                        let Ok(Ok(tls)) = accepted else {
                             return;
                         };
                         this.serve_tunneled(tls, t).await;
@@ -157,13 +191,32 @@ impl Proxy {
         let this = self.clone();
         let mut kill = t.kill.clone();
         let closed_by = t.closed_by.clone();
+        let limits = self.byo.tunnel_limits;
+        let act = Activity::new();
+        let in_flight = act.clone();
         let svc = service_fn(move |req: Request<Incoming>| {
             let this = this.clone();
             let t = t.clone();
-            async move { Ok::<_, Infallible>(this.process(&t, req).await) }
+            let _busy = InFlight::new(&in_flight);
+            async move {
+                let _busy = _busy;
+                Ok::<_, Infallible>(this.process(&t, req).await)
+            }
         });
-        let builder = auto::Builder::new(TokioExecutor::new());
-        let conn = builder.serve_connection_with_upgrades(TokioIo::new(io), svc);
+        // (FIX-106) hyper enforces the header-read bound only with a timer.
+        let mut builder = auto::Builder::new(TokioExecutor::new());
+        builder
+            .http1()
+            .timer(TokioTimer::new())
+            .header_read_timeout(limits.header);
+        builder.http2().timer(TokioTimer::new());
+        let conn = builder.serve_connection_with_upgrades(
+            TokioIo::new(Active {
+                inner: io,
+                act: act.clone(),
+            }),
+            svc,
+        );
         tokio::pin!(conn);
         let mut stop = self.stop.subscribe();
         // Closed by a freeze or BYO tightening: let the answers go out, then shut the connection.
@@ -188,6 +241,10 @@ impl Proxy {
             () = stopped(&mut stop) => {
                 conn.as_mut().graceful_shutdown();
                 let _ = conn.await;
+            }
+            // (FIX-106) No traffic and nothing in flight for the idle limit: closed.
+            () = act.expired(limits.idle) => {
+                tracing::debug!("tunnel idle limit reached");
             }
         }
     }

@@ -287,6 +287,22 @@ published policy generation (no DB on the hot path; invalidation scopes `org`
 and `workspace`), so changing it takes effect for the next `CONNECT`; open
 tunnels end at the idle limit or when the client closes them.
 
+### Tunnel limits (FIX-106, REVIEW-5 GWT-1/GWT-2)
+
+Everything inside a `CONNECT` is attacker-paced, so every phase has a bound (all in
+`aurora_core::limits`, `02 §Limits`):
+
+| Bound | Value | Applies to |
+|-------|-------|------------|
+| `TUNNEL_HANDSHAKE_TIMEOUT` | 10 s | the inner TLS handshake of a MITM tunnel (from the `200` to a completed handshake) and the dial of an open-lane tunnel (a slow dial answers 504 `upstream_timeout`) |
+| `TUNNEL_HEADER_TIMEOUT` | 30 s | the head of each request inside a MITM tunnel (hyper's header-read bound, which needs a timer: the inner HTTP builder has one). It also bounds the wait for the next request on a keep-alive HTTP/1 tunnel |
+| `TUNNEL_IDLE_TIMEOUT` | 600 s (the WebSocket idle value) | **every** tunnel kind: open-lane tunnels, MITM tunnels (no bytes in either direction and no request in flight; a request held for approval is in flight, not idle) and upgraded WebSockets |
+| `TUNNEL_PER_CREDENTIAL_MAX` | 64 | concurrent tunnels of one credential; the next `CONNECT` is answered 429 `rate_limited` (`details.limit = "concurrent_tunnels"`, `retry-after: 5`) |
+| `TUNNEL_TOTAL_MAX` | 4096 | concurrent tunnels of the gateway (same answer, `details.scope = "total"`) |
+
+A refusal by a cap increments `aurora_gateway_tunnel_refused_total{scope="credential"|"total"}`.
+The slot is held for the tunnel's whole life and released when it ends, for any reason.
+
 ## Database lane (phase 2, P2-DBL-1, D-80)
 
 Spec: `21 §Phase 2 — Database lane`; invariant SEC-60. Code: `services/aurora-gateway/src/db/`

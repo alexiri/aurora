@@ -89,6 +89,19 @@ pub fn ambiguous_path() -> ApiError {
     )
 }
 
+/// (FIX-106) 429: the credential (or the gateway) holds as many tunnels as it may.
+pub fn tunnel_limit(scope: &str) -> ApiError {
+    ApiError::rate_limited(
+        5,
+        if scope == "total" {
+            "The gateway holds as many tunnels as it allows. Retry shortly."
+        } else {
+            "This credential already holds as many concurrent tunnels as it may. Close one or retry shortly."
+        },
+    )
+    .with_details(json!({ "limit": "concurrent_tunnels", "scope": scope }))
+}
+
 pub fn upstream_timeout() -> ApiError {
     ApiError::gateway_timeout("upstream_timeout", "The upstream did not respond in time.")
 }

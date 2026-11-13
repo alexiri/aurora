@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
 
-pub use tunnel::bridge;
+pub use tunnel::{TunnelLimits, bridge};
 
 /// In-flight work may finish for this long after SIGTERM.
 /// Response-body prefix inspected for `token.stale_codes.body_contains`.
@@ -55,6 +55,8 @@ pub struct ByoParts {
     pub tunnels: Option<Arc<crate::byo::TunnelRegistry>>,
     /// (phase 3, RFE-014) Outage state: new connections are refused while `down`.
     pub health: Option<Arc<crate::health::Health>>,
+    /// (FIX-106) Inbound tunnel bounds; the defaults are the `aurora_core::limits` values.
+    pub tunnel_limits: TunnelLimits,
 }
 
 #[derive(Default)]
@@ -82,6 +84,8 @@ pub struct Proxy {
     stop: watch::Sender<bool>,
     live: Arc<Live>,
     byo: ByoParts,
+    /// (FIX-106) Live tunnels, per credential and in total.
+    tunnel_caps: Arc<tunnel::TunnelCaps>,
     refusals: crate::byo::RefusalLimiter,
     /// (FIX-086) Rate limit of the CONNECT-authentication refusal log line, per source address.
     connect_log: SourceLimiter,
@@ -132,6 +136,7 @@ impl Proxy {
             stop: watch::channel(false).0,
             live: Arc::default(),
             byo,
+            tunnel_caps: Arc::default(),
             refusals: crate::byo::RefusalLimiter::default(),
             connect_log: SourceLimiter::default(),
             db_cancel: crate::db::pg::CancelRegistry::default(),
