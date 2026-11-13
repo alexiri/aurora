@@ -390,3 +390,49 @@ async fn a_request_already_in_the_pipeline_keeps_the_identity_it_started_with() 
         "the owned identity is unchanged"
     );
 }
+
+#[tokio::test]
+async fn a_speaker_in_more_than_100_groups_is_refused_never_truncated() {
+    // Truncating to 100 ids (ORDER BY group id) would hide the highest-id group from the
+    // policy: a block rule naming it would never match and the request would pass.
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    sqlx::query(
+        "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+    )
+    .bind(w.ws)
+    .bind(w.alice)
+    .execute(p)
+    .await
+    .unwrap();
+    let mut ids = Vec::new();
+    for i in 0..100 {
+        let g = group(p, w.org, &format!("g{i}"), None).await;
+        member(p, g, w.org, w.alice).await;
+        ids.push(g);
+    }
+    cred(p, w.hosted, "auc_alice", "context", Some(w.alice)).await;
+    let r = live(p).await;
+    // exactly at the limit: resolves with every id
+    assert_eq!(resolve(&r, "auc_alice").await.speaker_group_ids.len(), 100);
+    // a 101st membership (the cap bypassed, inserted directly) whose id sorts last
+    let last = group(p, w.org, "last", None).await;
+    member(p, last, w.org, w.alice).await;
+    assert!(last > *ids.iter().max().unwrap());
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "user", "id": w.alice}),
+    )
+    .await;
+    let mut refused = false;
+    for _ in 0..100 {
+        if r.resolve("auc_alice").await.is_err() {
+            refused = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(refused, "resolution must fail closed above 100 groups");
+}

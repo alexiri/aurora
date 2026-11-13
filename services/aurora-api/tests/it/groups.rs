@@ -1214,3 +1214,71 @@ async fn access_notification_ends_the_removed_users_long_poll() {
         ended - began
     );
 }
+
+// ---------------------------------------------------------------- FIX-063
+
+#[tokio::test]
+async fn concurrent_adds_of_one_user_never_exceed_the_per_user_cap() {
+    let f = fx().await;
+    sqlx::query(
+        "INSERT INTO groups (id, org_id, name) SELECT gen_random_uuid(), $1, 'g' || i FROM generate_series(1, 101) i",
+    )
+    .bind(f.org)
+    .execute(f.h.pool())
+    .await
+    .unwrap();
+    // 99 memberships, two more groups to race into
+    sqlx::query(
+        "INSERT INTO group_members (group_id, org_id, user_id) \
+         SELECT id, org_id, $2 FROM groups WHERE org_id = $1 ORDER BY name LIMIT 99",
+    )
+    .bind(f.org)
+    .bind(f.plain.id)
+    .execute(f.h.pool())
+    .await
+    .unwrap();
+    let free: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM groups WHERE org_id = $1 AND id NOT IN \
+         (SELECT group_id FROM group_members WHERE user_id = $2) ORDER BY id LIMIT 2",
+    )
+    .bind(f.org)
+    .bind(f.plain.id)
+    .fetch_all(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(free.len(), 2);
+    let (a, b) = tokio::join!(f.add(free[0], f.plain.id), f.add(free[1], f.plain.id));
+    let mut got = [(a.0, code(&a.1).to_owned()), (b.0, code(&b.1).to_owned())];
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            (200, String::new()),
+            (422, "group_user_limit_reached".to_owned())
+        ]
+    );
+    assert_eq!(
+        f.n(&format!(
+            "SELECT count(*) FROM group_members WHERE user_id = '{}'",
+            f.plain.id
+        ))
+        .await,
+        100
+    );
+}
+
+#[tokio::test]
+async fn group_only_workspace_access_counts_for_workspace_user_checks() {
+    // `uses_any_workspace` (skill-library browse) reads the effective views, not the raw rows.
+    let f = fx().await;
+    let list = format!("/v1/orgs/{}/skill-libraries", f.org);
+    let (s, v) = f.call(&f.plain, Method::GET, &list, None).await;
+    assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
+    let g = f.create("readers", json!({})).await;
+    let (s, v) = f.bind(g, "member").await;
+    assert!(s == 200 || s == 201, "{v}");
+    let (s, v) = f.add(g, f.plain.id).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = f.call(&f.plain, Method::GET, &list, None).await;
+    assert_eq!(s, 200, "{v}");
+}

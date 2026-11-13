@@ -104,7 +104,7 @@ export function ProfileView() {
       <Section id="profile" title="Profile" description="How you appear to other people in your organizations." card>
         <ProfileForm key={me.dataUpdatedAt} me={me.data} />
       </Section>
-      {(me.data.groups ?? []).length > 0 || me.data.memberships.some((m) => m.effective_role !== m.role) ? (
+      {(me.data.groups ?? []).length > 0 || me.data.memberships.some((m) => m.status === "active" && m.effective_role !== m.role) ? (
         <Section
           id="my-groups"
           title="Your groups and role"
@@ -118,8 +118,8 @@ export function ProfileView() {
                 const via = m.sources.filter((s) => s.kind === "group").map((s) => s.group?.name);
                 return (
                   <li key={m.org.id}>
-                    <span className="font-medium">{m.org.name}</span>: {m.effective_role}
-                    {m.effective_role !== m.role && via.length > 0 ? ` (via ${via.join(", ")})` : ""}
+                    <span className="font-medium">{m.org.name}</span>: {m.effective_role ?? m.role}
+                    {m.effective_role != null && m.effective_role !== m.role && via.length > 0 ? ` (via ${via.join(", ")})` : ""}
                     {groups.length > 0 ? ` — groups: ${groups.map((g) => g.name).join(", ")}` : ""}
                   </li>
                 );

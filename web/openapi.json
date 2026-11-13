@@ -28960,14 +28960,20 @@
           "org",
           "role",
           "status",
-          "effective_role",
           "sources",
           "workspaces"
         ],
         "properties": {
           "effective_role": {
-            "$ref": "#/components/schemas/OrgRole",
-            "description": "(phase 4, P4-GRP-1) The effective org role: the strongest of `role` and the `org_role` of\nthe caller's groups, only while the membership is active (`role` stays the direct role)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrgRole",
+                "description": "(phase 4, P4-GRP-1) The effective org role: the strongest of `role` and the `org_role` of\nthe caller's groups, only while the membership is active (`role` stays the direct role);\n`null` for a suspended membership (C-465)."
+              }
+            ]
           },
           "org": {
             "$ref": "#/components/schemas/OrgSummary"
