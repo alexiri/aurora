@@ -8472,6 +8472,12 @@ export interface components {
         ReachDecision: "approve" | "block";
         ReachDecisionRequest: {
             decision: components["schemas"]["ReachDecision"];
+            /**
+             * Format: int32
+             * @description (FIX-111) Approve only: the grant expires this many seconds from now (60 s to 365 days)
+             *     and then needs a new approval; without it a grant does not expire.
+             */
+            expires_in?: number | null;
             listen?: null | components["schemas"]["Listen"];
             /** Format: int64 */
             revision: number;
@@ -19909,6 +19915,8 @@ export interface operations {
             query?: {
                 /** @description Page size (default 50, max 200). */
                 limit?: number | null;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string | null;
             };
             header?: never;
             path: {
@@ -21589,6 +21597,8 @@ export interface operations {
             query?: {
                 /** @description Page size (default 50, max 200). */
                 limit?: number | null;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string | null;
             };
             header?: never;
             path: {

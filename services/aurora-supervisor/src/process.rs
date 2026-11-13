@@ -35,7 +35,7 @@ use crate::channel::ChannelSender;
 pub const GATE_CAPTURE: usize = 16 * 1024;
 const MAX_NAME: usize = 64;
 const MAX_COMMAND: usize = 4096;
-const MAX_PATTERN: usize = 256;
+const MAX_PATTERN: usize = aurora_core::limits::WATCH_PATTERN_MAX;
 const MAX_WATCHES: usize = 8;
 
 #[derive(Debug, Clone)]

@@ -13,7 +13,7 @@ The normative text is [docs/10 §Archive, delete, redaction, retention, export](
 | `attachments.days_max` | unset (no ceiling) | 7 to 3650 days | The same for attachment bytes. |
 | `attachments.default_org_quota_mib` | `10240` (10 GiB) | `0` = unlimited | Attachment storage quota of an organization that has set none. |
 | `attachments.org_quota_mib_max` | `51200` (50 GiB) | `0` = no ceiling | The highest quota an organization may choose. |
-| `retention.request_log_days` | `30` | at least 1 | How long the gateway request log is kept (see [backups.md](backups.md)). |
+| `retention.request_log_days` | `30` | at least 1 | How long the gateway request log is kept (see [backups.md](backups.md)). Rows are deleted when older than this, checked daily (not only whole months). |
 
 An out-of-range value stops the API at startup and names the key. Both quota keys are limited to 1 073 741 824 MiB.
 
@@ -44,6 +44,7 @@ A value above the instance ceiling is refused with 422 `retention_above_instance
 - **Quota.** Every upload checks `used + size <= quota` first: the dashboard and API answer 422 `attachment_quota_exceeded` (`details.used_mib`, `details.quota_mib`); an agent's `send_file` gets a tool error; a connector file fetch is marked `failed`.
   The organization's owners get a notice at 80 % and 100 %.
 - The attachment job also removes orphaned blobs and recomputes the usage counters.
+- **Daily housekeeping** (FIX-111). A daily job removes rows that only ever grow: finished chat-platform ledger rows (inbound events, outbound operations, interactive cards, link requests) older than 7 days (a pending bot-removal operation is never removed), sessions and expired agent context credentials 7 days after they expired or were revoked, and webhook deliveries older than 30 days or beyond the newest 10 000 per webhook.
 
 ## Sizing and verification
 

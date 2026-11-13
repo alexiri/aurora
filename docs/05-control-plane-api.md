@@ -360,11 +360,11 @@ claim-based and safe to run everywhere.
 | Skill library retention (phase 4, P4-GSL): prune decided `skill_library_updates` older than 90 days; expire leases; mark libraries whose connection vanished `error` | daily | singleton |
 | Preview housekeeping (phase 4, P4-PRV-1/2): delete expired `preview_sessions`, `preview_grant_uses` and `preview_stream_grants`; clear stale `sandboxes.preview_wake_at`/`preview_start_requested_at`; count shares per org for `aurora_preview_shares` | every 60 s | idempotent (`SKIP LOCKED` batches) |
 | Request-log partition maintenance and retention | daily | singleton |
-| Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
+| Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) (FIX-111: implemented for terminal `channel_inbox`/`channel_ops` rows (a pending deprovision op survives), settled `channel_cards`, expired `link_requests`, sessions and context credentials past `SESSION_PRUNE_GRACE`, `webhook_deliveries` past `WEBHOOK_DELIVERY_RETENTION` or over `WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`, and `cli_logins` past `SESSION_PRUNE_GRACE` after expiry; used action tokens are pruned by the card fan-out, `email_tokens` are no longer written (OIDC-only sign-in); each statement deletes at most `RETENTION_PRUNE_BATCH` rows) | daily | singleton, `SKIP LOCKED` batches |
 | Runtime daily rollup | hourly | singleton |
 | Plugin directory scan | startup + 60 s | singleton |
 | Snapshot compile & activate | on package state change | singleton |
-| Peer-task and reach expiry | every 60 s | idempotent |
+| Peer-task and reach expiry (FIX-111: `approved` reach grants past `expires_at`, set by `expires_in` on the decision, become `expired`) | every 60 s | idempotent |
 
 ## The due-work engine
 

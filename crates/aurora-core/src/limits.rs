@@ -40,7 +40,6 @@ pub const WEBSOCKET_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// flush interval; also flushes at `REQUEST_LOG_FLUSH_ROWS` rows.
 pub const REQUEST_LOG_FLUSH: Duration = Duration::from_secs(5);
 pub const REQUEST_LOG_FLUSH_ROWS: u32 = 500;
-pub const REQUEST_LOG_RETENTION: Duration = Duration::from_secs(2592000);
 pub const BATCH_HEADER_MAX: usize = 128;
 pub const CONNECTION_CHOICE_MAX: u32 = 20;
 pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
@@ -188,6 +187,19 @@ pub const OP_BACKOFF_MAX: Duration = Duration::from_secs(600);
 /// creation (instead of `OP_MAX_ATTEMPTS`), then `failed`.
 pub const DEPROVISION_RETRY_WINDOW: Duration = Duration::from_secs(24 * 3600);
 pub const CHANNEL_LEDGER_RETENTION: Duration = Duration::from_secs(604800);
+/// (FIX-111) Webhook delivery rows are kept this long, and at most
+/// [`WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`] per webhook (rejected requests write rows too).
+pub const WEBHOOK_DELIVERY_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
+pub const WEBHOOK_DELIVERY_MAX_PER_WEBHOOK: i64 = 10_000;
+/// (FIX-111) Revoked or expired sessions and expired context credentials are removed by the
+/// daily retention pass this long after expiry or revocation.
+pub const SESSION_PRUNE_GRACE: Duration = Duration::from_secs(7 * 24 * 3600);
+/// (FIX-111) Rows removed per statement by the daily retention pass (`SKIP LOCKED` batches:
+/// no long lock, no unbounded transaction).
+pub const RETENTION_PRUNE_BATCH: i64 = 1_000;
+/// (FIX-111) Bounds of `expires_in` (seconds) on a reach-grant approval: 1 minute to 365 days.
+pub const REACH_EXPIRES_IN_MIN_SECS: u32 = 60;
+pub const REACH_EXPIRES_IN_MAX_SECS: u32 = 365 * 24 * 3600;
 /// fallback TTL when there is no approval deadline.
 pub const ACTION_TOKEN_TTL: Duration = Duration::from_secs(86400);
 /// consecutive bot-authored turns.

@@ -123,10 +123,11 @@ pub async fn decide<'e, E: PgExecutor<'e>>(
     state: &str,
     listen: &str,
     by: Uuid,
+    expires_at: Option<DateTime<Utc>>,
 ) -> Result<Option<i64>, DbError> {
     Ok(sqlx::query_scalar(
         "UPDATE reach_grants
-            SET state=$3, listen=$4, decided_by_user_id=$5, decided_at=now(),
+            SET state=$3, listen=$4, decided_by_user_id=$5, decided_at=now(), expires_at=$6,
                 revision=revision+1, updated_at=now()
           WHERE id=$1 AND revision=$2
           RETURNING revision",
@@ -136,8 +137,22 @@ pub async fn decide<'e, E: PgExecutor<'e>>(
     .bind(state)
     .bind(listen)
     .bind(by)
+    .bind(expires_at)
     .fetch_optional(exec)
     .await?)
+}
+
+/// (FIX-111, docs/05 "Peer-task and reach expiry") `approved` grants past their `expires_at`
+/// become `expired` (revision bumped); the next message from the subject reopens them as
+/// `pending`. Idempotent, safe on every replica.
+pub async fn expire_due<'e, E: PgExecutor<'e>>(exec: E) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE reach_grants SET state='expired', revision=revision+1, updated_at=now()
+          WHERE state='approved' AND expires_at IS NOT NULL AND expires_at <= now()",
+    )
+    .execute(exec)
+    .await?
+    .rows_affected())
 }
 
 /// Whether any of `person_refs` has an approved person grant for `agent` on `integration`.

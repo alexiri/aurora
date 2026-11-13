@@ -202,7 +202,11 @@ overridden by the named configuration key (`15`).
 | `AGENT_TOKEN_STALE_DAYS` / `AGENT_TOKEN_EXPIRING_DAYS` | (phase 3, RFE-013) 30 days unused / 14 days to expiry | — | 08 §7, 14 |
 | `BYO_REFUSAL_LOG_INTERVAL` | (phase 2, RFE-025) one log line and one request-log row per credential per minute for gateway BYO refusals | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
-| `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
+| Request-log retention | 30 days (key default; rows are deleted when older than the period, checked daily: aged rows of the oldest kept monthly partition and of the default partition are deleted in batches of 10 000, whole partitions past the period are dropped) | `retention.request_log_days` | 15 |
+| `WEBHOOK_DELIVERY_RETENTION` | (FIX-111) 30 days, and at most 10 000 rows per webhook (`WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`), removed by the daily retention pass | — | 05, 10 |
+| `SESSION_PRUNE_GRACE` | (FIX-111) 7 days after expiry or revocation before the daily retention pass removes a session or an expired context credential | — | 03, 05 |
+| `RETENTION_PRUNE_BATCH` | (FIX-111) 1 000 rows per statement in the daily retention pass (`SKIP LOCKED` batches; no long lock) | — | 05 |
+| `REACH_EXPIRES_IN` | (FIX-111) `expires_in` on a reach-grant approval: 60 s to 365 days (seconds); without it a grant does not expire | — | 05, 13 |
 | `SANDBOX_START_LOG_MAX` | (phase 4, FIX-029, C-612) 30 entries and 8 KiB per boot's start log ring (`sandboxes.start_log`; oldest dropped, detail ≤ 300 chars) | — | 11 |
 | `BATCH_HEADER_MAX` | 128 chars | — | 06 |
 | `CONNECTION_CHOICE_MAX` | 20 entries | — | 06 |

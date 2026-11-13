@@ -30,19 +30,27 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
   const q = useWebhookDeliveries(agentId, id, true);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <p className="text-sm text-muted">No deliveries yet.</p>;
+  const items = q.data.pages.flatMap((p) => p.items);
+  if (items.length === 0) return <p className="text-sm text-muted">No deliveries yet.</p>;
   return (
-    <DataTable caption="Deliveries">
-      <tbody>
-        {q.data.items.map((d) => (
-          <tr key={d.id}>
-            <Td className="whitespace-nowrap">{fmtDate(d.received_at)}</Td>
-            <Td>{d.status}</Td>
-            <Td className="whitespace-nowrap">{d.size} B</Td>
-          </tr>
-        ))}
-      </tbody>
-    </DataTable>
+    <div className="flex flex-col gap-3">
+      <DataTable caption="Deliveries">
+        <tbody>
+          {items.map((d) => (
+            <tr key={d.id}>
+              <Td className="whitespace-nowrap">{fmtDate(d.received_at)}</Td>
+              <Td>{d.status}</Td>
+              <Td className="whitespace-nowrap">{d.size} B</Td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
+      {q.hasNextPage ? (
+        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+          Load more
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

@@ -112,7 +112,7 @@ impl PlatformTool for Deliveries {
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: IdArgs = parse(args)?;
         let w = own(ctx, a.id).await?;
-        let rows = repo::list_deliveries(&ctx.agent.pool, w.id, 50).await?;
+        let rows = repo::list_deliveries(&ctx.agent.pool, w.id, None, 50).await?;
         out(json!({"deliveries": rows.iter().map(|d| json!({
             "id": d.id, "received_at": d.created_at,
             "status": api_status(&d.status, d.reason.as_deref()),

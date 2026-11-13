@@ -401,7 +401,9 @@ idempotent). Steps:
    Bot authors: allowed only through an approved `person` reach grant for the
    bot, metered by the app-turn cap.
 5. **Authorization**: `can_use(user, agent workspace)` or an approved reach
-   grant (person = author, or space = this space). Otherwise send a polite
+   grant (person = author, or space = this space; (FIX-111) an approval may carry
+   `expires_in`: past its `expires_at` the grant is no longer effective, the 60 s sweep
+   marks it `expired`, and the next message reopens it as `pending`). Otherwise send a polite
    refusal **before anything reaches the agent**, create/refresh a `pending`
    reach grant and notify the agent's workspace owners (dashboard + a
    `reach.decide` card DM to owners linked on this integration). Stop.

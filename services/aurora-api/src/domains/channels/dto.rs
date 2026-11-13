@@ -353,4 +353,7 @@ pub struct ReachDecisionRequest {
     /// Defaults to the grant's current listen mode.
     pub listen: Option<Listen>,
     pub revision: i64,
+    /// (FIX-111) Approve only: the grant expires this many seconds from now (60 s to 365 days)
+    /// and then needs a new approval; without it a grant does not expire.
+    pub expires_in: Option<u32>,
 }

@@ -16012,7 +16012,20 @@
                 "integer",
                 "null"
               ],
-              "format": "int64"
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -18593,7 +18606,20 @@
                 "integer",
                 "null"
               ],
-              "format": "int64"
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -35977,6 +36003,15 @@
         "properties": {
           "decision": {
             "$ref": "#/components/schemas/ReachDecision"
+          },
+          "expires_in": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "(FIX-111) Approve only: the grant expires this many seconds from now (60 s to 365 days)\nand then needs a new approval; without it a grant does not expire.",
+            "minimum": 0
           },
           "listen": {
             "oneOf": [

@@ -737,6 +737,11 @@ secret, constant-time compare) → 401 on mismatch.
   active owner) → 410 / 403 and a `webhook_deliveries` row.
   (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row
   `paused` (reason `frozen`); the webhook stays enabled.
+  (FIX-111) Delivery rows (including every rejected request) are kept
+  `WEBHOOK_DELIVERY_RETENTION` (30 days) and at most `WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`
+  (10 000) per webhook; the daily retention pass removes the rest. `GET
+  /v1/webhooks/{id}/deliveries` and `GET /v1/schedules/{id}/runs` page by cursor
+  (`05` list convention).
 - Accepted → turn in the webhook's run conversation with the stored
 instructions + payload; responds `202 { "delivery_id" }` immediately.
 - Rate limit: 60 deliveries/min per webhook (429).
