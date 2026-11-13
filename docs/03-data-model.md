@@ -138,6 +138,7 @@ owner cannot be demoted or removed).
 | frozen_reason | text null | (phase 2, RFE-006) |
 | frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | (phase 2, RFE-006) |
 | personal_owner_user_id | uuid null FK→users (set null) | (phase 4, P4-ONB-1, D-140, SEC-79) the user this personal workspace was created for; unique per (`org_id`, user) (partial index); the only way sign-in finds a personal workspace |
+| personal | boolean not null default false | (phase 4, FIX-097) sticky marker: set with `personal_owner_user_id` and kept when that id is nulled by the user's deletion; a personal workspace is never offered as a shared workspace (readers treat a row with an owner id as personal too) |
 
 ### `instance_placement`
 (phase 4, P4-ONB-1, D-140) The instance admin's new-user placement (`04 §New-user placement`). At most one row; no row = unsaved (behaves as `personal_org` under `open`).
@@ -597,8 +598,10 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | context_label | text null | (phase 2, RFE-025) label of the BYO context credential (a labelled `aurora run`), ≤128, sanitized (`08 §11.9`) |
 | speaker_user_id | uuid null | (phase 2, RFE-005) the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request |
 
-Partitions are created ahead by the API (next 2 months) and dropped after
-`REQUEST_LOG_RETENTION`.
+Partitions are created ahead by the API (next 2 months); rows are deleted when older than
+`retention.request_log_days` (default 30), checked daily: whole partitions past the period are
+dropped, aged rows of the oldest kept partition and of the default partition are deleted in
+bounded batches (FIX-111).
 
 ### `rate_limit_windows` (phase 4, P4-CNT, D-119; shared fixed-window counters)
 `UNLOGGED` table (counters are not a system of record: a Postgres crash or a failover to a standby that lacks unlogged data resets windows, which at worst grants one extra window of quota and is listed in `17` residual risks). Used only when `ratelimit.counters.backend = postgres` (`15 §Shared rate-limit counters`); the migration creates it whatever the backend is (empty, no cost).

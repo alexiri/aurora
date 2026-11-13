@@ -324,6 +324,77 @@ pub fn confirmation_mismatch() -> ApiError {
     )
 }
 
+/// Discard managed secret values whose rows are gone (docs/08 §Secret stores): after the
+/// commit, best effort. A failure leaves an orphan in the store, which is logged — never a
+/// reason to undo a committed deletion.
+pub async fn discard_managed(state: &AppState, refs: Vec<orgs::ManagedRef>) {
+    use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
+    for r in refs {
+        let Ok(sref) = r.value_ref.parse::<SecretRef>() else {
+            continue;
+        };
+        let ctx = SealContext {
+            purpose: match r.kind {
+                orgs::ManagedKind::SecretValue => Purpose::SecretValue,
+                orgs::ManagedKind::ConnectionCredentials => Purpose::ConnectionCredentials,
+                orgs::ManagedKind::OauthClientSecret => Purpose::OauthClientSecret,
+            },
+            owner_id: r.owner_id,
+            org_id: r.org_id.unwrap_or_else(Uuid::nil),
+            workspace_id: r.workspace_id,
+        };
+        if let Err(e) = state.vault.discard(&ctx, &sref, ValueSource::Managed).await {
+            tracing::warn!(error = %e, owner = %r.owner_id, "managed secret value not discarded");
+        }
+    }
+}
+
+/// A workspace deletion in three steps, so a caller can combine several (or other deletes) in
+/// one transaction: [`WorkspaceDeletion::prepare`] seals the deprovision copies,
+/// [`WorkspaceDeletion::run`] deletes inside the caller's transaction, and after the commit
+/// [`WorkspaceDeletion::committed`] discards what must not outlive the rows (managed secret
+/// values, spare credential copies); [`WorkspaceDeletion::rollback`] on failure.
+pub struct WorkspaceDeletion {
+    dep: crate::domains::channels::deprovision::Prepared,
+    refs: Vec<orgs::ManagedRef>,
+}
+
+impl WorkspaceDeletion {
+    pub async fn prepare(state: &AppState, ws: Uuid) -> Result<Self, ApiError> {
+        use crate::domains::channels::deprovision::{self, Scope};
+        // Self-contained deprovision ops (RFE-024): sealed first (503 when the secret store is
+        // unavailable, nothing deleted), committed with the delete, before the cascade.
+        Ok(Self {
+            dep: deprovision::prepare(state, Scope::Workspace(ws)).await?,
+            refs: Vec::new(),
+        })
+    }
+
+    pub async fn run(
+        &mut self,
+        tx: &mut PgConnection,
+        org: Uuid,
+        ws: Uuid,
+    ) -> Result<(), ApiError> {
+        self.dep.enqueue(tx).await?;
+        self.refs
+            .extend(orgs::managed_refs(&mut *tx, org, Some(ws)).await?);
+        workspaces::delete(&mut *tx, ws).await?;
+        // (FIX-097) Gateways hold the workspace's secrets, connections and policy warm.
+        aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "workspace", ws).await?;
+        Ok(())
+    }
+
+    pub async fn committed(self, state: &AppState) {
+        self.dep.committed(state).await;
+        discard_managed(state, self.refs).await;
+    }
+
+    pub async fn rollback(&self, state: &AppState) {
+        self.dep.rollback(state).await;
+    }
+}
+
 pub async fn delete_org(
     state: &AppState,
     org_id: Uuid,
@@ -333,10 +404,15 @@ pub async fn delete_org(
     // Self-contained deprovision ops (RFE-024): the integrations are removed by the cascade, so
     // each op carries its own sealed credential copy. The org's shared bot stays (C-364).
     let mut dep = deprovision::prepare(state, Scope::Org(org_id)).await?;
+    let mut refs = Vec::new();
     let done = async {
         let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
         dep.enqueue(&mut tx).await?;
+        // (FIX-097) The managed values of the org's secrets, connections and OAuth clients
+        // lose their rows with the cascade: collect them now, discard after the commit.
+        refs = orgs::managed_refs(&mut tx, org_id, None).await?;
         orgs::delete_cascade(&mut tx, org_id).await?;
+        aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "org", org_id).await?;
         crate::audit::commit_critical(tx, ev).await
     }
     .await;
@@ -345,6 +421,7 @@ pub async fn delete_org(
         return Err(e);
     }
     dep.committed(state).await;
+    discard_managed(state, refs).await;
     Ok(())
 }
 

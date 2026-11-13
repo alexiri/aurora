@@ -127,8 +127,10 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
                     .await
                     .retry()?;
                 (
-                    g.filter(|g| g.state == "approved")
-                        .map_or_else(|| "mentions".to_owned(), |g| g.listen),
+                    g.filter(|g| {
+                        g.state == "approved" && g.expires_at.is_none_or(|e| e > chrono::Utc::now())
+                    })
+                    .map_or_else(|| "mentions".to_owned(), |g| g.listen),
                     false,
                 )
             }

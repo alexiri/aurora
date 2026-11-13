@@ -1,0 +1,4 @@
+description: FIX-109 - the allow behaviour is pinned the same way - an allow on /v1/users also matches /v1/users/ (loosening for the slash variant; the upgrade note says so)
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000b2, name: ws-allow-users, action: allow, targets: [{type: network, host: api.example.com, path: '/v1/users'}]}]}
+facts: {host: api.example.com, port: 443, path: /v1/users/, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow, workspace_rule: ws-allow-users}

@@ -770,3 +770,48 @@ async fn tools_list_deliveries_update_scoped_to_own_agent() {
         .await;
     assert!(v.to_string().contains("lost access"), "{v}");
 }
+
+/// (FIX-111 5) The delivery history pages by keyset cursor: following `next_cursor` through
+/// more than 200 deliveries (some sharing one `created_at`) returns each exactly once.
+#[tokio::test]
+async fn delivery_history_pages_by_cursor() {
+    let r = rig().await;
+    let agent = r.agent("pager").await;
+    let (_, v) = r
+        .create(agent, json!({"name": "pg", "instructions": "x"}))
+        .await;
+    let id = v["webhook"]["id"].as_str().unwrap().to_owned();
+    sqlx::query(
+        "INSERT INTO webhook_deliveries (id, webhook_id, status, size_bytes, created_at)
+         SELECT gen_random_uuid(), $1::uuid, 'accepted', 1, now() - make_interval(secs => g / 3)
+         FROM generate_series(1, 450) g",
+    )
+    .bind(&id)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let mut seen = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let uri = match &cursor {
+            None => format!("/v1/webhooks/{id}/deliveries?limit=200"),
+            Some(c) => format!("/v1/webhooks/{id}/deliveries?limit=200&cursor={c}"),
+        };
+        let (s, v) = r.user(Method::GET, &uri, None).await;
+        assert_eq!(s, 200, "{v}");
+        seen.extend(
+            v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["id"].as_str().unwrap().to_owned()),
+        );
+        match v["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    assert_eq!(seen.len(), 450);
+    let unique: std::collections::HashSet<_> = seen.iter().collect();
+    assert_eq!(unique.len(), 450, "each delivery exactly once");
+}

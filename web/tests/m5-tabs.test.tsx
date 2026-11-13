@@ -51,6 +51,32 @@ describe("SchedulesTab", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("already has a run in progress");
   });
 
+  it("pages the run history with Load more, following next_cursor", async () => {
+    const run = (id: string, outcome: string) => ({
+      id, schedule_id: "s1", fired_at: "2026-01-02T09:00:00Z", scheduled_for: "2026-01-02T09:00:00Z", created_at: "2026-01-02T09:00:00Z", outcome,
+    });
+    const cursors: (string | null)[] = [];
+    mockFetch({
+      "GET /v1/agents/a1/schedules": () => json(200, { items: [sched], next_cursor: null }),
+      "GET /v1/schedules/s1/runs": (r) => {
+        const c = new URL(r.url, "http://localhost").searchParams.get("cursor");
+        cursors.push(c);
+        return c
+          ? json(200, { items: [run("r2", "coalesced")], next_cursor: null })
+          : json(200, { items: [run("r1", "gated_quiet")], next_cursor: "CUR1" });
+      },
+    });
+    wrap(<SchedulesTab agentId="a1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Runs" }));
+    expect(await screen.findByText("gated_quiet")).toBeTruthy();
+    expect(screen.queryByText("coalesced")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("coalesced")).toBeTruthy();
+    expect(screen.getByText("gated_quiet")).toBeTruthy();
+    expect(cursors).toEqual([null, "CUR1"]);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
   it("creates with the workspace timezone default and shows server cron validation", async () => {
     let body: Record<string, unknown> | null = null;
     let attempt = 0;

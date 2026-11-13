@@ -117,11 +117,17 @@ present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
   and `a.b.example.com`, not `example.com`). Patterns with more than one `*`
   are rejected at authoring and, if ever encountered at runtime, match nothing.
   An optional `:port` in a pattern must equal the request port; without it any
-  port matches.
+  port matches. (FIX-109) Host patterns are ASCII: clients send the punycode form, so an
+  internationalised name is written in its punycode form (`xn--bcher-kva.example`);
+  authoring refuses other characters with that hint (a Unicode pattern would be accepted
+  and never match).
 - **Path patterns**: `/`-separated segments; a segment is a literal, `*` (exactly
   one non-empty segment) or, as the **last** segment only, `**` (zero or more
   segments). A literal segment may end with `*` for prefix matching within that
-  segment (`/v1/file*`). Query strings never participate.
+  segment (`/v1/file*`). Query strings never participate. (FIX-109) A trailing `/` is
+  not significant: `/a/b` and `/a/b/` match the same literal pattern (most frameworks
+  serve both identically, and doubt only tightens: a block on `/v1/users` must also stop
+  `/v1/users/`). For allow rules this loosens by the slash variant.
 - **Methods**: uppercase list; empty = any.
 - **GraphQL kind** (tools tagged `graphql: query|mutation`): parse the JSON
   body (`{query, operationName}` or a batch array) and the GraphQL document
@@ -389,7 +395,9 @@ facts per tool (one per tool's first method/path example).
 - **Publish**: copies the draft into a new `published` generation (previous
   becomes `superseded`), creates a fresh draft as a copy, invalidates gateways.
 - **Rollback**: publishes a copy of an older generation's rules as a new
-  generation (history is append-only).
+  generation (history is append-only). (FIX-109) It replaces the current draft, so it
+  requires the draft revision the caller last read (`expect_revision`; 409
+  `stale_revision`): a colleague's saved draft is never discarded silently.
 - **Validation at authoring** (422): (phase 2, RFE-011a) `approval_timeout_secs`
   outside `[APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]` →
   `approval_timeout_out_of_range`, and a timeout on a rule without
@@ -445,6 +453,10 @@ prod" ask deserves longer than a routine one, so from phase 2:
   and dashboard show the exact expiry; `GET …/policy/simulate` and the effective view
   show the timeout a request would get; the transcript `approval.pending` event
   carries `expires_at`. Expiry still **denies** (`expired`, 403 `manual_approval_expired`).
+  (FIX-109) The deadline is part of the decision itself: a decision after the deadline is
+  refused (409 `already_decided`) and the approval is expired in the same transaction,
+  whether or not the expiry sweep has run (the sweep keeps its 30 s grace only for rows
+  nobody touches).
 - Clients may time out before a long deadline (an agent tool's own HTTP timeout is
   the client's business). Parking a request and resuming it later is **not** part of
   phase 2. (phase 5 (D-138, moved from phase 4), RFE-011b, D-133) From phase 4, and only when the operator enables

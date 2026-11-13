@@ -174,7 +174,7 @@ async fn place_in_shared_workspaces(
             continue;
         };
         if ws.org_id != org_id
-            || repo::personal_owner_of(&mut **tx, ws.id).await?.is_some()
+            || repo::is_personal(&mut **tx, ws.id).await?
             || !matches!(s.role.as_str(), "member" | "approver")
         {
             tracing::warn!("placement: shared workspace {} is not usable", ws.id);
@@ -534,7 +534,7 @@ pub async fn put(
             .await?
             .filter(|w| Some(w.org_id) == org_id)
             .ok_or_else(|| bad(&path, "not a workspace of the default organization"))?;
-        if repo::personal_owner_of(&mut *tx, ws.id).await?.is_some() {
+        if repo::is_personal(&mut *tx, ws.id).await? {
             return Err(bad(
                 &path,
                 "a personal workspace cannot be shared with everyone",

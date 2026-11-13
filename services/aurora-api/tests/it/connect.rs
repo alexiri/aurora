@@ -735,3 +735,71 @@ async fn tenant_oauth_callback_stores_host_and_exchanges_against_it() {
         .unwrap();
     assert_eq!(host.as_deref(), Some("acme.tenant.example.test"));
 }
+
+/// (FIX-109) Reconnecting to a package version whose blocklist is empty removes the derived
+/// `blocklist` rule an earlier version left (the app has no `default_blocklist`, as after an
+/// upgrade that dropped it); a first connect writes none.
+#[tokio::test]
+async fn reconnect_with_an_empty_blocklist_leaves_no_blocklist_rule() {
+    let w = world(None).await;
+    w.tenant_client().await;
+    let mut b = w.connect_body("oauth");
+    b["fields"] = json!({"subdomain": "acme.tenant.example.test"});
+    let (s, sc, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/tenant_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap().to_owned();
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM app_connections")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let rules = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM derived_rules WHERE source_kind = 'blocklist' AND source_id = $1",
+        )
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        rules().await,
+        0,
+        "a first connect of a blocklist-free app writes none"
+    );
+    // The previous package version had a blocklist: its rule is still in the table.
+    sqlx::query("INSERT INTO derived_rules (id, org_id, workspace_id, source_kind, source_id, ordinal, logical_id, rule) VALUES ($1,$2,$3,'blocklist',$4,0,$5,'{}')")
+        .bind(Uuid::now_v7()).bind(w.org).bind(w.ws).bind(id).bind(Uuid::now_v7())
+        .execute(w.h.pool()).await.unwrap();
+    assert_eq!(rules().await, 1);
+    b["reconnect_connection_id"] = json!(id);
+    let (s, sc, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/tenant_app/connect",
+            Some(b),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap().to_owned();
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    assert_eq!(
+        rules().await,
+        0,
+        "the old blocklist rule is gone after the reconnect"
+    );
+}

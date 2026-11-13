@@ -343,16 +343,23 @@ pub async fn count_recent(
     .await?)
 }
 
+/// Keyset page of a webhook's deliveries, newest first (`created_at`, `id`; FIX-111).
 pub async fn list_deliveries<'e, E: PgExecutor<'e>>(
     exec: E,
     webhook: Uuid,
+    after: Option<(DateTime<Utc>, Uuid)>,
     limit: i64,
 ) -> Result<Vec<DeliveryRow>, DbError> {
+    let (t, id) = after.unzip();
     Ok(sqlx::query_as(
         "SELECT id, webhook_id, turn_id, status, size_bytes, reason, created_at
-         FROM webhook_deliveries WHERE webhook_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
+         FROM webhook_deliveries WHERE webhook_id = $1
+           AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
+         ORDER BY created_at DESC, id DESC LIMIT $4",
     )
     .bind(webhook)
+    .bind(t)
+    .bind(id)
     .bind(limit)
     .fetch_all(exec)
     .await?)

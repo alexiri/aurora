@@ -7,6 +7,7 @@ use crate::domains::conversations::service::load_agent;
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::ApiError;
+use aurora_core::limits::{REACH_EXPIRES_IN_MAX_SECS, REACH_EXPIRES_IN_MIN_SECS};
 use aurora_db::DbError;
 use aurora_db::repo::reach_grants::{self as repo, ReachRow};
 use serde_json::json;
@@ -94,9 +95,36 @@ pub async fn decide(
     let listen = req
         .listen
         .map_or_else(|| cur.listen.clone(), |l| l.as_str().to_owned());
-    repo::decide(&mut *tx, id, req.revision, state, &listen, c.user_id)
-        .await?
-        .ok_or_else(stale)?;
+    // (FIX-111) `expires_in` only makes sense for an approval, within the documented bounds.
+    let expires_at = match req.expires_in {
+        None => None,
+        Some(secs)
+            if req.decision == ReachDecision::Approve
+                && (REACH_EXPIRES_IN_MIN_SECS..=REACH_EXPIRES_IN_MAX_SECS).contains(&secs) =>
+        {
+            Some(chrono::Utc::now() + chrono::Duration::seconds(i64::from(secs)))
+        }
+        Some(_) => {
+            return Err(ApiError::invalid_request(
+                "Invalid request.",
+                vec![aurora_core::FieldError::new(
+                    "/expires_in",
+                    "only valid with an approval, between 60 seconds and 365 days",
+                )],
+            ));
+        }
+    };
+    repo::decide(
+        &mut *tx,
+        id,
+        req.revision,
+        state,
+        &listen,
+        c.user_id,
+        expires_at,
+    )
+    .await?
+    .ok_or_else(stale)?;
     // RFE-008: the decision commits with its audit row, or does not happen.
     audit::commit_critical(
         tx,

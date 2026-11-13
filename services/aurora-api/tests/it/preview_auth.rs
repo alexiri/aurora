@@ -137,6 +137,11 @@ impl Prv {
     /// The full grant exchange of `authorize`: seal through the route, redeem through the
     /// relay plane. Returns the `auv_` preview credential and its dashboard session id.
     async fn authorize_and_redeem(&self, label: &str) -> (String, Uuid) {
+        self.authorize_and_redeem_as(label, &self.r.cookie).await
+    }
+
+    /// [`Self::authorize_and_redeem`] from the dashboard session behind `dash_cookie`.
+    async fn authorize_and_redeem_as(&self, label: &str, dash_cookie: &str) -> (String, Uuid) {
         let nonce = Uuid::now_v7().simple().to_string();
         let (s, hd, _v) = self
             .r
@@ -144,7 +149,7 @@ impl Prv {
             .send(
                 Method::GET,
                 &format!("/v1/previews/authorize?host={label}&state={nonce}"),
-                &[("cookie", &self.r.cookie), ("origin", ORIGIN)],
+                &[("cookie", dash_cookie), ("origin", ORIGIN)],
                 None,
             )
             .await;
@@ -164,11 +169,9 @@ impl Prv {
         assert_eq!(s, 200, "{v}");
         // The preview session is bound to the dashboard session that authorized it: look
         // the row up by its token hash (the cookie carries `aurora_session=<token>`).
-        let dash_tok = self
-            .r
-            .cookie
+        let dash_tok = dash_cookie
             .strip_prefix("aurora_session=")
-            .unwrap_or(&self.r.cookie);
+            .unwrap_or(dash_cookie);
         let sid: Uuid = sqlx::query_scalar("SELECT id FROM sessions WHERE token_hash = $1")
             .bind(&token::hash(dash_tok)[..])
             .fetch_one(self.r.h.pool())
@@ -704,6 +707,64 @@ async fn dead_dashboard_session_cannot_redeem() {
 }
 
 // ---------------------------------------------------------------- the auv_ session law
+
+/// (FIX-097, docs/04 §Preview access step 5) Signing out through the route, or revoking the
+/// other sessions, ends preview access at the next resolve: the revoked `sessions` row is
+/// kept (only `revoked_at` is set), so the cascade never fires and `resolve` has to join a
+/// live dashboard session itself.
+#[tokio::test]
+async fn sign_out_and_revoke_others_end_preview_access() {
+    let p = prv_rig().await;
+    let r = &p.r;
+
+    // Sign-out through the route.
+    let (share, tok, _sid) = p.share_with_session(3000).await;
+    let (share2, _, _) = p.share_with_session(3001).await;
+    let label = share["label"].as_str().unwrap().to_owned();
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(v["decision"], "allow", "{v}");
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            "/v1/auth/logout",
+            &[("cookie", &r.cookie), ("origin", ORIGIN)],
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 204, "{v}");
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(
+        v["decision"], "login",
+        "sign-out must end preview access: {v}"
+    );
+
+    // Revoke-others: a second dashboard session of the same member holds the preview session.
+    let user: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'm@x.io'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let (_, keep) = r.h.good_session(user).await;
+    let (_, other) = r.h.good_session(user).await;
+    let other = cookie(&other);
+    let label2 = share2["label"].as_str().unwrap().to_owned();
+    let tok2 = p.authorize_and_redeem_as(&label2, &other).await.0;
+    let (_, v) = p.resolve(&label2, Some(&sess_hash(&tok2)), true).await;
+    assert_eq!(v["decision"], "allow", "{v}");
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            "/v1/auth/sessions/revoke-others",
+            &[("cookie", &cookie(&keep)), ("origin", ORIGIN)],
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    let (_, v) = p.resolve(&label2, Some(&sess_hash(&tok2)), true).await;
+    assert_eq!(
+        v["decision"], "login",
+        "revoke-others must end preview access: {v}"
+    );
+}
 
 /// Revocation paths: sign-out sweep, expired preview session, lost `can_use`, paused share,
 /// frozen agent, org switch — the next resolve denies/validates revoked and streams stop.

@@ -85,6 +85,19 @@ pub async fn personal_workspace<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-097) Is the workspace a personal one? The sticky `personal` marker, not the owner id:
+/// that is nulled when the person's account is deleted, and the workspace must still never be
+/// handed out as a shared workspace.
+pub async fn is_personal<'e, E: PgExecutor<'e>>(exec: E, workspace: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT personal OR personal_owner_user_id IS NOT NULL FROM workspaces WHERE id = $1",
+    )
+    .bind(workspace)
+    .fetch_optional(exec)
+    .await?
+    .unwrap_or(false))
+}
+
 /// The user a workspace is the personal workspace of, if any.
 pub async fn personal_owner_of<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -104,7 +117,7 @@ pub async fn set_personal_owner<'e, E: PgExecutor<'e>>(
     workspace: Uuid,
     user: Uuid,
 ) -> Result<(), DbError> {
-    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2 WHERE id = $1")
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
         .bind(workspace)
         .bind(user)
         .execute(exec)
@@ -129,7 +142,8 @@ pub async fn org_brief<'e, E: PgExecutor<'e>>(
 /// credentials. Capped; names only.
 pub async fn choices<'e, E: PgExecutor<'e> + Copy>(exec: E, org: Uuid) -> Result<Choices, DbError> {
     let workspaces = sqlx::query_as(
-        "SELECT id, slug, name FROM workspaces WHERE org_id = $1 AND personal_owner_user_id IS NULL
+        "SELECT id, slug, name FROM workspaces WHERE org_id = $1 AND NOT personal
+           AND personal_owner_user_id IS NULL
          ORDER BY name, id LIMIT 500",
     )
     .bind(org)

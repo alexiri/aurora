@@ -1803,6 +1803,108 @@ async fn reach_decision_and_stale_revision() {
     );
 }
 
+/// (FIX-111 4) A person reach grant approved with `expires_in` is ineffective after it and the
+/// 60 s sweep marks it `expired`; one approved without an expiry persists; `expires_in` is
+/// refused on a block and out of bounds.
+#[tokio::test]
+async fn reach_grant_expiry_is_set_by_the_decision_and_swept() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    let mk = |subject: &'static str| {
+        let (pool, id) = (w.h.pool().clone(), Uuid::now_v7());
+        async move {
+            sqlx::query("INSERT INTO reach_grants (id, agent_id, integration_id, subject_kind, subject_ref, subject_label, state) VALUES ($1,$2,$3,'person',$4,'p','pending')")
+                .bind(id).bind(agent).bind(integ).bind(subject).execute(&pool).await.unwrap();
+            id
+        }
+    };
+    let (timed, plain) = (mk("U-timed").await, mk("U-plain").await);
+    let effective = |who: &'static str| {
+        let pool = w.h.pool().clone();
+        async move {
+            aurora_db::repo::reach_grants::approved_person_reach(
+                &pool,
+                agent,
+                integ,
+                &[who.to_owned()],
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let path = |g: Uuid| format!("/v1/reach-grants/{g}/decision");
+    for bad in [
+        json!({"decision": "block", "revision": 0, "expires_in": 3600}),
+        json!({"decision": "approve", "revision": 0, "expires_in": 5}),
+        json!({"decision": "approve", "revision": 0, "expires_in": 999_999_999}),
+    ] {
+        let (s, v) = w
+            .call(&w.wsowner, Method::POST, &path(timed), Some(bad))
+            .await;
+        assert_eq!(s, 400, "{v}");
+    }
+    let (s, v) = w
+        .call(
+            &w.wsowner,
+            Method::POST,
+            &path(timed),
+            Some(json!({"decision": "approve", "revision": 0, "expires_in": 3600})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["expires_at"].is_string(), "{v}");
+    let (s, v) = w
+        .call(
+            &w.wsowner,
+            Method::POST,
+            &path(plain),
+            Some(json!({"decision": "approve", "revision": 0})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["expires_at"].is_null(), "{v}");
+    assert!(effective("U-timed").await && effective("U-plain").await);
+    // Not yet due: the sweep changes nothing.
+    assert_eq!(
+        aurora_api::jobs::expire_reach_grants(w.h.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    // Time passes.
+    sqlx::query("UPDATE reach_grants SET expires_at = now() - interval '1 minute' WHERE id = $1")
+        .bind(timed)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert!(
+        !effective("U-timed").await,
+        "ineffective after its expiry, before the sweep"
+    );
+    assert!(effective("U-plain").await);
+    assert_eq!(
+        aurora_api::jobs::expire_reach_grants(w.h.pool())
+            .await
+            .unwrap(),
+        1
+    );
+    let st = |g: Uuid| {
+        let pool = w.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT state FROM reach_grants WHERE id = $1")
+                .bind(g)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        (st(timed).await.as_str(), st(plain).await.as_str()),
+        ("expired", "approved")
+    );
+}
+
 // ------------------------------------------------------------ credential_dead
 
 #[tokio::test]

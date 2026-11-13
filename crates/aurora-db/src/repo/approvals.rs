@@ -214,7 +214,61 @@ async fn notify_tx(
     .map_err(|e| DbError::Other(sqlx::Error::Protocol(e.to_string())))
 }
 
-/// First decision wins: `pending` -> `approved`/`denied`. `None` = already resolved.
+/// (FIX-109, `07` §Approval deadlines: "Expiry still denies") A `pending` approval past its
+/// deadline is `expired` here, in the caller's transaction, instead of waiting for the sweep
+/// (which runs every 10 s and adds a 30 s grace): a decision after the deadline must not win.
+/// Returns whether this call expired it.
+pub async fn expire_if_overdue(tx: &mut sqlx::PgConnection, id: Uuid) -> Result<bool, DbError> {
+    let ws: Option<Uuid> = sqlx::query_scalar(
+        "UPDATE approvals SET status = 'expired', decided_at = now(), resolved_at = now(), \
+         updated_at = now() WHERE id = $1 AND status = 'pending' AND deadline <= now() \
+         RETURNING workspace_id",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(ws) = ws else {
+        return Ok(false);
+    };
+    notify_tx(&mut *tx, id, ws, "expired").await?;
+    Ok(true)
+}
+
+/// [`expire_if_overdue`] for the pending approvals of one batch of one agent that the user
+/// could decide. Returns how many it expired.
+pub async fn expire_overdue_of_batch(
+    tx: &mut sqlx::PgConnection,
+    user: Uuid,
+    org: Option<Uuid>,
+    ws: Option<Uuid>,
+    agent: Uuid,
+    batch_id: &str,
+) -> Result<usize, DbError> {
+    let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(&format!(
+        "UPDATE approvals a SET status = 'expired', decided_at = now(), resolved_at = now(), \
+         updated_at = now() \
+         WHERE a.status = 'pending' AND a.deadline <= now() AND a.batch_id = $5 \
+         AND a.agent_id = $4 AND {} AND ($2::uuid IS NULL OR a.org_id = $2) \
+         AND ($3::uuid IS NULL OR a.workspace_id = $3) \
+         RETURNING a.id, a.workspace_id",
+        may_decide()
+    ))
+    .bind(user)
+    .bind(org)
+    .bind(ws)
+    .bind(agent)
+    .bind(batch_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (id, w) in &rows {
+        notify_tx(&mut *tx, *id, *w, "expired").await?;
+    }
+    Ok(rows.len())
+}
+
+/// First decision wins: `pending` -> `approved`/`denied`. `None` = already resolved (or past its
+/// deadline: (FIX-109) the deadline is part of the statement, so a decision after it cannot win
+/// even when the expiry sweep is down).
 ///
 /// Runs inside the caller's transaction (RFE-008): the `approval.decide` audit row commits with
 /// the decision, or the decision does not happen.
@@ -228,7 +282,7 @@ pub async fn decide(
     let won: Option<Uuid> = sqlx::query_scalar(
         "UPDATE approvals SET status = $2, decided_by_user_id = $3, decided_via = $4, \
          decided_at = now(), resolved_at = now(), updated_at = now() \
-         WHERE id = $1 AND status = 'pending' \
+         WHERE id = $1 AND status = 'pending' AND deadline > now() \
          RETURNING workspace_id",
     )
     .bind(id)
@@ -285,7 +339,8 @@ pub async fn decide_batch(
     let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(&format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
          decided_at = now(), resolved_at = now(), updated_at = now() \
-         WHERE a.status = 'pending' AND a.batch_id = $5 AND a.agent_id = $4 AND {} \
+         WHERE a.status = 'pending' AND a.deadline > now() AND a.batch_id = $5 AND a.agent_id = $4 \
+         AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          RETURNING a.id, a.workspace_id, a.org_id",
         may_decide()

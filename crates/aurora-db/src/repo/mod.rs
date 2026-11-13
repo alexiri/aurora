@@ -51,6 +51,7 @@ pub mod preview_relay;
 pub mod preview_shares;
 pub mod reach_grants;
 pub mod request_log;
+pub mod retention;
 pub mod runners;
 pub mod sandboxes;
 pub mod schedules;

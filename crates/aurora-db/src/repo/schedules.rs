@@ -342,16 +342,22 @@ pub async fn insert_run(
     .await?)
 }
 
+/// Keyset page of a schedule's runs, newest first (`created_at`, `id`; FIX-111).
 pub async fn list_runs<'e, E: PgExecutor<'e>>(
     exec: E,
     schedule: Uuid,
+    after: Option<(DateTime<Utc>, Uuid)>,
     limit: i64,
 ) -> Result<Vec<RunRow>, DbError> {
+    let (t, id) = after.unzip();
     Ok(sqlx::query_as(&format!(
         "SELECT {RUN_COLS} FROM schedule_runs WHERE schedule_id = $1
-         ORDER BY fired_at DESC, id DESC LIMIT $2"
+           AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
+         ORDER BY created_at DESC, id DESC LIMIT $4"
     ))
     .bind(schedule)
+    .bind(t)
+    .bind(id)
     .bind(limit)
     .fetch_all(exec)
     .await?)

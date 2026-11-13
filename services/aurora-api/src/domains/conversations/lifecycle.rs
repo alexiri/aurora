@@ -74,7 +74,7 @@ pub async fn set_archived(
 // ------------------------------------------------------------------ delete
 
 /// Remove blob bytes after the delete committed; a failure leaves an orphan for the daily sweep.
-async fn remove_blobs(pool: &PgPool, blobs: &[(String, String)]) {
+pub(crate) async fn remove_blobs(pool: &PgPool, blobs: &[(String, String)]) {
     for (backend, key) in blobs {
         match blob::for_backend(backend, pool) {
             Some(store) => {
@@ -120,7 +120,12 @@ pub async fn delete(state: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
 }
 
 /// Ids, kinds and counts only: never content (docs/04 §Audit).
-fn delete_meta(convs: &[(Uuid, &str)], agent: Uuid, gone: &Deleted, reason: Option<&str>) -> Value {
+pub(crate) fn delete_meta(
+    convs: &[(Uuid, &str)],
+    agent: Uuid,
+    gone: &Deleted,
+    reason: Option<&str>,
+) -> Value {
     let mut m = json!({
         "conversation_ids": convs.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
         "kinds": convs.iter().map(|(_, k)| *k).collect::<Vec<_>>(),

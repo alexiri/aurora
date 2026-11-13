@@ -1454,7 +1454,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10). */
+        /** Server-sent events `approval` (`created` | `decided` | `expired` | `abandoned`), no SSE ids (C-10). */
         get: operations["streamApprovals"];
         put?: never;
         post?: never;
@@ -4700,7 +4700,7 @@ export interface components {
         /** @description SSE `data:` payload of `event: approval` (C-10). */
         ApprovalEvent: {
             approval: components["schemas"]["Approval"];
-            /** @description `created` | `decided` | `expired` */
+            /** @description `created` | `decided` | `expired` | `abandoned` */
             event: string;
             notice?: null | components["schemas"]["ApprovalNotice"];
         };
@@ -5787,6 +5787,13 @@ export interface components {
              */
             effective_frozen: boolean;
             frozen?: null | components["schemas"]["Frozen"];
+            /**
+             * @description What a `freeze` call did: `frozen` (it was not frozen), `escalated` (it was frozen by a
+             *     lower authority; the record now carries the caller's authority, reason and identity) or
+             *     `unchanged` (already frozen by an equal or higher authority: nothing changed). `null`
+             *     after `unfreeze`.
+             */
+            outcome?: string | null;
         };
         /** @description Which library skill to add (`10 §Git skill library`). */
         FromLibrary: {
@@ -8472,6 +8479,12 @@ export interface components {
         ReachDecision: "approve" | "block";
         ReachDecisionRequest: {
             decision: components["schemas"]["ReachDecision"];
+            /**
+             * Format: int32
+             * @description (FIX-111) Approve only: the grant expires this many seconds from now (60 s to 365 days)
+             *     and then needs a new approval; without it a grant does not expire.
+             */
+            expires_in?: number | null;
             listen?: null | components["schemas"]["Listen"];
             /** Format: int64 */
             revision: number;
@@ -8666,6 +8679,12 @@ export interface components {
             revoked: number;
         };
         RollbackRequest: {
+            /**
+             * Format: int64
+             * @description (FIX-109) The draft revision the caller last read: rollback replaces the current draft,
+             *     so a draft a colleague saved since is not discarded silently (409 `stale_revision`).
+             */
+            expect_revision: number;
             /**
              * Format: int32
              * @description Generation number to copy.
@@ -19909,6 +19928,8 @@ export interface operations {
             query?: {
                 /** @description Page size (default 50, max 200). */
                 limit?: number | null;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string | null;
             };
             header?: never;
             path: {
@@ -21589,6 +21610,8 @@ export interface operations {
             query?: {
                 /** @description Page size (default 50, max 200). */
                 limit?: number | null;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string | null;
             };
             header?: never;
             path: {

@@ -44,6 +44,8 @@ import { SimulatePanel } from "./simulate-panel";
 function History({ scope, canEdit, onClose }: { scope: PolicyScope; canEdit: boolean; onClose: () => void }) {
   const gens = usePolicyGenerations(scope, true);
   const rollback = useRollback(scope);
+  // Rollback replaces the draft: it carries the draft revision this list showed (409 otherwise).
+  const draftRevision = gens.data?.items.find((g) => g.status === "draft")?.draft_revision ?? undefined;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent title="Policy history" className="max-h-[90vh] overflow-y-auto">
@@ -62,9 +64,12 @@ function History({ scope, canEdit, onClose }: { scope: PolicyScope; canEdit: boo
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={rollback.isPending}
+                  disabled={rollback.isPending || draftRevision === undefined}
                   aria-label={`Roll back to generation ${g.number}`}
-                  onClick={() => rollback.mutate(g.number, { onSuccess: onClose })}
+                  onClick={() =>
+                    draftRevision !== undefined &&
+                    rollback.mutate({ generation: g.number, expectRevision: draftRevision }, { onSuccess: onClose })
+                  }
                 >
                   Roll back
                 </Button>

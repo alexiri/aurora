@@ -12,7 +12,7 @@ pub enum BusMsg {
     Event {
         id: Uuid,
         workspace_id: Uuid,
-        /// `created` | `decided` | `expired`
+        /// `created` | `decided` | `expired` | `abandoned`
         event: String,
     },
     /// Notifications may have been missed (listener reconnected, or receiver lagged).

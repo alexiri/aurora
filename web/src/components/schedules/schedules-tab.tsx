@@ -28,24 +28,32 @@ function Runs({ agentId, id }: { agentId: string; id: string }) {
   const q = useScheduleRuns(agentId, id, true);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <p className="text-sm text-muted">No runs yet.</p>;
+  const items = q.data.pages.flatMap((p) => p.items);
+  if (items.length === 0) return <p className="text-sm text-muted">No runs yet.</p>;
   return (
-    <DataTable caption="Runs">
-      <thead>
-        <tr>
-          <Th>Fired</Th>
-          <Th>Outcome</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {q.data.items.map((r) => (
-          <tr key={r.id}>
-            <Td className="whitespace-nowrap">{fmtDate(r.fired_at)}</Td>
-            <Td>{r.outcome}</Td>
+    <div className="flex flex-col gap-3">
+      <DataTable caption="Runs">
+        <thead>
+          <tr>
+            <Th>Fired</Th>
+            <Th>Outcome</Th>
           </tr>
-        ))}
-      </tbody>
-    </DataTable>
+        </thead>
+        <tbody>
+          {items.map((r) => (
+            <tr key={r.id}>
+              <Td className="whitespace-nowrap">{fmtDate(r.fired_at)}</Td>
+              <Td>{r.outcome}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
+      {q.hasNextPage ? (
+        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+          Load more
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

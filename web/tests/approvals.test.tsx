@@ -71,6 +71,8 @@ describe("approvals", () => {
     const d = applyApprovalEvent({ items: [] }, { event: "created", approval: a });
     expect(d?.items).toHaveLength(1);
     expect(applyApprovalEvent(d, { event: "decided", approval: { ...(a as object), status: "approved" } as never })?.items).toHaveLength(0);
+    // (FIX-109) A freeze-abandoned approval leaves the pending list like an expired one.
+    expect(applyApprovalEvent(d, { event: "abandoned", approval: { ...(a as object), status: "abandoned" } as never })?.items).toHaveLength(0);
   });
 
   it("SSE events update the list and escape summary text", async () => {

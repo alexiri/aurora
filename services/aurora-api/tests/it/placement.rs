@@ -868,6 +868,101 @@ async fn choices_offer_org_level_credentials_and_never_personal_workspaces() {
     assert_eq!(s, 404);
 }
 
+/// (FIX-097 6, docs/04 §Deletion semantics) Account deletion deletes the person's personal
+/// workspace when they are its only member; a personal workspace somebody else is bound to
+/// stays, keeps its `personal` marker after `personal_owner_user_id` is nulled, and is never
+/// offered as a shared workspace again (choices) nor accepted by `PUT /v1/admin/placement`.
+#[tokio::test]
+async fn deleting_an_account_deletes_a_solely_used_personal_workspace_and_keeps_a_shared_one_personal()
+ {
+    let e = env(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    let mut cookies = Vec::new();
+    for (sub, email) in [("s1", "bob@example.com"), ("s2", "cy@example.com")] {
+        e.who(sub, email, None);
+        cookies.push(e.sign_in().await.unwrap());
+    }
+    let (bob, cy) = (
+        e.user("bob@example.com").await,
+        e.user("cy@example.com").await,
+    );
+    let ws_of = |u: Uuid| {
+        let pool = e.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM workspaces WHERE personal_owner_user_id = $1",
+            )
+            .bind(u)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let (bws, cws) = (ws_of(bob).await, ws_of(cy).await);
+    // Cy is bound to Bob's personal workspace too: it is not Bob's alone.
+    e.h.bind_ws(bws, cy, "member").await;
+    for u in [bob, cy] {
+        sqlx::query("UPDATE sessions SET reauth_at = now() WHERE user_id = $1")
+            .bind(u)
+            .execute(e.h.pool())
+            .await
+            .unwrap();
+    }
+    let (s, v) = e.call(&cookies[0], Method::DELETE, "/v1/me", None).await;
+    assert_eq!(s, 204, "{v}");
+    let (owner, personal): (Option<Uuid>, bool) =
+        sqlx::query_as("SELECT personal_owner_user_id, personal FROM workspaces WHERE id = $1")
+            .bind(bws)
+            .fetch_one(e.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (owner, personal),
+        (None, true),
+        "kept, still marked personal"
+    );
+    let (s, v) = e
+        .call(
+            &e.admin,
+            Method::GET,
+            &format!("/v1/admin/placement/choices?org_id={org}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|w| w["id"] != json!(bws)),
+        "a departed person's workspace is not offered: {v}"
+    );
+    let (s, v) = e
+        .put(json!({"mode": "shared_org", "default_org_id": org,
+            "shared_workspaces": [{"workspace_id": bws, "role": "member"}],
+            "personal_workspace": {"enabled": true}}))
+        .await;
+    assert_eq!(s, 400, "cannot be saved as shared: {v}");
+    // Cy's own workspace has no other member: it goes with the account.
+    let (s, v) = e.call(&cookies[1], Method::DELETE, "/v1/me", None).await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(
+        e.n(&format!(
+            "SELECT count(*) FROM workspaces WHERE id = '{cws}'"
+        ))
+        .await,
+        0
+    );
+    assert_eq!(
+        e.n(&format!(
+            "SELECT count(*) FROM workspaces WHERE id = '{bws}'"
+        ))
+        .await,
+        1
+    );
+}
+
 // ---- FIX-045 (D-162): the default template names workspaces from the OIDC-unique `sub` ----
 
 #[tokio::test]

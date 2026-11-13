@@ -141,19 +141,51 @@ async fn agent_freeze_needs_can_own_is_idempotent_reversible_and_audited() {
     let view = w.agent_view(w.member, agent).await;
     assert_eq!(view["effective_frozen"], true);
     assert_eq!(view["frozen"]["level"], "agent");
-    // Idempotent: a repeat by a higher authority keeps the original record and adds no audit row.
+    assert_eq!(v["outcome"], "frozen");
+    // (FIX-109, D-50) A repeat by the same authority changes nothing and says so.
+    let (s, v) = w.freeze(w.ws_owner, &uri).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["outcome"], "unchanged");
+    assert_eq!(w.audit_count("agent.freeze").await, 1);
+    // A higher authority raises the record: who, reason and authority now are the caller's,
+    // with an audit row marked `escalated`; the lower authority can no longer lift it.
     let (s, v) = w.freeze(w.org_owner, &uri).await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(v["frozen"]["by_label"], "wso@x.io");
-    assert_eq!(v["frozen"]["authority"], "workspace_owner");
-    assert_eq!(w.audit_count("agent.freeze").await, 1);
-    // Unfreeze: members cannot; an owner can; repeating is a no-op.
+    assert_eq!(v["outcome"], "escalated");
+    assert_eq!(v["frozen"]["by_label"], "oo@x.io");
+    assert_eq!(v["frozen"]["authority"], "org_admin");
+    assert_eq!(w.audit_count("agent.freeze").await, 2);
+    let esc: Value = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'agent.freeze' ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(w.r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (
+            esc["escalated"].clone(),
+            esc["previous_authority"].clone(),
+            esc["authority"].clone()
+        ),
+        (json!(true), json!("workspace_owner"), json!("org_admin"))
+    );
+    // A lower authority freezing again does not lower it.
+    let (s, v) = w.freeze(w.ws_owner, &uri).await;
+    assert_eq!(
+        (s, v["outcome"].as_str(), v["frozen"]["authority"].as_str()),
+        (200, Some("unchanged"), Some("org_admin")),
+        "{v}"
+    );
+    // Unfreeze: members cannot; the workspace owner no longer can; the org owner can.
     assert!(matches!(w.unfreeze(w.member, &uri).await.0, 403 | 404));
     let (s, v) = w.unfreeze(w.ws_owner, &uri).await;
+    assert_eq!((s, code(&v)), (403, "freeze_authority_insufficient"), "{v}");
+    let (s, v) = w.unfreeze(w.org_owner, &uri).await;
     assert_eq!(s, 200, "{v}");
+    // Repeating the unfreeze is a no-op.
+    assert_eq!(w.unfreeze(w.ws_owner, &uri).await.0, 200);
     assert_eq!(v["effective_frozen"], false);
     assert!(v["frozen"].is_null());
-    assert_eq!(w.unfreeze(w.ws_owner, &uri).await.0, 200);
     assert_eq!(w.audit_count("agent.unfreeze").await, 1);
     let view = w.agent_view(w.member, agent).await;
     assert_eq!(view["effective_frozen"], false);
@@ -404,11 +436,25 @@ async fn running_turn_aborts_sandbox_is_parked_with_home_kept_and_nothing_dispat
     // A follow-up that joined the running turn is promoted, then aborted with it.
     w.r.say(lv.conv, "and also").await;
 
+    let mut l = sqlx::postgres::PgListener::connect_with(w.r.h.pool())
+        .await
+        .unwrap();
+    l.listen("aurora_approval").await.unwrap();
     // Freezing the whole workspace is enough.
     let (s, v) = w
         .freeze(w.org_admin, &format!("/v1/workspaces/{}", w.r.ws))
         .await;
     assert_eq!(s, 200, "{v}");
+    // (FIX-109) The approval stream event of a freeze-abandoned approval says `abandoned`.
+    let mut event = None;
+    while let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_secs(2), l.recv()).await {
+        let p: Value = serde_json::from_str(n.payload()).unwrap();
+        if p["id"] == json!(appr) {
+            event = p["event"].as_str().map(str::to_owned);
+            break;
+        }
+    }
+    assert_eq!(event.as_deref(), Some("abandoned"));
     assert_eq!(
         w.r.turn_status(&turn).await,
         ("aborted".to_owned(), Some("frozen".to_owned()))

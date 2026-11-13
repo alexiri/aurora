@@ -101,6 +101,14 @@ was recorded) it stays `false` while the sandbox still runs the old image (found
 without waiting for the flag; `GET /v1/agents/{agent}/sandbox` shows the runner's image, not the
 sandbox's.
 
+**(FIX-109) Policy path matching ignores one trailing `/`.** A rule path `/v1/users` now also
+matches the request `/v1/users/` (and the reverse). For **block** and approval rules this
+tightens: requests with the slash variant that used to slip past are now stopped. For **allow**
+rules it loosens by exactly that slash variant (the request `/v1/users/` is now allowed where
+`/v1/users` was). Review allow rules on endpoints whose slash form means something else
+(rare); the policy simulator shows the new answers. Rollback of a policy now needs the draft
+revision (`expect_revision`): custom API clients that call `…/policy/rollback` must send it.
+
 ## After the upgrade
 
 - `GET /v1/instance` returns the new `version`.

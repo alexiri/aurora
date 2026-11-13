@@ -488,6 +488,9 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
         let mut tx = state.pool.begin().await.map_err(DbError::from)?;
         credentials::revoke_for_agent(&mut *tx, id, true).await?;
         dep.enqueue(&mut tx).await?;
+        // (FIX-097) The agent's grants cascade without touching their compiled rules: remove
+        // those first, or they stay in the policy as rules of a source that no longer exists.
+        aurora_db::repo::derived_rules::delete_for_agent_grants(&mut *tx, id).await?;
         agents::delete(&mut *tx, id).await?;
         credentials::notify_gateway_invalidate(&mut *tx, "agent", id).await?;
         tx.commit().await.map_err(DbError::from)?;
