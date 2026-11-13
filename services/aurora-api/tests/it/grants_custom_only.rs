@@ -537,3 +537,119 @@ async fn a_failing_activation_leaves_full_grants_and_audit_untouched() {
     assert_eq!(w.rules(w.agent, conn).await.len(), 1);
     assert!(audit_meta(w.h, "grant.converted_by_app").await.is_empty());
 }
+
+/// FIX-064: a `full` grant PUT racing the activation that makes the app `custom_only` never
+/// leaves a `full` grant behind: the PUT either sees the new restriction (422) or its grant is
+/// written before the activation's conversion, which then converts it. (The grant writer takes
+/// the activation's compile lock in shared mode before reading the restrictions.)
+#[tokio::test]
+async fn a_full_grant_racing_the_custom_only_activation_never_survives_it() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    install(&a, "1.0.0", "", HOST).await;
+    let w = world(&h).await;
+    let conn = w.conn().await;
+    // Few racers: the harness pool has 5 connections and each writer holds one while its
+    // restriction read takes another.
+    let agents = [w.agent, w.agent2];
+    // An existing full grant holds the upload for approval (`converts_grants`); the approval,
+    // i.e. the activation that converts, races the PUTs.
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &w.put(w.agent_ws2, conn),
+            Some(json!({"mode": "full"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let held = a.upload(&yaml("1.1.0", CUSTOM_ONLY, HOST)).await;
+    assert_eq!(held["status"], "pending_approval", "{held}");
+    let approve = async {
+        let (s, b) = a.act(&held["id"], "approve").await;
+        assert_eq!(s, 200, "{b}");
+    };
+    let puts = futures::future::join_all(agents.iter().map(|ag| {
+        let w = &w;
+        async move {
+            let (s, v) = w
+                .call(
+                    Method::PUT,
+                    &w.put(*ag, conn),
+                    Some(json!({"mode": "full"})),
+                )
+                .await;
+            assert!(
+                s == 200 || (s == 422 && v["error"]["code"] == "full_grant_forbidden"),
+                "{s} {v}"
+            );
+        }
+    }));
+    tokio::join!(approve, puts);
+    let active: String = sqlx::query_scalar(
+        "SELECT version FROM plugin_packages WHERE package_id = 'cust' AND status = 'active'",
+    )
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(active, "1.1.0", "the activation completed");
+    let fulls: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM grants WHERE connection_id = $1 AND mode = 'full'",
+    )
+    .bind(conn)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(fulls, 0, "no full grant on a custom_only app");
+}
+
+/// FIX-064: the same race through the *upload* path. With no full grant at the time of the check
+/// the version activates automatically; a `full` PUT racing it must still never survive (it is
+/// refused, or it is counted and holds the version for approval, which then converts it).
+#[tokio::test]
+async fn a_full_grant_racing_an_auto_activating_custom_only_upload_never_survives_it() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    install(&a, "1.0.0", "", HOST).await;
+    let w = world(&h).await;
+    let conn = w.conn().await;
+    let agents = [w.agent, w.agent2];
+    let upload = async {
+        let v = a.upload(&yaml("1.1.0", CUSTOM_ONLY, HOST)).await;
+        if v["status"] == "pending_approval" {
+            let (s, b) = a.act(&v["id"], "approve").await;
+            assert_eq!(s, 200, "{b}");
+        }
+    };
+    let puts = futures::future::join_all(agents.iter().map(|ag| {
+        let w = &w;
+        async move {
+            let (s, v) = w
+                .call(
+                    Method::PUT,
+                    &w.put(*ag, conn),
+                    Some(json!({"mode": "full"})),
+                )
+                .await;
+            assert!(
+                s == 200 || (s == 422 && v["error"]["code"] == "full_grant_forbidden"),
+                "{s} {v}"
+            );
+        }
+    }));
+    tokio::join!(upload, puts);
+    let active: String = sqlx::query_scalar(
+        "SELECT version FROM plugin_packages WHERE package_id = 'cust' AND status = 'active'",
+    )
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(active, "1.1.0", "the upload ended active");
+    let fulls: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM grants WHERE connection_id = $1 AND mode = 'full'",
+    )
+    .bind(conn)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(fulls, 0, "no full grant on a custom_only app");
+}

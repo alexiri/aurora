@@ -206,7 +206,7 @@ pub async fn activate_snapshot(
     Ok(Some(c.hash))
 }
 
-fn flatten(f: CompileFail) -> ApiError {
+pub(super) fn flatten(f: CompileFail) -> ApiError {
     match f {
         CompileFail::Api(e) => e,
         CompileFail::Conflict(_) => ApiError::internal("Unresolved host claim conflict."),
@@ -289,9 +289,19 @@ pub async fn active_snapshot(
     state: &AppState,
     contract_max: u32,
 ) -> Result<Option<ActiveSnapshot>, ApiError> {
+    let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
+    active_snapshot_on(&mut conn, contract_max).await
+}
+
+/// [`active_snapshot`] on a connection the caller already holds (e.g. inside its transaction,
+/// so no second pool connection is taken while one is pinned).
+pub async fn active_snapshot_on(
+    conn: &mut PgConnection,
+    contract_max: u32,
+) -> Result<Option<ActiveSnapshot>, ApiError> {
     let max = contract_max.min(CONTRACT);
     let headers = gateway::snapshot_headers(
-        &state.pool,
+        &mut *conn,
         i32::try_from(max.saturating_sub(1)).unwrap_or(0),
         i32::try_from(max).unwrap_or(i32::MAX),
     )
@@ -313,7 +323,7 @@ pub async fn active_snapshot(
         .iter()
         .find(|c| c.2 == hash)
         .map_or(0, |c| i32::try_from(c.0).unwrap_or(0));
-    let Some(v) = gateway::snapshot_body(&state.pool, &hash).await? else {
+    let Some(v) = gateway::snapshot_body(&mut *conn, &hash).await? else {
         return Ok(None);
     };
     let body = aurora_registry::snapshot::canonical_bytes(&v);
@@ -333,7 +343,15 @@ pub async fn active_snapshot(
 pub async fn active_typed(
     state: &AppState,
 ) -> Result<Option<aurora_registry::snapshot::Snapshot>, ApiError> {
-    let Some(s) = active_snapshot(state, CONTRACT).await? else {
+    let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
+    active_typed_on(&mut conn).await
+}
+
+/// [`active_typed`] on a connection the caller already holds.
+pub async fn active_typed_on(
+    conn: &mut PgConnection,
+) -> Result<Option<aurora_registry::snapshot::Snapshot>, ApiError> {
+    let Some(s) = active_snapshot_on(conn, CONTRACT).await? else {
         return Ok(None);
     };
     aurora_registry::snapshot::Snapshot::from_slice(&s.body)

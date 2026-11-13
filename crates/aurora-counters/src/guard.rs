@@ -114,7 +114,11 @@ impl Guarded {
                 return Err(CounterError::Unavailable("circuit breaker open".into()));
             }
             Gate::Probe => {
+                // If this future is dropped mid-probe (client disconnect, freeze), the guard
+                // counts a failure and clears `probing`, so the breaker can never wedge open.
+                let abandoned = AbandonedProbe(self);
                 let probe = tokio::time::timeout(self.cfg.timeout, self.inner.health()).await;
+                std::mem::forget(abandoned);
                 if !matches!(probe, Ok(Ok(()))) {
                     self.failure();
                     count(backend, op, "breaker_open");
@@ -149,6 +153,16 @@ impl Guarded {
                 Err(CounterError::Unavailable("timeout".into()))
             }
         }
+    }
+}
+
+/// Dropped while the liveness probe was in flight: record a failure (re-arms the cooldown and
+/// clears `probing`). Disarmed with `mem::forget` once the probe has an answer.
+struct AbandonedProbe<'a>(&'a Guarded);
+
+impl Drop for AbandonedProbe<'_> {
+    fn drop(&mut self) {
+        self.0.failure();
     }
 }
 

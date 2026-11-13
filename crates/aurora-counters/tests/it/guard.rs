@@ -123,6 +123,36 @@ async fn breaker_opens_after_three_failures_and_probes_after_the_cooldown() {
 }
 
 #[tokio::test]
+async fn a_cancelled_probe_never_wedges_the_breaker_open() {
+    let f = Fault::new();
+    let g = Guarded::new(f.clone(), cfg());
+    f.mode.store(1, Ordering::Relaxed);
+    for _ in 0..3 {
+        assert!(g.fixed_window_consume(&[unit()]).await.is_err());
+    }
+    assert!(g.is_open());
+    // The probe hangs and the caller goes away (shorter than the guard's own timeout).
+    f.mode.store(2, Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let cancelled =
+        tokio::time::timeout(Duration::from_millis(10), g.fixed_window_consume(&[unit()])).await;
+    assert!(
+        cancelled.is_err(),
+        "the caller's future was dropped mid-probe"
+    );
+    // The store recovers; after the cooldown a later call probes again and passes.
+    f.mode.store(0, Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(
+        g.fixed_window_consume(&[unit()])
+            .await
+            .expect("probed again and recovered")
+            .is_allowed()
+    );
+    assert!(!g.is_open());
+}
+
+#[tokio::test]
 async fn a_hang_is_a_timeout_and_never_allowed() {
     let f = Fault::new();
     f.mode.store(2, Ordering::Relaxed);

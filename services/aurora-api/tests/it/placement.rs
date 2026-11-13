@@ -1300,8 +1300,8 @@ async fn fix038_pre_fix_custom_only_starter_row_skips_and_audits_without_blockin
         .execute(e.h.pool())
         .await
         .unwrap();
-    // Sign-in must not be blocked: the starter is skipped and the skip is audited with the
-    // established (wrong-cause but fail-open) reason.
+    // Sign-in must not be blocked: the starter is skipped and the skip is audited with its own
+    // reason (FIX-064: not `credential_unavailable`, the wrong cause FIX-038 left).
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     let (slug, _, _) = e.personal("bob@example.com").await.unwrap();
@@ -1314,5 +1314,58 @@ async fn fix038_pre_fix_custom_only_starter_row_skips_and_audits_without_blockin
     .await
     .unwrap();
     assert_eq!(ev["starter"], json!(true));
-    assert_eq!(ev["reason"], "credential_unavailable");
+    assert_eq!(ev["reason"], "full_grant_forbidden");
+}
+
+/// FIX-064: a database error inside a starter grant is not "a credential that went away": it is
+/// never audited as `credential_unavailable`, and a refusal before it (skipped in a savepoint)
+/// does not poison the shared sign-in transaction.
+#[tokio::test]
+async fn fix064_a_database_error_in_a_starter_grant_is_not_reported_as_unavailable() {
+    let e = env(SignupMode::Open).await;
+    let org = e
+        .shared(json!({"personal_workspace": {"enabled": true,
+            "name_template": "{preferred_username}|{email_local}"}}))
+        .await;
+    let conn = e
+        .fix038_connection(&fix038_yaml("1.0.0", FIX038_CUSTOM_ONLY))
+        .await;
+    let key = Uuid::now_v7();
+    sqlx::query("UPDATE instance_placement SET starter_grants = $2 WHERE default_org_id = $1")
+        .bind(org)
+        .bind(json!([{"kind": "connection", "id": conn}, {"kind": "connection", "id": key}]))
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    // The second starter: a live connection of a plain app whose grant insert fails in the
+    // database (an injected trigger), i.e. a real `Db` error, not a refusal.
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,NULL,'plain_app','plain','1.0.0','pc','active','x')")
+        .bind(key)
+        .bind(org)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE FUNCTION fix064_boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF NEW.connection_id = '{key}' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$"
+    ))
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fix064_boom BEFORE INSERT ON grants FOR EACH ROW EXECUTE FUNCTION fix064_boom()",
+    )
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    e.who("s1", "bob@example.com", Some("bobj"));
+    let r = e.sign_in().await;
+    assert!(r.is_err(), "the real failure surfaces: {r:?}");
+    let unavailable = e
+        .n("SELECT count(*) FROM audit_log WHERE action = 'grant.create' AND metadata->>'reason' = 'credential_unavailable'")
+        .await;
+    assert_eq!(
+        unavailable, 0,
+        "a database error is not a vanished credential"
+    );
 }

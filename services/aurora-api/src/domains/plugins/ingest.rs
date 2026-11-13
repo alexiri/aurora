@@ -262,6 +262,12 @@ pub async fn ingest(
     let new_id = ids::new_id();
 
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    // (FIX-064, SEC-67) The same exclusive compile lock every other activation path holds, taken
+    // before the impact is computed: a connection-grant writer (shared lock) either committed its
+    // `full` grant first, so it counts in `impact.converts` and holds this version for approval,
+    // or waits until this transaction — package row *and* snapshot — has committed and then
+    // sees the version's `custom_only` restriction.
+    plugins::lock_compile(&mut tx).await?;
     // C-343 (RFE-022): a major upgrade that would flip a connection to `reauth_required` is
     // never activated automatically, widening or not; it waits for an instance admin.
     let mut decision = decision;
@@ -321,6 +327,14 @@ pub async fn ingest(
             plugins::put_blob(&mut *tx, &hex(&Sha256::digest(wasm)), "hooks_wasm", wasm).await?;
         }
         plugins::put_blob(&mut *tx, &digest, "archive", bytes).await?;
+    }
+    if auto {
+        // Activate the snapshot in the same transaction as the package row: a window between
+        // "package active" and "snapshot active" would let a `full` grant be written against the
+        // old snapshot after the conversion check above (nothing would ever convert it).
+        registry::activate_snapshot(state, &mut tx, true)
+            .await
+            .map_err(registry::flatten)?;
     }
     tx.commit().await.map_err(DbError::from)?;
 

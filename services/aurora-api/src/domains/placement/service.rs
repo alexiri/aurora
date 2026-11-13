@@ -251,6 +251,13 @@ async fn ensure_personal_workspace(
     let starters: Vec<Starter> =
         serde_json::from_value(row.starter_grants.clone()).unwrap_or_default();
     for s in starters {
+        // Each starter runs in a savepoint inside the shared sign-in transaction: a refusal
+        // (even one that was a failed statement) is rolled back to here and skipped, and the
+        // transaction stays usable for the audit row and the rest of the placement.
+        sqlx::query("SAVEPOINT starter_grant")
+            .execute(&mut **tx)
+            .await
+            .map_err(aurora_db::DbError::from)?;
         let res = match s.kind.as_str() {
             "secret" => grants::grant_secret_as_system(tx, state, &agent, s.id, actor())
                 .await
@@ -261,16 +268,34 @@ async fn ensure_personal_workspace(
             _ => Err(ApiError::not_found("Unknown credential kind.")),
         };
         match res {
-            Ok(Some(mut ev)) => {
-                ev.metadata["starter"] = json!(true);
-                audit_tx(tx, ev).await?;
+            Ok(w) => {
+                sqlx::query("RELEASE SAVEPOINT starter_grant")
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(aurora_db::DbError::from)?;
+                if let Some(mut ev) = w {
+                    ev.metadata["starter"] = json!(true);
+                    audit_tx(tx, ev).await?;
+                }
             }
-            Ok(None) => {}
-            // A credential that was deleted or disabled since the admin saved must not lock
-            // people out: skip it and leave a trail.
+            // A server-side failure (database, internal) is not a refusal: it propagates and
+            // the sign-in fails with its real cause instead of being logged as a skipped grant.
+            Err(e) if e.status().is_server_error() => return Err(e),
+            // A credential that was deleted or disabled since the admin saved, or an app that
+            // became `custom_only` after the starter was saved, must not lock people out: skip
+            // it and leave a trail with the real reason.
             Err(e) => {
+                sqlx::query("ROLLBACK TO SAVEPOINT starter_grant")
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(aurora_db::DbError::from)?;
+                let reason = if e.code() == "full_grant_forbidden" {
+                    "full_grant_forbidden"
+                } else {
+                    "credential_unavailable"
+                };
                 tracing::warn!(
-                    "placement: starter grant {} {} skipped: {e:?}",
+                    "placement: starter grant {} {} skipped ({reason}): {e:?}",
                     s.kind,
                     s.id
                 );
@@ -281,7 +306,7 @@ async fn ensure_personal_workspace(
                         .workspace(ws.id)
                         .target("agent", agent.id)
                         .metadata(json!({"starter": true, "kind": s.kind, "id": s.id,
-                                         "reason": "credential_unavailable"})),
+                                         "reason": reason})),
                 )
                 .await?;
             }

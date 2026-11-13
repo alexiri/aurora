@@ -160,9 +160,11 @@ impl Target {
     /// of a `custom_only` app (P4-GRANTS, D-123).
     pub fn inert_for_custom_only(&self, c: &Credential) -> bool {
         match self {
-            Self::Connection { tools, .. } | Self::AppConnections { tools, .. } => {
-                custom_only_inert(c, tools)
-            }
+            // A toolless `app` target allows every tool of the app, the winning connection
+            // included: the same full-style allow as the other two (corpus `p4g_12`).
+            Self::App { tools, .. }
+            | Self::Connection { tools, .. }
+            | Self::AppConnections { tools, .. } => custom_only_inert(c, tools),
             _ => false,
         }
     }
@@ -390,14 +392,25 @@ impl Rule {
     /// Block rules are unaffected: the restrictions only tighten, and custom grants compile a
     /// toolless `block` as their rule 3.
     pub fn targets_match(&self, f: &RequestFacts) -> bool {
-        self.targets.is_empty()
-            || self.targets.iter().any(|t| {
-                t.matches(f)
-                    && !(self.action == Action::Allow
-                        && f.winning_credential
-                            .as_ref()
-                            .is_some_and(|c| t.inert_for_custom_only(c)))
-            })
+        // A target-less rule matches everything, so as an *allow* it is the same full-style
+        // grant: inert for a `custom_only` winner (corpus `p4g_11`).
+        if self.targets.is_empty() {
+            return !(self.action == Action::Allow
+                && matches!(
+                    f.winning_credential,
+                    Some(Credential::Connection {
+                        custom_only: true,
+                        ..
+                    })
+                ));
+        }
+        self.targets.iter().any(|t| {
+            t.matches(f)
+                && !(self.action == Action::Allow
+                    && f.winning_credential
+                        .as_ref()
+                        .is_some_and(|c| t.inert_for_custom_only(c)))
+        })
     }
 
     /// `CONNECT`-time targets + conditions (RFE-003). Restrictive rules: unknowable

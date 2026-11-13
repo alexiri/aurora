@@ -636,6 +636,45 @@ async fn sec_84_oversize_responses_are_cut_and_the_credential_never_appears() {
     assert!(!v.to_string().contains("127.0.0.1"));
 }
 
+/// FIX-065: headers and part of the body arrive, then the connection is reset — never a 200
+/// carrying a truncated file (the API would hash and ingest it).
+#[tokio::test]
+async fn a_body_cut_short_by_the_upstream_is_502_library_upstream_not_a_partial_success() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let fx = start().await;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else {
+                return;
+            };
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf).await;
+            let _ = s
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{\"sha\":\"abc",
+                )
+                .await;
+            let _ = s.flush().await;
+            // Close with data announced but not sent: the body ends in an error.
+            drop(s);
+        }
+    });
+    let cut = Arc::new(LibraryFetch {
+        port,
+        ..clone_fetch(&fx.fetch)
+    });
+    let (s, v) = fx
+        .post_via(
+            cut,
+            true,
+            fx.req("resolve_ref", json!({"repo": "acme/skills", "ref": "main"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (502, "library_upstream"), "{v}");
+}
+
 fn clone_fetch(f: &Arc<LibraryFetch>) -> LibraryFetch {
     LibraryFetch {
         ring: f.ring.clone(),

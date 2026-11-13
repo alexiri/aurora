@@ -311,6 +311,10 @@ fn decode(raw: &[u8], plus_is_space: bool) -> Option<String> {
     }
     let s = if plus_is_space {
         std::borrow::Cow::Owned(s.replace('+', " "))
+    } else if s.contains('+') {
+        // Query strings: most servers read `+` as a space, others keep it. Whichever the
+        // upstream does, we cannot know, so a literal `+` is encoding doubt (`%2B` is exact).
+        return None;
     } else {
         std::borrow::Cow::Borrowed(s)
     };
@@ -511,6 +515,31 @@ mod tests {
         ));
         assert!(!matches(&c, &i(None)));
         assert!(!matches(&c, &i(Some("action=GetCallerIdentity"))));
+    }
+
+    #[test]
+    fn a_plus_in_a_query_is_encoding_doubt_and_never_matches() {
+        let i = |q| ParamInput {
+            query: q,
+            ..ParamInput::NONE
+        };
+        for expected in ["A B", "A+B"] {
+            let c = vec![cond(ParamSource::Query, "Action", eq(expected))];
+            assert!(!matches(&c, &i(Some("Action=A+B"))), "{expected}");
+            let c = vec![cond(ParamSource::Query, "Action", one_of(&[expected]))];
+            assert!(!matches(&c, &i(Some("Action=A+B"))), "{expected}");
+        }
+        // a `+` in a name (it might have been ours) is doubt too; an unrelated value is not read
+        let c = vec![cond(ParamSource::Query, "Action", eq("A"))];
+        assert!(!matches(&c, &i(Some("Action=A&x+y=1"))));
+        assert!(!matches(&c, &i(Some("Ac+tion=A"))));
+        assert!(matches(&c, &i(Some("Action=A&x=1+2"))));
+        // the exact encodings still work
+        assert!(matches(&c, &i(Some("Action=A&x=1%2B2"))));
+        let c = vec![cond(ParamSource::Query, "Action", eq("A B"))];
+        assert!(matches(&c, &i(Some("Action=A%20B"))));
+        let c = vec![cond(ParamSource::Query, "Action", eq("A+B"))];
+        assert!(matches(&c, &i(Some("Action=A%2BB"))));
     }
 
     #[test]
