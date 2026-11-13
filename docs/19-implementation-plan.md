@@ -218,3 +218,6 @@ Phases 3 and 4 start once phases 1 and 2 are done.
 
 Multi-arch (arm64) images, OPS-022 (owner, 2026-11-07: no arm deployment planned; images are
 amd64 only until then). Dependabot, OPS-021, and the Slack connector (owner, 2026-11-08, D-78).
+App guides on demand, P5-GUIDE-1..5 (owner, 2026-11-13, D-170..D-172; `24`, `21 §Phase 5 — App
+guides on demand`): P5-GUIDE-1 is the first addon-related task of the phase, before addon sources
+(P5-ASRC) and the CERN addons.

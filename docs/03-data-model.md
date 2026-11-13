@@ -418,7 +418,7 @@ The project's built-in publisher key (`aurora`) is compiled in and never stored.
 | Column | Type | Notes |
 |---|---|---|
 | digest | text pk | sha256 of the bytes |
-| kind | text CHECK in (`hooks_wasm`,`icon`,`icon_dark`,`setup_guide`,`archive`) | |
+| kind | text CHECK in (`hooks_wasm`,`icon`,`icon_dark`,`setup_guide`,`archive`) | (phase 5, P5-GUIDE-1, C-642) gains `agent_guide`: one row per agent guide file (`24 §4`), keyed like every blob by the sha256 of its bytes. Because the key is the digest alone, a guide file whose bytes equal an existing blob keeps that row's kind: guide files are read **by digest only** |
 | content | bytea not null | |
 
 ### `host_claim_decisions`

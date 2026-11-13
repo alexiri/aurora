@@ -72,6 +72,7 @@ Both kinds share the gateway, the secret stores and the policy engine.
 | **Egress posture** | `open` or `credentialed_only` (requests on which Aurora injects nothing are blocked unless allow-listed). |
 | **Plugin package** | Signed archive holding one or more **apps**: manifest, assets, docs, optional `hooks.wasm`, fixtures. |
 | **App** | A third-party service declared by a plugin package: hosts, injection, token lifecycle, connect methods, permission tools, approval summaries, agent instructions. |
+| **Agent guide** | (phase 5, `24`) What a hosted agent can read about a connected app, in `.aurora/apps/<app_id>/` of its home: `guide.md` and `tools.md` written by Aurora (accounts, access per catalogue tool) and the package's reference files. Read on demand; distinct from the **setup guide** for people. |
 | **Mechanism** | A named, core-implemented behaviour that a manifest selects and parameterizes (`bearer`, `basic`, `header`, `oauth2_refresh`, `aws_sigv4`, …). Plugins cannot add mechanisms. |
 | **Hook** | A function exported by a plugin's WebAssembly component (`connect.authorize`, `connect.exchange`, `token.mint`, `approval.summarize`). Runs only in the **hook host**, only on slow paths. |
 | **Hook host** | Stateless internal service embedding wasmtime; holds no keys and no database access. |

@@ -370,7 +370,9 @@ The home (`/workspace`) holds:
 2. **Projection** (managed roots only): `<skills_dir>/` (0444/0555),
    `memory/` (`*.md` 0644 + `index.md` 0444), instruction files (0444) at the
    paths the harness declares, `.aurora/` (tool catalogue cache, inbox
-   attachments).
+   attachments), (phase 5, P5-GUIDE-2) `.aurora/apps/<app_id>/` (the agent guide of each
+   connected app: `guide.md`, `tools.md` and the package's reference files, 0444 in 0555
+   directories; `24 §5`, `§7`).
 3. **Ephemeral** `/run/aurora`: CA, tools socket, boot-time stubs outside home.
 
 ### Sync protocol
@@ -381,7 +383,21 @@ The home (`/workspace`) holds:
 - Part kinds: `skills` (full files), `memory` (rendered files), `render_inputs`
   (preamble data, brief, capability fragment inputs: apps with snippets and
   docs links, presences, peers, memory language, schedules summary, timezone),
-  `tools` (catalogue), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
+  `tools` (catalogue), (phase 5, P5-GUIDE-2) `apps` (agent guide files, below), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
+- (phase 5, P5-GUIDE-2, D-171, SEC-90, `24 §7`) **`apps` parts** carry file entries
+  `{ path, content }` (the entry shape of `skills`) for `.aurora/apps/<app_id>/<file>`: the two
+  files the API renders per connected app (`guide.md`, `tools.md`) and the reference files of the
+  app's package, the latter up to `AGENT_GUIDE_SYNC_MAX` per sync (apps beyond the budget, in
+  `app_id` order, get the two generated files only and their `guide.md` says so).
+  `.aurora/apps/` is a managed root: an entry is accepted only at exactly
+  `.aurora/apps/<id>/<name>` with both segments matching their grammars (`24 §3.1`), files are
+  installed 0444, and the root is pruned to the manifest at commit, so a folder disappears with
+  the grant, connection or availability that put it there. Each `render_inputs` app entry gains
+  `app_id`, `summary` and `guide_path`; `name`, `accounts`, `docs_links` and `snippet` are
+  unchanged. A supervisor that predates the kind skips the part and renders as before; a
+  supervisor that gets no `guide_path` (an older API) renders as before. A sync that changes
+  only files under `.aurora/apps/` leaves the instruction files byte-identical and therefore
+  releases no idle session.
 - The supervisor applies each part idempotently without buffering; only the
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves

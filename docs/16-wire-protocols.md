@@ -100,7 +100,7 @@ a dialect refuses the turn with `harness_failed` and a clear message, never gues
 or "skip auth" switches only). `TurnInput`: `{ text, speaker_label, door, recall: {
 index, snippets: [] }, notices: [] }`. `HomeSyncPart`: `{ kind: "skills" |
 "memory" | "render_inputs" | "tools" | "previews" | "manifest" | "final", entries: [...] }` ((phase 4, P4-PRV-1) a `previews` part has the single entry `{ shares: [{ share_id, port, start_command?, cwd? }] }`; an older supervisor that does not know the kind skips it, which only means no preview works)
-(`12 §Sync protocol`). (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
+(`12 §Sync protocol`). (phase 5, P5-GUIDE-2, C-643) The kind vocabulary gains `"apps"` (between `tools` and `previews`): file entries `{ path, content }` under `.aurora/apps/<app_id>/`, the entry shape of `skills`; an older supervisor skips the kind, which only means no app folders. (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
 
 ### Reports
 

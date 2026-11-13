@@ -640,6 +640,63 @@ done when its tests exist, pass in CI, and the security invariants it touches
   remove confirms, update review (full diff, disabled approve for non-authority with explanation), repository text
   rendered as data (an HTML/markdown/URL payload is inert), no horizontal scroll at 390 px, both themes.
 
+### App guides on demand (phase 5, P5-GUIDE-1..5, D-170..D-172, SEC-90, SEC-91)
+- **Fixture packages** (`plugins/fixtures`): `fixture-guide` (`09 §13`) and one
+  `fixture-invalid-agent-guide-*` package per linter rule of `24 §3` (unlisted file, missing file,
+  reserved name, bad name, not text, file too large, summary required), each with its line in
+  `expected-invalid.txt`.
+- **Registry** (`crates/aurora-registry/tests/it/agent_guide.rs`): the linter matrix; a package
+  without the new keys keeps its digest and its snapshot fragment byte for byte; snapshot carries
+  `summary` and `guide[]` with `sha256`/`size` and omits both when absent; the **renderer**
+  (`agent_guide::render`) under `insta` snapshots for: one account full, one account custom
+  (allowed / approval / blocked all present), two accounts with different grants (per-letter
+  states), a lost host claim (`unavailable`), `block_untooled`, an instance-bound and a
+  tenant-bound account (host shown), a database app, an app with no tools, classifiers (`graphql`,
+  `git`, `params`), reference files left out by the budget; a hostile-text corpus (names, labels,
+  titles, descriptions, essentials with backtick runs, headings, control characters) never leaves
+  its line or fence; the property of SEC-91.
+- **API** (`services/aurora-api/tests/it/home_agent_guides.rs`, and `home_render_inputs.rs`):
+  the `apps` part carries exactly the folders of the apps in the render inputs, every path is in
+  the manifest, entries fit a part; `render_inputs.apps[]` keeps its old fields and gains `app_id`,
+  `summary`, `guide_path`; a custom grant edit, a revoked grant, a disconnected account, an app
+  made unavailable and a new package version each produce the expected next generation (changed
+  `tools.md`, folder gone, new reference file); `AGENT_GUIDE_SYNC_MAX` (lowered in the test
+  configuration) drops reference files in `app_id` order, keeps the generated files and counts the
+  metric; a guide file whose bytes equal a blob of another kind is still served (read by digest);
+  an `invalid` package stores no guide blob; `agent_guide_changed` is in the audit metadata; the
+  guard `scripts/guards/agent-guide-advisory.sh` (SEC-91); the admin routes
+  (C-648): shape, `changed` against the active version, instance-admin only, `text/plain` +
+  `nosniff`, 404s.
+- **Supervisor** (`services/aurora-supervisor`): `.aurora/apps/` managed-root rules (exact depth,
+  name grammars, traversal refused, 0444/0555, prune); instruction snapshots for **inline** (at the
+  threshold), **index** (one character above it), an older API (no `guide_path` → today's file,
+  byte for byte against the existing snapshot), and the preamble paragraph present only with an
+  app; a sync that changes only `.aurora/apps/**` re-renders identical instruction files and
+  releases no session.
+- **Rolling upgrade**: regression tests written *before* the feature code pin what an older
+  supervisor does with the new wire: a sync with an unknown part kind and with unknown
+  render-input fields commits and renders the pre-feature instruction snapshot (they pass on the
+  unmodified supervisor and must keep passing for the `_` arm); the compiled snapshot of the
+  built-in packages as they are before P5-GUIDE-4 has an unchanged hash after P5-GUIDE-1.
+- **CLI**: `aurora plugin guide` output equals the API's for the same inputs (shared renderer,
+  one golden directory); `new` scaffolds a package that validates; `import-openapi` (P5-GUIDE-5)
+  on three checked-in documents (small 3.0 JSON, 3.1 YAML with tags and `$ref` parameters, one
+  that exceeds `AGENT_GUIDE_APP_MAX`): output is byte-stable across two runs, validates, stays
+  within the limits, and the dropped-detail report is printed for the third.
+- **Built-in packages** (P5-GUIDE-4): all validate and pass their fixtures unchanged; one supervisor
+  snapshot with every built-in app connected (index mode) records the size of the *connected apps*
+  fragment, which must not exceed 270 characters per app plus the paragraph.
+- **End to end** (`fake` harness, kind): a hosted agent granted `fixture-guide` under a custom
+  grant has `.aurora/apps/fixture-guide/{guide.md,tools.md,api.md,operations.tsv}` with the expected
+  content and modes; revoking the grant removes the folder at the next sync.
+- **Live, env-gated** (harness conformance against `claude-code` and `codex` with an LLM endpoint):
+  in index mode the agent is asked for something that needs an endpoint named only in
+  `fixture-guide`'s `api.md`; the mock upstream must receive a request on that path. This is the
+  behavioural check that an agent reads the guide before calling; it is reported, not a merge gate.
+- **Dashboard** (P5-GUIDE-3): Agent guide section in the plugin view and in the review, change
+  marks, the plain-text viewer with an HTML/Markdown payload inert, a 64 KiB file, no horizontal
+  page scroll at 390 px, both themes.
+
 ### API rate limiting (phase 2, RFE-017)
 - Bucket semantics per class (burst then steady refill), a request must pass
   general + class + org buckets and a refused request consumes none of the others;

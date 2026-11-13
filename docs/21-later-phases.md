@@ -206,6 +206,34 @@ tokens), group → workspace access bindings, group identities in policy
   directory sync`, `01` (trust boundary 11), `02 §Limits`, `18 §SCIM`. Not in phase 4:
   SCIM `roles`, Bulk, enterprise extension, ETags, filters beyond `eq`, nested groups.
 
+## Phase 5 — App guides on demand
+
+**Specified (P5-GUIDE-1..5, owner 2026-11-13, D-170..D-172, SEC-90, SEC-91, C-640..C-659);
+`24-app-guides.md` is normative.** The owner asked whether to adopt Code Mode (and the Rust
+gateway Skarn). It does not apply as such: apps are not MCP tools, and agents already run code
+against app APIs in their sandbox (D-170). What is built is the part that transfers:
+
+- every connected app gets a read-only folder `.aurora/apps/<app_id>/` in the agent's home:
+  `guide.md` (accounts, access, file list, the plugin's essentials) and `tools.md` (every
+  catalogue tool and whether this agent's grant allows it, asks approval or blocks it), both
+  written by Aurora, plus the package's own reference files (`agent/<app_id>/`, new, additive in
+  contract 1);
+- the instruction file is unchanged for agents with few apps and becomes a one-line-per-app
+  index above `AGENT_NOTES_INLINE_MAX` of plugin notes; a preamble paragraph tells agents to
+  reduce large responses in code;
+- `aurora plugin guide` previews what an agent reads; `aurora plugin import-openapi`
+  (P5-GUIDE-5) generates an operation index, per-tag reference files and a catalogue skeleton
+  from an OpenAPI document, which is how large APIs (Zoom, OpenStack, OpenSearch) become
+  practical to package.
+
+No gateway, policy, hook-host or runner change. **Order: P5-GUIDE-1 precedes every other addon
+task** (P5-ASRC documents the package format for third parties and P5-CERN-ADDONS writes
+packages; both are done once, in this shape). Owning sections: `24`; `09 §2`, `§3.4 agent`, `§6`,
+`§9`, `§10`, `§12`, `§13`; `10 §Agent instructions`; `12 §Home projection`; `16 §W5`; `03`
+(`plugin_blobs`); `05` (plugin routes); `14` (Plugins); `02 §Limits`; `17`; `18 §App guides on
+demand`. Not in this phase: a code-execution runtime, MCP-server apps (shape recorded in D-172),
+effective-policy access in `tools.md`, digest-skipping in the home sync, guides for BYO agents.
+
 ## Other later items
 
 - **Shared rate-limit counters — specified (phase 4, P4-CNT, D-119, SEC-62).**

@@ -77,6 +77,7 @@ build from. It is not a description of an existing system.
 | 19 | [Implementation plan](19-implementation-plan.md) | Phases, milestones, acceptance criteria |
 | 20 | [Mattermost connector](20-mattermost-connector.md) | Phase 1 connector specification |
 | 21 | [Later phases](21-later-phases.md) | App catalogue, database lane, HashiCorp Vault store, SSH, previews, evals, … |
+| 24 | [App guides on demand](24-app-guides.md) | Phase 5: per-app folders in the agent's home (accounts, access, reference), package format additions, instruction-file index, OpenAPI import; why Code Mode is not adopted |
 | 90 | [Decision log](90-decisions.md) | Every deliberate departure from OneCLI and the proposals, with rationale |
 
 ## Phases at a glance
