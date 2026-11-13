@@ -561,6 +561,19 @@ async fn write_connection_grant(
     // (P4-GRANTS, D-123, SEC-67) An app whose manifest says `custom_only` is never granted in
     // `full` mode, on any path: this function is the only writer of connection grants, so the
     // agent-side PUT and the credential-side bulk route both stop here.
+    //
+    // The activation of a plugin version (which converts `full` grants of a newly `custom_only`
+    // app) holds the exclusive compile lock for its whole transaction. Taking the same lock in
+    // shared mode here, *before* reading the restrictions, closes the read-then-write race: either
+    // the activation committed first (this read, a fresh statement after the lock, sees the new
+    // snapshot and refuses `full`), or it waits for this transaction and then converts the grant
+    // written here. The lock is released with the transaction.
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('aurora:registry:compile', 0))",
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(DbError::from)?;
     let restrictions = app_restrictions(state, &conn.app_id).await?;
     if restrictions.custom_only && req.mode == GrantMode::Full {
         return Err(ApiError::unprocessable(
