@@ -69,6 +69,100 @@ async fn post(h: &Harness, uri: &str, auth: (&str, &str), body: Value) -> (u16, 
     (s.as_u16(), v)
 }
 
+/// (FIX-109, 07 §Approval deadlines "Expiry still denies") An approval still `pending` past its
+/// deadline (the 10 s sweep with its 30 s grace has not run, or is down) cannot be approved,
+/// denied or batch-approved: the answer is 409 `already_decided` and the approval is `expired`
+/// in the same transaction.
+#[tokio::test]
+async fn a_decision_after_the_deadline_is_refused_and_expires_the_approval() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let approver = h.user("ap@x.io", false).await;
+    h.member(f.org, approver, "member", "active").await;
+    h.bind_ws(f.ws, approver, "approver").await;
+    let (_, t) = h.good_session(approver).await;
+    let c = cookie(&t);
+    let overdue = |id: Uuid| {
+        let pool = h.pool().clone();
+        async move {
+            sqlx::query(
+                "UPDATE approvals SET deadline = now() - interval '5 seconds' WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let status = |id: Uuid| {
+        let pool = h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT status FROM approvals WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    for decision in ["approve", "deny"] {
+        let id = approval(&h, &f, f.ws, f.agent, None).await;
+        overdue(id).await;
+        let (s, v) = post(
+            &h,
+            &format!("/v1/approvals/{id}/decision"),
+            ("cookie", &c),
+            json!({"decision": decision}),
+        )
+        .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (409, Some("already_decided")),
+            "{decision}: {v}"
+        );
+        assert_eq!(status(id).await, "expired", "{decision}");
+    }
+    // Batch: every member overdue -> 409 and all expired; a mixed batch decides the live ones.
+    let (b1, b2) = (
+        approval(&h, &f, f.ws, f.agent, Some("late")).await,
+        approval(&h, &f, f.ws, f.agent, Some("late")).await,
+    );
+    overdue(b1).await;
+    overdue(b2).await;
+    let (s, v) = post(
+        &h,
+        "/v1/approvals/batches/late/decision",
+        ("cookie", &c),
+        json!({"decision": "approve", "agent_id": f.agent}),
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("already_decided")),
+        "{v}"
+    );
+    assert_eq!(
+        (status(b1).await.as_str(), status(b2).await.as_str()),
+        ("expired", "expired")
+    );
+    let (m1, m2) = (
+        approval(&h, &f, f.ws, f.agent, Some("mixed")).await,
+        approval(&h, &f, f.ws, f.agent, Some("mixed")).await,
+    );
+    overdue(m1).await;
+    let (s, v) = post(
+        &h,
+        "/v1/approvals/batches/mixed/decision",
+        ("cookie", &c),
+        json!({"decision": "approve", "agent_id": f.agent}),
+    )
+    .await;
+    assert_eq!((s, v["decided"].as_u64()), (200, Some(1)), "{v}");
+    assert_eq!(
+        (status(m1).await.as_str(), status(m2).await.as_str()),
+        ("expired", "approved")
+    );
+}
+
 #[tokio::test]
 async fn decide_first_wins_authz_and_notify() {
     let h = Harness::new().await;

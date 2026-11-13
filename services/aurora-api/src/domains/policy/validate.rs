@@ -116,7 +116,14 @@ fn check_app(e: &mut Errs, p: &str, app: &str) {
 }
 
 fn check_host_path(e: &mut Errs, p: &str, host: &str, path: &Option<String>) {
-    if let Err(err) = HostPattern::parse(host) {
+    // (FIX-109, 07 §Matching primitives) Host patterns are ASCII: clients send the punycode
+    // form, so a pattern in Unicode would be accepted and then never match anything.
+    if !host.is_ascii() {
+        e.add(
+            format!("{p}/host"),
+            "host patterns are ASCII; write an internationalised name in its punycode form (for example xn--bcher-kva.example)",
+        );
+    } else if let Err(err) = HostPattern::parse(host) {
         e.add(format!("{p}/host"), &format!("invalid host pattern: {err}"));
     }
     if let Some(path) = path
@@ -498,6 +505,34 @@ mod tests {
         assert!(paths.contains(&"/rules/0/targets/0/host"));
         assert!(paths.contains(&"/rules/0/targets/0/path"));
         assert!(paths.contains(&"/rules/0/require_approval"));
+    }
+
+    /// (FIX-109) A Unicode host pattern is refused with the punycode hint (it would never match:
+    /// clients send punycode); the punycode form is accepted.
+    #[test]
+    fn non_ascii_host_patterns_are_refused_with_the_punycode_hint() {
+        let scope = Scope {
+            org: Uuid::nil(),
+            ws: Some(Uuid::nil()),
+        };
+        let mut r = req(json!([{
+            "name": "x", "action": "allow",
+            "targets": [{"type": "network", "host": "bücher.example"}]
+        }]));
+        let mut e = Errs(vec![]);
+        check_shape(&mut r, scope, &mut e);
+        let f =
+            e.0.iter()
+                .find(|f| f.path == "/rules/0/targets/0/host")
+                .unwrap();
+        assert!(f.message.contains("punycode"), "{}", f.message);
+        let mut r = req(json!([{
+            "name": "x", "action": "allow",
+            "targets": [{"type": "network", "host": "xn--bcher-kva.example"}]
+        }]));
+        let mut e = Errs(vec![]);
+        check_shape(&mut r, scope, &mut e);
+        assert!(e.0.iter().all(|f| f.path != "/rules/0/targets/0/host"));
     }
 
     #[test]

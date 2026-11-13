@@ -71,7 +71,7 @@ async fn pending(
     Ok(Json(PendingList { items }))
 }
 
-/// Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10).
+/// Server-sent events `approval` (`created` | `decided` | `expired` | `abandoned`), no SSE ids (C-10).
 #[utoipa::path(get, path = "/approvals/stream", operation_id = "streamApprovals", tag = "approvals",
     responses((status = 200, content_type = "text/event-stream", body = ApprovalEvent),
         (status = 401, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope)),

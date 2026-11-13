@@ -45,6 +45,11 @@ pub struct FreezeResult {
     /// Whether the resource is effectively frozen after the call (an agent: agent ∨ workspace ∨
     /// org flag; a workspace: workspace ∨ org flag).
     pub effective_frozen: bool,
+    /// What a `freeze` call did: `frozen` (it was not frozen), `escalated` (it was frozen by a
+    /// lower authority; the record now carries the caller's authority, reason and identity) or
+    /// `unchanged` (already frozen by an equal or higher authority: nothing changed). `null`
+    /// after `unfreeze`.
+    pub outcome: Option<String>,
 }
 
 /// One organization in the instance-admin list (operator view: no org data).

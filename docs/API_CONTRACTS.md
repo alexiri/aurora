@@ -338,7 +338,7 @@ interface EffectiveGovernance {
 | GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K (read: can_use / member) | — | 200 `PolicyDocument` | 404 |
 | PUT `…/policy/draft` | S/K can_own / owner·admin | `{ revision, default_action, uncredentialed_default?, uncredentialed_allowlist?, rules: Omit<PolicyRule,"priority"\|"logical_id"> & {logical_id?}[] }` (C-08) | 200 `PolicyGeneration` (draft) | 409 `stale_revision`; 422 `policy_invalid` (`details.fields`) |
 | POST `…/policy/publish` | same | `{ revision }` | 200 `PolicyDocument` | 409 `stale_revision` |
-| POST `…/policy/rollback` | same | `{ generation: number }` | 200 `PolicyDocument` | 404 |
+| POST `…/policy/rollback` | same | `{ generation: number, expect_revision: number }` (FIX-109: the draft revision the caller last read; rollback replaces the draft) | 200 `PolicyDocument` | 404; 409 `stale_revision` |
 | GET `…/policy/generations` | S/K | `?limit&cursor` | 200 `Page<Omit<PolicyGeneration,"rules"> & {rule_count}>` | — |
 | GET `…/policy/warnings` | S/K | — | 200 `{ items: { code: "shadowed" \| "inert" \| "overridden_by_org", rule_logical_id, message }[] }` | — |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K can_use | `{ agent_id, method, url, body?, use_draft? }` | 200 `Simulation` | 400; 404 agent |

@@ -263,8 +263,27 @@ async fn draft_validation_stale_publish_rollback() {
             .any(|g| g["number"] == 1 && g["status"] == "superseded")
     );
 
-    // rollback to gen 1 (empty) publishes a copy as gen 3
+    // (FIX-109) Rollback replaces the draft: it needs the draft revision the caller last read,
+    // and a colleague's draft saved since is not discarded (409, draft untouched).
+    let (_, doc) = w.call(Method::GET, &w.wsu(""), &w.owner, None).await;
+    let rev = doc["draft"]["draft_revision"].as_i64().unwrap();
     let (s, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/rollback"),
+            &w.owner,
+            Some(json!({"generation": 1, "expect_revision": rev + 1})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("stale_revision")),
+        "{v}"
+    );
+    let (_, after) = w.call(Method::GET, &w.wsu(""), &w.owner, None).await;
+    assert_eq!(after["draft"]["draft_revision"].as_i64().unwrap(), rev);
+    // A body without the revision is refused.
+    let (s, _) = w
         .call(
             Method::POST,
             &w.wsu("/rollback"),
@@ -272,16 +291,29 @@ async fn draft_validation_stale_publish_rollback() {
             Some(json!({"generation": 1})),
         )
         .await;
+    assert_eq!(s, 400);
+
+    // rollback to gen 1 (empty) publishes a copy as gen 3
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/rollback"),
+            &w.owner,
+            Some(json!({"generation": 1, "expect_revision": rev})),
+        )
+        .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["published"]["number"], 3);
     assert_eq!(v["published"]["rules"].as_array().unwrap().len(), 0);
     assert_eq!(v["draft"]["number"], 4);
+    let (_, doc) = w.call(Method::GET, &w.wsu(""), &w.owner, None).await;
+    let rev = doc["draft"]["draft_revision"].as_i64().unwrap();
     let (s, _) = w
         .call(
             Method::POST,
             &w.wsu("/rollback"),
             &w.owner,
-            Some(json!({"generation": 99})),
+            Some(json!({"generation": 99, "expect_revision": rev})),
         )
         .await;
     assert_eq!(s, 404);

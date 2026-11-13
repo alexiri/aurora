@@ -510,6 +510,12 @@ impl Ctx<'_> {
             .as_ref()
             .map(|a| a.default_blocklist.clone())
             .unwrap_or_default();
+        // (FIX-109) A reconnect to a package version whose blocklist is now empty must not
+        // leave the previous version's derived block rule in force.
+        let stale_rule = hosts.is_empty() && self.reconnect.is_some();
+        if stale_rule {
+            derived_rules::delete_for_source(&mut *tx, "blocklist", n.id).await?;
+        }
         if !hosts.is_empty() {
             let rule = json!({
                 "name": format!("Blocklist: {}", self.app.about.name),
@@ -527,6 +533,8 @@ impl Ctx<'_> {
                 &rule,
             )
             .await?;
+        }
+        if !hosts.is_empty() || stale_rule {
             match n.workspace_id {
                 Some(ws) => {
                     credentials::notify_gateway_invalidate(&mut *tx, "workspace", ws).await?

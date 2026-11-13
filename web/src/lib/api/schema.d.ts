@@ -1454,7 +1454,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10). */
+        /** Server-sent events `approval` (`created` | `decided` | `expired` | `abandoned`), no SSE ids (C-10). */
         get: operations["streamApprovals"];
         put?: never;
         post?: never;
@@ -4700,7 +4700,7 @@ export interface components {
         /** @description SSE `data:` payload of `event: approval` (C-10). */
         ApprovalEvent: {
             approval: components["schemas"]["Approval"];
-            /** @description `created` | `decided` | `expired` */
+            /** @description `created` | `decided` | `expired` | `abandoned` */
             event: string;
             notice?: null | components["schemas"]["ApprovalNotice"];
         };
@@ -5787,6 +5787,13 @@ export interface components {
              */
             effective_frozen: boolean;
             frozen?: null | components["schemas"]["Frozen"];
+            /**
+             * @description What a `freeze` call did: `frozen` (it was not frozen), `escalated` (it was frozen by a
+             *     lower authority; the record now carries the caller's authority, reason and identity) or
+             *     `unchanged` (already frozen by an equal or higher authority: nothing changed). `null`
+             *     after `unfreeze`.
+             */
+            outcome?: string | null;
         };
         /** @description Which library skill to add (`10 §Git skill library`). */
         FromLibrary: {
@@ -8672,6 +8679,12 @@ export interface components {
             revoked: number;
         };
         RollbackRequest: {
+            /**
+             * Format: int64
+             * @description (FIX-109) The draft revision the caller last read: rollback replaces the current draft,
+             *     so a draft a colleague saved since is not discarded silently (409 `stale_revision`).
+             */
+            expect_revision: number;
             /**
              * Format: int32
              * @description Generation number to copy.

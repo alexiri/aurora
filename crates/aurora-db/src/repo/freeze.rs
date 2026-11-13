@@ -143,6 +143,42 @@ pub async fn freeze(
         == 1)
 }
 
+/// (FIX-109, D-50) Raise the record of an already frozen scope to a higher authority: who,
+/// reason and authority change, `frozen_at` stays (the freeze began then). Only ever raises:
+/// the statement is a no-op unless the stored authority ranks below `authority`. Returns `true`
+/// when the record was raised.
+pub async fn escalate(
+    conn: &mut PgConnection,
+    scope: Scope,
+    id: Uuid,
+    by: Uuid,
+    reason: &str,
+    authority: &str,
+) -> Result<bool, DbError> {
+    let rank = |col: &str| {
+        format!(
+            "CASE {col} WHEN 'workspace_owner' THEN 1 WHEN 'org_admin' THEN 2
+                         WHEN 'instance_admin' THEN 3 ELSE 255 END"
+        )
+    };
+    let sql = format!(
+        "UPDATE {} SET frozen_by_user_id = $2, frozen_reason = $3, frozen_authority = $4
+          WHERE id = $1 AND frozen_at IS NOT NULL AND {} < {}",
+        scope.table(),
+        rank("frozen_authority"),
+        rank("$4::text"),
+    );
+    Ok(sqlx::query(&sql)
+        .bind(id)
+        .bind(by)
+        .bind(reason)
+        .bind(authority)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected()
+        == 1)
+}
+
 /// Clear the flag. Returns `true` when it was set.
 pub async fn unfreeze(conn: &mut PgConnection, scope: Scope, id: Uuid) -> Result<bool, DbError> {
     let sql = format!(

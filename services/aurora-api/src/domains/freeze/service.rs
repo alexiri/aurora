@@ -146,16 +146,64 @@ pub async fn freeze(
     if !repo::lock(&mut tx, target.scope, target.id).await? {
         return Err(ApiError::not_found("Not found."));
     }
-    let created = repo::freeze(
-        &mut tx,
-        target.scope,
-        target.id,
-        who.user_id,
-        &reason,
-        who.authority,
-    )
-    .await?;
+    // (FIX-109, D-50) Freezing a scope that a lower authority already froze raises the record to
+    // the caller's authority (who, reason, authority; audited with `escalated`): otherwise the
+    // lower authority could still lift what the higher one meant to hold. An equal or higher
+    // stored authority is left alone and the call says `unchanged`.
+    let existing = repo::get(&mut tx, target.scope, target.id, false).await?;
+    let escalated_from = match &existing {
+        Some(cur) if repo::authority_rank(who.authority) > repo::authority_rank(&cur.authority) => {
+            Some(cur.authority.clone())
+        }
+        _ => None,
+    };
+    let created = existing.is_none()
+        && repo::freeze(
+            &mut tx,
+            target.scope,
+            target.id,
+            who.user_id,
+            &reason,
+            who.authority,
+        )
+        .await?;
+    let escalated = escalated_from.is_some()
+        && repo::escalate(
+            &mut tx,
+            target.scope,
+            target.id,
+            who.user_id,
+            &reason,
+            who.authority,
+        )
+        .await?;
+    let outcome = if created {
+        "frozen"
+    } else if escalated {
+        "escalated"
+    } else {
+        "unchanged"
+    };
     let mut flush = Vec::new();
+    if escalated {
+        let mut ev = AuditEvent::new(
+            who.actor.clone(),
+            format!("{}.freeze", label(target.scope)),
+            Outcome::Success,
+        )
+        .org(target.org_id)
+        .target(label(target.scope), target.id)
+        .metadata(json!({
+            "reason": reason,
+            "authority": who.authority,
+            "escalated": true,
+            "previous_authority": escalated_from,
+        }));
+        if let Some(ws) = target.workspace_id {
+            ev = ev.workspace(ws);
+        }
+        audit::insert_tx(&mut tx, &ev).await.map_err(audit_failed)?;
+    }
     if created {
         flush = apply_effects(&mut tx, target).await?;
         // (FIX-042) The next home sync must carry an empty `previews` part (the allow-list dies
@@ -189,6 +237,7 @@ pub async fn freeze(
             })
         }),
         effective_frozen: true,
+        outcome: Some(outcome.to_owned()),
     })
 }
 
@@ -247,6 +296,7 @@ pub async fn unfreeze(
     Ok(FreezeResult {
         frozen: None,
         effective_frozen,
+        outcome: None,
     })
 }
 
@@ -288,7 +338,9 @@ async fn apply_effects(
         aurora_db::bus::notify(
             &mut *tx,
             aurora_db::bus::Channel::Approval,
-            &json!({"id": id, "workspace_id": ws, "event": "expired"}),
+            // (FIX-109) A freeze-abandoned approval is not an expired one: the dashboard shows
+            // its own copy for the `abandoned` event (docs/05 SSE `approval` events).
+            &json!({"id": id, "workspace_id": ws, "event": "abandoned"}),
         )
         .await
         .map_err(|e| DbError::Other(sqlx::Error::Protocol(e.to_string())))?;

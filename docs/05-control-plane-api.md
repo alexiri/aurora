@@ -287,7 +287,7 @@ caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhil
 | `aurora_ops` | `{ "connector": id }`; (phase 4, P4-MCON) `{ "assignments": true }` when a managed connector changed | API → API connector long-polls; the connector-host `assignments` long poll |
 | `aurora_inbox` | `{}` | API → API inbox workers |
 | `aurora_op_result` | `{ "op_id" }` | API (on connector results) → API callers waiting on correlated operations |
-| `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired" }` | gateway & API → gateways, API (cards, SSE, long-polls) |
+| `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired"|"abandoned" }` (FIX-109: `abandoned` for an approval ended by a freeze or by a gateway that went away; the dashboard treats it like `expired` and shows its own copy) | gateway & API → gateways, API (cards, SSE, long-polls) |
 | `aurora_gateway_invalidate` | `{ "scope": "org"|"workspace"|"agent"|"credential"|"connection"|"user"|"all", "id"?: uuid }` (phase 4, P4-GRP-1: `user`, id = the user; drops the cached identities of that speaker) | API → gateways |
 | `aurora_registry` | `{ "hash": content_hash, "contract": int }` | API → gateways, API replicas (hook hosts have no DB connection and poll `/internal/v1/registry/active` every 60 s and on cache miss) |
 | `aurora_secret_origin` | `{ "secret_id", "status" }` | gateway (origin preflight/backstop) → API (audit, owner notice, dashboard) |
@@ -607,7 +607,7 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 |---|---|---|
 | GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision; (phase 4, P4-CNT) plus `rate_limit_scope: "replica" \| "shared"` (`shared` when `ratelimit.counters.backend` is `postgres`/`redis` and the gateway share is not `memory`; the editor note of `14`) |
 | PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
-| POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
+| POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation, expect_revision }` (FIX-109: rollback replaces the current draft, so it needs the draft revision the caller last read; 409 `stale_revision` otherwise) |
 | GET `…/policy/generations` | S/K | history |
 | GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft; (phase 2, RFE-025) includes `rule_applies_to_all_agents` (`07 §Injection selection`) |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |

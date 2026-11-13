@@ -1027,8 +1027,13 @@ an incident such as a compromised org account, and lifts only as described
 next). **Lifting** requires at least the authority that froze (`frozen_authority`
 = the caller's highest applicable authority at freeze time): a workspace owner
 cannot unfreeze what an org admin froze, an org owner cannot lift an
-instance-admin freeze. All of it is idempotent (freezing a frozen scope keeps the
-original record, returns 200).
+instance-admin freeze. All of it is idempotent and returns 200. (FIX-109) **Freezing a
+scope that is already frozen by a lower authority raises the record to the caller's
+authority** (who, reason, authority; `frozen_at` stays; audited as `*.freeze` with
+`escalated: true` and `previous_authority`), so a higher authority's freeze is never
+reversible by a lower one (D-50, SEC-45); freezing by an equal or lower authority changes
+nothing and says so (`outcome: "unchanged"`; the response always carries the resulting
+record and authority).
 
 **Effects** (all effective at the next gateway cache refresh ≤ 5 s, by
 `aurora_gateway_invalidate` scope `agent`/`workspace`/`org`, except where noted):

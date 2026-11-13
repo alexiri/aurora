@@ -6718,7 +6718,7 @@
         "tags": [
           "approvals"
         ],
-        "summary": "Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10).",
+        "summary": "Server-sent events `approval` (`created` | `decided` | `expired` | `abandoned`), no SSE ids (C-10).",
         "operationId": "streamApprovals",
         "responses": {
           "200": {
@@ -23318,7 +23318,7 @@
           },
           "event": {
             "type": "string",
-            "description": "`created` | `decided` | `expired`"
+            "description": "`created` | `decided` | `expired` | `abandoned`"
           },
           "notice": {
             "oneOf": [
@@ -26864,6 +26864,13 @@
                 "description": "The flag of the scope the call acted on: set after `freeze`, `null` after `unfreeze`."
               }
             ]
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What a `freeze` call did: `frozen` (it was not frozen), `escalated` (it was frozen by a\nlower authority; the record now carries the caller's authority, reason and identity) or\n`unchanged` (already frozen by an equal or higher authority: nothing changed). `null`\nafter `unfreeze`."
           }
         }
       },
@@ -36576,9 +36583,15 @@
       "RollbackRequest": {
         "type": "object",
         "required": [
-          "generation"
+          "generation",
+          "expect_revision"
         ],
         "properties": {
+          "expect_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(FIX-109) The draft revision the caller last read: rollback replaces the current draft,\nso a draft a colleague saved since is not discarded silently (409 `stale_revision`)."
+          },
           "generation": {
             "type": "integer",
             "format": "int32",

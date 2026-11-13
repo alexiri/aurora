@@ -1190,7 +1190,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"revision": 0})
         }
         ("POST", "/v1/orgs/{org}/policy/rollback" | "/v1/workspaces/{ws}/policy/rollback") => {
-            json!({"generation": 1})
+            json!({"generation": 1, "expect_revision": 0})
         }
         ("POST", "/v1/orgs/{org}/secrets" | "/v1/workspaces/{ws}/secrets") => {
             json!({"name": "matrix-secret", "kind": "generic"})

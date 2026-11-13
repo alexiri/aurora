@@ -131,6 +131,28 @@ describe("PolicyView", () => {
     expect(putBody!.rules.map((r) => r.name)).toEqual(["Other", "Allow x"]);
   });
 
+  it("rolls back with the draft revision the history list showed (FIX-109)", async () => {
+    let rollbackBody: unknown = null;
+    base({
+      "GET /v1/workspaces/w1/policy/generations": () =>
+        json(200, {
+          items: [
+            { id: "g3", number: 3, status: "draft", rule_count: 0, draft_revision: 7, created_at: "2026-01-03T00:00:00Z" },
+            { id: "g2", number: 2, status: "published", rule_count: 1, draft_revision: null, created_at: "2026-01-02T00:00:00Z" },
+          ],
+          next_cursor: null,
+        }),
+      "POST /v1/workspaces/w1/policy/rollback": async (req) => {
+        rollbackBody = await req.json();
+        return json(200, { scope: "workspace", published: gen(), draft: gen() });
+      },
+    });
+    wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
+    fireEvent.click(await screen.findByText("History"));
+    fireEvent.click(await screen.findByLabelText("Roll back to generation 2"));
+    await waitFor(() => expect(rollbackBody).toEqual({ generation: 2, expect_revision: 7 }));
+  });
+
   it("edits the workspace open-lane posture and shows what the higher level enforces", async () => {
     let putBody: { open_lane_posture?: string } | null = null;
     base({

@@ -96,10 +96,21 @@ export function usePublish(scope: PolicyScope) {
 export function useRollback(scope: PolicyScope) {
   const inv = useInvalidatePolicy(scope);
   return useMutation({
-    mutationFn: (generation: number) =>
+    // `expect_revision`: the draft revision last read (rollback replaces the draft; 409 when it moved).
+    mutationFn: ({ generation, expectRevision }: { generation: number; expectRevision: number }) =>
       scope.kind === "workspace"
-        ? unwrap(api.POST("/v1/workspaces/{ws}/policy/rollback", { params: { path: { ws: scope.id } }, body: { generation } }))
-        : unwrap(api.POST("/v1/orgs/{org}/policy/rollback", { params: { path: { org: scope.id } }, body: { generation } })),
+        ? unwrap(
+            api.POST("/v1/workspaces/{ws}/policy/rollback", {
+              params: { path: { ws: scope.id } },
+              body: { generation, expect_revision: expectRevision },
+            }),
+          )
+        : unwrap(
+            api.POST("/v1/orgs/{org}/policy/rollback", {
+              params: { path: { org: scope.id } },
+              body: { generation, expect_revision: expectRevision },
+            }),
+          ),
     onSuccess: inv,
   });
 }
