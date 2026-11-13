@@ -12,9 +12,9 @@ Every lane spec names its lane name, its task ids and their briefs (`docs/tasks/
 5. If you run `connect::*` api tests: `bash scripts/fixtures/build.sh` once.
 
 ## Working rules
-- **One commit per task id** (several are fine if the work is large — "evidence then fix" is OK), message prefix `<ID>: `, ending with the line `Co-Authored-By: Claude <noreply@anthropic.com>`. Commit as you go; don't leave the tree dirty between tasks.
+- **One commit per task id** (several are fine if the work is large — "evidence then fix" is OK), message prefix `<ID>: `. Commit as you go; don't leave the tree dirty between tasks. Never add co-authored lines.
 - **Scope**: only the files your brief's "Owns" lists. If the fix genuinely needs more, stop that task and report rather than widening.
-- **Change files only with the Edit/Write tools.** Never python, sed, awk, perl, `cat >>`, `tee` or heredocs to create or modify files (owner rule). Repo generators are fine (`UPDATE_OPENAPI=1 cargo test -p aurora-api --test it openapi_matches_checked_in`, `pnpm -C web gen:api`, `UPDATE_SCHEMAS=1 cargo test -p aurora-protocol`, `cargo fmt`).
+- **Change files only with the Edit/Write tools.** Never python, sed, awk, perl, `cat >>`, `tee` or heredocs to create or modify files (owner rule), unless it's a bulk edit where it makes sense. Repo generators are fine (`UPDATE_OPENAPI=1 cargo test -p aurora-api --test it openapi_matches_checked_in`, `pnpm -C web gen:api`, `UPDATE_SCHEMAS=1 cargo test -p aurora-protocol`, `cargo fmt`).
 - **Do not edit `docs/PROGRESS.md` or `docs/FEATURES.md`** — the coordinator does. Fill the brief's "Completion report" section if it has one.
 - New tables/columns → real `### \`table\`` sections in `docs/03-data-model.md` (`created_at`/`updated_at` implicit) and `python3 scripts/extract-schema.py --check`. Migrations: `git fetch origin` and take the next free timestamp after `origin/master`'s newest; say so in the commit.
 - Tests must prove the behaviour: no sleeps for synchronisation (use barriers/notify/polling with a deadline), no assertions on mocks where a real path exists, no `#[ignore]`. A new test must fail without your fix — check that for at least the main test of each task and say so in the report. WebSocket test consumers answer Pings and bound every wait (FIX-051/FIX-055 playbooks).
