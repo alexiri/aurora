@@ -279,6 +279,10 @@ pub struct Script {
     /// How many long-polling `resolve` calls the API saw, and the `wait_secs` of the last.
     pub waits: std::sync::atomic::AtomicU32,
     pub last_wait: std::sync::atomic::AtomicU32,
+    /// When set, every `resolve` answers this body instead (a `deny`, say).
+    pub resolve_override: Mutex<Option<serde_json::Value>>,
+    /// The status `grants/redeem` answers (0 = 404, the default of the fake).
+    pub redeem_status: std::sync::atomic::AtomicU16,
 }
 
 pub async fn fake_api(listener: TcpListener, runner_endpoint: String, script: Arc<Script>) {
@@ -316,8 +320,20 @@ pub async fn fake_api(listener: TcpListener, runner_endpoint: String, script: Ar
                                     "wake_wait_secs": 45,
                                 }
                             })),
+                            "/v1/relay/grants/redeem" => {
+                                let st = script
+                                    .redeem_status
+                                    .load(std::sync::atomic::Ordering::SeqCst);
+                                hyper::Response::builder()
+                                    .status(if st == 0 { 404 } else { st })
+                                    .body(Full::new(Bytes::new()))
+                                    .unwrap()
+                            }
                             "/v1/relay/resolve" => {
                                 use std::sync::atomic::Ordering::SeqCst;
+                                if let Some(v) = script.resolve_override.lock().unwrap().clone() {
+                                    return Ok::<_, Infallible>(reply(v));
+                                }
                                 let waited = json["wait_secs"].as_u64().unwrap_or(0) as u32;
                                 let mut route = script.route.lock().unwrap().clone();
                                 if waited > 0 {

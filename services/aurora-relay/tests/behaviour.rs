@@ -400,7 +400,7 @@ async fn start_command_exit_and_throttle_pages() {
         .not_running
         .store(true, std::sync::atomic::Ordering::SeqCst);
     *r.script.route.lock().unwrap() = Some(serde_json::json!({
-        "sandbox": "running", "listening": false, "start": "exited"
+        "sandbox": "running", "listening": false, "start": "exited", "exit_code": 3
     }));
     let mut c = connect(&r).await;
     c.write_all(request("/echo", &[], true).as_bytes())
@@ -414,11 +414,14 @@ async fn start_command_exit_and_throttle_pages() {
     );
     let mut body = rest;
     c.read_to_end(&mut body).await.unwrap();
+    let body = String::from_utf8_lossy(&body).into_owned();
+    assert!(body.contains("start command"), "{body:?}");
     assert!(
-        String::from_utf8_lossy(&body).contains("start command"),
-        "{body:?}"
+        body.contains("exit code 3"),
+        "the exit code is shown: {body:?}"
     );
 
+    // The start-attempt budget is its own page, with its own words (not the wake budget's).
     *r.script.route.lock().unwrap() = Some(serde_json::json!({
         "sandbox": "running", "listening": false, "start": "limited", "retry_after_secs": 60
     }));
@@ -426,8 +429,104 @@ async fn start_command_exit_and_throttle_pages() {
     c.write_all(request("/echo", &[], true).as_bytes())
         .await
         .unwrap();
-    let (status, h, _) = read_head(&mut c).await;
+    let (status, h, rest) = read_head(&mut c).await;
     assert_eq!((status, header(&h, "retry-after")), (429, Some("60")));
+    let mut body = rest;
+    c.read_to_end(&mut body).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&body).contains("start command"),
+        "{body:?}"
+    );
+}
+
+/// A running sandbox whose port never listens, with no start command to wait for, answers the
+/// "nothing is listening" 502 page — not the refreshing "starting" page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nothing_listening_is_a_502_page_not_a_wait() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let r = rig(tm(), false).await;
+    // The API's `streams` waited `PREVIEW_LISTEN_WAIT` and refused (409); the route says so.
+    r.script.not_running.store(true, SeqCst);
+    *r.script.route.lock().unwrap() = Some(serde_json::json!({
+        "sandbox": "running", "listening": false, "start": "none"
+    }));
+    let mut c = connect(&r).await;
+    c.write_all(request("/echo", &[], true).as_bytes())
+        .await
+        .unwrap();
+    let (status, h, rest) = read_head(&mut c).await;
+    assert_eq!(status, 502);
+    assert!(header(&h, "refresh").is_none(), "nothing to wait for");
+    let mut body = rest;
+    c.read_to_end(&mut body).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&body).contains("Nothing is listening"),
+        "{body:?}"
+    );
+}
+
+/// The API's spoken denials become their pages: paused 403, frozen 423, the wake budget 429
+/// with the API's `Retry-After` (and that answer is not cached: the next request asks again).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn spoken_denials_render_their_pages() {
+    let r = rig(tm(), false).await;
+    for (reason, retry, want_status, want_retry) in [
+        ("paused", None, 403, None),
+        ("frozen", None, 423, None),
+        ("wake_limited", Some(120), 429, Some("120")),
+        ("not_found", None, 404, None),
+    ] {
+        let mut v = serde_json::json!({ "decision": "deny", "reason": reason });
+        if let Some(s) = retry {
+            v["retry_after_secs"] = serde_json::json!(s);
+        }
+        *r.script.resolve_override.lock().unwrap() = Some(v);
+        // A session of its own per case: denials are cached (5 s) per `(label, session)`.
+        let raw = format!(
+            "GET /echo HTTP/1.1\r\nhost: {HOST}\r\nconnection: close\r\n\
+             cookie: __Host-aurora_preview=auv_{reason}\r\n\r\n"
+        );
+        let mut c = connect(&r).await;
+        c.write_all(raw.as_bytes()).await.unwrap();
+        let (status, h, _) = read_head(&mut c).await;
+        assert_eq!(status, want_status, "{reason}");
+        assert_eq!(header(&h, "retry-after"), want_retry, "{reason}");
+    }
+    // wake_limited was not cached: when the budget frees up the very next request is served.
+    *r.script.resolve_override.lock().unwrap() = Some(serde_json::json!({
+        "decision": "deny", "reason": "wake_limited", "retry_after_secs": 5
+    }));
+    let mut c = connect(&r).await;
+    c.write_all(request("/echo", &[], true).as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(read_head(&mut c).await.0, 429);
+    *r.script.resolve_override.lock().unwrap() = None;
+    let mut c = connect(&r).await;
+    c.write_all(request("/echo", &[], true).as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(read_head(&mut c).await.0, 200);
+}
+
+/// The grant exchange of a share whose access ended: redeem 404 → the uniform not-found page,
+/// 423 → the frozen page, 403 → the paused page (not "grant service unavailable").
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn redeem_denials_render_their_pages() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let r = rig(tm(), false).await;
+    // `__Host-aurora_pstate=<nonce>.<base64url("/")>`
+    let raw = format!(
+        "GET /_aurora/grant?g=x HTTP/1.1\r\nhost: {HOST}\r\nconnection: close\r\n\
+         cookie: __Host-aurora_pstate=nonce.Lw\r\n\r\n"
+    );
+    for (api, page) in [(404, 404), (423, 423), (403, 403), (400, 400), (500, 502)] {
+        r.script.redeem_status.store(api, SeqCst);
+        let mut c = connect(&r).await;
+        c.write_all(raw.as_bytes()).await.unwrap();
+        let (status, _, _) = read_head(&mut c).await;
+        assert_eq!(status, page, "redeem answered {api}");
+    }
 }
 
 /// Revoking access closes an open stream within the validation interval — `PREVIEW_AUTH_CACHE`

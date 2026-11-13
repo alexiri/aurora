@@ -810,7 +810,7 @@ async fn revocation_paths_reach_the_next_resolve() {
         .await
         .unwrap();
 
-    // 3. Paused share: uniform not_found deny (a specific reason only the relay page shows).
+    // 3. Paused share: the holder of a live session is told `paused` (403 page; `16 §W17`).
     let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
     let (s, v) = r
         .call(
@@ -822,7 +822,7 @@ async fn revocation_paths_reach_the_next_resolve() {
     assert_eq!(s, 200, "{v}");
     let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
     assert_eq!(v["decision"], "deny", "{v}");
-    assert_eq!(v["reason"], "not_found", "{v}");
+    assert_eq!(v["reason"], "paused", "{v}");
     let (s, v) = r
         .call(
             Method::PATCH,
@@ -832,8 +832,8 @@ async fn revocation_paths_reach_the_next_resolve() {
         .await;
     assert_eq!(s, 200, "{v}");
 
-    // 4. Frozen agent: no access (folded into not_found on the relay plane).
-    sqlx::query("UPDATE agents SET frozen_at = now() WHERE id = $1")
+    // 4. Frozen agent: `frozen` (423 page) for the holder; no access either way.
+    sqlx::query("UPDATE agents SET frozen_at = now(), frozen_reason = 'x', frozen_authority = 'workspace_owner' WHERE id = $1")
         .bind(
             sqlx::query_scalar::<_, Uuid>("SELECT agent_id FROM preview_shares WHERE id = $1")
                 .bind(share_id)
@@ -846,7 +846,8 @@ async fn revocation_paths_reach_the_next_resolve() {
         .unwrap();
     let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
     assert_eq!(v["decision"], "deny", "{v}");
-    sqlx::query("UPDATE agents SET frozen_at = NULL WHERE id = $1")
+    assert_eq!(v["reason"], "frozen", "{v}");
+    sqlx::query("UPDATE agents SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL WHERE id = $1")
         .bind(
             sqlx::query_scalar::<_, Uuid>("SELECT agent_id FROM preview_shares WHERE id = $1")
                 .bind(share_id)
@@ -1163,6 +1164,76 @@ impl Prv {
         (accessed, awake)
     }
 
+    /// [`Self::share_with_session`] with a start command (`None` = none).
+    async fn share_with_session_cmd(&self, port: i32, cmd: Option<&str>) -> (Value, String, Uuid) {
+        let r = &self.r;
+        let agent = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) \
+             VALUES ($1,$2,$3,$1::text,$1::text,'hosted','fake')",
+        )
+        .bind(agent)
+        .bind(r.org)
+        .bind(r.ws)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+        let mut body = json!({"port": port});
+        if let Some(c) = cmd {
+            body["start_command"] = json!(c);
+        }
+        let (s, v) = r
+            .call(
+                Method::POST,
+                &format!("/v1/agents/{agent}/previews"),
+                Some(body),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+        let label = v["label"].as_str().unwrap().to_owned();
+        let (tok, session) = self.authorize_and_redeem(&label).await;
+        (v, tok, session)
+    }
+
+    /// A sandbox row for the share's agent in `state` (`stopped`, `running`, …).
+    async fn sandbox_for(&self, share_id: Uuid, state: &str, ports: &[i32]) -> Uuid {
+        let runner: Uuid = sqlx::query_scalar("SELECT id FROM runners LIMIT 1")
+            .fetch_one(self.r.h.pool())
+            .await
+            .unwrap();
+        let running = state == "running";
+        let sb = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO sandboxes (id, agent_id, runner_id, channel_replica_id, state, boot_id, \
+                                    listening_ports) \
+             VALUES ($1,(SELECT agent_id FROM preview_shares WHERE id = $4),$2,$3,$5,$6,$7)",
+        )
+        .bind(sb)
+        .bind(runner)
+        .bind(if running {
+            Some(self.replica_dummy().await)
+        } else {
+            None
+        })
+        .bind(share_id)
+        .bind(state)
+        .bind(running.then(Uuid::now_v7))
+        .bind(ports)
+        .execute(self.r.h.pool())
+        .await
+        .unwrap();
+        sb
+    }
+
+    async fn wake_count(&self, share_id: Uuid) -> usize {
+        let v: Value = sqlx::query_scalar("SELECT wake_attempts FROM preview_shares WHERE id = $1")
+            .bind(share_id)
+            .fetch_one(self.r.h.pool())
+            .await
+            .unwrap();
+        v.as_array().map_or(0, Vec::len)
+    }
+
     async fn replica_dummy(&self) -> Uuid {
         sqlx::query_scalar("SELECT id FROM runner_replicas LIMIT 1")
             .fetch_one(self.r.h.pool())
@@ -1418,6 +1489,317 @@ async fn stream_closed_requires_the_runner_credential() {
 }
 
 // ---------------------------------------------------------------- token hygiene
+
+// ---------------------------------------------------------------- FIX-089: wake and start
+
+/// One wake per request however long the long-poll runs; the hourly budget answers
+/// `deny wake_limited` with `retry_after_secs` once it is spent.
+#[tokio::test]
+async fn a_long_poll_spends_one_wake_and_the_budget_denies_with_wake_limited() {
+    let p = prv_rig().await;
+    let (share, tok, _) = p.share_with_session_cmd(3000, Some("npm start")).await;
+    let label = share["label"].as_str().unwrap().to_owned();
+    let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
+    p.sandbox_for(share_id, "stopped", &[]).await;
+    let ask = |wait: u32| {
+        p.relay(
+            "/v1/relay/resolve",
+            json!({"label": label, "session_hash": sess_hash(&tok), "wait_secs": wait}),
+        )
+    };
+    // A parked sandbox that never starts: a 2 s long-poll polls four times and records ONE wake.
+    let (s, v) = ask(2).await;
+    assert_eq!((s, v["decision"].as_str().unwrap()), (200, "allow"), "{v}");
+    assert_eq!(v["route"]["start"], "starting", "{v}");
+    assert_eq!(
+        p.wake_count(share_id).await,
+        1,
+        "one wake for the whole long-poll"
+    );
+    // A second request inside the window: the demand is outstanding, nothing more is recorded.
+    let (_, v) = ask(0).await;
+    assert_eq!(v["route"]["start"], "starting", "{v}");
+    assert_eq!(p.wake_count(share_id).await, 1);
+    // Twelve windows pass (the stamp ages out between requests): the 12th wake is recorded,
+    // the 13th request is refused with the budget's retry time.
+    for want in 2..=12 {
+        sqlx::query("UPDATE sandboxes SET preview_wake_at = now() - interval '2 minutes'")
+            .execute(p.r.h.pool())
+            .await
+            .unwrap();
+        let (_, v) = ask(0).await;
+        assert_eq!(v["decision"], "allow", "{v}");
+        assert_eq!(p.wake_count(share_id).await, want);
+    }
+    sqlx::query("UPDATE sandboxes SET preview_wake_at = now() - interval '2 minutes'")
+        .execute(p.r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = ask(0).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["decision"], "deny", "{v}");
+    assert_eq!(v["reason"], "wake_limited", "{v}");
+    let retry = v["retry_after_secs"].as_u64().unwrap();
+    assert!((1..=3600).contains(&retry), "{v}");
+    assert_eq!(
+        p.wake_count(share_id).await,
+        12,
+        "a refused demand records nothing"
+    );
+}
+
+/// A running sandbox's start flow: `starting` while a launch is pending, `exited` with the
+/// code when the command ended (re-arming a start), `limited` once `PREVIEW_START_ATTEMPTS`
+/// launches happened inside the window.
+#[tokio::test]
+async fn start_flow_reports_starting_exited_and_limited() {
+    use aurora_db::repo::preview_shares as shares;
+    let p = prv_rig().await;
+    let (share, tok, _) = p.share_with_session_cmd(3000, Some("npm start")).await;
+    let label = share["label"].as_str().unwrap().to_owned();
+    let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
+    p.sandbox_for(share_id, "running", &[]).await;
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(v["route"]["start"], "starting", "{v}");
+    assert_eq!(v["route"]["listening"], false, "{v}");
+    // The start arm launched it; it then exited with code 3.
+    let mut c = p.r.h.pool().acquire().await.unwrap();
+    assert!(
+        shares::record_start_attempt(&mut c, share_id, 600.0, 3)
+            .await
+            .unwrap()
+    );
+    // The launch is under way: still `starting`.
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(v["route"]["start"], "starting", "{v}");
+    shares::record_start_outcome(&mut c, share_id, Some(3), Some("boom"))
+        .await
+        .unwrap();
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(v["route"]["start"], "exited", "{v}");
+    assert_eq!(v["route"]["exit_code"], 3, "{v}");
+    // The request that reported the exit asked for a relaunch: the next one sees `starting`.
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(v["route"]["start"], "starting", "{v}");
+    // Two more launches in the window (the third the budget allows), each ending: the fourth
+    // is refused with `limited` and the time until a slot frees.
+    for _ in 0..2 {
+        assert!(
+            shares::record_start_attempt(&mut c, share_id, 600.0, 3)
+                .await
+                .unwrap()
+        );
+    }
+    shares::record_start_outcome(&mut c, share_id, Some(1), None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sandboxes SET preview_start_requested_at = now() - interval '2 minutes'")
+        .execute(p.r.h.pool())
+        .await
+        .unwrap();
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(v["route"]["start"], "limited", "{v}");
+    assert!(
+        (1..=600).contains(&v["route"]["retry_after_secs"].as_u64().unwrap()),
+        "{v}"
+    );
+}
+
+/// Paused and frozen shares: `authorize` mints nothing (403 / 423), `redeem` of an already
+/// minted grant answers the same, and a session holder's `resolve` is told `paused`/`frozen`
+/// (a person who lost the workspace still gets the uniform `not_found`).
+#[tokio::test]
+async fn paused_and_frozen_shares_answer_their_own_pages() {
+    let p = prv_rig().await;
+    let r = &p.r;
+    let (share, tok, _) = p.share_with_session(3000).await;
+    let label = share["label"].as_str().unwrap().to_owned();
+    let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM preview_shares WHERE id = $1")
+        .bind(share_id)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let authorize = |nonce: &'static str| {
+        let uri = format!("/v1/previews/authorize?host={label}&state={nonce}");
+        async move {
+            r.h.send(
+                Method::GET,
+                &uri,
+                &[("cookie", &r.cookie), ("origin", ORIGIN)],
+                None,
+            )
+            .await
+        }
+    };
+    let grants_before: i64 = sqlx::query_scalar("SELECT count(*) FROM preview_sessions")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+
+    // A grant minted while the share is fine, redeemed after the agent is frozen: 423.
+    let (s, hd, _) = authorize("n-frozen").await;
+    assert_eq!(s.as_u16(), 302);
+    let g = hd["location"]
+        .to_str()
+        .unwrap()
+        .rsplit('=')
+        .next()
+        .unwrap()
+        .to_owned();
+    sqlx::query("UPDATE agents SET frozen_at = now(), frozen_reason = 'x', frozen_authority = 'workspace_owner' WHERE id = $1")
+        .bind(agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = p
+        .relay(
+            "/v1/relay/grants/redeem",
+            json!({"grant": g, "label": label, "nonce": "n-frozen"}),
+        )
+        .await;
+    assert_eq!(s, 423, "{v}");
+    // Frozen: authorize answers the 423 page and mints no grant; the holder is told `frozen`.
+    let (s, _, v) = authorize("n2").await;
+    assert_eq!(s.as_u16(), 423, "{v}");
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(
+        (
+            v["decision"].as_str().unwrap(),
+            v["reason"].as_str().unwrap()
+        ),
+        ("deny", "frozen"),
+        "{v}"
+    );
+    sqlx::query("UPDATE agents SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL WHERE id = $1")
+        .bind(agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+
+    // Paused: 403 from authorize, `paused` for the holder, redeem 403.
+    let (s, hd, _) = authorize("n-paused").await;
+    assert_eq!(s.as_u16(), 302);
+    let g = hd["location"]
+        .to_str()
+        .unwrap()
+        .rsplit('=')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (s, v) = r
+        .call(
+            Method::PATCH,
+            &format!("/v1/previews/{share_id}"),
+            Some(json!({"state": "paused"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, v) = authorize("n3").await;
+    assert_eq!(s.as_u16(), 403, "{v}");
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(
+        (
+            v["decision"].as_str().unwrap(),
+            v["reason"].as_str().unwrap()
+        ),
+        ("deny", "paused"),
+        "{v}"
+    );
+    let (s, v) = p
+        .relay(
+            "/v1/relay/grants/redeem",
+            json!({"grant": g, "label": label, "nonce": "n-paused"}),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    // The holder lost the workspace: paused is not spoken to them.
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE user_id = (SELECT user_id FROM preview_sessions LIMIT 1)")
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let (_, v) = p.resolve(&label, Some(&sess_hash(&tok)), true).await;
+    assert_eq!(v["reason"], "not_found", "{v}");
+    // No grant was ever redeemed into a session by the refused attempts.
+    let grants_after: i64 = sqlx::query_scalar("SELECT count(*) FROM preview_sessions")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(grants_after, grants_before);
+}
+
+/// A database error in `validate` is a 5xx the relay retries: nobody is revoked for it.
+#[tokio::test]
+async fn validate_database_error_is_a_5xx_not_a_revocation() {
+    let p = prv_rig().await;
+    let (share, tok, _) = p.share_with_session(3000).await;
+    let label = share["label"].as_str().unwrap().to_owned();
+    let body = json!({"sessions": [{"label": label, "session_hash": sess_hash(&tok)}]});
+    let (s, v) = p.relay("/v1/relay/validate", body.clone()).await;
+    assert_eq!((s, v["revoked"].as_array().unwrap().len()), (200, 0), "{v}");
+    // Break the lookup the way an outage would: the table is unreachable.
+    sqlx::query("ALTER TABLE preview_sessions RENAME TO preview_sessions_away")
+        .execute(p.r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = p.relay("/v1/relay/validate", body.clone()).await;
+    assert!(s >= 500, "a database error must be a 5xx, got {s}: {v}");
+    assert!(v.get("revoked").is_none(), "{v}");
+    sqlx::query("ALTER TABLE preview_sessions_away RENAME TO preview_sessions")
+        .execute(p.r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = p.relay("/v1/relay/validate", body).await;
+    assert_eq!((s, v["revoked"].as_array().unwrap().len()), (200, 0), "{v}");
+}
+
+/// A running sandbox whose port is not listening: the stream grant waits for it (up to
+/// `PREVIEW_LISTEN_WAIT`; shortened here through the same code path), then refuses with
+/// `not_listening` for the relay's "nothing is listening" page.
+#[tokio::test]
+async fn stream_grant_waits_for_the_port_then_refuses() {
+    use aurora_api::domains::relay::{dto::RelayStreamsRequest, service};
+    let p = prv_rig().await;
+    let (share, tok, _) = p.share_with_session(3000).await;
+    let label = share["label"].as_str().unwrap().to_owned();
+    let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
+    let sb = p.sandbox_for(share_id, "running", &[]).await;
+    let req = || RelayStreamsRequest {
+        label: label.clone(),
+        session_hash: sess_hash(&tok),
+    };
+    // Never listens: refused after the wait.
+    let t = std::time::Instant::now();
+    let e = service::streams_waiting(&p.r.h.state, req(), std::time::Duration::from_millis(600))
+        .await
+        .unwrap_err();
+    assert_eq!(e.status().as_u16(), 409);
+    assert!(
+        t.elapsed() >= std::time::Duration::from_millis(550),
+        "{:?}",
+        t.elapsed()
+    );
+    // Comes up after a moment: served, without waiting out the whole budget.
+    let pool = p.r.h.pool().clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        sqlx::query("UPDATE sandboxes SET listening_ports = ARRAY[3000] WHERE id = $1")
+            .bind(sb)
+            .execute(&pool)
+            .await
+            .unwrap();
+    });
+    let t = std::time::Instant::now();
+    let ok = service::streams_waiting(&p.r.h.state, req(), std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert!(ok.grant.starts_with("aux_"));
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        t.elapsed()
+    );
+}
 
 /// The relay plane itself: 401 without/with a wrong `aul_`, 426 on a newer protocol,
 /// 403 `replica_unknown` without or with a foreign replica.

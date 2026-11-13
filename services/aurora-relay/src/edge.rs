@@ -248,6 +248,18 @@ async fn not_ready(state: &State, label: &str, hash: &str, wait_secs: u32) -> No
     let Ok(a) = state.api.resolve(label, Some(hash), wait_secs, false).await else {
         return NotReady::Unknown;
     };
+    // A denial the holder of a live session may be told (the API only speaks these to one):
+    // paused, frozen, the wake budget.
+    if a.decision == "deny" {
+        return match a
+            .reason
+            .as_deref()
+            .and_then(|r| spoken_deny(r, a.retry_after_secs))
+        {
+            Some(p) => NotReady::Page(p),
+            None => NotReady::Unknown,
+        };
+    }
     let Some(route) = a.route.filter(|_| a.decision == "allow") else {
         return NotReady::Unknown;
     };
@@ -255,20 +267,34 @@ async fn not_ready(state: &State, label: &str, hash: &str, wait_secs: u32) -> No
         return NotReady::Listening;
     }
     match (route.start.as_str(), route.sandbox.as_str()) {
-        ("exited", _) => NotReady::Page(status_page(
-            StatusCode::BAD_GATEWAY,
-            "Preview",
-            "The start command of this preview exited. Open the preview's page in the dashboard to see its exit code and output.",
-        )),
+        ("exited", _) => {
+            let code = route
+                .exit_code
+                .map_or_else(String::new, |c| format!(" with exit code {c}"));
+            NotReady::Page(status_page(
+                StatusCode::BAD_GATEWAY,
+                "Preview",
+                &format!(
+                    "The start command of this preview exited{code}. Reload to start it again; the preview's page in the dashboard shows its output."
+                ),
+            ))
+        }
+        // The start-attempt budget (`PREVIEW_START_ATTEMPTS` per window) is spent.
         ("limited", _) => NotReady::Page(retry_after(
             status_page(
                 StatusCode::TOO_MANY_REQUESTS,
                 "Preview",
-                "This preview was started too often; try again later.",
+                "The start command of this preview was started too often; try again later.",
             ),
             u64::from(route.retry_after_secs.unwrap_or(60)),
         )),
         (_, "unavailable") => NotReady::Unknown,
+        // A running sandbox with nothing starting and nothing listening (no start command).
+        ("none", "running") => NotReady::Page(status_page(
+            StatusCode::BAD_GATEWAY,
+            "Preview",
+            "Nothing is listening on this preview's port.",
+        )),
         // Still waking or starting after the wait: a 503 page that refreshes itself.
         _ => {
             let mut r = retry_after(
@@ -284,6 +310,31 @@ async fn not_ready(state: &State, label: &str, hash: &str, wait_secs: u32) -> No
             NotReady::Page(r)
         }
     }
+}
+
+/// The page of a deny reason the API speaks only to the holder of a live session of the
+/// share (`16 §W17`): `frozen` 423, `paused` 403, `wake_limited` 429 with `Retry-After`,
+/// `unreachable` 502. `None` for the uniform `not_found` (and anything unknown).
+fn spoken_deny(reason: &str, retry_after_secs: Option<u32>) -> Option<hyper::Response<RelayBody>> {
+    let (code, text) = match reason {
+        "frozen" => (StatusCode::LOCKED, "This preview is frozen.\n"),
+        "paused" => (StatusCode::FORBIDDEN, "This preview is paused.\n"),
+        "wake_limited" => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many wake requests; try again later.\n",
+        ),
+        "unreachable" => (
+            StatusCode::BAD_GATEWAY,
+            "The runner of this preview is unreachable.\n",
+        ),
+        _ => return None,
+    };
+    let page = status_page(code, "Preview", text);
+    Some(if reason == "wake_limited" {
+        retry_after(page, u64::from(retry_after_secs.unwrap_or(60)))
+    } else {
+        page
+    })
 }
 
 /// Adds `Retry-After: <secs>` to a response.
@@ -615,6 +666,7 @@ async fn login_or_wait(
             .map(|a| a.decision.clone())
             .unwrap_or_else(|| "deny".into());
         if decision != "login" {
+            let retry_secs = answer.as_ref().and_then(|a| a.retry_after_secs);
             let reason = answer.and_then(|a| a.reason).unwrap_or_default();
             if reason == "preview_quota" {
                 // The share is past its daily byte quota: 429 until the next UTC midnight.
@@ -632,21 +684,9 @@ async fn login_or_wait(
                 );
             }
             outcome("not_found");
-            let text = match reason.as_str() {
-                "frozen" => "This preview is frozen.\n",
-                "paused" => "This preview is paused.\n",
-                "wake_limited" => "Too many wake requests; try again later.\n",
-                "unreachable" => "The runner of this preview is unreachable.\n",
-                _ => "Preview not found.\n",
-            };
-            let code = match reason.as_str() {
-                "frozen" => StatusCode::LOCKED,
-                "paused" => StatusCode::FORBIDDEN,
-                "wake_limited" => StatusCode::TOO_MANY_REQUESTS,
-                "unreachable" => StatusCode::BAD_GATEWAY,
-                _ => StatusCode::NOT_FOUND,
-            };
-            return status_page(code, "Preview", text);
+            return spoken_deny(&reason, retry_secs).unwrap_or_else(|| {
+                status_page(StatusCode::NOT_FOUND, "Preview", "Preview not found.\n")
+            });
         }
         // `login`: fall through to the navigation redirect (the flow restarts silently).
     }
@@ -770,6 +810,20 @@ async fn aurora_path(
         Err(crate::api::ApiError::Status(400)) => {
             outcome("invalid");
             simple(StatusCode::BAD_REQUEST, "grant_invalid\n", &[])
+        }
+        // The grant was sound but the person no longer passes the access law: the uniform
+        // not-found page (404), the frozen page (423) or the paused page (403).
+        Err(crate::api::ApiError::Status(404)) => {
+            outcome("denied");
+            status_page(StatusCode::NOT_FOUND, "Preview", "Preview not found.\n")
+        }
+        Err(crate::api::ApiError::Status(423)) => {
+            outcome("denied");
+            spoken_deny("frozen", None).unwrap_or_else(|| simple(StatusCode::LOCKED, "", &[]))
+        }
+        Err(crate::api::ApiError::Status(403)) => {
+            outcome("denied");
+            spoken_deny("paused", None).unwrap_or_else(|| simple(StatusCode::FORBIDDEN, "", &[]))
         }
         Err(_) => {
             outcome("invalid");

@@ -58,6 +58,9 @@ pub struct RelayResolveResponse {
     /// (relay plane only; never rendered to a browser).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<Uuid>,
+    /// On a `deny` with `wake_limited` (or `preview_quota`): seconds until it may be retried.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,8 +78,13 @@ pub struct RelayRoute {
     pub start: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runner_endpoint: Option<String>,
+    /// With `start: "limited"`: seconds until the start-attempt budget frees a slot.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_secs: Option<u32>,
+    /// With `start: "exited"`: the exit code of the share's last start command (absent when
+    /// the process was killed by a signal).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 // ---------------------------------------------------------------- grants/redeem

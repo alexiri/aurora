@@ -133,11 +133,16 @@ impl State {
                 share: c.share,
                 route: None,
                 user: c.user,
+                retry_after_secs: None,
             });
         }
         metrics::counter!("aurora_relay_resolve_cache", "hit" => "false").increment(1);
         let a = self.api.resolve(label, hash, 0, navigation).await?;
-        self.cache_put(label, key, &a).await;
+        // A `wake_limited` answer is not cached: its `retry_after_secs` is the API's, and the
+        // budget frees a slot on the API's clock, not after a cache entry.
+        if a.reason.as_deref() != Some("wake_limited") {
+            self.cache_put(label, key, &a).await;
+        }
         Ok(a)
     }
 }
