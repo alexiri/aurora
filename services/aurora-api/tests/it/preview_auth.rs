@@ -1052,6 +1052,51 @@ async fn stream_grants_require_running_sandbox_and_are_single_use() {
 impl Prv {
     /// A runner replica row for the channel FK (the rig's registered runner is the channel
     /// holder in practice; a real replica id keeps the insert honest).
+    /// A running sandbox for the share's agent on the rig's runner (the one `r.rep` belongs to).
+    async fn running_sandbox_for(&self, share_id: Uuid) -> (Uuid, Uuid) {
+        let pool = self.r.h.pool();
+        let runner: Uuid =
+            sqlx::query_scalar("SELECT runner_id FROM runner_replicas WHERE id = $1")
+                .bind(self.r.rep)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let sb = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO sandboxes (id, agent_id, runner_id, channel_replica_id, state, boot_id) \
+             VALUES ($1,(SELECT agent_id FROM preview_shares WHERE id = $4),$2,$3,'running',$5)",
+        )
+        .bind(sb)
+        .bind(runner)
+        .bind(self.r.rep)
+        .bind(share_id)
+        .bind(Uuid::now_v7())
+        .execute(pool)
+        .await
+        .unwrap();
+        (runner, sb)
+    }
+
+    /// `(last_accessed_at set, preview keep-awake stamped)` after a `closed` report.
+    async fn closed_stamps(&self, share_id: Uuid, sb: Uuid) -> (bool, bool) {
+        let pool = self.r.h.pool();
+        let accessed: bool = sqlx::query_scalar(
+            "SELECT last_accessed_at IS NOT NULL FROM preview_shares WHERE id = $1",
+        )
+        .bind(share_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let awake: bool = sqlx::query_scalar(
+            "SELECT preview_active_until IS NOT NULL FROM sandboxes WHERE id = $1",
+        )
+        .bind(sb)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (accessed, awake)
+    }
+
     async fn replica_dummy(&self) -> Uuid {
         sqlx::query_scalar("SELECT id FROM runner_replicas LIMIT 1")
             .fetch_one(self.r.h.pool())
@@ -1142,6 +1187,7 @@ async fn stream_closed_is_accounting_only() {
     let r = &p.r;
     let (share, _tok, _sid) = p.share_with_session(3000).await;
     let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
+    let (_, sb) = p.running_sandbox_for(share_id).await;
     sqlx::query("UPDATE preview_shares SET last_accessed_at = NULL WHERE id = $1")
         .bind(share_id)
         .execute(r.h.pool())
@@ -1156,13 +1202,9 @@ async fn stream_closed_is_accounting_only() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["ok"], true, "{v}");
-    let accessed: Option<Option<chrono::DateTime<chrono::Utc>>> =
-        sqlx::query_scalar("SELECT last_accessed_at FROM preview_shares WHERE id = $1")
-            .bind(share_id)
-            .fetch_one(r.h.pool())
-            .await
-            .unwrap();
-    assert!(accessed.flatten().is_some(), "last_accessed_at refreshed");
+    let (accessed, awake) = p.closed_stamps(share_id, sb).await;
+    assert!(accessed, "last_accessed_at refreshed");
+    assert!(awake, "keep-awake stamped");
     // An unknown share id: still ok (advisory).
     let (s, v) = r
         .runner(
@@ -1172,6 +1214,67 @@ async fn stream_closed_is_accounting_only() {
         )
         .await;
     assert_eq!(s, 200, "{v}");
+}
+
+/// FIX-071: the `closed` report is honoured only from the runner holding the share's agent's
+/// sandbox. Runner B reporting a share whose sandbox runs on runner A is answered `ok` but
+/// writes nothing (no `last_accessed_at`, no keep-awake stamp); runner A's report writes both.
+#[tokio::test]
+async fn stream_closed_from_another_runner_writes_nothing() {
+    let p = prv_rig().await;
+    let r = &p.r;
+    let (share, _tok, _sid) = p.share_with_session(3000).await;
+    let share_id: Uuid = share["id"].as_str().unwrap().parse().unwrap();
+    let (_runner_a, sb) = p.running_sandbox_for(share_id).await;
+    sqlx::query("UPDATE preview_shares SET last_accessed_at = NULL WHERE id = $1")
+        .bind(share_id)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+
+    // Runner B: its own credential and replica.
+    let tok_b = token::generate(TokenPrefix::Runner).expose().to_owned();
+    let runner_b = Uuid::now_v7();
+    let rep_b = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO runners (id, name, token_hash, installation_fingerprint) \
+         VALUES ($1, 'runner-b', $2, 'fp-b')",
+    )
+    .bind(runner_b)
+    .bind(&token::hash(&tok_b)[..])
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO runner_replicas (id, runner_id, advertised_host, version, started_at, last_seen_at) \
+         VALUES ($1, $2, 'runner-b', 'test', now(), now())",
+    )
+    .bind(rep_b)
+    .bind(runner_b)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let body = json!({"share_id": share_id, "reason": "done"});
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            "/v1/runner/preview-streams/closed",
+            &[
+                ("authorization", &bearer(&tok_b)),
+                ("x-aurora-replica", &rep_b.to_string()),
+            ],
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "advisory: never fails the stream: {v}");
+    assert_eq!(p.closed_stamps(share_id, sb).await, (false, false));
+
+    // Runner A (the holder) still updates both.
+    let (s, v) = r
+        .runner(Some(r.rep), "/v1/runner/preview-streams/closed", body)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(p.closed_stamps(share_id, sb).await, (true, true));
 }
 
 /// FIX-061: a preview session is bound to the share (label) it was minted for. Share A's

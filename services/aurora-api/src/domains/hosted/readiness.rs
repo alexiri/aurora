@@ -214,13 +214,13 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
     for (sandbox, boot, detail) in overdue {
         let msg = sanitize::reason(&unreachable_message(detail.as_deref()), REASON_MAX);
         let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-        if let Some(revoked) = sandboxes::fail_attempt(
+        // (FIX-071) Fenced on "supervisor still not connected" as well as on "not ready".
+        if let Some(revoked) = sandboxes::fail_attempt_unconnected(
             &mut tx,
             sandbox,
             boot,
             "supervisor_unreachable",
             &msg,
-            false,
         )
         .await?
         {
