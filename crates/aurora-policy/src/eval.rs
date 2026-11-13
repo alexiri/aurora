@@ -236,15 +236,20 @@ fn allowlisted(p: &ScopePolicy, f: &RequestFacts) -> bool {
 }
 
 /// The winning credential is a connection of a `block_untooled` app and no tool matched.
+/// (FIX-085, SEC-67) `custom_only` implies `block_untooled`: its tools "are the only way to use
+/// the app" (docs/09), so a request outside them is blocked before any rule, hand-written
+/// `network` allow rules included. The manifest linter requires both flags together; this keeps a
+/// snapshot that carries `custom_only` alone (one built before that rule) just as strict.
 fn blocks_untooled(f: &RequestFacts) -> bool {
     !f.connect_time
         && f.tool_id.is_none()
         && matches!(
             f.winning_credential,
             Some(crate::facts::Credential::Connection {
-                block_untooled: true,
+                block_untooled,
+                custom_only,
                 ..
-            })
+            }) if block_untooled || custom_only
         )
 }
 

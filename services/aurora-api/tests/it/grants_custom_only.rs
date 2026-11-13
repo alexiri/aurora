@@ -39,7 +39,8 @@ apps:
 }
 
 const HOST: &str = "api.cust.example";
-const CUSTOM_ONLY: &str = "    grants: { custom_only: true }\n";
+// (FIX-085) `custom_only` implies `block_untooled`: the manifest says both.
+const CUSTOM_ONLY: &str = "    grants: { custom_only: true, block_untooled: true }\n";
 const BLOCK_UNTOOLED: &str = "    grants: { block_untooled: true }\n";
 
 struct W<'a> {
@@ -250,7 +251,7 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let r = w.rules(w.agent, conn).await;
     assert_eq!(r.len(), 3);
@@ -284,12 +285,12 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["items"][0]["grant"]["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     // C-504: the bulk response carries them at the top as well.
     assert_eq!(
         v["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let (s, v) = w
         .call(Method::GET, &format!("/v1/agents/{}/grants", w.agent), None)
@@ -297,7 +298,7 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["connections"][0]["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let (s, v) = w
         .call(Method::GET, &format!("/v1/connections/{conn}/grants"), None)
@@ -305,14 +306,14 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["items"][0]["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     // The catalogue and the app detail carry the flags too (C-414).
     let (s, v) = w.call(Method::GET, "/v1/apps/cust_app", None).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let (s, v) = w.call(Method::GET, "/v1/apps", None).await;
     assert_eq!(s, 200, "{v}");
@@ -324,7 +325,7 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
         .unwrap();
     assert_eq!(
         item["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
 }
 

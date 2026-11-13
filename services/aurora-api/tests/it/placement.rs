@@ -1156,7 +1156,8 @@ apps:
     )
 }
 
-const FIX038_CUSTOM_ONLY: &str = "    grants: { custom_only: true }\n";
+// (FIX-085) `custom_only` implies `block_untooled`; the manifest says both.
+const FIX038_CUSTOM_ONLY: &str = "    grants: { custom_only: true, block_untooled: true }\n";
 
 impl Env {
     /// An org-level connection of `pkg_app`, installed from `yaml`.

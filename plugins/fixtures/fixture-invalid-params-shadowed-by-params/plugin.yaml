@@ -1,0 +1,29 @@
+package:
+  id: fixture-invalid-params-shadowed-by-params
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Invalid fixture
+  description: "Expected rejection: params_tool_shadowed (an earlier params tool implies the later one)"
+apps:
+  - about: { id: invalid-app, name: Invalid app, web_hosts: [app.invalid.example.test] }
+    credentials: [ { name: api_token, secret: true } ]
+    metadata: [ { name: org } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: API token, type: secret, required: true } ]
+    hosts:
+      - match: { host: api.invalid.example.test }
+        inject:
+          - bearer: "{credentials.api_token}"
+    tools:
+      read:
+        items:
+          # Read tools are classified first: every `Action` that starts with Describe is read...
+          - { id: describe_any, name: Describe, host: api.invalid.example.test, path: /, methods: [POST], params: [ { source: form, name: Action, match: { prefix: Describe } } ] }
+      write:
+        items:
+          # ...so this write tool, whose only request is `Action=DescribeInstances`, is unreachable.
+          - { id: describe_instances_write, name: Unreachable, host: api.invalid.example.test, path: /, methods: [POST], params: [ { source: form, name: Action, match: { equals: DescribeInstances } } ] }

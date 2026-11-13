@@ -92,11 +92,40 @@ fn grants_unknown_keys_and_non_booleans_are_rejected() {
 #[test]
 fn custom_only_without_tools() {
     assert_eq!(
-        codes(&with("    grants: { custom_only: true }\n")),
+        codes(&with(
+            "    grants: { custom_only: true, block_untooled: true }\n"
+        )),
         BTreeSet::from(["custom_only_without_tools"])
     );
     // `block_untooled` alone is fine without tools (everything is untooled).
     assert!(codes(&with("    grants: { block_untooled: true }\n")).is_empty());
+}
+
+/// FIX-085 (SEC-67): the tools of a `custom_only` app are the only way to use it, so the manifest
+/// must also say that a request matching none is blocked.
+#[test]
+fn custom_only_needs_block_untooled() {
+    let t = tools(&[DESCRIBE], &[GENERIC]);
+    let v = violations(&with(&format!("    grants: {{ custom_only: true }}\n{t}")));
+    assert_eq!(
+        v.iter().map(|x| x.code).collect::<Vec<_>>(),
+        ["custom_only_needs_block_untooled"],
+        "{v:#?}"
+    );
+    assert!(
+        codes(&with(&format!(
+            "    grants: {{ custom_only: true, block_untooled: false }}\n{t}"
+        )))
+        .contains("custom_only_needs_block_untooled")
+    );
+    for ok in [
+        "    grants: { custom_only: true, block_untooled: true }\n",
+        "    grants: { block_untooled: true }\n",
+        "",
+    ] {
+        let v = violations(&with(&format!("{ok}{t}")));
+        assert!(v.is_empty(), "{ok}: {v:#?}");
+    }
 }
 
 // ---- params shape -----------------------------------------------------------------------------
@@ -221,6 +250,12 @@ fn params_in_list_and_length_limits() {
 fn form_condition_needs_a_body_method() {
     let t = "{ id: t1, name: T, host: \"ec2.*.amazonaws.com\", path: /, methods: [GET, HEAD], params: [ { source: form, name: Action, match: { equals: Abcd } } ] }";
     assert!(codes(&with(&tools(&[t], &[GENERIC]))).contains("params_invalid"));
+    // FIX-085: a tool without `methods` serves any method, a GET with a form body included.
+    let any = "{ id: t1, name: T, host: \"ec2.*.amazonaws.com\", path: /, params: [ { source: form, name: Action, match: { equals: Abcd } } ] }";
+    assert!(codes(&with(&tools(&[any], &[GENERIC]))).contains("params_invalid"));
+    // A query condition needs no body method.
+    let q = "{ id: t1, name: T, host: \"ec2.*.amazonaws.com\", path: /, methods: [GET], params: [ { source: query, name: Action, match: { equals: Abcd } } ] }";
+    assert!(codes(&with(&tools(&[q], &[GENERIC]))).is_empty());
 }
 
 #[test]
@@ -244,6 +279,70 @@ fn params_tool_must_precede_the_tool_that_shadows_it() {
     // a broader tool after it is fine too; a broader tool with params itself does not shadow
     let other = "{ id: o, name: O, host: \"ec2.*.amazonaws.com\", path: /, methods: [POST], params: [ { source: form, name: Action, match: { equals: Other } } ] }";
     assert!(codes(&with(&tools(&[other], &[DESCRIBE]))).is_empty());
+}
+
+/// FIX-085: an earlier `params` tool shadows a later one when every condition of the earlier is
+/// implied by a condition of the later.
+#[test]
+fn a_params_tool_shadows_a_later_params_tool_it_implies() {
+    let t = |id: &str, m: &str| {
+        format!(
+            "{{ id: {id}, name: {id}, host: \"ec2.*.amazonaws.com\", path: /, methods: [POST], params: [ {{ source: form, name: Action, match: {m} }} ] }}"
+        )
+    };
+    let shadowed = |earlier: String, later: String| {
+        codes(&with(&tools(&[&earlier], &[&later, GENERIC]))).contains("params_tool_shadowed")
+    };
+    // The review's case: read `prefix Describe`, then write `equals DescribeInstances`.
+    assert!(shadowed(
+        t("rd", "{ prefix: Describe }"),
+        t("wr", "{ equals: DescribeInstances }")
+    ));
+    // equals ⊂ in; in ⊂ superset; prefix ⊂ shorter prefix; equal conditions.
+    assert!(shadowed(
+        t("a", "{ in: [Abcd, Efgh] }"),
+        t("b", "{ equals: Efgh }")
+    ));
+    assert!(shadowed(
+        t("a", "{ in: [Abcd, Efgh, Ijkl] }"),
+        t("b", "{ in: [Abcd, Ijkl] }")
+    ));
+    assert!(shadowed(
+        t("a", "{ prefix: Desc }"),
+        t("b", "{ prefix: Describe }")
+    ));
+    assert!(shadowed(
+        t("a", "{ equals: Abcd }"),
+        t("b", "{ equals: Abcd }")
+    ));
+    // Not implied: the later tool accepts something the earlier refuses.
+    assert!(!shadowed(
+        t("a", "{ equals: DescribeInstances }"),
+        t("b", "{ prefix: Describe }")
+    ));
+    assert!(!shadowed(
+        t("a", "{ in: [Abcd, Efgh] }"),
+        t("b", "{ in: [Abcd, Ijkl] }")
+    ));
+    assert!(!shadowed(
+        t("a", "{ prefix: Describe }"),
+        t("b", "{ prefix: Desc }")
+    ));
+    assert!(!shadowed(
+        t("a", "{ prefix: Describe }"),
+        t("b", "{ equals: RunInstances }")
+    ));
+    // A later tool without `params` matches what the earlier refuses: never shadowed by it.
+    assert!(!shadowed(
+        t("a", "{ prefix: Describe }"),
+        GENERIC.to_owned()
+    ));
+    // The same name in another source is another parameter.
+    let q = "{ id: q, name: q, host: \"ec2.*.amazonaws.com\", path: /, methods: [POST], params: [ { source: query, name: Action, match: { equals: DescribeInstances } } ] }".to_owned();
+    assert!(!shadowed(t("a", "{ prefix: Describe }"), q));
+    // Every condition of the earlier tool must be implied: a second, unrelated one saves it.
+    let two = "{ id: two, name: two, host: \"ec2.*.amazonaws.com\", path: /, methods: [POST], params: [ { source: form, name: Action, match: { prefix: Describe } }, { source: form, name: Version, match: { equals: \"2016-11-15\" } } ] }".to_owned();
+    assert!(!shadowed(two, t("b", "{ equals: DescribeInstances }")));
 }
 
 // ---- snapshot ---------------------------------------------------------------------------------
@@ -555,4 +654,49 @@ fn each_missing_fixture_category_is_reported() {
         assert_eq!(hit.len(), 1, "{drop}: {c:?}");
         assert!(hit[0].1.contains(label), "{drop}: {c:?}");
     }
+}
+
+/// FIX-085: the `positive` requirement is a match, not a claim: a fixture that says
+/// `tool: ec2_describe` for a request the conditions do not accept proves nothing.
+#[test]
+fn a_positive_fixture_must_really_match() {
+    let y = with(&tools(&[DESCRIBE], &[GENERIC]));
+    let u = "https://ec2.eu-west-1.amazonaws.com/";
+    let others: String = full_fixtures()
+        .split("- name: ")
+        .filter(|c| !c.is_empty() && !c.starts_with("positive"))
+        .map(|c| format!("- name: {c}"))
+        .collect();
+    for (why, body, extra) in [
+        ("other value", "Action=RunInstances", ""),
+        (
+            "semicolon doubt",
+            "Action=DescribeInstances;Action=Terminate",
+            "",
+        ),
+        (
+            "truncated",
+            "Action=DescribeInstances",
+            ", body_truncated: true",
+        ),
+    ] {
+        let claim = case("claim", FORM, u, body, extra, "ec2_describe");
+        let c = pkg_codes(&y, Some(&format!("{claim}{others}")));
+        assert!(
+            c.iter()
+                .any(|(code, m)| *code == "params_fixture_missing" && m.contains("positive")),
+            "{why}: {c:?}"
+        );
+    }
+    // The same request that does match satisfies it.
+    let real = case(
+        "real",
+        FORM,
+        u,
+        "Action=DescribeInstances",
+        "",
+        "ec2_describe",
+    );
+    let c = pkg_codes(&y, Some(&format!("{real}{others}")));
+    assert!(c.is_empty(), "{c:?}");
 }

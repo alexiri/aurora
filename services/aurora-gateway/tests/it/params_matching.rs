@@ -163,6 +163,45 @@ fn every_fail_closed_case_falls_through_to_the_generic_write_tool_or_to_none() {
     // case differences never match
     y += &form(ec2, "Action=describeInstances", "{ tool: ec2_call }");
     y += &form(ec2, "action=DescribeInstances", "{ tool: ec2_call }");
+    // (FIX-085) A raw `;` may split pairs upstream: one `Action` here, two there. Doubt.
+    y += &form(
+        ec2,
+        "Action=DescribeInstances;Action=TerminateInstances&Version=1",
+        "{ tool: ec2_call }",
+    );
+    y += &form(
+        ec2,
+        "Version=1;Action=DescribeInstances",
+        "{ tool: ec2_call }",
+    );
+    // ... while an encoded one is an ordinary character.
+    y += &form(
+        ec2,
+        "Action=DescribeInstances&Note=a%3Bb",
+        "{ tool: ec2_describe }",
+    );
+    // (FIX-085) The name in two spellings is one parameter given twice to a case-folding server.
+    y += &form(
+        ec2,
+        "ACTION=TerminateInstances&Action=DescribeInstances",
+        "{ tool: ec2_call }",
+    );
+    y += &form(
+        ec2,
+        "Action=DescribeInstances&ACTION=TerminateInstances",
+        "{ tool: ec2_call }",
+    );
+    let sts = "sts.eu-west-1.amazonaws.com";
+    y += &form(
+        sts,
+        "ACTION=AssumeRole&Action=GetCallerIdentity",
+        "{ no_tool: true }",
+    );
+    y += &form(
+        sts,
+        "Action=GetCallerIdentity;Action=AssumeRole",
+        "{ no_tool: true }",
+    );
     // invalid UTF-8 after decoding, malformed escape
     y += &form(ec2, "Action=Describe%FF", "{ tool: ec2_call }");
     y += &form(ec2, "Action=Describe%zz", "{ tool: ec2_call }");

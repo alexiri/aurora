@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use aurora_policy::params::{
     ALLOWED_HEADERS, IN_MAX, MAX_CONDITIONS, NAME_MAX, Outcome, PREFIX_MIN, ParamCondition,
-    ParamInput, ParamSource, VALUE_MAX, outcome,
+    ParamInput, ParamSource, VALUE_MAX, matches, outcome,
 };
 use aurora_policy::{HostPattern, PathPattern};
 use serde_yaml::Value;
@@ -66,10 +66,56 @@ fn example_path(p: &str) -> String {
     }
 }
 
+/// Whether every value `later` accepts is accepted by `earlier` (both on the same parameter):
+/// `equals` ⊂ `equals` / `in` / a prefix of it; `in` ⊂ a superset (every member accepted);
+/// `prefix` ⊂ a shorter-or-equal prefix. Anything else is not provably implied.
+fn implies(later: &ParamCondition, earlier: &ParamCondition) -> bool {
+    if later.source != earlier.source {
+        return false;
+    }
+    let same_name = if later.source == ParamSource::Header {
+        later.name.eq_ignore_ascii_case(&earlier.name)
+    } else {
+        later.name == earlier.name
+    };
+    if !same_name {
+        return false;
+    }
+    let (l, e) = (&later.matcher, &earlier.matcher);
+    if l.forms() != 1 || e.forms() != 1 {
+        return false;
+    }
+    let accepted_by_earlier = |v: &str| match (&e.equals, &e.any_of, &e.prefix) {
+        (Some(x), None, None) => v == x,
+        (None, Some(xs), None) => xs.iter().any(|x| x == v),
+        (None, None, Some(p)) => v.starts_with(p.as_str()),
+        _ => false,
+    };
+    match (&l.equals, &l.any_of, &l.prefix) {
+        (Some(v), None, None) => accepted_by_earlier(v),
+        (None, Some(vs), None) => !vs.is_empty() && vs.iter().all(|v| accepted_by_earlier(v)),
+        // Every string with prefix `p` starts with `q` iff `p` does.
+        (None, None, Some(p)) => e.prefix.as_ref().is_some_and(|q| p.starts_with(q.as_str())),
+        _ => false,
+    }
+}
+
 /// An earlier tool that matches everything `t` can match (so it would shadow it).
 fn shadows(earlier: &ToolItem, t: &ToolItem) -> bool {
-    if earlier.params.is_some() || earlier.graphql.is_some() || earlier.git.is_some() {
+    if earlier.graphql.is_some() || earlier.git.is_some() {
         return false;
+    }
+    // (FIX-085) An earlier `params` tool shadows `t` when every one of its conditions is implied
+    // by a condition `t` carries: whatever `t` accepts, the earlier tool accepts first. A tool
+    // without `params` is matched by anything the earlier one (with `params`) refuses, so it is
+    // never shadowed by it.
+    if let Some(ec) = &earlier.params {
+        let Some(tc) = &t.params else {
+            return false;
+        };
+        if ec.is_empty() || !ec.iter().all(|e| tc.iter().any(|l| implies(l, e))) {
+            return false;
+        }
     }
     let host_ok = earlier.host == t.host
         || (earlier.host != INSTANCE_HOST
@@ -84,20 +130,32 @@ fn shadows(earlier: &ToolItem, t: &ToolItem) -> bool {
     host_ok && path_ok && methods_ok
 }
 
-fn read_only(methods: &[String]) -> bool {
-    !methods.is_empty()
-        && methods
+/// A tool that cannot carry a body: no methods listed (any method, a GET included, would
+/// match), or only `GET` / `HEAD`.
+fn carries_no_body(methods: &[String]) -> bool {
+    methods.is_empty()
+        || methods
             .iter()
             .all(|m| m.eq_ignore_ascii_case("GET") || m.eq_ignore_ascii_case("HEAD"))
 }
 
-/// Manifest-level rules: `custom_only_without_tools`, `params` shape and shadowing.
+/// Manifest-level rules: `custom_only_without_tools`, `custom_only_needs_block_untooled`,
+/// `params` shape and shadowing.
 pub fn app_rules(app: &App, base: &str, out: &mut Vec<Violation>) {
     if app.grants.custom_only && tool_count(app) == 0 {
         out.push(Violation::new(
             "custom_only_without_tools",
             format!("{base}/grants/custom_only"),
             "`custom_only` needs at least one tool in the catalogue",
+        ));
+    }
+    // (FIX-085, SEC-67) The tools of a `custom_only` app are the only way to use it: a request
+    // that matches none must be blocked, so the manifest says so.
+    if app.grants.custom_only && !app.grants.block_untooled {
+        out.push(Violation::new(
+            "custom_only_needs_block_untooled",
+            format!("{base}/grants/block_untooled"),
+            "`custom_only` implies `block_untooled: true`; set both",
         ));
     }
     let tools = ordered(app);
@@ -113,11 +171,11 @@ pub fn app_rules(app: &App, base: &str, out: &mut Vec<Violation>) {
         }
         for (i, c) in conds.iter().enumerate() {
             condition(c, &at(&format!("/{i}")), out);
-            if c.source == ParamSource::Form && read_only(&t.methods) {
+            if c.source == ParamSource::Form && carries_no_body(&t.methods) {
                 out.push(Violation::new(
                     "params_invalid",
                     at(&format!("/{i}/source")),
-                    "a `form` condition needs a tool with a method that carries a body",
+                    "a `form` condition needs a tool that lists the methods that carry a body (`methods`, not `GET`/`HEAD` only)",
                 ));
             }
         }
@@ -307,10 +365,6 @@ pub fn fixtures(m: &Manifest, pkg: &crate::package::Package, out: &mut Vec<Viola
                 {
                     continue;
                 }
-                if r.expect_tool.as_deref() == Some(t.id.as_str()) {
-                    need.remove("positive");
-                    continue;
-                }
                 let headers: Vec<(&str, &str)> = r
                     .headers
                     .iter()
@@ -322,6 +376,14 @@ pub fn fixtures(m: &Manifest, pkg: &crate::package::Package, out: &mut Vec<Viola
                     body: r.body.as_bytes(),
                     truncated: r.truncated,
                 };
+                if r.expect_tool.as_deref() == Some(t.id.as_str()) {
+                    // (FIX-085) A claim is not a match: the fixture counts as the positive case
+                    // only when the tool's conditions really hold for the request it describes.
+                    if matches(conds, &input) {
+                        need.remove("positive");
+                    }
+                    continue;
+                }
                 for c in conds {
                     match outcome(c, &input) {
                         Outcome::Match => {}

@@ -30,3 +30,7 @@ fixture-invalid-instance-host-part instance_placeholder_misuse
 fixture-invalid-instance-no-block instance_placeholder_misuse
 fixture-invalid-instance-in-path instance_placeholder_misuse
 fixture-invalid-instance-default-host instance_default_host_invalid
+fixture-invalid-custom-only-block-untooled custom_only_needs_block_untooled
+fixture-invalid-params-shadowed-by-params params_tool_shadowed
+fixture-invalid-form-without-body-methods params_invalid
+fixture-invalid-positive-fixture-claim params_fixture_missing

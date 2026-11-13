@@ -24,7 +24,10 @@ good practice).
 
 The skill library (`10 §Skills`) reads repository files with a connection's credential. That
 credential is used **only here**, by the gateway, so the API never holds a plaintext token and the
-refresh and host guard (`08 §8`) stay in one place. The internal listener (4103) serves one more route,
+refresh and host guard (`08 §8`) stay in one place. It is the one credentialed request outside an app's
+tools: policy, grants and the app's `custom_only` / `block_untooled` flags do not apply to it, and it is
+bounded instead by the package's approved `library` templates (exact host, path and method, `09 §3.4 library`;
+FIX-085). The internal listener (4103) serves one more route,
 `POST /internal/v1/library-fetch`, with the same internal-secret auth and the same reachability
 (API replicas only, never a sandbox, SEC-09):
 

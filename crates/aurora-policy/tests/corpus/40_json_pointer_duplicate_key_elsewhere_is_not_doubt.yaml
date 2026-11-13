@@ -1,0 +1,4 @@
+description: FIX-085 a repeated key off the pointer's path is not doubt - the block rule on /action = delete does not fire for a clean /action
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: no-delete, action: block, conditions: [{on: body, op: equals, value: delete, json_pointer: /action}]}]}
+facts: {host: api.example.com, port: 443, path: /q, method: POST, body: '{"note":"a","note":"b","action":"read","nested":{"x":1,"x":2}}', identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow}

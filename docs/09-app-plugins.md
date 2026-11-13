@@ -353,7 +353,16 @@ with `Action=DescribeInstances`, STS with `Action=GetCallerIdentity`), AWS JSON 
   **truncated beyond the buffer** (`CONDITION_BODY_BUFFER`), the condition is **unknown, the tool
   does not match**, and classification continues down the catalogue (typically reaching the generic
   write tool of the same endpoint, or `tool = None`). Doubt therefore never produces a `read`
-  classification. The linter requires, for every tool with `params`, fixtures for the positive case
+  classification. (FIX-085) A condition also treats as doubt (no match, and the request is untooled):
+  **a raw `;`** anywhere in the query string or form body (some servers split pairs on it, so one
+  `Action` for the gateway may be two for the upstream; `%3B` is exact and stays an ordinary
+  character); **two parameters whose names differ only in case** (`ACTION` beside `Action`: a
+  server that folds case sees one parameter given twice), and a lone case variant of the name
+  (`ACTION=...` is not the parameter and is not read as absent either); and, for a
+  `json_pointer` rule condition (`07`), **a key repeated on the way to the pointer** in the JSON
+  body (the parsers disagree on which copy wins), which makes the condition unknown for allow and
+  restrictive rules alike. A `form` condition requires the tool to list body methods (the linter
+  refuses a tool with no `methods`, or only `GET`/`HEAD`). The linter requires, for every tool with `params`, fixtures for the positive case
   and for each of: other value, missing, repeated, query/body conflict, wrong content type,
   truncated body.
 - **Query conditions and a body.** Servers merge the query and an urlencoded body, so a `query`
@@ -436,13 +445,23 @@ must change. For apps whose credential is far broader than their catalogue (Indi
   (`07 §Grants and their compilation`). Custom grants (allow / ask / block per tool;
   new tools arrive blocked; unmatched requests blocked) are the only way to use the
   app. Requires at least one tool in the catalogue (linter error `custom_only_without_tools`).
+  **`custom_only: true` implies `block_untooled`** (FIX-085): the tools "are the only way to
+  use the app", so a request that matches none is blocked before any rule, a hand-written
+  `network` allow for the host included. A manifest that sets `custom_only` with `block_untooled`
+  false or absent is refused (`custom_only_needs_block_untooled`); the evaluator applies the
+  implication itself, so a snapshot built before the rule is just as strict.
 - `block_untooled` — whatever grants exist, a request on which the app's connection
   would be the winning credential but **no catalogue tool matches** (`tool = None`) is
   blocked (403 `blocked_by_policy`, `details.reason = "app_untooled_blocked"`), and
-  no hand-written rule can allow it. With `custom_only` it is already implied for custom
-  grants; the flag matters for packages that keep `full` available but want it to cover
+  no hand-written rule can allow it. With `custom_only` it is implied; the flag matters
+  for packages that keep `full` available but want it to cover
   *catalogued* tools only (a `full` grant then means "every tool the catalogue names,
   including future ones", never "anything the token can do").
+- **The one credentialed request outside the tools** is the skill-library fetch (D-148,
+  `§3.4 library`): the gateway's own request for a package's declared `library` templates,
+  bounded by those approved templates (exact host, path and method); policy and grants do not
+  apply to it, and neither flag changes it. Nothing else a connection's credential signs is
+  exempt from `custom_only`.
 
 Both are properties of the manifest the instance admin approves (shown in the
 permissions review, `§10`), not of a grant, so a user cannot switch them off.
@@ -594,13 +613,20 @@ if any of:
   inject on those hosts; the built-in AWS packages (`s3.*`, `ec2.*`) are unaffected;
 - unknown mechanism or decoder;
 - (phase 4, P4-GRANTS) `grants` with unknown keys or non-boolean values, `custom_only` on an
-  app with no tools (`custom_only_without_tools`); a tool `params` list that is empty, longer
+  app with no tools (`custom_only_without_tools`), `custom_only` without `block_untooled`
+  (`custom_only_needs_block_untooled`, FIX-085); a tool `params` list that is empty, longer
   than 4, has an unknown `source` or header name, a `match` without exactly one of `equals` /
   `in` / `prefix`, an over-long or non-conforming value, a `prefix` shorter than 4 characters, a
-  `form` condition on a tool whose methods are all `GET`/`HEAD`, or a `params` tool declared
+  `form` condition on a tool that lists no methods or only `GET`/`HEAD` (it must list the
+  methods that carry a body), or a `params` tool declared
   **after** a broader tool that would shadow it (the linter proves the order by testing the
-  tool's own first example against the earlier tools); a group wildcard carrying `params`; a
-  `params` tool missing any of the required fixtures (`§3.4 tools`);
+  tool's own first example against the earlier tools; (FIX-085) a `params` tool also shadows a
+  later `params` tool when every condition of the earlier one is implied by a condition of the
+  later one on the same source and name: `equals` within `equals` / `in` / a prefix of it, `in`
+  within a superset, `prefix` within a shorter-or-equal prefix); a group wildcard carrying
+  `params`; a `params` tool missing any of the required fixtures (`§3.4 tools`), where the
+  `positive` fixture counts only if the tool's conditions really hold for the request it
+  describes (a claim is not a match);
 - (phase 4, P4-GSL) `library` violating the rules of `§3.4 library` (`library_host_not_exact`,
   `library_no_credential`, `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
   unknown keys or non-conforming values), or `library` on an app without a credential that can
