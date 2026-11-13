@@ -257,3 +257,179 @@ async fn shutdown_closes_every_pty() {
         }
     }
 }
+
+/// Waits for `pid` to disappear from `/proc` (reaped), bounded.
+async fn gone_within(pid: u32, d: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + d;
+    while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    true
+}
+
+/// FIX-091 item 5: a shell that ignores SIGHUP does not survive its terminal: the engine
+/// escalates to SIGKILL on the session's process group after a short grace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shell_that_ignores_hup_is_killed_when_its_terminal_closes() {
+    let home = TempDir::new();
+    let mut r = rig(home.path(), true);
+    open(&mut r, 1).await;
+    let pid = shell_pid(&mut r, 1).await;
+    // Ignores SIGHUP and keeps running (an idle interactive shell would exit on the master's
+    // EOF anyway; a busy one is what the escalation is for).
+    r.data(
+        1,
+        b"trap '' HUP; echo TRAP_\"SET\"; while :; do sleep 1; done\n",
+    )
+    .await;
+    r.until("TRAP_SET").await;
+    r.frame(RunnerToSupervisor::PtyClose(PtyClose {
+        pty_id: 1,
+        reason: PtyCloseReason::Eof,
+        bytes_in: None,
+        bytes_out: None,
+    }))
+    .await;
+    assert!(
+        gone_within(pid, Duration::from_secs(8)).await,
+        "a shell ignoring SIGHUP outlived its closed terminal"
+    );
+}
+
+/// FIX-091 item 2: a program that never reads its stdin stalls only its own terminal. The fake
+/// runner pushes input until the kernel stops accepting it (credit stops coming back), then
+/// closes the terminal and opens two more — before the fix the pump awaited the terminal's
+/// 16-slot queue, so `pty.close` was never read and the slots stayed taken.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shell_that_never_reads_stalls_no_other_terminal() {
+    let home = TempDir::new();
+    let mut r = rig(home.path(), true);
+    open(&mut r, 1).await;
+    // `exec sleep`: nothing reads the terminal's input from here on. Raw mode: a canonical
+    // line discipline silently drops input beyond its 4 KiB line buffer, raw mode makes the
+    // writer wait (as for a real program that has stopped reading).
+    r.data(1, b"stty raw -echo; echo STALL_\"READY\"; exec sleep 600\n")
+        .await;
+    r.until("STALL_READY").await;
+
+    const WINDOW: usize = 131_072;
+    const FRAME: usize = 1000;
+    let mut unacked = 0usize;
+    let mut sent = 0usize;
+    loop {
+        while unacked + FRAME <= WINDOW {
+            r.data(1, &[b'x'; FRAME]).await;
+            unacked += FRAME;
+            sent += 1;
+        }
+        // A quiet second means the terminal stopped accepting input.
+        let mut got = false;
+        while let Some(out) = r.next_out_within(Duration::from_secs(1)).await {
+            if let StreamOut::Text(t) = out {
+                let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+                if v["kind"] == "pty.credit" {
+                    unacked -= v["body"]["bytes"].as_u64().unwrap() as usize;
+                    got = true;
+                    break;
+                }
+            }
+        }
+        if !got {
+            break;
+        }
+        assert!(sent < 1_000_000, "the terminal never stalled");
+    }
+    assert!(sent > 17, "stalled below the old queue depth ({sent})");
+
+    // The engine still reads control frames: close the stalled terminal, open two new ones.
+    r.frame(RunnerToSupervisor::PtyClose(PtyClose {
+        pty_id: 1,
+        reason: PtyCloseReason::Eof,
+        bytes_in: None,
+        bytes_out: None,
+    }))
+    .await;
+    open(&mut r, 2).await;
+    open(&mut r, 3).await;
+}
+
+/// FIX-091 item 3: a wedged engine cannot hold shutdown past its grace. The engine's outbound
+/// queue is full and nobody drains it (a stuck channel), so telling the runner `pty.close`
+/// blocks; `shutdown` still finishes within the grace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_with_a_wedged_engine_finishes_within_the_grace() {
+    use aurora_supervisor::channel::{ChannelSender, PtyEnds, StreamSender};
+    use aurora_supervisor::fake::FakeHarness;
+    use aurora_supervisor::pty::PtyEngine;
+    use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
+
+    let home = TempDir::new();
+    let (pty_out_tx, mut pty_out_rx) = tokio::sync::mpsc::channel(4);
+    let (pty_in_tx, pty_in_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (_epoch_tx, epoch_rx) = tokio::sync::watch::channel(0u64);
+    let handle = PtyEngine::spawn(
+        PtyEnds {
+            sender: StreamSender::from_mpsc(pty_out_tx.clone()),
+            inbound: pty_in_rx,
+            epoch: epoch_rx,
+        },
+        true,
+        None,
+        home.path().to_path_buf(),
+        crate::pty_env_probe::bootstrap_exe(),
+    );
+    pty_in_tx
+        .send(aurora_supervisor::channel::PtyIn::Frame(
+            RunnerToSupervisor::PtyOpen(PtyOpen {
+                pty_id: 1,
+                window: 131_072,
+                cols: 80,
+                rows: 24,
+            }),
+        ))
+        .unwrap();
+    // Wait for `pty.opened`, then wedge the queue: nothing drains it from here on.
+    loop {
+        let out = tokio::time::timeout(Duration::from_secs(10), pty_out_rx.recv())
+            .await
+            .expect("no pty.opened")
+            .expect("engine ended");
+        if let StreamOut::Text(t) = out
+            && t.contains("pty.opened")
+        {
+            break;
+        }
+    }
+    while pty_out_tx.try_send(StreamOut::Flush).is_ok() {}
+
+    let (out_tx, _out_rx) = tokio::sync::mpsc::channel(256);
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel(8);
+    let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
+    cfg.working_dir = home.path().to_path_buf();
+    cfg.process = aurora_supervisor::process::ProcessConfig::new(home.path().to_path_buf());
+    cfg.process.uid = None;
+    let sup = Supervisor::new(
+        cfg,
+        ChannelSender::from_mpsc(out_tx),
+        std::sync::Arc::new(FakeHarness),
+        aurora_supervisor::streams::StreamsHandle::noop(),
+        (*handle).clone(),
+    );
+    let run = tokio::spawn(sup.run(in_rx));
+    in_tx
+        .send(
+            serde_json::from_value(
+                serde_json::json!({"kind": "shutdown", "body": {"grace_secs": 1}}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), run)
+        .await
+        .expect("a wedged PTY engine held the supervisor's shutdown past its grace")
+        .unwrap();
+}

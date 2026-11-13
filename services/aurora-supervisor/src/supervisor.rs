@@ -344,9 +344,14 @@ impl Supervisor {
             t.abort.notify_one();
             let _ = t.session.lock().await.abort().await;
         }
-        // Every terminal ends with the sandbox (`12 §Terminal`, `16 §W19`).
-        self.ptys.close_all().await;
         let deadline = Instant::now() + grace;
+        // Every terminal and preview stream ends with the sandbox (`12 §Terminal`, `16 §W19`,
+        // `12 §Previews`), within the grace: a wedged engine must not hold shutdown (FIX-091).
+        let _ = tokio::time::timeout_at(
+            deadline,
+            futures::future::join(self.ptys.close_all(), self.streams.close_all()),
+        )
+        .await;
         while !self.turns.is_empty() {
             tokio::select! {
                 Some(id) = done_rx.recv() => { self.finish_turn(id); }

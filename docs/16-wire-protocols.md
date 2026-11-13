@@ -426,9 +426,14 @@ bytes were *written onward* (to the loopback socket or the leg-1 WebSocket), at 
 one chunk at a time, so one stream cannot starve the channel. With at most
 `PREVIEW_STREAMS_PER_SANDBOX` (64) streams the bytes in flight per sandbox are bounded by
 `64 × 128 KiB = 8 MiB` per direction; a credit that would exceed a window, a data frame beyond the window, an unknown
-`stream_id`, a second `stream.open` for a live id or a data frame on a closed stream is a protocol
-violation: the receiver sends `stream.close { reason: "error" }` for that stream (and a supervisor
-that sees repeated violations closes the channel with 4400).
+`stream_id` or a second `stream.open` for a live id is a protocol
+violation: the receiver sends `stream.close { reason: "error" }` for that stream. Data for a stream
+id this side closed, or was told closed, in the current channel connection is dropped silently and is
+not a violation (a legal close race). A violation is data beyond the window or for an id never
+opened. **Four violations within 60 s** on one channel connection close it with 4400; the count
+resets when the connection changes. A supervisor's stream and PTY pumps never wait on a peer
+(an app that stopped reading, a program that stopped reading its stdin): they hand data to
+per-stream queues with `try_send` and a stream whose queue is full is closed with `error`.
 
 **Allow-list, enforced at both ends (SEC-82).**
 1. **Runner**: the port and sandbox of every stream come from the API's answer to the stream grant
@@ -495,7 +500,9 @@ runner increasing per channel connection, interleaved round-robin):
 Credit-based flow control exactly as W18 (`TERMINAL_STREAM_WINDOW` 128 KiB per
 direction per PTY, credit returned after the bytes were written onward, at
 least every `window/4`, control frames never blocked, round-robin one chunk at
-a time; a violation closes that PTY with `pty.close { reason: "error" }`).
+a time; a violation closes that PTY with `pty.close { reason: "error" }`; data for a PTY id closed on
+this connection is dropped silently, and four violations within 60 s on one connection close the
+channel with 4400, exactly as W18).
 A W6 reconnect ends every PTY (leg 1 closes 4503, nothing is resumed); a
 supervisor that does not know the kinds ignores them (the runner's `pty.open`
 times out 5 s → 4502): harmless. Limits: `TERMINALS_PER_SANDBOX` 2,

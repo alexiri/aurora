@@ -106,6 +106,11 @@ impl Rig {
             .expect("engine output ended")
     }
 
+    /// The engine's next outgoing unit, or `None` after `d` of silence.
+    pub(crate) async fn next_out_within(&mut self, d: Duration) -> Option<StreamOut> {
+        tokio::time::timeout(d, self.out_rx.recv()).await.ok()?
+    }
+
     /// The next `pty.*` text frame (skips binary data and flushes).
     pub(crate) async fn next_frame(&mut self) -> Value {
         loop {
