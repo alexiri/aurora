@@ -227,7 +227,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Card**.
 - **Tabs**: segmented style for page-level views such as Approvals
   Pending/Actions/History, and underline style for the agent page's tab strip
-  (scrolls horizontally on narrow screens).
+  (FIX-129: it never scrolls sideways; `overflow="menu"` moves the tabs that do
+  not fit into a trailing **More ▾** menu, the selected tab is always shown).
 - **Field**: label, hint and error text linked by `aria-describedby`;
   `aria-invalid` sets the error border.
 - **Avatar**: initial on a tinted tile when there is no image.
@@ -267,7 +268,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   buttons.
 - **Agent page**: header with a 44 px avatar, then name, `@handle`,
   kind/default badges and a sandbox-state pill on one wrapping line, with the
-  header actions (Freeze) on the right; an underline tab strip below it.
+  header actions (Freeze) on the right; an underline tab strip below it (FIX-129:
+  the page uses the full content width, not a 896 px column — long-form panels
+  such as Instructions keep a readable width inside themselves; the tab strip
+  collapses what does not fit into **More**, so neither the page nor the strip
+  scrolls sideways at 390, 768, 1280 or 1920 px).
   (FIX-025, D-158) The pill never sits on "Sandbox starting" forever: while
   starting it says "Sandbox starting" (with the live phase on the Computer
   tab); on a failed start it reads "Sandbox failed" with the sanitised reason
@@ -449,7 +454,7 @@ here, add it here and document it.
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
 | Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
-| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The strip scrolls within itself at 390 px. |
+| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
 | Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. |

@@ -123,7 +123,8 @@ export function AgentPage() {
   const menuFreeze = compact && freezeProps && freezeProps.canOwn && !agent.frozen;
 
   return (
-    <div className={cn("space-y-4", compact ? "space-y-2" : "max-w-4xl")}>
+    // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
+    <div className={cn("min-w-0 space-y-4", compact && "space-y-2")}>
       <PageHeader
         compact={compact}
         breadcrumb={[{ label: "Agents", href: `/o/${org}/w/${ws}/agents` }, { label: agent.name }]}
@@ -150,6 +151,7 @@ export function AgentPage() {
         value={tab}
         onValueChange={(v) => setTab(v as AgentTab)}
         variant="underline"
+        overflow="menu"
         label="Agent"
         idBase="agent"
       />
