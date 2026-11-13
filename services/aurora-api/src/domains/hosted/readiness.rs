@@ -90,14 +90,16 @@ pub fn classify(
     let r = match state {
         // The sandbox is ready: dispatch takes the turn; nothing to explain.
         "running" if t.channel_held && t.harness_ready && t.home_synced => return None,
-        _ if !t.any_runner_live => ("runner_unavailable".to_owned(), runner_gone(&None), false),
+        // (FIX-058) No live runner holds the attempt: give it up terminally (`fail_attempt` with
+        // `runner_gone` lands the sandbox in `failed`, never `stopping`, which nothing would drive).
+        _ if !t.any_runner_live => ("runner_unavailable".to_owned(), runner_gone(&None), true),
         "starting" | "running" | "stopping"
             if t.sandbox_id.is_some() && t.runner_name.is_some() && !t.runner_live =>
         {
             (
                 "runner_unavailable".to_owned(),
                 runner_gone(&t.runner_name),
-                state != "stopping",
+                true,
             )
         }
         "starting" => (
@@ -134,9 +136,7 @@ pub fn classify(
             let code = t
                 .failure_code
                 .clone()
-                .filter(|c| {
-                    plane::START_FAILURE_CODES.contains(&c.as_str()) || c == "runner_unavailable"
-                })
+                .filter(|c| plane::START_FAILURE_CODES.contains(&c.as_str()))
                 .unwrap_or_else(|| "sandbox_start_failed".to_owned());
             let last = t
                 .failure_message
@@ -182,6 +182,14 @@ pub fn classify(
     Some((r.0, sanitize::reason(&r.1, REASON_MAX), r.2))
 }
 
+/// Tells the gateway the boot credentials revoked by a terminal give-up are gone.
+async fn invalidate(tx: &mut sqlx::PgConnection, revoked: Vec<Uuid>) -> Result<(), ApiError> {
+    for id in revoked {
+        aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "credential", id).await?;
+    }
+    Ok(())
+}
+
 /// One sweep (singleton across API replicas). `Ok(None)` when another replica holds the lock.
 pub async fn sweep(s: &AppState) -> Result<Option<Swept>, ApiError> {
     let ran = aurora_db::jobs::try_singleton(&s.pool, SWEEP_JOB, || sweep_once(s)).await?;
@@ -206,7 +214,17 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
     for (sandbox, boot, detail) in overdue {
         let msg = sanitize::reason(&unreachable_message(detail.as_deref()), REASON_MAX);
         let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-        if sandboxes::fail_attempt(&mut tx, sandbox, boot, "supervisor_unreachable", &msg).await? {
+        if let Some(revoked) = sandboxes::fail_attempt(
+            &mut tx,
+            sandbox,
+            boot,
+            "supervisor_unreachable",
+            &msg,
+            false,
+        )
+        .await?
+        {
+            invalidate(&mut tx, revoked).await?;
             plane::fail_start(&mut tx, sandbox, Some("supervisor_unreachable"), Some(&msg)).await?;
             out.unreachable += 1;
             woke = true;
@@ -238,7 +256,17 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
             && !given_up.contains(&sb)
         {
             given_up.push(sb);
-            if sandboxes::fail_attempt(&mut tx, sb, boot, &code, &message).await? {
+            if let Some(revoked) = sandboxes::fail_attempt(
+                &mut tx,
+                sb,
+                boot,
+                &code,
+                &message,
+                code == "runner_unavailable",
+            )
+            .await?
+            {
+                invalidate(&mut tx, revoked).await?;
                 // Every queued turn of the agent fails with the same reason (10 §Failure semantics).
                 plane::fail_start(&mut tx, sb, Some(&code), Some(&message)).await?;
                 woke = true;
@@ -316,7 +344,7 @@ mod tests {
         let code = |r: &OverdueTurn| classify(r, 300, now).map(|c| (c.0, c.2));
         let mut r = row(None);
         r.any_runner_live = false;
-        assert_eq!(code(&r), Some(("runner_unavailable".into(), false)));
+        assert_eq!(code(&r), Some(("runner_unavailable".into(), true)));
         let mut r = row(Some("starting"));
         r.runner_live = false;
         assert_eq!(code(&r), Some(("runner_unavailable".into(), true)));

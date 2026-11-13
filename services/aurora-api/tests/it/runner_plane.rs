@@ -1545,3 +1545,119 @@ async fn disabled_posture_removes_the_capability() {
     let (doc, _) = start_caps(&r, "runner-a", Some(&["browser"]), "daneel").await;
     assert_eq!(doc, json!(["browser"]));
 }
+
+/// (FIX-058) Claims a start for `agent` and returns `(sandbox, boot, turn)`.
+async fn claimed_start(r: &Rig, rep: Uuid, agent: Uuid) -> (Uuid, Uuid, Uuid) {
+    let turn = r.turn(agent).await;
+    let w = r.work(rep, 0).await;
+    let item = first(&w, "sandbox.start");
+    (
+        item["sandbox_id"].as_str().unwrap().parse().unwrap(),
+        item["boot_id"].as_str().unwrap().parse().unwrap(),
+        turn,
+    )
+}
+
+/// (FIX-058) The runner holding the attempt is gone: the give-up keeps `runner_unavailable`
+/// (not rewritten to `agent_start_failed`) and the sandbox ends `failed` with the backoff, in
+/// the same sweep — never `stopping` (nothing would send the stop), whether the attempt was
+/// `starting` or already `stopping`.
+#[tokio::test]
+async fn give_up_on_a_dead_runner_keeps_runner_unavailable_and_ends_failed() {
+    for state in ["starting", "stopping"] {
+        let r = rig().await;
+        let rep = r.register("runner-a", 4).await;
+        let agent = r.agent("orphan").await;
+        let (sb, _boot, turn) = claimed_start(&r, rep, agent).await;
+        // Another replica keeps the platform "up" is not needed: every replica is silent.
+        sqlx::query("UPDATE runner_replicas SET last_seen_at = now() - interval '1 hour'")
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE sandboxes SET state = $2 WHERE id = $1")
+            .bind(sb)
+            .bind(state)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+            .bind(turn)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        assert_eq!(sweep(&r).await.turns_failed, 1, "{state}");
+        let (status, code, msg) = turn_error(&r, turn).await;
+        assert_eq!(
+            (status.as_str(), code.as_deref()),
+            ("failed", Some("runner_unavailable")),
+            "{state}"
+        );
+        assert!(msg.unwrap().contains("No runner is connected"), "{state}");
+        let (st, failures, lease_live, code): (String, i32, bool, Option<String>) = sqlx::query_as(
+            "SELECT state, start_failures, coalesce(lifecycle_lease_until > now(), false),
+                        failure_code FROM sandboxes WHERE id = $1",
+        )
+        .bind(sb)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(st, "failed", "{state}: not wedged in stopping");
+        assert_eq!(
+            (failures, lease_live),
+            (1, true),
+            "{state}: backoff applies"
+        );
+        assert_eq!(code.as_deref(), Some("runner_unavailable"), "{state}");
+    }
+}
+
+/// (FIX-058) A sandbox the sweep selected as overdue that became ready before the update is left
+/// alone: `fail_attempt` returns `None` and counts no failure; a not-yet-ready one is failed.
+#[tokio::test]
+async fn fail_attempt_leaves_a_sandbox_that_became_ready() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("lucky").await;
+    let (sb, boot, _turn) = claimed_start(&r, rep, agent).await;
+    // Ready: running, supervisor bootstrapped, channel held, harness ready, home synced.
+    sqlx::query(
+        "UPDATE sandboxes SET state = 'running', running_at = now(), bootstrap_used_at = now(),
+             channel_replica_id = $2, resource_profile = '{\"harness\": {}}',
+             home_applied_generation = 1000000 WHERE id = $1",
+    )
+    .bind(sb)
+    .bind(rep)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let ran =
+        aurora_db::repo::sandboxes::fail_attempt(&mut conn, sb, boot, "pod_failed", "x", false)
+            .await
+            .unwrap();
+    assert!(ran.is_none(), "a ready sandbox is not failed");
+    let (st, failures): (String, i32) =
+        sqlx::query_as("SELECT state, start_failures FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((st.as_str(), failures), ("running", 0));
+    // The same row, no longer ready (channel dropped), is given up.
+    sqlx::query("UPDATE sandboxes SET channel_replica_id = NULL WHERE id = $1")
+        .bind(sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let ran =
+        aurora_db::repo::sandboxes::fail_attempt(&mut conn, sb, boot, "pod_failed", "x", false)
+            .await
+            .unwrap();
+    assert!(ran.is_some());
+    let st: String = sqlx::query_scalar("SELECT state FROM sandboxes WHERE id = $1")
+        .bind(sb)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(st, "stopping");
+}
