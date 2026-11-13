@@ -10,6 +10,14 @@ notes where the shipped artifacts do not follow them yet.
 2. Back up Postgres, the keyring, the signing key and the gateway CA ([backups.md](backups.md)).
 3. Check the current state: `curl -i https://<external-url>/v1/instance`, and the pods are healthy.
 4. Choose the new version. Set `image.tag` (default: the chart appVersion, `0.1.0`).
+5. **External database: give the gateway its own login first** (FIX-106, D-178 Q-R5-11, D-182). From
+   this release the chart refuses to render with an external database (`postgres.enabled: false`, the
+   default) unless the gateway has its own least-privilege role: create the role and a Secret with key
+   `AURORA_DATABASE_URL` that logs in as it, then set `database.gatewayRole` and
+   `database.gatewayExistingSecret` (`aurora-api migrate` grants the role exactly what the gateway needs,
+   [install-helm.md](install-helm.md) §Database, `03 §Gateway database role grants`). Or, knowingly, set
+   `database.allowSharedLogin: true` to keep the gateway on the main login as before. The refusal happens
+   while Helm renders, so nothing in the cluster changes until one of the two is set.
 
 ## Rules that make a rolling upgrade safe
 
