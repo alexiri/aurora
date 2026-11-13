@@ -840,11 +840,20 @@ fn helm_rendered_runner_config_loads() {
 
 /// Renders the chart with `helm template t <chart> --set-json <each arg>` and returns the
 /// ConfigMap `aurora.toml`. `None` when `helm` is not installed.
+///
+/// FIX-106: with an external database the chart refuses to render without the gateway's
+/// least-privilege role pair, so every render sets the recommended pair.
 fn helm_rendered_toml(set_json: &[&str]) -> Option<String> {
     let chart = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/helm/aurora");
     let mut cmd = std::process::Command::new("helm");
     cmd.args(["template", "t"]).arg(&chart);
-    for s in set_json {
+    for s in [
+        r#"database.gatewayRole="aurora_gateway""#,
+        r#"database.gatewayExistingSecret="aurora-gateway-db""#,
+    ]
+    .iter()
+    .chain(set_json)
+    {
         cmd.args(["--set-json", s]);
     }
     let Ok(out) = cmd.output() else {
