@@ -212,7 +212,7 @@ carve-out is deliberate and was undocumented until phase 3:
   governs requests to an LLM host on which Aurora injects nothing (the agent
   brought its own key): they are blocked unless allow-listed. (3) The `allow`
   Default Rule is unaffected (it allows anyway). (4) Everything in `08 §11`.
-- (phase 4, P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
+- (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
   providers of `08 §Phase 4 providers` (OpenAI, Azure OpenAI, Bedrock, Vertex, generic
   OpenAI-compatible) add the **exact hosts** of their configured endpoints to the
   governed LLM hosts, so the carve-out covers them and only them: enabling Bedrock
@@ -447,7 +447,7 @@ prod" ask deserves longer than a routine one, so from phase 2:
   carries `expires_at`. Expiry still **denies** (`expired`, 403 `manual_approval_expired`).
 - Clients may time out before a long deadline (an agent tool's own HTTP timeout is
   the client's business). Parking a request and resuming it later is **not** part of
-  phase 2. (phase 4, RFE-011b, D-133) From phase 4, and only when the operator enables
+  phase 2. (phase 5 (D-138, moved from phase 4), RFE-011b, D-133) From phase 4, and only when the operator enables
   it, a long deadline can be served by **parking** instead of holding the connection:
   *Park and resume* below. With parking off (the default) everything in this section is
   unchanged.
@@ -463,7 +463,7 @@ means: no pending approval of the turn **and** `now − GREATEST(last_progress_a
 latest approval resolved_at) ≥ TURN_STALL`. The exemption never extends `TURN_CEILING`
 (wall-clock cap, still `failed time_limit`) and does not apply to action approvals
 (the agent is not blocked on them: it received `pending_approval` and continued).
-(phase 4, RFE-011b) Nor does it apply to **parked** approvals (`parked = true`): the
+(phase 5 (D-138, moved from phase 4), RFE-011b) Nor does it apply to **parked** approvals (`parked = true`): the
 agent was refused and is not blocked, so a turn that keeps running after a parked
 refusal is subject to stall detection like any other.
 
@@ -524,14 +524,14 @@ in UIs and cards ("Approve all 14 / Deny all"); a batch decision applies to all
 *pending* approvals of that batch id within the same agent that the caller may
 decide.
 
-- **Web Push when the user has no live tab (phase 4, RFE-011b, D-134).** Besides the
+- **Web Push when the user has no live tab (phase 5 (D-138, moved from phase 4), RFE-011b, D-134).** Besides the
   e-mail above, a decider who registered a browser for Web Push (`§Web Push`) receives a
   push for each approval created while they have no live `approvals/stream` or
   long-poll in that workspace. It is per user and per device, independent of the e-mail
   (the e-mail remains the fallback and is **not** suppressed by a push), and never an
   approve/deny action.
 
-### Park and resume (phase 4, RFE-011b, D-133, SEC-74)
+### Park and resume (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, SEC-74)
 
 **Problem.** A gateway hold keeps the agent's connection open until a person decides
 (`06 §Approval holds`). That is right for minutes and wrong for hours: the sandbox is
@@ -654,7 +654,7 @@ Limits and honesty: parking suits requests the agent can repeat **byte-identical
 that puts a timestamp, nonce or idempotency token in the body will produce a different
 fingerprint on retry and must be approved again (documented in the guidance and `17`).
 
-### Web Push (phase 4, RFE-011b, D-134, SEC-75, SEC-76)
+### Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134, SEC-75, SEC-76)
 
 RFE-011a notifies by dashboard SSE (an open tab) and e-mail (when *nobody* has a live
 surface). Web Push (RFC 8030, 8291, 8292) reaches a **person's device** when their browser is

@@ -96,7 +96,7 @@ one new entry without activating it.
 | `previews.session_ttl_secs`, `previews.session_idle_secs`, `previews.bytes_per_share_day` | 28800, 3600, 5 GiB | api, relay | (phase 4, P4-PRV-2) lower only for the first two (`02 §Limits`) |
 | `relay.api_url` | `http://127.0.0.1:4101` | relay | (phase 4, P4-PRV-2) the API it registers with; the anchor token comes from `AURORA_RELAY_TOKEN` (`aul_`) |
 | `relay.listen` / `relay.ops_port` | `0.0.0.0:4112` / `4193` | relay | (phase 4, P4-PRV-2) edge-facing HTTP / health and metrics |
-| `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two |
+| `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB (chart: 2048, 64, **32 MiB**) | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two. 100 MiB is the ceiling and the binary's default; the Helm chart deliberately ships the lower 32 MiB (`docs/23`), raise it to at most 100 MiB if previews must accept larger uploads (FIX-074) |
 | `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`). The runner registers the `stream_tls` capability; the API derives the endpoint scheme it hands the relay from it (`ws://` off, `wss://` on, `16 §W18`) — the relay verifies the presented certificate against its own trust configuration |
 | `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled. Helm: the chart value `terminal.enabled` is the single switch — it mirrors `config.terminal.enabled` (FIX-053), so `helm upgrade --set terminal.enabled=true` wires everything; set the config key only to agree explicitly, never alone |
 | `terminal.awake_cap_secs` | 14400 | api | (phase 4, P4-TERM) `TERMINAL_AWAKE_CAP`, at most `hosted.background_cap_secs` |
@@ -128,8 +128,8 @@ one new entry without activating it.
 | `secrets.stores[].managed_prefix` | `aurora` | api, gateway | managed values live at `<kv_mount>/data/<managed_prefix>/<org_id>/<purpose>/<owner_id>` (fixed layout; only the prefix is configurable); 1..128 chars, segments of `[A-Za-z0-9._-]`, no `.`/`..`/empty segment. The mount's `max_versions` SHOULD be ≥ 10 |
 | `secrets.stores[].reference_scopes[]` | `[]` (no org may reference) | api, gateway | which org may reference which paths (SEC-61; phase 3, D-107): entries `{ org_id, paths: [glob, …] }`. `org_id` is the organization's **immutable id** (a UUID string; anything else refuses startup naming the key), never its slug: a slug can be changed, freed and taken by another org, which must never inherit a scope. An id that matches no org grants nothing. Operators find an org's id with `GET /v1/admin/orgs` (instance admin; `id`, `slug`, `name` per org, C-203) or, as an org member, `GET /v1/resolve?org=<slug>` (`org.id`). `paths` non-empty, each glob either an exact path or a prefix ending in a single trailing `*` (the phase-0 `memory` store rule; `*` anywhere else is refused), relative to `kv_mount`, no leading `/`, no `.`/`..`/empty segment; a glob equal to, inside or covering `<managed_prefix>/` refuses startup (no reference can reach another org's managed values). Several entries for one id are unioned. Matched against the secret's org id at every resolve and open |
 | `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints[]` | `["litellm","anthropic"]` | api, gateway | `08 §6`; each endpoint may set `allowed_models` and `key_origin` (`method` = `endpoint` \| `litellm_team` \| `provider_account`, with `allowed_organization_ids`, `allowed_workspace_ids`, `allowed_team_ids`); (phase 4, FIX-019, D-136) an endpoint whose models are listed live (`litellm`) and that has no `default_model` starts with a **warning**: hosted agents then need a model chosen per agent, otherwise turns fail `no_default_model`. Set `default_model` (a model id served by the endpoint, e.g. a Claude model for the `claude-code` harness). An unknown `key_origin.method` refuses startup with the nearest valid value suggested |
-| `llm.endpoints[]` provider keys (phase 4, P4-LLM, D-121) | — | api, gateway | per provider, in addition to the common `id`, `provider`, `display_name`, `dialects`, `default_model`, `models`, `allowed_models`, `key_origin`: **`openai`**: `organization`, `project` (optional, not secrets); **`azure_openai`**: `base_url` (required, `https://<resource>.<azure-domain>`, host only), `models` and `default_model` required (deployment names); **`bedrock`**: `region` (required, e.g. `eu-central-1`), `base_url` (optional VPC endpoint override), `dialects` (default `["anthropic_bedrock"]`); **`vertex`**: `project_id` and `location` (required), `models` and `default_model` required; **`openai_compatible`**: `base_url` (required), `auth_header` (`authorization` default \| `api-key` \| `x-api-key`), `models_path`, `allowed_paths` (default derived from `dialects`; `["/**"]` opts out). Every provider also accepts `allowed_paths` to **narrow** its inference set. Credentials never appear here: an entry with a key such as `api_key`, `access_key*`, `secret*`, `private_key`, `password` or `token`, an unknown key, a non-https `base_url` (loopback excepted), or an invalid region/location/project id refuses startup naming the key (`08 §Phase 4 providers`) |
-| `llm.enabled_providers` additions | default unchanged | api, gateway | (phase 4, P4-LLM) accepts `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` besides `litellm`, `anthropic`; the default stays `["litellm","anthropic"]`, so an existing configuration behaves exactly as before |
+| `llm.endpoints[]` provider keys (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) | — | api, gateway | per provider, in addition to the common `id`, `provider`, `display_name`, `dialects`, `default_model`, `models`, `allowed_models`, `key_origin`: **`openai`**: `organization`, `project` (optional, not secrets); **`azure_openai`**: `base_url` (required, `https://<resource>.<azure-domain>`, host only), `models` and `default_model` required (deployment names); **`bedrock`**: `region` (required, e.g. `eu-central-1`), `base_url` (optional VPC endpoint override), `dialects` (default `["anthropic_bedrock"]`); **`vertex`**: `project_id` and `location` (required), `models` and `default_model` required; **`openai_compatible`**: `base_url` (required), `auth_header` (`authorization` default \| `api-key` \| `x-api-key`), `models_path`, `allowed_paths` (default derived from `dialects`; `["/**"]` opts out). Every provider also accepts `allowed_paths` to **narrow** its inference set. Credentials never appear here: an entry with a key such as `api_key`, `access_key*`, `secret*`, `private_key`, `password` or `token`, an unknown key, a non-https `base_url` (loopback excepted), or an invalid region/location/project id refuses startup naming the key (`08 §Phase 4 providers`) |
+| `llm.enabled_providers` additions | default unchanged | api, gateway | (phase 5 (D-138, moved from phase 4), P4-LLM) accepts `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` besides `litellm`, `anthropic`; the default stays `["litellm","anthropic"]`, so an existing configuration behaves exactly as before |
 | `governance.llm.allowed_key_scopes` | `["organization","workspace"]` | api, gateway | key scopes any org may permit (`08 §11`) |
 | `governance.llm.minimum_posture` | `open` | api, gateway | `open` or `sanctioned_only` — floor for every org |
 | `governance.llm.require_key_origin` | `false` | api, gateway | when `true`, startup fails unless every endpoint declares a `key_origin` |
@@ -200,31 +200,31 @@ one new entry without activating it.
 | `scim.allowed_email_domains` | `[]` | api | (phase 4, P4-GRP-2) optional instance allow-list of the e-mail domains an org may provision (exact, case-insensitive); empty = any domain the org owner lists. Entries must be domains (no `@`, wildcard or single label), else startup refuses naming the key |
 | `scim.rate_per_minute` | 600 | api | (phase 4, P4-GRP-2) `SCIM_RATE` per token (burst is a fifth of it), 30–6000 |
 | `scim.token_max_days` | 730 | api | (phase 4, P4-GRP-2) longest lifetime of an `aud_` token, 1–1825; the default offered in the dashboard is 365 (never above this) |
-| `approvals.park.enabled` | `false` | gateway, api | (phase 4, RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. The gateway and the API must agree (both read it from the shared configuration) |
-| `approvals.park.threshold_secs` | 900 | gateway | (phase 4, RFE-011b) effective timeouts above this park; 60–`approvals.park.max_timeout_secs` |
-| `approvals.park.max_timeout_secs` | 86400 | gateway, api | (phase 4, RFE-011b) longest deadline of a parked approval, 3600–604800 (also the upper bound of a rule's `approval_timeout_secs` when parking is enabled); requests that cannot park stay clamped to `approvals.max_timeout_secs` |
-| `approvals.park.resume_window_secs` | 1800 | api | (phase 4, RFE-011b) how long an approved parked request can be repeated once, 60–86400 |
-| `approvals.park.deny_cooldown_secs` | 900 | gateway | (phase 4, RFE-011b) a denied parked request repeated within it is answered `manual_approval_denied`, 0–86400 |
-| `approvals.park.max_body_bytes` | 262144 | gateway | (phase 4, RFE-011b) largest request body that can be parked (4096–1048576); larger requests are held |
-| `approvals.park.max_pending_per_agent` | 20 | gateway | (phase 4, RFE-011b) parked pending approvals per agent, 1–200 |
-| `push.enabled` | `false` | api | (phase 4, RFE-011b, D-134) Web Push; needs outbound HTTPS from the API to the push services. See *Approval park-and-resume and Web Push* below |
-| `push.vapid.subject` | the external URL | api | (phase 4, RFE-011b) VAPID `sub` claim: `mailto:` or `https:` contact for the push services |
-| `push.vapid.private_key_env` | unset | api | (phase 4, RFE-011b) name of an environment variable holding an operator-managed ES256 (P-256) VAPID private key (PKCS#8 PEM or raw base64url); unset = Aurora generates, seals and rotates its own key. Never the value |
-| `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 4, RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
-| `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 4, RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
-| `blobs.backend` | `postgres` | api | (phase 4, P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
-| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 4, P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
-| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 4, P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
-| `blobs.s3.allow_insecure_http` | `false` | api | (phase 4, P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
-| `blobs.s3.path_style` | `false` | api | (phase 4, P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
-| `blobs.s3.prefix` | `aurora/` | api | (phase 4, P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
-| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 4, P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
-| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 4, P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
-| `blobs.s3.sse` | `AES256` | api | (phase 4, P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
-| `blobs.s3.sse_kms_key_id` | unset | api | (phase 4, P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
-| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 4, P4-S3) PEM bundle verifying the endpoint |
-| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 4, P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
-| `blobs.s3.upload_concurrency` | 16 | api | (phase 4, P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
+| `approvals.park.enabled` | `false` | gateway, api | (phase 5 (D-138, moved from phase 4), RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. The gateway and the API must agree (both read it from the shared configuration) |
+| `approvals.park.threshold_secs` | 900 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) effective timeouts above this park; 60–`approvals.park.max_timeout_secs` |
+| `approvals.park.max_timeout_secs` | 86400 | gateway, api | (phase 5 (D-138, moved from phase 4), RFE-011b) longest deadline of a parked approval, 3600–604800 (also the upper bound of a rule's `approval_timeout_secs` when parking is enabled); requests that cannot park stay clamped to `approvals.max_timeout_secs` |
+| `approvals.park.resume_window_secs` | 1800 | api | (phase 5 (D-138, moved from phase 4), RFE-011b) how long an approved parked request can be repeated once, 60–86400 |
+| `approvals.park.deny_cooldown_secs` | 900 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) a denied parked request repeated within it is answered `manual_approval_denied`, 0–86400 |
+| `approvals.park.max_body_bytes` | 262144 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) largest request body that can be parked (4096–1048576); larger requests are held |
+| `approvals.park.max_pending_per_agent` | 20 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) parked pending approvals per agent, 1–200 |
+| `push.enabled` | `false` | api | (phase 5 (D-138, moved from phase 4), RFE-011b, D-134) Web Push; needs outbound HTTPS from the API to the push services. See *Approval park-and-resume and Web Push* below |
+| `push.vapid.subject` | the external URL | api | (phase 5 (D-138, moved from phase 4), RFE-011b) VAPID `sub` claim: `mailto:` or `https:` contact for the push services |
+| `push.vapid.private_key_env` | unset | api | (phase 5 (D-138, moved from phase 4), RFE-011b) name of an environment variable holding an operator-managed ES256 (P-256) VAPID private key (PKCS#8 PEM or raw base64url); unset = Aurora generates, seals and rotates its own key. Never the value |
+| `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 5 (D-138, moved from phase 4), RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
+| `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 5 (D-138, moved from phase 4), RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
+| `blobs.backend` | `postgres` | api | (phase 5 (D-138, moved from phase 4), P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
+| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 5 (D-138, moved from phase 4), P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
+| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 5 (D-138, moved from phase 4), P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
+| `blobs.s3.allow_insecure_http` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
+| `blobs.s3.path_style` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
+| `blobs.s3.prefix` | `aurora/` | api | (phase 5 (D-138, moved from phase 4), P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
+| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 5 (D-138, moved from phase 4), P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
+| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 5 (D-138, moved from phase 4), P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
+| `blobs.s3.sse` | `AES256` | api | (phase 5 (D-138, moved from phase 4), P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
+| `blobs.s3.sse_kms_key_id` | unset | api | (phase 5 (D-138, moved from phase 4), P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
+| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 5 (D-138, moved from phase 4), P4-S3) PEM bundle verifying the endpoint |
+| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
+| `blobs.s3.upload_concurrency` | 16 | api | (phase 5 (D-138, moved from phase 4), P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
 | `retention.request_log_days` | 30 | api | |
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
@@ -265,7 +265,7 @@ Built-in `known_llm_hosts` (maintained with releases): `api.openai.com`,
 `api.together.xyz`, `api.fireworks.ai`, `api.deepseek.com`, `api.x.ai`,
 `api.perplexity.ai`, `openrouter.ai`, `api.anthropic.com` (when no
 `anthropic` endpoint is configured). Hosts that are also endpoint hosts are
-removed from the list automatically. (phase 4, P4-LLM) The list is unchanged: the
+removed from the list automatically. (phase 5 (D-138, moved from phase 4), P4-LLM) The list is unchanged: the
 hosts of OpenAI, Azure OpenAI, Bedrock and Vertex are already known LLM hosts, so
 until an operator configures an endpoint they stay refused under `sanctioned_only`;
 configuring one reserves exactly that endpoint's host and removes it from the list.
@@ -425,7 +425,7 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   exists before the job on `helm upgrade`, when default deny is already in
   place); connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
   backend api and gateway also reach the configured Redis peers
-  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 4, P4-S3)
+  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 5 (D-138, moved from phase 4), P4-S3)
   With the `s3` blob backend the **api** (only) also reaches the configured bucket
   endpoint (`blobs.s3.networkPolicy`).
 - (phase 4, P4-MCON) **Connector host** (`connectorHost.enabled`, default `true`; replicas
@@ -464,7 +464,8 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - Wire contracts: API supports runner/connector/supervisor protocol versions N
   and N−1; plugin manifest contracts N and N−1; registry snapshots
   "newest contract wins" (`09 §9`).
-- Order: migrate → api → hookhost → gateway → runner → web → connectors.
+- Order: migrate → api → hookhost → gateway → runner → relay (when `relay.enabled`; after the API, whose relay plane
+  it registers with, and after the runners, whose :4108 stream listener it dials) → web → connectors.
   Gateways and runners of the previous version keep working during the roll.
 - (phase 4, P4-TERM, FIX-053) Turning the web terminal on in an existing
   deployment is a single-switch upgrade: `helm upgrade … --set
@@ -527,7 +528,7 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 
 ## Backups and state
 
-Stateful: Postgres (system of record), (phase 4, P4-S3) the attachment bucket when
+Stateful: Postgres (system of record), (phase 5 (D-138, moved from phase 4), P4-S3) the attachment bucket when
 `blobs.backend = "s3"` (restore it together with Postgres), per-agent home volumes (PVC snapshots /
 volume backups are the operator's job), the gateway CA Secret, the encryption
 keyring and signing key (phase 2: the signing-key and internal-secret **rings**,
@@ -542,7 +543,7 @@ occupy a slot permanently: size for steady state, not peak. Postgres: modest;
 
 ### Attachment storage (phase 2, RFE-015)
 
-Attachments live in Postgres (`blobs`, `bytea`) by default (phase 4, P4-S3: or in an
+Attachments live in Postgres (`blobs`, `bytea`) by default (phase 5 (D-138, moved from phase 4), P4-S3: or in an
 S3-compatible bucket with `blobs.backend = "s3"`, *S3-compatible blob store* below), so in
 the default they share the database's disk and backups. Budget for
 `Σ org quotas` (default 10 GiB each) in the worst case, expect real use to be far
@@ -678,7 +679,7 @@ back to `memory` leaves the tables in place (they are pruned, not dropped). A mi
 fleet (some replicas shared, some `memory`) is safe: each counts what it sees, so
 the effective limit is between the configured value and N× until the roll finishes.
 
-## S3-compatible blob store (phase 4, P4-S3, D-120, SEC-63)
+## S3-compatible blob store (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63)
 
 A second attachment backend beside Postgres, behind the same **BlobStore** trait
 (`put`, `get`, `delete`, `list(prefix)`, `health`; crate `aurora-blobstore`, with the
@@ -782,18 +783,19 @@ infrastructure**: the API serves it, state is in Postgres, rate limits use the c
 - **What it never does**: sign anyone in, change a role, create or touch an org owner, change the
   global account of a person who has signed in, link by `externalId`, or reactivate a person an org
   admin suspended by hand (`04 §SCIM`).
-- **Observability.** `aurora_scim_requests_total{resource,method,status}`,
-  `aurora_scim_provisioned_total{op}` (`user_created`, `user_linked`, `suspended`, `reactivated`,
-  `removed`, `group_member_added`, `group_member_removed`), `aurora_scim_auth_failures_total`;
-  alert on a rising `status=401` rate for a token that was recently valid (expired token or a
-  rotated one still in the IdP) and on `5xx`. The Directory sync page shows the same per org.
+- **Observability.** `aurora_scim_requests_total{outcome}` (`ok`, `unauthorized`, `rate_limited`,
+  `client_error`, `server_error`) and `aurora_scim_auth_failures_total` (no labels: never an org, token
+  name or e-mail); alert on a rising `outcome="unauthorized"` / auth-failure rate for a token that was
+  recently valid (expired token or a rotated one still in the IdP) and on `outcome="server_error"`. What
+  was provisioned is in the audit log and the Directory sync page, not in a metric (there is no
+  `aurora_scim_provisioned_total`).
 - **Offboarding runbook.** SCIM deprovisioning does not rotate BYO agent tokens the person saw and
   cannot reassign their automations (`04 §SCIM`); follow the offboarding view of the member
   (`/o/<org>/members`) after the IdP removes them.
-- **Helm values**: `scim.enabled` (false), `scim.allowedEmailDomains` (`[]`), `scim.ratePerMinute`
-  (600), `scim.tokenMaxDays` (730); no Secret is generated (tokens are created in the dashboard).
+- **Helm values**: `scim.enabled` (false) and `scim.ratePerMinute` (600); the other keys are config keys
+  (`config.scim.allowed_email_domains` (`[]`), `config.scim.token_max_days` (730)); no Secret is generated (tokens are created in the dashboard).
 
-## Approval park-and-resume and Web Push (phase 4, RFE-011b, D-133, D-134, SEC-74..SEC-76)
+## Approval park-and-resume and Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, D-134, SEC-74..SEC-76)
 
 Both are optional and off by default; an existing `aurora.toml` and Helm values change nothing.
 
@@ -864,7 +866,7 @@ until an org owner or admin switches **Port previews** on.
 
 **Turn it on** (one switch): set `relay.enabled: true` and `relay.domain` (the chart value
 mirrors `config.previews.enabled`, FIX-056 — set the config key only to agree explicitly,
-never alone), wait for `aurora_relay_up` and the Admin → Overview "Previews" line (relay
+never alone), wait for `up{job="aurora-relay"}` and the Admin → Overview "Previews" line (relay
 replicas seen by the API), then an org owner or admin enables **Port previews** in the org
 settings. **Turn it off**: set `relay.enabled: false` (or unset it; shares are kept but
 inert; the supervisor allow-list is emptied at the next sync) or switch the org setting
@@ -930,25 +932,36 @@ harmlessly, and it can be deleted). With `secrets.existingSecret`, create the ke
 restart loses only open streams.
 
 **NetworkPolicy** (default deny stays; each rule is rendered only with `relay.enabled`, FIX-056):
-relay ingress from the edge (and the Cilium edge entities) on 4112 and from the monitoring
-namespace on 4193; relay egress to **api:4101** and **runner:4108** (runner pods of this release,
-or `relay.networkPolicy.runnerEgressTo` for runners elsewhere) and DNS **only**: no Postgres, no
+relay ingress from the edge on 4112; **no policy of the chart opens any ops/metrics port** (4193 included, like
+the other components' ops ports; the chart has no monitoring-namespace selector, FIX-074 decision), so a
+Prometheus in another namespace needs an additional NetworkPolicy of the operator's own allowing its pods to the
+component's ops port; relay egress to **api:4101** and **runner:4108** (runner pods of this release;
+a runner outside the cluster must be reachable from the relay by the overlay/private link described
+above, there is no chart value for extra egress) and DNS **only**: no Postgres, no
 gateway, no hook host, no sandboxes, no Internet; api ingress from the relay on 4101; runner ingress
 on 4108 from the relay pods **only** (the sandboxes namespace gets nothing new: sandboxes → gateway:4102
 and runner:4105 only, unchanged). The `aurora-relay` pod runs in the control-plane namespace, never in
 the sandboxes namespace.
 
-**Metrics** (4193 `/metrics`, plus API gauges): `aurora_relay_up`, `aurora_relay_requests_total{outcome}`
-(`ok`, `login`, `not_found`, `paused`, `frozen`, `cross_site`, `quota`, `wake_limited`, `unreachable`,
-`upstream_error`), `aurora_relay_request_duration_seconds`, `aurora_relay_streams_open`,
-`aurora_relay_stream_bytes_total{direction}`, `aurora_relay_stream_closed_total{reason}`,
-`aurora_relay_grants_total{result}` (`redeemed`, `invalid`, `replayed`, `no_state`),
-`aurora_relay_wake_wait_seconds`, `aurora_relay_resolve_cache_hit_ratio`; API: `aurora_preview_shares{state}`,
-`aurora_preview_sessions`, `aurora_preview_wakes_total{result}`; runner: `aurora_runner_preview_streams_open`,
-`aurora_runner_preview_stream_refused_total{reason}`. Alert on a rising `grants_total{result="replayed"}` or
-`result="no_state"` (attempted login CSRF or a replayed link), on `stream_closed_total{reason="refused"}` for
-`not_shared` (a relay or runner disagreeing with the API) and on `aurora_relay_up == 0`. Logs carry the label,
-share id, outcome and byte counts; never paths with query strings, headers, cookies or bodies.
+**Metrics** (4193 `/metrics`, plus one API gauge and counter; FIX-074: this list is what the code emits):
+`aurora_relay_requests_total{outcome}` (`ok`, `login`, `redeemed`, `not_found`, `bad_request`, `cross_site`,
+`quota`, `too_large`, `unreachable`, `upstream_error`, `invalid`), `aurora_relay_streams_open` (gauge),
+`aurora_relay_stream_bytes_total{direction}` (`to_app`, `from_app`), `aurora_relay_stream_closed_total{reason}`
+(`closed`, `eof`, `detached`, `revoked`, `idle`, `lifetime`), `aurora_relay_stream_dial_seconds` (histogram) and
+`aurora_relay_stream_dial_errors_total{kind}` (`connect`, `timeout`), `aurora_relay_grants_total{result}`
+(`redeemed`, `invalid`, `no_state`), `aurora_relay_resolve_cache{hit}` (`true`/`false`), `aurora_relay_refused_total{reason}` (FIX-072, `docs/16 §W18`, C-636:
+`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`; no ids in labels; present once
+FIX-072 has merged); API (every replica):
+`aurora_preview_shares{org}` (active shares per org slug, set by the share job) and
+`aurora_preview_stream_bytes_total{direction}`. There is no `aurora_relay_up`: relay liveness is the
+Prometheus-generated `up{job="aurora-relay"}` of the 4193 scrape (`== 0` means the relay is down or unscrapable)
+and the Deployment's readiness. Alert on `up{job="aurora-relay"} == 0`, on a rising
+`grants_total{result="no_state"}` or `result="invalid"` (attempted login CSRF, a replayed or tampered link) and
+on a rising `aurora_relay_stream_dial_errors_total` (a runner's 4108 unreachable). Not emitted (earlier drafts
+named them): `aurora_relay_request_duration_seconds`, `aurora_relay_wake_wait_seconds`,
+`aurora_relay_resolve_cache_hit_ratio` (compute it from `aurora_relay_resolve_cache`), `aurora_preview_sessions`,
+`aurora_preview_wakes_total`, `aurora_runner_preview_*`. Logs carry the label, share id, outcome and byte counts;
+never paths with query strings, headers, cookies or bodies.
 
 **Upgrade and rollback.** The relay and the preview columns are additive: an older API ignores them, an
 older runner reports no `previews` capability. Rolling back removes the relay Deployment; shares stay in

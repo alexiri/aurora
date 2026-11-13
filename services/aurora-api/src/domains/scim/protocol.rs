@@ -308,6 +308,23 @@ pub fn router(state: &crate::app::AppState) -> axum::Router<AppState> {
         ))
         .layer(middleware::from_fn(media_type_middleware))
         .layer(axum::middleware::from_fn(body_limit_middleware))
+        .layer(axum::middleware::from_fn(metrics_middleware))
+}
+
+/// `aurora_scim_requests_total{outcome}`: one increment per `/scim/v2` response. The label is
+/// the status class only (`ok`, `unauthorized`, `rate_limited`, `client_error`,
+/// `server_error`): never an org, token, e-mail or path.
+async fn metrics_middleware(req: Request, next: Next) -> Response {
+    let res = next.run(req).await;
+    let outcome = match res.status().as_u16() {
+        401 => "unauthorized",
+        429 => "rate_limited",
+        s if s >= 500 => "server_error",
+        s if s >= 400 => "client_error",
+        _ => "ok",
+    };
+    metrics::counter!("aurora_scim_requests_total", "outcome" => outcome).increment(1);
+    res
 }
 /// Marker: the router wrappers insert the parsed `{id}` here.
 #[derive(Debug, Clone, Copy)]

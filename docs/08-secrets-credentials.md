@@ -15,8 +15,8 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Webhook verification secret | `webhooks.verification.secret_ref` | `webhook.verification` |
 | Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
 | Managed connector secret settings (phase 4, P4-MCON; owner = `connectors.secret_owner`, org = nil UUID) | `connectors.secret_refs` (one per field) | `connector.settings` |
-| Web Push VAPID private key (phase 4, RFE-011b; owner = the key id, org = nil UUID) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
-| Web Push subscription endpoint and keys (phase 4, RFE-011b; owner = the subscription id, org = nil UUID) | `push_subscriptions.secret_ref` | `webpush.subscription` |
+| Web Push VAPID private key (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the key id, org = nil UUID) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
+| Web Push subscription endpoint and keys (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the subscription id, org = nil UUID) | `push_subscriptions.secret_ref` | `webpush.subscription` |
 
 Every such column holds a **SecretRef**. Code never interprets a SecretRef
 outside `aurora-secrets`; it calls the **SecretVault** service:
@@ -161,7 +161,7 @@ value on the connect path, never per request.
 `AURORA_SIGNING_KEY` (32 bytes, base64) is the root for derived keys:
 `HKDF-SHA256(root, info = "aurora:<purpose>:v1")`.
 
-(phase 4, P4-S3) **Blob-store credentials** are not Aurora secrets and are not in
+(phase 5 (D-138, moved from phase 4), P4-S3) **Blob-store credentials** are not Aurora secrets and are not in
 the `secrets` table or any SecretStore: the S3 backend (`15 §S3-compatible blob
 store`) uses the workload's provider chain (preferred) or environment variables named
 by the configuration (`blobs.s3.credentials.*_env`), filled from a Kubernetes Secret.
@@ -178,7 +178,7 @@ the configuration names environment variables (`username_env`, `password_env`),
 filled from a Secret (Helm `counters.redis.existingSecret`), exactly like the Vault
 `approle` variables (`15`).
 
-(phase 4, RFE-011b) **Web Push material** is opened only by the API: the VAPID private key
+(phase 5 (D-138, moved from phase 4), RFE-011b) **Web Push material** is opened only by the API: the VAPID private key
 (ES256) to sign a push request's JWT, and a subscription's sealed `{ endpoint, p256dh, auth }` to
 encrypt and address one push. Both live under the usual store registry (managed in the default
 store; an external store works the same), are never returned by a route, never logged and never
@@ -330,7 +330,7 @@ pub trait LlmProvider: Send + Sync {
     /// e.g. listing models), or Unknown (body truncated/unparsable — fail closed).
     fn model_from_request(&self, ep: &Endpoint, method: &Method, path: &str, body_prefix: &[u8], truncated: bool) -> ModelRef;
 
-    // --- (phase 4, P4-LLM, D-121) additions; phase-0 providers return the defaults ---
+    // --- (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) additions; phase-0 providers return the defaults ---
     /// Paths on which Aurora may inject this provider's credential (SEC-65); `None` = unrestricted (litellm, anthropic).
     fn inference_paths(&self, ep: &Endpoint) -> Option<PathSet> { None }
     /// Provider error → class, shared by the gateway (request log, metrics) and the harness adapters.
@@ -388,7 +388,7 @@ The `anthropic` endpoint is implicit (`id = "anthropic"`, no key-origin rule)
 when the provider is enabled and no endpoint of that provider is declared;
 declare it explicitly to attach origin rules or a model allow-list. Adding a provider later (OpenAI, Azure OpenAI, Bedrock, Vertex, a
 generic OpenAI-compatible endpoint) is a module + one registry line; adding an
-endpoint of an existing provider is configuration only. (phase 4, P4-LLM) These five are
+endpoint of an existing provider is configuration only. (phase 5 (D-138, moved from phase 4), P4-LLM) These five are
 specified below (*Phase 4 providers*).
 
 ### Phase 4 providers (P4-LLM, D-121, SEC-64, SEC-65)
@@ -482,7 +482,7 @@ every value change run, in order:
    and the secret's scope (organization / workspace) must be permitted for that
    endpoint, else 403 `llm_key_not_permitted`.
 2. **Validation**: list models with the key (failure → 422 `llm_key_invalid`).
-   (phase 4, P4-LLM) For providers without a usable listing call validation is the
+   (phase 5 (D-138, moved from phase 4), P4-LLM) For providers without a usable listing call validation is the
    provider's own cheapest proof of a live key: `azure_openai` `GET /openai/v1/models`,
    `bedrock` with `aws_sigv4` a signed `sts:GetCallerIdentity`, `vertex` the token mint;
    the value's shape (JSON fields, `token_uri`, key type) is checked first.

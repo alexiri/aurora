@@ -187,7 +187,7 @@ first, or the harness cannot steer, or the steer is reported *missed*, the
 follow-up is **promoted**: its row becomes `promoted` and a new `queued` turn
 is created with its text (one promotion per follow-up, fenced by
 `promoted_at`).
-- **Approval resume follow-up** (phase 4, RFE-011b, `07 §Park and resume`): when a parked
+- **Approval resume follow-up** (phase 5 (D-138, moved from phase 4), RFE-011b, `07 §Park and resume`): when a parked
   approval is approved or denied the API creates, in the origin conversation, a **system
   follow-up**: a `joining` row steered into the origin turn if it is still running and the
   harness can steer, else a new `queued` turn with `speaker_kind = system` (door `approval`,
@@ -246,7 +246,7 @@ generically.
 | `correction`                                                 | yes     | `{ turn_id, message_id, action: "retract"|"replace", text? }`                       |
 | `message.joined`                                             | yes     | `{ turn_id, followup_id }`                                                          |
 | `message.sent_now`                                           | yes     | `{ turn_id }`                                                                       |
-| `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 4, RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
+| `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 5 (D-138, moved from phase 4), RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |
 | `notice`                                                     | yes     | `{ code, text }` — platform-authored only                                           |
@@ -354,7 +354,7 @@ caps `ATTACH_OUT_*`; produces an `attachment` event and, for threads, a
 - Storage through the **BlobStore** trait (`put`, `get`, `delete`; backend key
 per row). Phase 0 backend: `postgres` (`blobs` table). An S3-compatible
 backend is a later registry entry.
-- **S3-compatible backend (phase 4, P4-S3, D-120, SEC-63).** The registry entry
+- **S3-compatible backend (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63).** The registry entry
   is `s3` (`15 §S3-compatible blob store`): `blobs.backend = "s3"` makes **new**
   attachments go to the bucket; `attachments.blob_backend` is already per row, so
   `postgres` rows stay readable and nothing is converted unless the operator runs
@@ -488,7 +488,7 @@ sync. Order:
 1. **Platform preamble** (platform voice): identity (name, handle, workspace),
  the boundary map (what is the agent's, the platform's and the gateway's),
  how credentials work (never ask people for secrets; the gateway injects),
- how to read gateway refusals. (phase 4, RFE-011b, only when parking is enabled) The
+ how to read gateway refusals. (phase 5 (D-138, moved from phase 4), RFE-011b, only when parking is enabled) The
  preamble includes the paragraph: *"If a request is refused with `approval_parked`, it was not
  sent: a person must approve it and that may take hours. Do not retry it and do not look for another
  route. Finish what you can, tell the user what you are waiting for, and end your turn. When you
@@ -764,7 +764,7 @@ arming conversation.
 whatever ends it, plus a reconcile sweep), control-plane timestamps only, no
 foreign keys. `runtime_daily` is rebuilt hourly.
 - **Token usage** per turn (`turns.usage`) as reported by the harness;
-aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 4, P4-LLM) The API stamps
+aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 5 (D-138, moved from phase 4), P4-LLM) The API stamps
 `provider`, `endpoint_id` and `model` into `turns.usage` from the turn's `ModelChoice`
 (never from what the harness reports), and the aggregate gains a `by_model` breakdown
 keyed by `(provider, endpoint_id, model)` over the same token counters. The gateway

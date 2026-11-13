@@ -270,8 +270,11 @@ relay:
   # The preview DNS suffix (must equal config.previews.domain; the relay refuses a mismatch
   # after registering). Required when relay.enabled.
   domain: ""
-  # Edge limits ([relay] request_body_max_bytes / max_streams*).
-  request_body_max_bytes: 33554432   # 32 MiB
+  # Edge limits ([relay] request_body_max_bytes / max_streams*). The relay's ops/metrics port
+  # 4193 is not opened to other namespaces by the chart's NetworkPolicies (no component's is;
+  # the chart has no monitoring-namespace selector): allow your Prometheus with a policy of your
+  # own (docs/operator/previews.md, FIX-074).
+  request_body_max_bytes: 33554432   # 32 MiB (the binary's default and ceiling is 100 MiB)
   max_streams: 2048
   max_streams_per_user: 64
 

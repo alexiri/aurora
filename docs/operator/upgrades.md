@@ -20,7 +20,7 @@ notes where the shipped artifacts do not follow them yet.
 - **Wire contracts.** The API supports runner, connector and supervisor protocol versions N and
   N−1. Plugin manifest contracts N and N−1 are supported. Registry snapshots use "newest contract
   wins" (docs/09 §9).
-- **Rolling order** (docs/15): **migrate → api → hookhost → gateway → runner → web → connectors.**
+- **Rolling order** (docs/15): **migrate → api → hookhost → gateway → runner → relay (when `relay.enabled`) → web → connectors.**
   Gateways and runners of the previous version keep working during the roll.
 
 ## Order

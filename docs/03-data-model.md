@@ -685,7 +685,7 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | name | text not null | display name and the identity the agent states |
 | kind | text CHECK in (`byo`,`hosted`) | immutable |
 | is_default | bool not null default false | the workspace's Daneel; partial unique (workspace_id) WHERE is_default |
-| harness | text null | hosted: adapter id (`claude-code`) |
+| harness | text null | hosted: adapter id (`claude-code`; phase 4, P4-HAR: also `codex`, an open vocabulary validated against `hosted.enabled_harnesses` on write) |
 | model_provider | text null | stamped with the provider of `model_id` (`08 §Model selection`) |
 | model_endpoint_id | text null | LLM endpoint id from configuration |
 | model_id | text null | provider's model id; null ⇒ endpoint/provider default |
@@ -742,7 +742,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | title | text null | |
 | origin_conversation_id | uuid null FK→conversations (set null) | where reports go (schedule/webhook/peer) |
 | harness_session_ref | text null | opaque, adapter-owned |
-| harness_session_epoch | bigint not null default 0 | bumped to force a fresh session |
+| harness_session_epoch | bigint not null default 0 | bumped to force a fresh session (phase 4, P4-HAR: on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared and a `session_purges` row is queued per old session, `12`) |
 | last_seq | bigint not null default 0 | incremented atomically per durable event |
 | app_turn_streak | int not null default 0 | bot-authored consecutive turns |
 | last_activity_at | timestamptz not null | churn column |
@@ -1441,29 +1441,22 @@ headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
 
-#### `attachments` (S3 blob backend)
+#### `attachments` (S3 blob backend; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 4 (P4-S3) |
-| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 4 (P4-S3) |
-| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 4 (P4-S3) |
+| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 5 (P4-S3, D-138) |
+| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 5 (P4-S3, D-138) |
+| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 5 (P4-S3, D-138) |
 
 `blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
 
-#### `secrets` (LLM providers of phase 4)
+#### `secrets` (additional LLM providers; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| llm_provider | (existing open vocabulary) | gains `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` (`08 §Phase 4 providers`); no schema change | 4 (P4-LLM) |
-| llm_auth_mode | (existing open vocabulary) | gains `aws_sigv4` (sealed JSON `{ access_key_id, secret_access_key, session_token? }`) and `gcp_service_account` (sealed service-account key JSON); `api_key` is unchanged | 4 (P4-LLM) |
-| injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; fixed by the provider, read-only | 4 (P4-LLM) |
-| origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id; for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key (`08 §Phase 4 providers`) | 4 (P4-LLM) |
-
-#### `grants`, `plugin_packages` (app-level grant restrictions)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| grants.mode | (existing) | no schema change: a `full` row for a `custom_only` app cannot be written (`07`); activation of a package that introduces `custom_only` rewrites existing `full` rows to `custom` with `allow_tools` = the whole catalogue (`09 §10`) | 4 (P4-GRANTS) |
-| plugin_packages.status_reason | (existing open vocabulary) | gains `converts_grants`: an upgrade held in `pending_approval` because it would convert full grants | 4 (P4-GRANTS) |
-| registry snapshot `apps[].grants` | `{ custom_only, block_untooled }` booleans, in the snapshot JSON only | no table; copied from the manifest (`09 §9`). Tool entries may also carry `params` (Q8, `09 §3.4`) | 4 (P4-GRANTS) |
+| llm_provider | (existing open vocabulary) | gains `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` (`08 §Phase 4 providers`); no schema change | 5 (P4-LLM, D-138) |
+| llm_auth_mode | (existing open vocabulary) | gains `aws_sigv4` (sealed JSON `{ access_key_id, secret_access_key, session_token? }`) and `gcp_service_account` (sealed service-account key JSON); `api_key` is unchanged | 5 (P4-LLM, D-138) |
+| injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; fixed by the provider, read-only | 5 (P4-LLM, D-138) |
+| origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id; for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key (`08 §Phase 4 providers`) | 5 (P4-LLM, D-138) |
 
 (P4-GRP-1 landed `groups`, `group_members` and `group_workspace_access`: see §1. P4-GRP-2 landed `groups.external_id`, `scim_tokens` and `scim_users`: see §1.)
 
@@ -1471,60 +1464,60 @@ tables above in the same change (and this section shrinks).
 
 `effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
 
-#### `approvals` (park and resume; phase 4)
+#### `approvals` (park and resume; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| parked | bool not null default false | true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption | 4 (RFE-011b) |
-| fp_salt | bytea null | 16 random bytes; set iff `parked` | 4 (RFE-011b) |
-| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`; never the request itself | 4 (RFE-011b) |
-| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) | 4 (RFE-011b) |
-| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` | 4 (RFE-011b) |
-| consumed_at | timestamptz null | | 4 (RFE-011b) |
-| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 4 (RFE-011b) |
-| indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 4 (RFE-011b) |
+| parked | bool not null default false | true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption | 5 (RFE-011b, D-138) |
+| fp_salt | bytea null | 16 random bytes; set iff `parked` | 5 (RFE-011b, D-138) |
+| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`; never the request itself | 5 (RFE-011b, D-138) |
+| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) | 5 (RFE-011b, D-138) |
+| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` | 5 (RFE-011b, D-138) |
+| consumed_at | timestamptz null | | 5 (RFE-011b, D-138) |
+| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 5 (RFE-011b, D-138) |
+| indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 5 (RFE-011b, D-138) |
 
 The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status.
 
-#### `approval_push_claims` (new table)
+#### `approval_push_claims` (new table; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) | 4 (RFE-011b) |
-| user_id | uuid FK→users (cascade) | pk part | 4 (RFE-011b) |
-| stage | text CHECK in (`initial`,`reminder`) | pk part | 4 (RFE-011b) |
-| kind | text CHECK in (`gateway`,`action`) | | 4 (RFE-011b) |
-| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) | 4 (RFE-011b) |
-| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` | 4 (RFE-011b) |
+| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) | 5 (RFE-011b, D-138) |
+| user_id | uuid FK→users (cascade) | pk part | 5 (RFE-011b, D-138) |
+| stage | text CHECK in (`initial`,`reminder`) | pk part | 5 (RFE-011b, D-138) |
+| kind | text CHECK in (`gateway`,`action`) | | 5 (RFE-011b, D-138) |
+| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) | 5 (RFE-011b, D-138) |
+| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` | 5 (RFE-011b, D-138) |
 
-#### `webpush_vapid_keys` (new table; instance-wide)
+#### `webpush_vapid_keys` (new table; instance-wide; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| id | uuid pk | the `vapid_key_id` of subscriptions | 4 (RFE-011b) |
-| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key | 4 (RFE-011b) |
-| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`); owner id = this id, org = nil UUID; never returned | 4 (RFE-011b) |
-| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index) | 4 (RFE-011b) |
-| created_at / retired_at | timestamptz | `retired_at` set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced | 4 (RFE-011b) |
+| id | uuid pk | the `vapid_key_id` of subscriptions | 5 (RFE-011b, D-138) |
+| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key | 5 (RFE-011b, D-138) |
+| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`); owner id = this id, org = nil UUID; never returned | 5 (RFE-011b, D-138) |
+| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index) | 5 (RFE-011b, D-138) |
+| created_at / retired_at | timestamptz | `retired_at` set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced | 5 (RFE-011b, D-138) |
 
 Absent when the operator supplies the key through `push.vapid.private_key_env` (nothing is stored). The gateway role has no access.
 
-#### `push_subscriptions` (new table)
+#### `push_subscriptions` (new table; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| id | uuid pk | | 4 (RFE-011b) |
-| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) | 4 (RFE-011b) |
-| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) | 4 (RFE-011b) |
-| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key | 4 (RFE-011b) |
-| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) | 4 (RFE-011b) |
-| endpoint_host | text not null | for the allow-list check and metrics; not secret | 4 (RFE-011b) |
-| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned | 4 (RFE-011b) |
-| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") | 4 (RFE-011b) |
-| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) | 4 (RFE-011b) |
-| paused_at | timestamptz null | | 4 (RFE-011b) |
-| expires_at | timestamptz null | the browser's `expirationTime` when given | 4 (RFE-011b) |
-| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` | 4 (RFE-011b) |
-| disabled_at | timestamptz null | | 4 (RFE-011b) |
-| last_success_at, last_failure_at | timestamptz null | churn columns | 4 (RFE-011b) |
-| created_at | timestamptz not null default now() | | 4 (RFE-011b) |
-| index | `(user_id)`, `(session_id)` | delivery and cascade | 4 (RFE-011b) |
+| id | uuid pk | | 5 (RFE-011b, D-138) |
+| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) | 5 (RFE-011b, D-138) |
+| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) | 5 (RFE-011b, D-138) |
+| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key | 5 (RFE-011b, D-138) |
+| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) | 5 (RFE-011b, D-138) |
+| endpoint_host | text not null | for the allow-list check and metrics; not secret | 5 (RFE-011b, D-138) |
+| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned | 5 (RFE-011b, D-138) |
+| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") | 5 (RFE-011b, D-138) |
+| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) | 5 (RFE-011b, D-138) |
+| paused_at | timestamptz null | | 5 (RFE-011b, D-138) |
+| expires_at | timestamptz null | the browser's `expirationTime` when given | 5 (RFE-011b, D-138) |
+| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` | 5 (RFE-011b, D-138) |
+| disabled_at | timestamptz null | | 5 (RFE-011b, D-138) |
+| last_success_at, last_failure_at | timestamptz null | churn columns | 5 (RFE-011b, D-138) |
+| created_at | timestamptz not null default now() | | 5 (RFE-011b, D-138) |
+| index | `(user_id)`, `(session_id)` | delivery and cascade | 5 (RFE-011b, D-138) |
 
 The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades).
 
@@ -1611,19 +1604,6 @@ migration that adds it (every existing label is already spent).
 The gateway role gets nothing on any preview table. Preview sessions are deleted by cascade when
 their share, user or dashboard session goes; the `sessions` retention job's deletes cascade too.
 
-#### `sandboxes` (start diagnostics; phase 4, FIX-025, D-158, C-582)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| start_attempt_at | timestamptz null | when the current (or last) start attempt was claimed; the attempt's clock origin | 4 (FIX-025) |
-| start_phase | text null | the last phase the runner reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`, `creating`, `booting`, `ready`) | 4 (FIX-025) |
-| start_detail | text null | the phase's detail as the runner reported it (sanitised) | 4 (FIX-025) |
-| start_events | jsonb not null default `'[]'` | the pod's Warning events (bounded, newest first) | 4 (FIX-025) |
-| start_progress_at | timestamptz null | when the runner last reported progress | 4 (FIX-025) |
-| running_at | timestamptz null | when the runner reported `running` for the current boot | 4 (FIX-025) |
-| start_log | jsonb not null default `'[]'` | (phase 4, FIX-029, D-160, C-612) the boot's start log: a ring of ≤ 30 entries `{ts, kind: "phase"\|"note", phase?, detail?}` (≤ 300 chars per detail, sanitised, 8 KiB total, oldest dropped), reset by every new boot | 4 (FIX-029) |
-
-Reset by every new boot. A start failure also writes a `sandbox_start_failures` row (below). A retry of a failed start (C-610) clears the failure fields and resets `start_failures`; it never bypasses the ordinary start arm.
-
 ### `terminal_stream_grants` (single-use web-terminal grants, phase 4, P4-TERM, D-161, SEC-87, C-618)
 | Column | Type | Notes |
 |---|---|---|
@@ -1641,28 +1621,3 @@ No foreign keys (the rows die young, like `preview_stream_grants`); rows pruned 
 grant value never reaches the browser and is never stored; terminal bytes are never stored
 anywhere — the table holds the open's metadata only. The gateway database role gets nothing on
 this table.
-
-#### `sandbox_start_failures` (new table; per-runner start failures for Admin › Runners; phase 4, FIX-025, D-158, C-587)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 4 (FIX-025) |
-| runner_id | uuid null FK→runners (cascade) | null only for a legacy row (the runner is recorded on every write) | 4 (FIX-025) |
-| sandbox_id | uuid not null FK→sandboxes (cascade) | | 4 (FIX-025) |
-| agent_id | uuid not null | denormalized for the admin list | 4 (FIX-025) |
-| boot_id | uuid null | the attempt's boot | 4 (FIX-025) |
-| code | text not null | a start-failure code (`10 §Failure semantics`, C-581) | 4 (FIX-025) |
-| message | text not null | the human reason, sanitised at write time | 4 (FIX-025) |
-| phase | text null | the attempt's last phase | 4 (FIX-025) |
-| events | jsonb not null default `'[]'` | the pod's Warning events | 4 (FIX-025) |
-| elapsed_secs | int null | seconds the attempt ran before it failed | 4 (FIX-025) |
-| created_at | timestamptz not null default now() | rows older than 30 days are pruned on insert | 4 (FIX-025) |
-| indexes | `(runner_id, created_at DESC)` | the admin list (`C-586`) | 4 (FIX-025) |
-
-#### `agents`, `conversations` (harness selection)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| harness | (existing text) | gains `codex` (open vocabulary, validated against `hosted.enabled_harnesses` on write); no schema change | 4 (P4-HAR) |
-| harness_session_epoch | (existing bigint) | bumped on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared, and a `session_purges` row is queued per old session (`12`) | 4 (P4-HAR) |
-
-`turns.usage` and `agents.model_provider` already carry free-text provider and model values; nothing changes except that the API stamps `provider`, `endpoint_id` and `model` from the turn's `ModelChoice` rather than from harness-reported values.
-

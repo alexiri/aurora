@@ -309,8 +309,8 @@ feature:
 - previews: `previews.domain` is a **config** key (set via `config.previews.domain`, `15 §Port previews`); the chart values are `relay.*` ([§Port previews (relay)](#port-previews-relay)). There are no `previews.tls.*` chart values: the wildcard certificate is the operator's own edge configuration (the chart renders no TLS block for `*.<relay.domain>`), and the relay's egress is fixed (api, runners, DNS).
 - web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: config keys, set via `config.terminal.*`; the switch itself is the chart value `terminal.enabled`, above — it mirrors `config.terminal.enabled`, so set only the chart value)
 - SCIM: `scim.enabled` and `scim.ratePerMinute` are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are config keys (`config.scim.*`, `15 §SCIM directory sync`)
-- approval park + Web Push: `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)
-- S3 blob store: `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
+- approval park + Web Push (phase 5, D-138; not in the chart yet): `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)
+- S3 blob store (phase 5, D-138; not in the chart yet): `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
 
 Until a feature's chart work merges, set its `config.*` keys directly (the
 chart passes `config` through verbatim).

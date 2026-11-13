@@ -453,7 +453,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (personal workspace keys), chat platform links, DM defaults, delete account
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
 lists the person's groups per organization (read-only) and the effective role with its
-source. (phase 4, RFE-011b) **Notifications**: the in-tab notification and e-mail switches
+source. (phase 5 (D-138, moved from phase 4), RFE-011b) **Notifications**: the in-tab notification and e-mail switches
 and the Web Push device list (*Key flows*). (phase 4, P4-IDP-1) **Roles from your
 sign-in**: each IdP role value and what it granted. (phase 4, P4-ONB-2) "Show the tour
 again" and "Show the getting-started guide again".
@@ -700,7 +700,7 @@ again" and "Show the getting-started guide again".
 - **Credentials** — (phase 2, P2-DBL-2: a connection of a database app (`Connection.database`, C-230) shows a neutral `Notice` under its row with the libpq service name and `psql service=<name> -c 'select 1'`, and says that a name shared by two granted connections gets the id prefix) (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
-  OAuth clients, agent-proposed secrets awaiting a value. (phase 4, P4-LLM) The LLM key
+  OAuth clients, agent-proposed secrets awaiting a value. (phase 5 (D-138, moved from phase 4), P4-LLM) The LLM key
   form adapts to the provider's auth mode from `/v1/llm/providers`: one password field
   (`api_key`), three fields for AWS (access key id, secret access key, optional session
   token, with the note that only the account id is shown afterwards and that the key
@@ -918,7 +918,7 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
   tab. Account also has the "E-mail me approvals
   nobody is watching" switch (`approval_email`).
-- **Web Push (phase 4, RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
+- **Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
   says `available` (the operator set `push.enabled`). **Account → Notifications** gets a
   **"Notify this device when an approval needs me, even when Aurora is closed"** card built from the
   shared patterns (section card, toggle, list rows, `Badge`, dialogs): the control needs a user
@@ -949,7 +949,7 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
     close, accept `data.url` **only** if it is a same-origin path starting with `/o/` (no scheme, no
     `//`, no backslash) else go to `/`, focus an existing Aurora window and navigate it, else open one.
     `pushsubscriptionchange` does nothing (the page re-syncs on its next load).
-- **Parked approvals (phase 4, RFE-011b)**: the Approvals page, the inline approval in the chat
+- **Parked approvals (phase 5 (D-138, moved from phase 4), RFE-011b)**: the Approvals page, the inline approval in the chat
   and the workspace overview mark a parked approval with a **"Parked"** chip and the line "The agent
   has stopped waiting. If you approve, it will be told and can repeat this exact request once within
   <N> minutes", with the deadline countdown (`pending-soft` tokens like any pending item); the

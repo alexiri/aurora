@@ -1979,14 +1979,7 @@ async fn presence_options_for_members_are_metadata_only() {
 // ------------------------------------------- self-contained deprovision (RFE-024, SEC-58)
 
 fn failed_total() -> f64 {
-    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-    static H: std::sync::OnceLock<PrometheusHandle> = std::sync::OnceLock::new();
-    let h = H.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap());
-    h.render()
-        .lines()
-        .find(|l| l.starts_with("aurora_channel_deprovision_failed_total"))
-        .and_then(|l| l.split_whitespace().last()?.parse().ok())
-        .unwrap_or(0.0)
+    counter_value("aurora_channel_deprovision_failed_total")
 }
 
 impl W {

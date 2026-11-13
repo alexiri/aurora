@@ -481,7 +481,7 @@ minted.
    - a winning LLM secret and a non-empty effective model allow-list →
      `model_from_request` must yield an allowed model or `None`; otherwise 403
      `llm_model_not_allowed`.
-   - (phase 4, P4-LLM, SEC-65) a winning LLM secret of a provider with an
+   - (phase 5 (D-138, moved from phase 4), P4-LLM, SEC-65) a winning LLM secret of a provider with an
      `inference_paths` set (`08 §Phase 4 providers`): the method and path (and, for
      `vertex`, the project and location in it) must be in the set, else 403
      `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` a request body above
@@ -504,7 +504,7 @@ minted.
     `connection_reauth_required` (with the dashboard URL).
 11. **Injection.** Apply the host entry's mechanisms (`09 §Mechanisms`) or the
     secret's injection recipe (`08`). Agent-supplied values for injected
-    headers/params are overwritten, never merged. (phase 4, P4-LLM) LLM recipes add
+    headers/params are overwritten, never merged. (phase 5 (D-138, moved from phase 4), P4-LLM) LLM recipes add
     `header` (Azure `api-key`), `aws_sigv4` (all agent `Authorization` and `X-Amz-*`
     headers removed, then the final request signed; Bedrock) and
     `gcp_service_account_token` (a gateway-minted access token from the in-memory
@@ -581,7 +581,7 @@ both directions.
 
 Decisions are written by the API (`07 §Approvals`); first decision wins.
 
-### Parking and grants (phase 4, RFE-011b, D-133, SEC-74)
+### Parking and grants (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, SEC-74)
 
 With `approvals.park.enabled` (default off) step 8 gains two branches **before** step 1 of the
 list above; with it off the hold is exactly as written.
@@ -639,12 +639,12 @@ dashboard URL to fix the problem when one exists.
 | `llm_key_unverifiable` | 403 | the key's account cannot be determined | `secret_id` |
 | `llm_model_not_allowed` | 403 | model not on the allow-list (or body unreadable) | `model`, `allowed_models` |
 | `llm_origin_check_unavailable` | 503 | provider unreachable during origin preflight | `endpoint_id` |
-| `llm_path_not_permitted` | 403 | (phase 4, P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
-| `llm_request_too_large` | 413 | (phase 4, P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
+| `llm_path_not_permitted` | 403 | (phase 5 (D-138, moved from phase 4), P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
+| `llm_request_too_large` | 413 | (phase 5 (D-138, moved from phase 4), P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
 | `rate_limited` | 429 | rate-limit modifier | `limit`, `per` |
-| `manual_approval_denied` / `manual_approval_expired` | 403 | holds; (phase 4, RFE-011b) also an identical retry within the deny cooldown of a denied parked approval | `approval_id` |
-| `approval_parked` | 403 | (phase 4, RFE-011b) the request needs an approval whose deadline is long: it was **not sent**, the agent should end its turn and will be messaged; carries `x-should-retry: false` | `approval_id`, `expires_at`, `resume_window_secs`, `manage_url` |
-| `approval_limit_reached` | 403 | (phase 4, RFE-011b) the agent has too many parked approvals pending or created too many this hour (`x-should-retry: false`) | `limit`, `per` |
+| `manual_approval_denied` / `manual_approval_expired` | 403 | holds; (phase 5 (D-138, moved from phase 4), RFE-011b) also an identical retry within the deny cooldown of a denied parked approval | `approval_id` |
+| `approval_parked` | 403 | (phase 5 (D-138, moved from phase 4), RFE-011b) the request needs an approval whose deadline is long: it was **not sent**, the agent should end its turn and will be messaged; carries `x-should-retry: false` | `approval_id`, `expires_at`, `resume_window_secs`, `manage_url` |
+| `approval_limit_reached` | 403 | (phase 5 (D-138, moved from phase 4), RFE-011b) the agent has too many parked approvals pending or created too many this hour (`x-should-retry: false`) | `limit`, `per` |
 | `gateway_restarting` | 503 | shutdown during hold | — |
 | `approval_store_unavailable` | 503 | cannot persist hold | — |
 | `gateway_degraded` | 503 | (phase 3, RFE-014) database unreachable and the identity, host or credential value is not in cache (fail closed for new state); not for an invalid token | `reason` (`database_unavailable` \| `credential_store_unavailable`), `retry-after: 5` |

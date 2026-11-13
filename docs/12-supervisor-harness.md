@@ -149,7 +149,7 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   `ANTHROPIC_AUTH_TOKEN=aurora-placeholder`; for `anthropic`
   `ANTHROPIC_API_KEY=aurora-placeholder`; `ANTHROPIC_MODEL=<model>`;
   auto-update, telemetry and non-essential traffic disabled.
-- (phase 4, P4-LLM, D-121) The adapter's `dialects` become `[anthropic_messages,
+- (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) The adapter's `dialects` become `[anthropic_messages,
   anthropic_bedrock, anthropic_vertex]` (declared, never probed; a harness version
   that cannot speak one removes it). Client environment for the new dialects, all
   **without credentials** because the gateway signs or mints: `anthropic_bedrock` →
@@ -285,13 +285,13 @@ The supervisor maps terminal harness errors to turn error codes:
 originated at the **gateway** (recognized by the gateway's error envelope or
 the `x-should-retry: false` + Aurora error code) is never presented as a
 provider refusal; it is reported as `gateway_refused` with the gateway code.
-(phase 4, P4-LLM) The classes for the new providers come from the shared
+(phase 5 (D-138, moved from phase 4), P4-LLM) The classes for the new providers come from the shared
 `aurora-llm` table (`08 §Phase 4 providers`, *Error classification*), so a Bedrock
 `ThrottlingException`, an OpenAI `insufficient_quota` or a Vertex `PERMISSION_DENIED`
 map to `provider_rate_limited`, `provider_quota` and `provider_auth` the same way in
 every adapter. The new gateway codes `llm_path_not_permitted` and
 `llm_request_too_large` are gateway refusals (`gateway_refused`).
-(phase 4, RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: the supervisor
+(phase 5 (D-138, moved from phase 4), RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: the supervisor
 shows it as an activity line ("waiting for approval") and never maps it to `gateway_refused` as a
 terminal error; a turn that ends normally after it is `done`. No adapter changes: the refusal
 arrives as the HTTP response of the agent's own tool call, and the platform preamble

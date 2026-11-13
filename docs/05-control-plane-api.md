@@ -346,16 +346,16 @@ claim-based and safe to run everywhere.
 | Approval card fan-out (`13`) | `aurora_approval created` + every 10 s catch-up | claims (`channel_ops.dedupe_key`) |
 | Approval e-mail notification (phase 2, RFE-011a, `07 §Approvals`): pending approvals older than `APPROVAL_NOTIFY_DELAY` without a live surface → e-mail to deciders | every 10 s | claims (`approval_notifications`) |
 | Approval watcher heartbeat (phase 2, RFE-011a): each replica upserts `approval_watchers` for its open approvals SSE/long-poll connections; stale rows pruned | every 15 s | idempotent |
-| Approval expiry: `pending` past `deadline + 30 s` → `expired` (phase 4, RFE-011b: a **parked** approval expires at `deadline`, nobody holds it); pending rows of gateway instances unseen for 60 s → `abandoned` (phase 4: **never** `parked` rows) | every 10 s | idempotent updates |
-| Approval resume window (phase 4, RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder | every 10 s | idempotent updates, claims (`approval_push_claims`) |
-| Web Push delivery (phase 4, RFE-011b, `07 §Web Push`): on `aurora_approval created` + `APPROVAL_PUSH_DELAY`, deciders with a live subscription and no watcher; failure handling, subscription disabling, retired-VAPID-key destruction (`PUSH_VAPID_RETIRE`) | event + every 10 s catch-up; daily | claims (`approval_push_claims`) |
+| Approval expiry: `pending` past `deadline + 30 s` → `expired` (phase 5 (D-138, moved from phase 4), RFE-011b: a **parked** approval expires at `deadline`, nobody holds it); pending rows of gateway instances unseen for 60 s → `abandoned` (phase 4: **never** `parked` rows) | every 10 s | idempotent updates |
+| Approval resume window (phase 5 (D-138, moved from phase 4), RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder | every 10 s | idempotent updates, claims (`approval_push_claims`) |
+| Web Push delivery (phase 5 (D-138, moved from phase 4), RFE-011b, `07 §Web Push`): on `aurora_approval created` + `APPROVAL_PUSH_DELAY`, deciders with a live subscription and no watcher; failure handling, subscription disabling, retired-VAPID-key destruction (`PUSH_VAPID_RETIRE`) | event + every 10 s catch-up; daily | claims (`approval_push_claims`) |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
-| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 4, P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
+| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 5 (D-138, moved from phase 4), P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
 | SCIM token expiry (phase 4, P4-GRP-2): a notice to the org owners and an audit row 14 days and 1 day before a token expires; expired tokens are simply dead (read-time check) | daily | singleton |
 | Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
-| Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
+| Blob store probe (phase 5 (D-138, moved from phase 4), P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
 | Skill library refresh (phase 4, P4-GSL, `10 §Skills`): libraries with at least one added skill and `next_refresh_at <= now()` and `status = active` are claimed with `FOR UPDATE SKIP LOCKED` and a per-library lease (`LIBRARY_LEASE` 5 min, `refresh_lease_until`/`lease_owner`), at most `LIBRARY_REFRESH_CONCURRENCY` (4) per replica; resolve → compare head → tree → blob comparison → proposed updates through the gateway's library fetch (`06 §Library fetch`); errors back off 15 min → 1 h → 6 h; never writes skill content (only `skill_library_updates`, `skill_libraries`) and never bumps a home-sync generation | every 60 s | claims (lease) |
 | Skill library retention (phase 4, P4-GSL): prune decided `skill_library_updates` older than 90 days; expire leases; mark libraries whose connection vanished `error` | daily | singleton |
 | Preview housekeeping (phase 4, P4-PRV-1/2): delete expired `preview_sessions`, `preview_grant_uses` and `preview_stream_grants`; clear stale `sandboxes.preview_wake_at`/`preview_start_requested_at`; count shares per org for `aurora_preview_shares` | every 60 s | idempotent (`SKIP LOCKED` batches) |
@@ -558,13 +558,13 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 ### Secrets and LLM
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference`; (phase 4, P4-LLM) for `aws_sigv4` the `value` is the JSON `{ access_key_id, secret_access_key, session_token? }` and for `gcp_service_account` the key-file JSON, validated for shape, `token_uri` and key type (422 `llm_key_invalid`) before any provider call; the same validation, governance and origin steps as every LLM secret (`08 §LLM secrets`) |
+| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference`; (phase 5 (D-138, moved from phase 4), P4-LLM) for `aws_sigv4` the `value` is the JSON `{ access_key_id, secret_access_key, session_token? }` and for `gcp_service_account` the key-file JSON, validated for shape, `token_uri` and key type (422 `llm_key_invalid`) before any provider call; the same validation, governance and origin steps as every LLM secret (`08 §LLM secrets`) |
 | GET/PATCH/DELETE `/v1/secrets/{id}` | S/K | metadata only; values never returned |
 | PUT `/v1/secrets/{id}/value` | S/K | replace value |
 | POST `/v1/secrets/{id}/accept` | S | agent proposal: `{ value }` → secret `active` + grant to the proposing agent |
 | POST `/v1/secrets/{id}/reject` | S/K | agent proposal → `rejected`; a notice goes to the proposing conversation |
 | GET `/v1/secret-stores` | S/K | configured stores: id, kind, capabilities (no config) |
-| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 4, P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals |
+| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 5 (D-138, moved from phase 4), P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals |
 | GET `/v1/secrets/{id}/models` | S/K | model catalogue for an LLM secret (only allowed models) |
 | POST `/v1/secrets/{id}/verify` | S/K | re-run key-origin verification (`08 §11.3`) and return `origin` |
 
@@ -622,11 +622,11 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
 | GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
-| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 4, RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at` (never the fingerprint or salt) |
+| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 5 (D-138, moved from phase 4), RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at` (never the fingerprint or salt) |
 | POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
 | GET `/v1/workspaces/{ws}/action-approvals`; POST `/v1/action-approvals/{id}/decision` | S/K | |
 
-### Web Push (phase 4, RFE-011b, D-134)
+### Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134)
 Own-resources only: every route acts on the caller's subscriptions; another user's subscription
 is 404. 404 `push_unavailable` on all of them while `push.enabled = false`. Writes are best-effort
 audited (`push_subscription.create|delete`).
@@ -699,7 +699,7 @@ the share lifecycle: `11 §Port previews`.
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
 | POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
-| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded; (phase 4, P4-S3) with the `s3` blob backend also 503 `blob_store_unavailable` (`retry-after: 5`) and 503 `blob_store_busy`; downloads (`GET /v1/attachments/{id}/content`) add 503 `blob_store_unavailable`, 503 `blob_backend_not_configured` and 502 `blob_store_corrupt`, never 404/410 for a store failure (`10 §Attachments`) |
+| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded; (phase 5 (D-138, moved from phase 4), P4-S3) with the `s3` blob backend also 503 `blob_store_unavailable` (`retry-after: 5`) and 503 `blob_store_busy`; downloads (`GET /v1/attachments/{id}/content`) add 503 `blob_store_unavailable`, 503 `blob_backend_not_configured` and 502 `blob_store_corrupt`, never 404/410 for a store failure (`10 §Attachments`) |
 | GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |
 | DELETE `/v1/attachments/{id}` | S/K | (phase 2, RFE-015) purge the bytes now; uploader or `can_own` |
 
@@ -756,7 +756,7 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 ### Instance administration
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (P4-S3) |
+| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (phase 5, D-138, P4-S3) |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable; (phase 4, P4-IDP-1, D-139) each user carries `idp_roles: { provider, values, synced_at, granted: [...] }`; claim-derived instance-admin flags cannot be changed here (409 `managed_by_idp`) |
 | GET `/v1/admin/identity` | IA | (phase 4, P4-IDP-1) per provider the role claim settings and mapping table, read-only (from the Helm values; no secrets) |
 | GET/PUT `/v1/admin/placement` | IA | (phase 4, P4-ONB-1, D-140) the new-user placement (`04 §New-user placement`); PUT validates org/workspace ids, roles, template and starter grants (credentials of the default org only) and is audited; `GET …/placement/preview?template=&sample=` renders a template for a typed sample or the caller's profile (D-151) (C-520..C-529) |
@@ -767,7 +767,7 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest. (phase 4, P4-MCON) `POST` with `managed: true` adds a managed connector (no token; settings, secrets, reviewed digest approved, C-451); PATCH `/v1/admin/connectors/{id}` edits settings, secrets, `enabled` (C-453); `…/token` on a managed connector → 409 `connector_managed` |
 | GET `/v1/admin/connector-types` | IA | (phase 4, P4-MCON) catalogue of built-in connector types announced by live connector hosts (C-450) |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
-| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (phase 4, P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
+| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (phase 5 (D-138, moved from phase 4), P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
 | POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
 | GET `/v1/admin/orgs` (`frozen=true` filter, paginated) | IA | (phase 2, RFE-006, D-76) organizations with their freeze state: id, slug, name only |
