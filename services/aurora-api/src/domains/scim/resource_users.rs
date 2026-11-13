@@ -985,27 +985,15 @@ async fn apply_update(
     .ok_or_else(ScimError::not_found)?;
     let mut evs = Vec::with_capacity(2);
     let mut flush: Vec<(Uuid, Uuid)> = Vec::new();
-    let change: &str;
-    if let Some(to) = move_to {
+    let change = if let Some(to) = move_to {
+        // The move decides the link state itself (POST semantics).
         flush = move_link(&mut tx, &actor, org.org_id, &row, to, want_active, &mut evs).await?;
-        change = "moved";
-    } else {
-        // The link keeps its user, whose membership exists (a link without one is a broken
-        // invariant: a human removal tombstones the link, FIX-037).
-        if member.is_none() {
-            tracing::error!(scim_id = %id, "scim: unremoved link without a membership");
-            return Err(ScimError::internal());
-        }
-        change = if want_active && row.state == "suspended" {
-            "reactivated"
-        } else if !want_active && row.state != "suspended" {
-            "suspended"
-        } else {
-            "attributes"
-        };
-    }
-    if move_to.is_some() {
-        // State was decided by the move (POST semantics).
+        "moved"
+    } else if member.is_none() {
+        // The link keeps its user, whose membership must exist (a human removal tombstones
+        // the link, FIX-037): a broken invariant is refused, never papered over.
+        tracing::error!(scim_id = %id, "scim: unremoved link without a membership");
+        return Err(ScimError::internal());
     } else if !want_active && row.state != "suspended" {
         // Suspend (deprovisioning matrix, D-135).
         repo::set_user_state(&mut tx, org.org_id, id, "suspended", true)
@@ -1031,6 +1019,7 @@ async fn apply_update(
         deprovision::cancel_invitations(&mut tx, org.org_id, &row.user_name, row.user_id)
             .await
             .map_err(scim_of_api)?;
+        "suspended"
     } else if want_active && row.state == "suspended" {
         // Reactivation only when SCIM suspended the membership (04 §SCIM).
         if !row.suspended_by_scim {
@@ -1049,7 +1038,10 @@ async fn apply_update(
         )
         .await
         .map_err(scim_of_api)?;
-    }
+        "reactivated"
+    } else {
+        "attributes"
+    };
     // Attribute update + state change + audit rows + invalidations commit atomically.
     evs.push(
         AuditEvent::new(actor.clone(), "scim.update", Outcome::Success)

@@ -827,6 +827,17 @@ must not be able to rewrite a global account that other orgs and other IdPs use)
 changes them only for a still-unbound pre-provisioned user. `active` drives *Deprovisioning*.
 An attempt to change the e-mail of a signed-in user is accepted into the link
 (`userName`) and ignored for the account (`200`, the response shows the link's value).
+**An update never moves a link to another account** (D-167, FIX-062): the link's user is
+fixed, so deprovisioning always reaches the person who signed in (an owner's link is treated
+the same way). The one exception is a still-unbound pre-provisioned user (no identity, e-mail
+unverified): a new e-mail that is free globally renames it in place **only when no other org
+has a membership or a SCIM link (any state) for it**; otherwise — the address belongs to another
+user, or the placeholder is shared with another org — the link moves exactly as a `POST` of the
+new address would link it (to that user, or to a new pre-provisioned user; membership adopted
+or inserted under the seat cap), the placeholder's membership in this org is removed (its SCIM
+group memberships follow the link) and the placeholder's `users` row stays as it is (SCIM never
+deletes a user). A `POST` that revives a removed link keeps the link's person (the e-mail is not
+re-resolved).
 
 **Members it manages.** SCIM may act on a membership only through a link. Where a person was
 already a member before SCIM (invited, JIT) and the IdP later `POST`s them, the membership
@@ -862,7 +873,7 @@ invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and 
 | Schedules, webhooks, peer tasks they created | disabled at their next fire by the creator re-check (`disabled_reason = authorization`, notice), anchored ones survive (RFE-021); directory sync cannot reassign, so the dashboard lists them in the org's offboarding view and a notice tells the owners | same |
 | BYO agents they created, agents and workspaces | nothing is deleted or rotated (agents belong to workspaces, a BYO token rotation would break a live service on an IdP hiccup); the audit row lists the BYO agents whose token the person saw (`agents.created_by`) and the dashboard shows "N BYO agents created by <user>: regenerate their tokens" to the owners | same |
 | Direct conversations, authored content | kept; owners still read them (`§The access law`); the content keeps its label | kept |
-| Pending invitations for the e-mail | cancelled | cancelled |
+| Pending invitations of this org for the link's `userName` or the account's e-mail | cancelled | cancelled |
 | JIT / invitation / sign-in re-entry | refused for this org while `suspended` or `removed` (*OIDC* note) | same |
 | Reactivation (`active=true`) | membership `active` again **only if SCIM suspended it** (`scim_users.suspended_by_scim`): a membership an org admin suspended by hand is never reactivated by the IdP; revoked keys stay revoked, aborted turns stay aborted, disabled automations stay disabled (owners re-enable) | `POST` re-adds a member |
 
