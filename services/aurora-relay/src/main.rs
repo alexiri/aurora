@@ -99,7 +99,12 @@ async fn serve(cfg: RelayConfig) -> std::io::Result<()> {
         );
         return Err(invalid("previews.domain mismatch with the API".into()));
     }
-    let streams = aurora_relay::stream::Streams::new();
+    // `relay.max_streams_per_user` may only lower the spec's per-user cap (docs/02).
+    let streams = aurora_relay::stream::Streams::with_limits(
+        aurora_core::limits::PREVIEW_STREAMS_PER_SHARE,
+        cfg.max_streams_per_user
+            .min(aurora_core::limits::PREVIEW_STREAMS_PER_USER),
+    );
     let state = aurora_relay::state::State::new(api.clone(), api_domain, external_url, wake_wait);
     // The 15 s validate + heartbeat cycle.
     {
@@ -113,10 +118,19 @@ async fn serve(cfg: RelayConfig) -> std::io::Result<()> {
                 let streams = streams.clone();
                 Arc::new(move |revoked| streams.revoke(&revoked))
             },
+            report: {
+                let streams = streams.clone();
+                Arc::new(move || streams.drain_report())
+            },
+            restore: {
+                let streams = streams.clone();
+                Arc::new(move |shares| streams.restore_report(shares))
+            },
         };
         tokio::spawn(aurora_relay::state::heartbeat_loop(
             api.clone(),
             hooks,
+            streams.timeouts().validate_every,
             stop_rx.clone(),
         ));
     }

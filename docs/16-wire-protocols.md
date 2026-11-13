@@ -446,7 +446,21 @@ agent cannot add to the list.
 **Limits** (`02 §Limits`): concurrent streams per share 32, per sandbox 64, per user and per relay
 replica 64; idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
 lifetime 4 h; connect 10 s; response header timeout 60 s; request body 100 MiB; bytes per share per day
-(`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day). WebSockets
+(`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day).
+**Enforcement** (FIX-072, C-636/C-637): the relay reserves a per-share and a per-user slot (per replica;
+`relay.max_streams_per_user` may lower the per-user value) before it asks the API for a stream grant and
+releases it on every exit; over a cap a plain request answers 429 `preview_streams_limit` and a WebSocket
+upgrade is accepted and closed `4409`. Grant redemptions at `/_aurora/grant` are limited to
+`PREVIEW_GRANT_RATE` (30/min per client address, 10/min per share; fixed window per replica) with 429
+`grant_rate_limited` and `Retry-After`. The daily quota is one **shared counter per share and UTC day**
+(`aurora-counters`, class `management`; never fails open — `local` counts in the API replica, `closed`
+answers 503 `counter_unavailable`): relays add the bytes they moved (both directions, batched per stream in
+units of ≥ 64 KiB and sent with each 15 s heartbeat) and `resolve` answers `deny`/`preview_quota` once the
+counter reaches the limit, so the relay answers 429 with `Retry-After` to the next UTC midnight. A stream
+that has started may finish its response; no new stream opens. The quota can be exceeded by at most what the
+relays move between two heartbeats plus the 15 s resolve cache plus responses already open. Refusals count in
+`aurora_relay_refused_total{reason}` (`share_streams`, `user_streams`, `quota`, `grant_rate_address`,
+`grant_rate_share`; no ids in labels). WebSockets
 are carried as ordinary upgraded streams: the relay forwards the `Upgrade` handshake over the stream
 after checking `Origin` (`04 §Preview access`) and then relays bytes; it does not inspect frames.
 

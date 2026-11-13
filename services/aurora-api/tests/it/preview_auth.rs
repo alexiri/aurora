@@ -44,9 +44,14 @@ struct Prv {
 }
 
 async fn prv_rig() -> Prv {
+    prv_rig_with(|_| {}).await
+}
+
+async fn prv_rig_with(extra: impl FnOnce(&mut aurora_config::ApiConfig) + 'static) -> Prv {
     let r = rig_with(|c| {
         c.previews.enabled = true;
         c.previews.domain = Some(DOMAIN.into());
+        extra(c);
     })
     .await;
     r.org_on().await;
@@ -1295,4 +1300,224 @@ async fn relay_plane_auth_is_uniform_and_protocol_checked() {
         .relay_raw(&hdrs, json!({"label": "paaaaaaaaaaaaaaaaaaaaaaaa"}))
         .await;
     assert_eq!((s, code(&v)), (403, "replica_unknown"), "{v}");
+}
+
+// ---------------------------------------------------------------- daily byte quota (FIX-072)
+
+mod quota {
+    use super::*;
+    use async_trait::async_trait;
+    use aurora_api::app::AppState;
+    use aurora_api::http::counters::ApiCounters;
+    use aurora_counters::{
+        BreakerConfig, BucketTake, ClassPolicy, CounterError, CounterStore, MemoryStore, Verdict,
+        WindowProbe, WindowUnit,
+    };
+    use axum::Router;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    /// A shared counter store that can be switched off.
+    struct Switch {
+        down: AtomicBool,
+        inner: MemoryStore,
+    }
+
+    impl Switch {
+        fn check(&self) -> Result<(), CounterError> {
+            if self.down.load(Ordering::Relaxed) {
+                Err(CounterError::Unavailable("stopped".into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CounterStore for Switch {
+        fn backend(&self) -> &'static str {
+            "switch"
+        }
+        async fn fixed_window_peek(&self, p: &[WindowProbe]) -> Result<Vec<u64>, CounterError> {
+            self.check()?;
+            self.inner.fixed_window_peek(p).await
+        }
+        async fn fixed_window_consume(&self, u: &[WindowUnit]) -> Result<Verdict, CounterError> {
+            self.check()?;
+            self.inner.fixed_window_consume(u).await
+        }
+        async fn bucket_take(&self, t: &[BucketTake]) -> Result<Verdict, CounterError> {
+            self.check()?;
+            self.inner.bucket_take(t).await
+        }
+        async fn health(&self) -> Result<(), CounterError> {
+            self.check()
+        }
+    }
+
+    const LIMIT: u64 = 1000;
+
+    fn counters(sw: &Arc<Switch>, management: ClassPolicy) -> ApiCounters {
+        ApiCounters::for_store(
+            sw.clone() as Arc<dyn CounterStore>,
+            ClassPolicy::Local,
+            management,
+            BreakerConfig {
+                failures: 3,
+                cooldown: Duration::from_millis(300),
+                timeout: Duration::from_millis(200),
+            },
+        )
+    }
+
+    /// The preview rig with a tiny quota, on the shared store; returns the second replica's
+    /// router (own state and counter classes, same store, same database).
+    async fn two_replicas(management: ClassPolicy) -> (Prv, Router, Arc<Switch>) {
+        let mut p = prv_rig_with(|c| c.previews.bytes_per_share_day = LIMIT).await;
+        let sw = Arc::new(Switch {
+            down: AtomicBool::new(false),
+            inner: MemoryStore::new(),
+        });
+        p.r.h.state = p.r.h.state.clone().with_counters(counters(&sw, management));
+        p.r.h.app = test_router(p.r.h.state.clone());
+        let b = test_router(
+            AppState::new(p.r.h.pool().clone(), (*p.r.h.state.config).clone())
+                .with_counters(counters(&sw, management)),
+        );
+        (p, b, sw)
+    }
+
+    /// A relay-plane call answered by `app` (a given replica).
+    async fn relay_on(app: &Router, p: &Prv, path: &str, body: Value) -> (u16, Value) {
+        use axum::body::Body;
+        use tower::ServiceExt;
+        let req = http::Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header("authorization", bearer(&p.relay_tok))
+            .header("x-aurora-replica", p.replica.to_string())
+            .header("x-aurora-protocol", "relay/1")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        let (parts, body) = res.into_parts();
+        let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap();
+        (
+            parts.status.as_u16(),
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn share_id(p: &Prv, label: &str) -> Uuid {
+        sqlx::query_scalar("SELECT id FROM preview_shares WHERE label = $1")
+            .bind(label)
+            .fetch_one(p.r.h.pool())
+            .await
+            .unwrap()
+    }
+
+    fn report(share: Uuid, to_app: u64, from_app: u64) -> Value {
+        json!({"shares": [{
+            "share_id": share, "bytes_to_app": to_app, "bytes_from_app": from_app
+        }]})
+    }
+
+    /// `resolve` names the session's user on `allow` (the per-user stream cap keys on it) and,
+    /// once the relays' reported bytes reach `previews.bytes_per_share_day`, denies with
+    /// `preview_quota` for that share only. Two relay replicas share the counter: bytes
+    /// reported through replica A make replica B refuse too.
+    #[tokio::test]
+    async fn reported_bytes_past_the_daily_quota_deny_on_every_replica() {
+        let (p, b, _sw) = two_replicas(ClassPolicy::Local).await;
+        let (sa, ta, _) = p.share_with_session(3000).await;
+        let (sb, tb, _) = p.share_with_session(3001).await;
+        let (la, lb) = (
+            sa["label"].as_str().unwrap().to_owned(),
+            sb["label"].as_str().unwrap().to_owned(),
+        );
+        let ida = share_id(&p, &la).await;
+        async fn resolve_on(app: &Router, p: &Prv, label: &str, tok: &str) -> (u16, Value) {
+            relay_on(
+                app,
+                p,
+                "/v1/relay/resolve",
+                json!({"label": label, "session_hash": sess_hash(tok), "navigation": false}),
+            )
+            .await
+        }
+        let (s, v) = resolve_on(&p.r.h.app, &p, &la, &ta).await;
+        assert_eq!((s, v["decision"].as_str()), (200, Some("allow")), "{v}");
+        assert!(
+            v["user"].as_str().is_some(),
+            "the allow names the user: {v}"
+        );
+
+        // 600 bytes through replica A: under the 1000 limit, both replicas still allow.
+        let (s, v) = relay_on(&p.r.h.app, &p, "/v1/relay/report", report(ida, 100, 500)).await;
+        assert_eq!((s, v["ok"].as_bool()), (200, Some(true)), "{v}");
+        for app in [&p.r.h.app, &b] {
+            let (_, v) = resolve_on(app, &p, &la, &ta).await;
+            assert_eq!(v["decision"], "allow", "{v}");
+        }
+        // 400 more through replica B reaches the limit: both replicas deny, with the
+        // `preview_quota` reason; the other share is unaffected on both.
+        let (s, v) = relay_on(&b, &p, "/v1/relay/report", report(ida, 100, 300)).await;
+        assert_eq!((s, v["ok"].as_bool()), (200, Some(true)), "{v}");
+        for app in [&p.r.h.app, &b] {
+            let (s, v) = resolve_on(app, &p, &la, &ta).await;
+            assert_eq!(s, 200, "{v}");
+            assert_eq!(v["decision"], "deny", "{v}");
+            assert_eq!(v["reason"], "preview_quota", "{v}");
+            assert!(v.get("share").is_none() && v.get("user").is_none(), "{v}");
+            let (_, v) = resolve_on(app, &p, &lb, &tb).await;
+            assert_eq!(v["decision"], "allow", "other share: {v}");
+        }
+        // A caller without a live session of the share learns nothing about the quota.
+        let (_, v) = p
+            .resolve(&la, Some(&sess_hash("auv_neverminted")), true)
+            .await;
+        assert_eq!(v["decision"], "login", "{v}");
+        // The counter is per UTC day and per share (key holds only the share id).
+    }
+
+    /// An unreachable shared store never reads as "under the quota": class `closed` answers
+    /// 503 `counter_unavailable` on `resolve` and `report` (the relay keeps its bytes and
+    /// re-sends); class `local` counts in this replica's memory and still enforces.
+    #[tokio::test]
+    async fn unavailable_store_follows_the_class_policy() {
+        // closed
+        let (p, _b, sw) = two_replicas(ClassPolicy::Closed).await;
+        let (sa, ta, _) = p.share_with_session(3000).await;
+        let la = sa["label"].as_str().unwrap().to_owned();
+        let ida = share_id(&p, &la).await;
+        sw.down.store(true, Ordering::Relaxed);
+        let (s, v) = p
+            .relay(
+                "/v1/relay/resolve",
+                json!({"label": la, "session_hash": sess_hash(&ta), "navigation": false}),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (503, "counter_unavailable"), "{v}");
+        let (s, v) = p.relay("/v1/relay/report", report(ida, 1, 1)).await;
+        assert_eq!((s, code(&v)), (503, "counter_unavailable"), "{v}");
+
+        // local: counted in this replica, enforced here.
+        let (p, _b, sw) = two_replicas(ClassPolicy::Local).await;
+        let (sa, ta, _) = p.share_with_session(3000).await;
+        let la = sa["label"].as_str().unwrap().to_owned();
+        let ida = share_id(&p, &la).await;
+        sw.down.store(true, Ordering::Relaxed);
+        let (s, v) = p.relay("/v1/relay/report", report(ida, LIMIT, 0)).await;
+        assert_eq!((s, v["ok"].as_bool()), (200, Some(true)), "{v}");
+        let (_, v) = p
+            .relay(
+                "/v1/relay/resolve",
+                json!({"label": la, "session_hash": sess_hash(&ta), "navigation": false}),
+            )
+            .await;
+        assert_eq!(v["decision"], "deny", "{v}");
+        assert_eq!(v["reason"], "preview_quota", "{v}");
+    }
 }

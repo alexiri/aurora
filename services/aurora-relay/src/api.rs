@@ -62,6 +62,10 @@ pub struct ResolveAnswer {
     pub share: Option<ShareRef>,
     #[serde(default)]
     pub route: Option<Route>,
+    /// The session's user (relay-plane only; keys the per-user stream cap). Never rendered
+    /// to the browser.
+    #[serde(default)]
+    pub user: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -98,7 +102,7 @@ pub struct StreamsAnswer {
 }
 
 /// `POST /v1/relay/report` entry.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ReportShare {
     pub share_id: Uuid,
     #[serde(default)]

@@ -188,6 +188,123 @@ fn simple(
     b.body(full_body(text)).unwrap()
 }
 
+/// What the API says about a share whose stream could not be opened.
+enum NotReady {
+    /// The sandbox runs and the port listens: try the stream again.
+    Listening,
+    /// A page to show instead (starting, start command exited, too many start attempts).
+    Page(hyper::Response<RelayBody>),
+    /// Nothing more is known: the generic answer applies.
+    Unknown,
+}
+
+/// Asks the API about the share's route, long-polling up to `wait_secs` for the port to
+/// listen (`POST /v1/relay/resolve { wait_secs }`, `docs/11 §Port previews` step 2/3).
+async fn not_ready(state: &State, label: &str, hash: &str, wait_secs: u32) -> NotReady {
+    let Ok(a) = state.api.resolve(label, Some(hash), wait_secs, false).await else {
+        return NotReady::Unknown;
+    };
+    let Some(route) = a.route.filter(|_| a.decision == "allow") else {
+        return NotReady::Unknown;
+    };
+    if route.sandbox == "running" && route.listening {
+        return NotReady::Listening;
+    }
+    match (route.start.as_str(), route.sandbox.as_str()) {
+        ("exited", _) => NotReady::Page(status_page(
+            StatusCode::BAD_GATEWAY,
+            "Preview",
+            "The start command of this preview exited. Open the preview's page in the dashboard to see its exit code and output.",
+        )),
+        ("limited", _) => NotReady::Page(retry_after(
+            status_page(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Preview",
+                "This preview was started too often; try again later.",
+            ),
+            u64::from(route.retry_after_secs.unwrap_or(60)),
+        )),
+        (_, "unavailable") => NotReady::Unknown,
+        // Still waking or starting after the wait: a 503 page that refreshes itself.
+        _ => {
+            let mut r = retry_after(
+                status_page(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Preview",
+                    "This preview is starting. The page refreshes by itself.",
+                ),
+                5,
+            );
+            r.headers_mut()
+                .insert("refresh", HeaderValue::from_static("5"));
+            NotReady::Page(r)
+        }
+    }
+}
+
+/// Adds `Retry-After: <secs>` to a response.
+fn retry_after(mut r: hyper::Response<RelayBody>, secs: u64) -> hyper::Response<RelayBody> {
+    if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+        r.headers_mut().insert("retry-after", v);
+    }
+    r
+}
+
+/// A WebSocket upgrade the relay accepts only to close it with `code` (`4409` limit reached,
+/// `docs/16`): a browser sees an ordinary close event with that code instead of a failed
+/// handshake it cannot tell from a network error.
+fn ws_refusal(
+    headers: &HeaderMap,
+    upgrade: Option<hyper::upgrade::OnUpgrade>,
+    code: u16,
+    reason: &'static str,
+) -> hyper::Response<RelayBody> {
+    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role};
+    let (Some(key), Some(up)) = (
+        headers
+            .get("sec-websocket-key")
+            .and_then(|v| v.to_str().ok()),
+        upgrade,
+    ) else {
+        return retry_after(
+            simple(
+                StatusCode::TOO_MANY_REQUESTS,
+                "preview_streams_limit\n",
+                &[],
+            ),
+            1,
+        );
+    };
+    let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+    tokio::spawn(async move {
+        let Ok(upgraded) = up.await else { return };
+        let mut ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            hyper_util::rt::TokioIo::new(upgraded),
+            Role::Server,
+            None,
+        )
+        .await;
+        let _ = futures::SinkExt::send(
+            &mut ws,
+            tokio_tungstenite::tungstenite::Message::Close(Some(CloseFrame {
+                code: code.into(),
+                reason: reason.into(),
+            })),
+        )
+        .await;
+        let _ = futures::SinkExt::close(&mut ws).await;
+    });
+    #[expect(clippy::unwrap_used)]
+    hyper::Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-accept", accept)
+        .header("cache-control", "no-store")
+        .body(full_body(""))
+        .unwrap()
+}
+
 /// Everything known about one request before the proxy decision.
 pub struct Request {
     method: Method,
@@ -374,7 +491,7 @@ pub async fn handle(
     }
     // ---- 1. the reserved namespace is never forwarded
     if req.path().starts_with(AURORA_PREFIX) {
-        return aurora_path(state, streams, &label, req).await;
+        return aurora_path(state, streams, &label, req, client_ip).await;
     }
     // ---- 2. Fetch Metadata matrix (docs/04 rule 4)
     if cross_site(&req) {
@@ -389,9 +506,21 @@ pub async fn handle(
     // ---- 3. credential check (resolve) + grant exchange
     let token = req.cookie(PREVIEW_COOKIE).map(str::to_owned);
     let hash = token.as_deref().map(session_hash);
+    let mut who: Option<(uuid::Uuid, String)> = None;
     let allowed = match &hash {
         Some(h) => match state.resolve(&label, Some(h), false).await {
-            Ok(a) => a.decision == "allow",
+            Ok(a) => {
+                if a.decision == "allow" {
+                    // The share (per-share cap) and the user (per-user cap; the session hash
+                    // stands in when the API named none).
+                    if let Some(sh) = &a.share {
+                        who = Some((sh.id, a.user.map_or_else(|| h.clone(), |u| u.to_string())));
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
             Err(_) => {
                 outcome("upstream_error");
                 return simple(
@@ -406,9 +535,17 @@ pub async fn handle(
     if !allowed {
         return login_or_wait(state, &label, req, nav, &token, outcome).await;
     }
-    // ---- 4. proxy
+    // ---- 4. proxy (an `allow` without a share cannot be capped: refuse it, never skip the cap)
+    let Some(who) = who else {
+        outcome("upstream_error");
+        return simple(
+            StatusCode::BAD_GATEWAY,
+            "The preview service is unavailable.\n",
+            &[],
+        );
+    };
     proxy(
-        state, streams, label, req, hash, nav, client_ip, body, upgrade, outcome,
+        state, streams, label, who, req, hash, nav, client_ip, body, upgrade, outcome,
     )
     .await
 }
@@ -432,8 +569,23 @@ async fn login_or_wait(
             .map(|a| a.decision.clone())
             .unwrap_or_else(|| "deny".into());
         if decision != "login" {
-            outcome("not_found");
             let reason = answer.and_then(|a| a.reason).unwrap_or_default();
+            if reason == "preview_quota" {
+                // The share is past its daily byte quota: 429 until the next UTC midnight.
+                // Only a holder of a live, authorized session gets here (the API decides
+                // after the access check), so the answer reveals nothing to others.
+                outcome("quota");
+                metrics::counter!("aurora_relay_refused_total", "reason" => "quota").increment(1);
+                return retry_after(
+                    status_page(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Preview",
+                        "preview_quota: this preview reached its daily transfer limit.",
+                    ),
+                    crate::limits::secs_to_utc_midnight(),
+                );
+            }
+            outcome("not_found");
             let text = match reason.as_str() {
                 "frozen" => "This preview is frozen.\n",
                 "paused" => "This preview is paused.\n",
@@ -494,6 +646,7 @@ async fn aurora_path(
     _streams: Arc<Streams>,
     label: &str,
     req: Request,
+    client_ip: Option<std::net::IpAddr>,
 ) -> hyper::Response<RelayBody> {
     if req.path() != "/_aurora/grant" {
         return simple(StatusCode::NOT_FOUND, "Preview not found.\n", &[]);
@@ -501,6 +654,16 @@ async fn aurora_path(
     // Only a top-level GET navigation lands here (the authorize redirect).
     if req.method != Method::GET {
         return simple(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed.\n", &[]);
+    }
+    // `PREVIEW_GRANT_RATE` (30/min per client address, 10/min per share) counts every
+    // redemption attempt, valid or not: grant guessing is bounded before the API sees it.
+    if let Err((why, secs)) = state.grant_rate.check(client_ip, label) {
+        metrics::counter!("aurora_relay_refused_total", "reason" => why.reason()).increment(1);
+        metrics::counter!("aurora_relay_grants_total", "result" => "rate_limited").increment(1);
+        return retry_after(
+            simple(StatusCode::TOO_MANY_REQUESTS, "grant_rate_limited\n", &[]),
+            secs,
+        );
     }
     let Some(pstate) = req.cookie(PSTATE_COOKIE) else {
         metrics::counter!("aurora_relay_grants_total", "result" => "no_state").increment(1);
@@ -577,6 +740,7 @@ async fn proxy(
     state: Arc<State>,
     streams: Arc<Streams>,
     label: String,
+    who: (uuid::Uuid, String),
     req: Request,
     hash: Option<String>,
     nav: Nav,
@@ -609,16 +773,65 @@ async fn proxy(
             return simple(StatusCode::FORBIDDEN, "preview_cross_site\n", &[]);
         }
     }
+    // The concurrent-stream caps (per share, per user; per replica): reserve before the API
+    // mints a grant. The slot is released by every exit path (drop), including a dial error
+    // and a client that goes away.
+    let slot = match streams.reserve(who.0, &who.1) {
+        Ok(s) => s,
+        Err(why) => {
+            outcome("quota");
+            metrics::counter!("aurora_relay_refused_total", "reason" => why.reason()).increment(1);
+            tracing::debug!(share = %who.0, reason = why.reason(), "preview stream cap reached");
+            return if is_ws {
+                ws_refusal(&req.headers, upgrade, 4409, "limit reached")
+            } else {
+                retry_after(
+                    simple(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "preview_streams_limit\n",
+                        &[],
+                    ),
+                    1,
+                )
+            };
+        }
+    };
     // The runner endpoint + stream grant (aux_) come from the API (`16 §W17`); the relay
     // never names a sandbox or a port.
-    let Ok(sa) = state.api.streams(&label, &h).await else {
-        outcome("unreachable");
-        return simple(
-            StatusCode::BAD_GATEWAY,
-            "The sandbox is not running.\n",
-            &[],
-        );
+    let sa = match state.api.streams(&label, &h).await {
+        Ok(sa) => sa,
+        // The sandbox is not running (parked or booting): the API set the wake demand when the
+        // request was resolved; hold the request until the port listens, at most
+        // `PREVIEW_WAKE_WAIT` (`docs/11 §Port previews`), else answer the refreshing 503 page.
+        Err(_) => {
+            let unreachable = || {
+                simple(
+                    StatusCode::BAD_GATEWAY,
+                    "The sandbox is not running.\n",
+                    &[],
+                )
+            };
+            match not_ready(&state, &label, &h, state.wake_wait_secs).await {
+                NotReady::Listening => match state.api.streams(&label, &h).await {
+                    Ok(sa) => sa,
+                    Err(_) => {
+                        outcome("unreachable");
+                        return unreachable();
+                    }
+                },
+                NotReady::Page(r) => {
+                    outcome("unreachable");
+                    return r;
+                }
+                NotReady::Unknown => {
+                    outcome("unreachable");
+                    return unreachable();
+                }
+            }
+        }
     };
+    let state_for_page = state.clone();
+    let hash_for_page = h.clone();
     // The rebuilt outbound header set: filtered (hop-by-hop, Aurora credentials, client
     // forwarding chain removed), `Host` = the runner endpoint, `X-Forwarded-For` added.
     let runner_host = authority_of(&sa.runner_endpoint).unwrap_or_default();
@@ -657,13 +870,23 @@ async fn proxy(
     // same leg-1 stream; the target keeps the query string.
     let head = crate::proxy::build_request_head(&req.method, req.target(), &out_headers, body_len);
     let _ = nav;
-    match crate::proxy::forward(state, streams, key, sa, head, body_len, body, upgrade).await {
+    match crate::proxy::forward(state, streams, key, sa, head, body_len, body, upgrade, slot).await
+    {
         Ok(r) => {
             outcome("ok");
             r
         }
         Err(code) => {
             outcome("upstream_error");
+            // A port that refuses the connection while the share's start command runs or
+            // has exited: say so (the refreshing "starting" page, the exit page) instead of
+            // a bare 502. No waiting here: the request body was already consumed.
+            if matches!(code, 502 | 504)
+                && let NotReady::Page(r) =
+                    not_ready(&state_for_page, &label, &hash_for_page, 0).await
+            {
+                return r;
+            }
             let text = match code {
                 502 => "The sandbox refused the connection.\n",
                 504 => "The sandbox timed out.\n",
@@ -935,8 +1158,10 @@ async fn serve_conn(
             Ok(handle(state, streams, req, raw_head, ip, body, Some(upgrade)).await)
         }
     });
+    // The request head must arrive within `PREVIEW_HEADER_TIMEOUT` (slow-loris): a connection
+    // that dribbles its headers is closed.
     let _ = hyper::server::conn::http1::Builder::new()
-        .header_read_timeout(HEADER_TIMEOUT)
+        .header_read_timeout(streams.timeouts().header)
         .timer(hyper_util::rt::TokioTimer::new())
         .serve_connection(hyper_util::rt::TokioIo::new(tcp), svc)
         .with_upgrades()

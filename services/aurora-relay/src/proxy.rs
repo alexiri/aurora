@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::api::StreamsAnswer;
 use crate::edge::RelayBody;
 use crate::state::State;
-use crate::stream::{LegWs, LiveStream, StreamKey, Streams, dial, run_leg};
+use crate::stream::{LegWs, LiveStream, Slot, StreamKey, Streams, dial, run_leg};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper::HeaderMap;
@@ -55,9 +55,11 @@ pub async fn forward(
     body_len: BodyLen,
     mut body: hyper::body::Incoming,
     upgrade: Option<hyper::upgrade::OnUpgrade>,
+    slot: Slot,
 ) -> Result<hyper::Response<RelayBody>, HttpError> {
+    // A failed dial drops `slot` (the concurrent-stream reservation) on this return.
     let ws = dial(&state, &sa).await?;
-    let mut live = run_leg(streams, key, ws);
+    let mut live = run_leg(streams, key, ws, slot);
     let tx = live.tx().clone();
     // The head goes first, then the body (the pump frames everything at leg size).
     if !tx.to_app(&head).await {
@@ -121,6 +123,8 @@ pub async fn forward(
         // this exchange takes over the whole `LiveStream`: `bridge_upgrade` gets the send
         // half, the receive half and `rest` (the app's first frames, if any).
         let (tx, from_app) = live.into_parts();
+        // An upgraded stream idles out on the longer `PREVIEW_WS_IDLE_TIMEOUT`.
+        tx.mark_upgraded();
         if let Some(up) = upgrade {
             bridge_upgrade(up, tx, from_app, rest);
         } else {
@@ -137,18 +141,43 @@ pub async fn forward(
     }
     // The response is handed to hyper with a body task that forwards until the stream ends.
     let (body_tx, body_rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, std::io::Error>>(16);
+    let mut dec = is_chunked(&rh.headers).then(ChunkedDecoder::default);
     let _body_task = tokio::spawn(async move {
-        if !rest.is_empty()
-            && body_tx
-                .send(Ok(Frame::data(Bytes::from(rest))))
-                .await
-                .is_err()
-        {
+        // One piece of the answer's body: through the de-framer when `chunked`. `true` = keep
+        // going, `false` = the body is over (last chunk, a framing error or a gone browser).
+        async fn emit(
+            dec: &mut Option<ChunkedDecoder>,
+            tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
+            data: Bytes,
+        ) -> bool {
+            let Some(d) = dec else {
+                return tx.send(Ok(Frame::data(data))).await.is_ok();
+            };
+            let mut out = Vec::new();
+            let more = matches!(d.feed(&data, &mut out), Ok(false));
+            for b in out {
+                if tx.send(Ok(Frame::data(b))).await.is_err() {
+                    return false;
+                }
+            }
+            more
+        }
+        if !rest.is_empty() && !emit(&mut dec, &body_tx, Bytes::from(rest)).await {
             return;
         }
-        // Bridge the rest: the body (chunked framing included) — the same copy.
-        while let Some(b) = live.from_app().await {
-            if body_tx.send(Ok(Frame::data(b))).await.is_err() {
+        // Bridge the rest of the body. A `chunked` answer is de-framed here (hyper re-frames
+        // it toward the browser, `transfer-encoding` being hop-by-hop): each app chunk — a
+        // server-sent event, say — goes out as it arrives, and the last chunk ends the
+        // stream at once. Also ends when hyper dropped the body (the browser went away, or a
+        // `content-length` answer is complete): dropping `live` detaches the leg and frees
+        // the stream slot instead of waiting for a next frame that may never come.
+        loop {
+            let b = tokio::select! {
+                b = live.from_app() => b,
+                () = body_tx.closed() => return,
+            };
+            let Some(b) = b else { break };
+            if !emit(&mut dec, &body_tx, b).await {
                 return;
             }
         }
@@ -332,6 +361,98 @@ pub fn is_chunked(headers: &[(String, String)]) -> bool {
     })
 }
 
+/// Incremental de-framer of an HTTP/1.1 `chunked` body (RFC 9112 §7.1): feed the bytes as
+/// they arrive; decoded payload comes out chunk by chunk and `feed` answers `true` once the
+/// last chunk and the trailer section have been read. Chunk extensions are ignored, trailers
+/// discarded; any framing violation is an error (the relay then ends the body).
+#[derive(Default)]
+pub struct ChunkedDecoder {
+    state: ChunkState,
+    line: Vec<u8>,
+}
+
+#[derive(Default)]
+enum ChunkState {
+    /// Reading a chunk-size line.
+    #[default]
+    Size,
+    /// This many payload bytes of the current chunk are still to come.
+    Data(u64),
+    /// The CRLF after a chunk's payload; the count is how many of its two bytes were seen.
+    DataEnd(u8),
+    /// After the zero chunk: trailer lines up to the empty line.
+    Trailer,
+}
+
+/// A `chunked` framing violation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkError;
+
+/// Longest chunk-size or trailer line accepted.
+const CHUNK_LINE_MAX: usize = 8 * 1024;
+
+impl ChunkedDecoder {
+    pub fn feed(&mut self, mut input: &[u8], out: &mut Vec<Bytes>) -> Result<bool, ChunkError> {
+        while !input.is_empty() {
+            match self.state {
+                ChunkState::Data(left) => {
+                    let n = usize::try_from(left).unwrap_or(usize::MAX).min(input.len());
+                    out.push(Bytes::copy_from_slice(&input[..n]));
+                    input = &input[n..];
+                    self.state = if left - n as u64 == 0 {
+                        ChunkState::DataEnd(0)
+                    } else {
+                        ChunkState::Data(left - n as u64)
+                    };
+                }
+                ChunkState::DataEnd(seen) => {
+                    let want = if seen == 0 { b'\r' } else { b'\n' };
+                    if input[0] != want {
+                        return Err(ChunkError);
+                    }
+                    input = &input[1..];
+                    self.state = if seen == 0 {
+                        ChunkState::DataEnd(1)
+                    } else {
+                        ChunkState::Size
+                    };
+                }
+                ChunkState::Size | ChunkState::Trailer => {
+                    let Some(nl) = input.iter().position(|b| *b == b'\n') else {
+                        self.line.extend_from_slice(input);
+                        if self.line.len() > CHUNK_LINE_MAX {
+                            return Err(ChunkError);
+                        }
+                        return Ok(false);
+                    };
+                    self.line.extend_from_slice(&input[..nl]);
+                    input = &input[nl + 1..];
+                    if self.line.len() > CHUNK_LINE_MAX {
+                        return Err(ChunkError);
+                    }
+                    let line = std::mem::take(&mut self.line);
+                    let line = line.strip_suffix(b"\r").unwrap_or(&line);
+                    if matches!(self.state, ChunkState::Trailer) {
+                        if line.is_empty() {
+                            return Ok(true);
+                        }
+                        continue; // a trailer field: ignored
+                    }
+                    let size = line.split(|b| *b == b';').next().unwrap_or_default();
+                    let size = std::str::from_utf8(size).map_err(|_| ChunkError)?.trim();
+                    let n = u64::from_str_radix(size, 16).map_err(|_| ChunkError)?;
+                    self.state = if n == 0 {
+                        ChunkState::Trailer
+                    } else {
+                        ChunkState::Data(n)
+                    };
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
 /// The bytes of one chunk header (`{len:x}\r\n`).
 pub fn chunk_header(len: usize) -> Bytes {
     Bytes::from(format!("{len:x}\r\n"))
@@ -417,6 +538,37 @@ mod tests {
                 .any(|(k, v)| k == "content-type" && v == "text/html")
         );
         assert!(parse_response_head(b"HTTP/1.1 200").is_none());
+    }
+
+    #[test]
+    fn chunked_decoder_survives_every_split_point() {
+        let wire = b"5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nx-trailer: 1\r\n\r\n";
+        for split in 0..=wire.len() {
+            let mut d = ChunkedDecoder::default();
+            let mut out = Vec::new();
+            let a = d.feed(&wire[..split], &mut out).unwrap();
+            assert!(!a || split == wire.len(), "split {split}");
+            let done = a || d.feed(&wire[split..], &mut out).unwrap();
+            assert!(done, "split {split}");
+            let body: Vec<u8> = out.iter().flat_map(|b| b.iter().copied()).collect();
+            assert_eq!(body, b"hello world", "split {split}");
+        }
+        // Byte at a time.
+        let mut d = ChunkedDecoder::default();
+        let mut out = Vec::new();
+        let mut done = false;
+        for b in wire {
+            done = d.feed(std::slice::from_ref(b), &mut out).unwrap();
+        }
+        assert!(done);
+        // Framing violations are errors, never a silent pass.
+        for bad in [&b"zz\r\n"[..], b"3\r\nabcXX", b"3\r\nabc\rX"] {
+            assert!(
+                ChunkedDecoder::default()
+                    .feed(bad, &mut Vec::new())
+                    .is_err()
+            );
+        }
     }
 
     #[test]

@@ -24,6 +24,10 @@ pub struct CachedResolve {
     /// `true` = positive entry (15 s), `false` = negative (5 s).
     pub positive: bool,
     pub at: Instant,
+    /// What the stream caps need from an `allow` (kept so a cache hit is as complete as the
+    /// API's answer): the share and the session's user.
+    pub share: Option<crate::api::ShareRef>,
+    pub user: Option<uuid::Uuid>,
 }
 
 impl CachedResolve {
@@ -41,6 +45,8 @@ pub struct State {
     /// The dashboard origin for the authorize redirect.
     pub external_url: String,
     pub wake_wait_secs: u32,
+    /// `PREVIEW_GRANT_RATE` at the grant endpoint (per replica).
+    pub grant_rate: crate::limits::GrantRate,
     cache: Mutex<HashMap<(String, String), CachedResolve>>,
 }
 
@@ -56,11 +62,29 @@ impl State {
         external_url: String,
         wake_wait_secs: u32,
     ) -> Arc<Self> {
+        Self::with_grant_rate(
+            api,
+            domain,
+            external_url,
+            wake_wait_secs,
+            crate::limits::GrantRate::spec(),
+        )
+    }
+
+    /// `new` with explicit grant-redemption limits (tests).
+    pub fn with_grant_rate(
+        api: Arc<RelayApi>,
+        domain: String,
+        external_url: String,
+        wake_wait_secs: u32,
+        grant_rate: crate::limits::GrantRate,
+    ) -> Arc<Self> {
         Arc::new(Self {
             api,
             domain,
             external_url,
             wake_wait_secs,
+            grant_rate,
             cache: Mutex::new(HashMap::new()),
         })
     }
@@ -86,6 +110,8 @@ impl State {
                 reason: a.reason.clone(),
                 positive: a.decision == "allow",
                 at: Instant::now(),
+                share: a.share.clone(),
+                user: a.user,
             },
         );
     }
@@ -104,8 +130,9 @@ impl State {
             return Ok(crate::api::ResolveAnswer {
                 decision: c.decision,
                 reason: c.reason,
-                share: None,
+                share: c.share,
                 route: None,
+                user: c.user,
             });
         }
         metrics::counter!("aurora_relay_resolve_cache", "hit" => "false").increment(1);
@@ -118,10 +145,18 @@ impl State {
 /// A live `(label, session_hash)` pair of open streams.
 pub type LivePair = (String, String);
 
+/// Puts back the report entries whose delivery failed.
+pub type RestoreFn = Arc<dyn Fn(&[crate::api::ReportShare]) + Send + Sync>;
+
 /// Validation callbacks: the pairs to check and what to do with the revoked ones.
 pub struct ValidateHooks {
     pub live: Arc<dyn Fn() -> Vec<LivePair> + Send + Sync>,
     pub on_revoked: Arc<dyn Fn(Vec<LivePair>) + Send + Sync>,
+    /// The bytes relayed per share since the last heartbeat (the API counts them against the
+    /// daily quota); drained each cycle.
+    pub report: Arc<dyn Fn() -> Vec<crate::api::ReportShare> + Send + Sync>,
+    /// Puts back a report whose delivery failed.
+    pub restore: RestoreFn,
 }
 
 /// Registration heartbeat: registers once, then keeps the replica alive with `report`
@@ -165,9 +200,10 @@ pub async fn registration_loop(
 pub async fn heartbeat_loop(
     api: Arc<RelayApi>,
     hooks: ValidateHooks,
+    every: Duration,
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) {
-    let mut tick = tokio::time::interval(Duration::from_secs(15));
+    let mut tick = tokio::time::interval(every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -187,10 +223,13 @@ pub async fn heartbeat_loop(
                 Err(e) => tracing::warn!(error = %e, "validate failed"),
             }
         }
-        // The heartbeat itself (an empty list is still a liveness report; per-share accounting
-        // rides the stream table's own report call).
-        if let Err(e) = api.report(&[]).await {
+        // The heartbeat itself (an empty list is still a liveness report) carries the bytes
+        // relayed per share since the last one: the API adds them to the share's daily
+        // counter (`PREVIEW_BYTES_PER_SHARE_DAY`). A failed report is retried with the next.
+        let shares = (hooks.report)();
+        if let Err(e) = api.report(&shares).await {
             tracing::warn!(error = %e, "relay report failed");
+            (hooks.restore)(&shares);
         }
     }
 }

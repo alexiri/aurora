@@ -54,6 +54,10 @@ pub struct RelayResolveResponse {
     pub share: Option<RelayShareRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route: Option<RelayRoute>,
+    /// On `allow`: the session's user, so the relay can apply the per-user stream cap
+    /// (relay plane only; never rendered to a browser).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
