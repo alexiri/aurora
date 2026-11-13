@@ -12,7 +12,8 @@ vi.mock("@wterm/react", () => ({
   useTerminal: () => ({ ref: { current: null }, write }),
   Terminal: () => <div data-testid="wterm-pane" />,
 }));
-vi.mock("@/lib/api/conversations", () => ({ useSandbox: () => ({ data: { state: "running" } }) }));
+const sandboxState = vi.hoisted(() => ({ state: "running" }));
+vi.mock("@/lib/api/conversations", () => ({ useSandbox: () => ({ data: { state: sandboxState.state } }) }));
 
 class Socket {
   static OPEN = 1;
@@ -27,12 +28,13 @@ class Socket {
   }
   send() {}
   close() {}
-  fail(code: number) {
-    this.onclose?.({ code, wasClean: false });
+  fail(code: number, wasClean = false) {
+    this.onclose?.({ code, wasClean });
   }
 }
 
 beforeEach(() => {
+  sandboxState.state = "running";
   vi.stubGlobal("WebSocket", Socket as unknown as typeof WebSocket);
   Socket.instances = [];
 });
@@ -77,5 +79,61 @@ describe("terminal reconnect", () => {
       await vi.advanceTimersByTimeAsync(20000);
     });
     expect(Socket.instances).toHaveLength(1);
+  });
+
+  // FIX-098: the code is classified first, even while the sandbox is waking.
+  it.each([4403, 4404, 4409])("close %i while the sandbox is starting is final: notice, no further socket", async (code) => {
+    sandboxState.state = "starting";
+    await mount();
+    act(() => Socket.instances[0].fail(code));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(Socket.instances).toHaveLength(1);
+  });
+
+  // The API sends 4502/4503 as real close frames: wasClean is true.
+  it.each([4502, 4503])("a clean close %i reconnects, visibly, up to the cap", async (code) => {
+    await mount();
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      act(() => Socket.instances.at(-1)!.fail(code, true));
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+      expect(screen.getByText(`(attempt ${attempt} of 4)`, { exact: false })).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8000);
+      });
+      expect(Socket.instances).toHaveLength(attempt + 1);
+    }
+    act(() => Socket.instances.at(-1)!.fail(code, true));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(Socket.instances).toHaveLength(5);
+  });
+
+  it("waking retries stop at the cap (a sandbox stuck starting is not a handshake every 8 s forever)", async () => {
+    sandboxState.state = "starting";
+    await mount();
+    for (let attempt = 1; attempt <= 12; attempt += 1) {
+      act(() => Socket.instances.at(-1)!.fail(1006));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8000);
+      });
+    }
+    expect(Socket.instances).toHaveLength(13);
+    act(() => Socket.instances.at(-1)!.fail(1006));
+    expect(screen.getByRole("alert")).toHaveTextContent("still starting");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(Socket.instances).toHaveLength(13);
+  });
+
+  it("shows that the pane is not connected while reconnecting", async () => {
+    await mount();
+    act(() => Socket.instances[0].fail(1006));
+    expect(screen.getByTestId("terminal-not-connected")).toHaveTextContent("Not connected");
   });
 });

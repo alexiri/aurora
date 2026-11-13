@@ -21,7 +21,7 @@ import "@wterm/react/css";
 import { Notice } from "@/components/ui/notice";
 import { useSandbox } from "@/lib/api/conversations";
 
-// The vendored, version-hashed Ghostty WASM (`web/public`, served same-origin as
+// The vendored, version-named Ghostty WASM (sha256 recorded in scripts/guards/ghostty-wasm.sha256) (`web/public`, served same-origin as
 // `application/wasm`; the CSP's `'wasm-unsafe-eval'` in script-src is what lets it compile —
 // SEC-87: it grants no script evaluation).
 const WASM_URL = "/ghostty-vt-0.5.10.wasm";
@@ -70,13 +70,19 @@ const RETRYABLE = new Set([1006, 4502, 4503]);
 type Phase =
   | { kind: "connecting" }
   | { kind: "open" }
-  | { kind: "reconnecting"; attempt: number }
+  | { kind: "reconnecting"; attempt: number; max: number }
   | { kind: "ended"; code: number | null; message: string };
 
 /** Backoff for a dropped socket: 1 s, 2 s, 4 s, capped at 8 s (`docs/14 §Terminal tab`). */
 const backoff = (attempt: number) => Math.min(8000, 1000 * 2 ** attempt);
 /** `docs/14`: a dropped socket retries "a few times" — four failed attempts then stop. */
 const MAX_ATTEMPTS = 4;
+/**
+ * While a sandbox wakes, every handshake is a wake demand (C-621: 12 per hour per agent), so the
+ * free retries are capped too — at the wake budget. A sandbox stuck `starting` ends the pane
+ * with a notice instead of one handshake every 8 s forever.
+ */
+const MAX_WAKE_ATTEMPTS = 12;
 
 /**
  * The Ghostty core, loaded once and shared by every (re)mount of the pane: `GhosttyCore.load`
@@ -119,16 +125,20 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
   const waking = sandbox.data?.state === "starting";
   // The close handler reads it without re-subscribing the socket effect on every poll tick.
   const wakingRef = useRef(waking);
+  const attemptRef = useRef(0);
   useEffect(() => {
+    // The wake finished: the running sandbox gets the ordinary retry budget afresh.
+    if (wakingRef.current && !waking) attemptRef.current = 0;
     wakingRef.current = waking;
   }, [waking]);
+  // Set when a keystroke arrived while the socket was not open (never sent, never queued).
+  const [droppedInput, setDroppedInput] = useState(false);
   // The OSC 52 clipboard-write confirmation (C-622: never automatic, always confirmed).
   const [copied, setCopied] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   // The latest measured grid: a reconnect re-opens at the current size, and the first
   // `pty.resize` rides the freshly opened socket.
   const sizeRef = useRef({ cols: 80, rows: 24 });
-  const attemptRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const paused = frozen;
@@ -147,7 +157,11 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
 
     const connect = () => {
       if (disposed) return;
-      setPhase(attemptRef.current === 0 ? { kind: "connecting" } : { kind: "reconnecting", attempt: attemptRef.current });
+      setPhase(
+        attemptRef.current === 0
+          ? { kind: "connecting" }
+          : { kind: "reconnecting", attempt: attemptRef.current, max: wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS },
+      );
       ws = new WebSocket(`/v1/agents/${agentId}/terminal`);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
@@ -155,6 +169,7 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
       ws.onopen = () => {
         attemptRef.current = 0;
         setPhase({ kind: "open" });
+        setDroppedInput(false);
         // The runner seeds the PTY at 80×24 (`16 §W19`); catch the pane up as soon as the
         // socket is live — the laid-out geometry rides `onResize` below.
         const { cols, rows } = sizeRef.current;
@@ -172,25 +187,27 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
         if (disposed || wsRef.current !== ws) return;
         wsRef.current = null;
         const message = CLOSE_COPY[ev.code] ?? "The terminal session ended unexpectedly.";
-        // A wake in flight (C-621) retries freely: the sandbox poll flips `waking` while the
-        // API records the demand, and the answer only becomes connectable once running.
-        if (wakingRef.current) {
-          attemptRef.current += 1;
-          setPhase({ kind: "reconnecting", attempt: attemptRef.current });
-          timerRef.current = setTimeout(connect, backoff(attemptRef.current));
-          return;
-        }
-        // A clean end (the shell exited, or the pane closed its own socket) is final.
-        if (ev.code === 1000 || ev.wasClean) {
-          setPhase({ kind: "ended", code: ev.code, message });
-          return;
-        }
-        // Transient failures retry with backoff, a few times, visibly; anything else
-        // (revoked, not-found, limit, timeout) ends the pane with its reason.
-        if (RETRYABLE.has(ev.code) && attemptRef.current < MAX_ATTEMPTS) {
-          attemptRef.current += 1;
-          setPhase({ kind: "reconnecting", attempt: attemptRef.current });
-          timerRef.current = setTimeout(connect, backoff(attemptRef.current));
+        // The code decides first (FIX-098): only a transient code is ever retried, whether or not
+        // the close frame was clean (the API sends 4502/4503 as real close frames, so
+        // `wasClean` is true for them) and whether or not a wake is in flight. 4403 (revoked),
+        // 4404, 4409, 4504, a shell's 1000 end the pane with their reason, always.
+        if (RETRYABLE.has(ev.code)) {
+          // A wake in flight (C-621) retries while the sandbox poll flips `waking`; the answer
+          // only becomes connectable once running. Both budgets are capped and shown.
+          const max = wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS;
+          if (attemptRef.current < max) {
+            attemptRef.current += 1;
+            setPhase({ kind: "reconnecting", attempt: attemptRef.current, max });
+            timerRef.current = setTimeout(connect, backoff(attemptRef.current));
+            return;
+          }
+          setPhase({
+            kind: "ended",
+            code: ev.code,
+            message: wakingRef.current
+              ? "The sandbox is still starting. Try again in a moment."
+              : message,
+          });
           return;
         }
         setPhase({ kind: "ended", code: ev.code, message });
@@ -225,7 +242,11 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
       case "connecting":
         return "Connecting…";
       case "reconnecting":
-        return "Reconnecting…";
+        return (
+          <>
+            Reconnecting…<span className="text-muted"> (attempt {phase.attempt} of {phase.max})</span>
+          </>
+        );
       case "open":
         return null;
       case "ended":
@@ -236,7 +257,7 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
   if (paused) {
     return (
       <Notice tone="neutral" role="status">
-        This agent is paused. The terminal is unavailable while paused.
+        This agent is frozen. The terminal is unavailable while it is frozen.
       </Notice>
     );
   }
@@ -254,6 +275,11 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
         <Notice tone="pending" role="status" aria-live="polite">
           {status}
         </Notice>
+      ) : null}
+      {phase.kind !== "open" ? (
+        <p data-testid="terminal-not-connected" className="text-xs text-muted" role="status">
+          Not connected{droppedInput ? " — what you typed was not sent." : " — typing is not sent until the terminal connects."}
+        </p>
       ) : null}
       {phase.kind === "ended" && phase.code !== 1000 ? (
         <Notice tone="danger" role="alert">
@@ -304,6 +330,10 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
         onData={(data) => {
           if (wsRef.current?.readyState === WebSocket.OPEN) {
             sendInput(wsRef.current, data);
+          } else {
+            // Not connected: the keystroke is not sent and not queued (it could replay into a
+            // different session); say so instead of dropping it silently.
+            setDroppedInput(true);
           }
         }}
         onResize={onResize}

@@ -35,6 +35,22 @@ const defaultWorkers = 4;
 // running on different workers at the same time.
 const REAL_STACK = [/first-run\.spec\.ts$/, /m1\.spec\.ts$/, /no-default-model\.spec\.ts$/, /onboarding-journeys\.spec\.ts$/];
 
+// FIX-098: a project that runs against the PRODUCTION build (`next build` + `next start`), the only
+// place the real Content-Security-Policy applies (dev adds 'unsafe-inline'/'unsafe-eval' and hid the
+// terminal's stripped style attributes). Playwright starts every webServer for every run, so the
+// production mode is a switch, not a second project of the default run: `pnpm e2e:prod` (or
+// AURORA_E2E_PROD=1) runs ONLY the `production` project — specs named `*.prod.spec.ts` — against a
+// production build of this checkout in its own dist dir. Port: AURORA_E2E_WEB_PROD_PORT (default
+// 4110, never 4000).
+const PROD_SPEC = /\.prod\.spec\.ts$/;
+const prodMode = process.env.AURORA_E2E_PROD === "1";
+const prodPort = Number(process.env.AURORA_E2E_WEB_PROD_PORT ?? "4110");
+if (!Number.isInteger(prodPort) || prodPort < 1 || prodPort > 65535) {
+  throw new Error(`AURORA_E2E_WEB_PROD_PORT must be a TCP port, got "${process.env.AURORA_E2E_WEB_PROD_PORT}"`);
+}
+const prodUrl = `http://localhost:${prodPort}`;
+const prodDist = ".next-e2e-prod";
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 90_000,
@@ -43,17 +59,26 @@ export default defineConfig({
   // Locally no retries (a retry hides a flake); CI keeps its own explicit value via AURORA_E2E_RETRIES.
   retries: process.env.AURORA_E2E_RETRIES ? Number(process.env.AURORA_E2E_RETRIES) : 0,
   workers: process.env.AURORA_E2E_WORKERS ? Number(process.env.AURORA_E2E_WORKERS) : defaultWorkers,
-  projects: [
-    { name: "mocked", testIgnore: REAL_STACK, fullyParallel: true },
-    // One worker, files and tests strictly in order: they share one stack.
-    { name: "real-stack", testMatch: REAL_STACK, fullyParallel: false, workers: 1 },
-  ],
+  projects: prodMode
+    ? [{ name: "production", testMatch: PROD_SPEC, fullyParallel: true, use: { baseURL: prodUrl } }]
+    : [
+        { name: "mocked", testIgnore: [...REAL_STACK, PROD_SPEC], fullyParallel: true },
+        // One worker, files and tests strictly in order: they share one stack.
+        { name: "real-stack", testMatch: REAL_STACK, fullyParallel: false, workers: 1 },
+      ],
   use: { baseURL: external ?? webUrl },
-  webServer: external
-    ? undefined
-    : {
-        command: `pnpm exec next dev -p ${port}`,
-        url: webUrl,
-        reuseExistingServer: process.env.AURORA_E2E_REUSE === "1",
-      },
+  webServer: prodMode
+    ? {
+        command: `AURORA_NEXT_DIST_DIR=${prodDist} pnpm exec next build && AURORA_NEXT_DIST_DIR=${prodDist} pnpm exec next start -p ${prodPort}`,
+        url: prodUrl,
+        timeout: 600_000,
+        reuseExistingServer: false,
+      }
+    : external
+      ? undefined
+      : {
+          command: `pnpm exec next dev -p ${port}`,
+          url: webUrl,
+          reuseExistingServer: process.env.AURORA_E2E_REUSE === "1",
+        },
 });

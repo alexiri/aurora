@@ -682,13 +682,19 @@ again" and "Show the getting-started guide again".
     non-`can_use` caller never sees the tab, a frozen agent shows the freeze banner and no
     terminal. A parked sandbox shows "Waking…" (the open is the wake demand) and the terminal
     attaches on ready. The pane is **wterm** with the **Ghostty core** (`@wterm/ghostty`,
-    vendored, the ~400 KB WASM served same-origin as a hashed static asset with
-    `Content-Type: application/wasm`): DOM rendering (native text selection, browser find,
+    vendored, the 599,368-byte WASM served same-origin as a version-named static asset,
+    `ghostty-vt-<version>.wasm`, with `Content-Type: application/wasm`; its sha256 is
+    recorded in `scripts/guards/ghostty-wasm.sha256` and a guard fails when the file or the
+    pinned package drifts from it): DOM rendering (native text selection, browser find,
     screen-reader access — the reason for this core), IME composition, OSC 8 links, 24-bit
     color, alternate screen, dirty-row rendering; themes are CSS custom properties mapped to
     the dashboard tokens (both themes). Resize uses the pane's measured cell geometry and
     sends `pty.resize`; a dropped WebSocket reconnects with backoff and a visible state
-    ("Reconnecting…"); session end states (frozen, parked, stopped, runner without terminal
+    ("Reconnecting…", with its attempt count; four attempts, twelve while the sandbox wakes —
+    the C-621 wake budget). The close code decides first: 4403, 4404, 4409, 4504 and a
+    shell's 1000 end the pane with their reason even while waking; 1006, 4502 and 4503 retry
+    whether or not the close frame was clean. While not connected the pane says "Not
+    connected" and keystrokes are not sent (nor queued); session end states (frozen, parked, stopped, runner without terminal
     support) render as notices, never silent closes. wterm never touches the clipboard
     automatically: selection copy is the browser's own; an application's OSC 52 write shows a
     "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). Keystrokes leave the tab as
