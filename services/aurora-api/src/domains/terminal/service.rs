@@ -58,6 +58,14 @@ fn terminal_not_supported() -> ApiError {
 /// "access lost": a removed member, a frozen agent, a revoked dashboard session).
 const ACCESS_RECHECK: Duration = Duration::from_secs(10);
 
+/// A browser text message is a `pty.resize` control — a few dozen bytes; longer is refused
+/// `4502` and never forwarded (C-617).
+const TEXT_MAX: usize = 256;
+/// One write toward the browser or the runner may not stall longer than this.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Ping interval toward the browser (`16 §W18`: ping/pong every 20 s).
+const PING_INTERVAL: Duration = Duration::from_secs(20);
+
 /// Live terminal sessions terminated on **this** API replica, per user and per agent
 /// (C-617 `4409`; `TERMINALS_PER_USER` / `TERMINALS_PER_AGENT` are per replica — with N
 /// replicas the effective ceiling is N×, `15 §Web terminal operations`). A slot is a
@@ -153,29 +161,40 @@ pub async fn upgrade(
     wait: bool,
 ) -> Result<axum::response::Response, ApiError> {
     let a = admit(&s, &c, agent).await?;
-    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
-    // The agent's sandbox row: `(id, state, boot_id)`.
-    type SandboxRow = (Uuid, String, Option<Uuid>);
-    let sb: Option<SandboxRow> =
-        sqlx::query_as("SELECT id, state, boot_id FROM sandboxes WHERE agent_id = $1")
-            .bind(a.id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(DbError::from)?;
-    let Some((sandbox_id, state, boot_id)) = sb else {
+    let Some((sandbox_id, state, boot_id)) = load_sandbox(&s, a.id).await? else {
         // Unprovisioned agent: waking it is meaningless without a start request; the dashboard
         // starts the agent explicitly. 404 as a pre-upgrade answer.
         return Err(ApiError::not_found("Agent has no sandbox."));
     };
-    let running = matches!(state.as_str(), "starting" | "running");
-    if !running {
+    let mut boot_id = boot_id;
+    if !is_live(&state) {
         // Parked → wake demand (C-621): rate-limited, never a turn. Frozen never gets here
         // (admit refused it).
         demand_wake(&s, &a, sandbox_id).await?;
-        let _ = wait; // both answers are the same 202; the dashboard re-checks the view
-        return Err(waking());
+        if !wait {
+            return Err(waking());
+        }
+        // C-616: long-poll ≤ `TERMINAL_WAKE_WAIT` for the wake, then upgrade; the 202 stays
+        // the answer when it did not come up in time. No connection is held while waiting.
+        let deadline = tokio::time::Instant::now()
+            + Duration::from_secs(s.config.terminal.wake_wait_secs.max(1));
+        loop {
+            tokio::time::sleep(WAKE_POLL).await;
+            match load_sandbox(&s, a.id).await? {
+                // The redemption and the runner's dial need `running` (not `starting`).
+                Some((_, st, boot)) if st == "running" => {
+                    boot_id = boot;
+                    break;
+                }
+                Some(_) if tokio::time::Instant::now() < deadline => {}
+                _ => return Err(waking()),
+            }
+        }
+        // The wake may have recreated the holder's session or frozen the agent meanwhile.
+        admit(&s, &c, agent).await?;
     }
     let boot = boot_id.ok_or_else(|| ApiError::not_found("Agent has no sandbox."))?;
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     // ---- caps over LIVE sessions (C-617 `4409`): the slot is held for the life of the leg
     // (moved into `proxy_leg`) and released by `Drop` on every exit, including a failed dial.
     // Over the cap the upgrade completes and the socket closes `4409` (no grant is minted).
@@ -235,9 +254,31 @@ pub async fn upgrade(
         s: s.clone(),
         c: c.clone(),
         agent: a.id,
+        org: a.org_id,
+        workspace: a.workspace_id,
     };
     Ok(ws.on_upgrade(move |socket| proxy_leg(socket, upstream, endpoint.redacted, slot, recheck)))
 }
+
+/// The agent's sandbox row: `(id, state, boot_id)`.
+type SandboxRow = (Uuid, String, Option<Uuid>);
+
+async fn load_sandbox(s: &AppState, agent: Uuid) -> Result<Option<SandboxRow>, ApiError> {
+    Ok(
+        sqlx::query_as("SELECT id, state, boot_id FROM sandboxes WHERE agent_id = $1")
+            .bind(agent)
+            .fetch_optional(&s.pool)
+            .await
+            .map_err(DbError::from)?,
+    )
+}
+
+fn is_live(state: &str) -> bool {
+    matches!(state, "starting" | "running")
+}
+
+/// How often the `?wait=true` long-poll looks at the sandbox again.
+const WAKE_POLL: Duration = Duration::from_millis(250);
 
 fn waking() -> ApiError {
     ApiError::new(
@@ -434,6 +475,8 @@ struct Recheck {
     s: AppState,
     c: Caller,
     agent: Uuid,
+    org: Uuid,
+    workspace: Uuid,
 }
 
 impl Recheck {
@@ -484,42 +527,57 @@ async fn proxy_leg(
     let mut tick =
         tokio::time::interval_at(tokio::time::Instant::now() + ACCESS_RECHECK, ACCESS_RECHECK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Liveness (`16 §W18`: idle 600 s, "a WebSocket's pings count"): the API pings the browser
+    // and any frame from it — a pong included — resets the idle clock, so a user reading
+    // output for ten minutes stays connected while a vanished tab is cut at the limit. The
+    // runner's own pings are answered by the upstream socket itself.
+    let mut ping =
+        tokio::time::interval_at(tokio::time::Instant::now() + PING_INTERVAL, PING_INTERVAL);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let idle = tokio::time::sleep(TERMINAL_IDLE_TIMEOUT);
+    tokio::pin!(idle);
+    let started = std::time::Instant::now();
     let reason = loop {
         tokio::select! {
+            () = &mut idle => break CLOSE_TIMEOUT,
+            _ = ping.tick() => {
+                if !bounded_send(&mut b_sink, WsMessage::Ping(Vec::new().into()), WRITE_TIMEOUT).await {
+                    break CLOSE_NORMAL;
+                }
+            }
             // Access re-check (C-617 `4403`): the holder must still pass the admission law.
             _ = tick.tick() => {
                 if !recheck.still_allowed().await {
-                    let _ = u_sink.send(Ws2Message::Close(None)).await;
+                    let _ = bounded_send(&mut u_sink, Ws2Message::Close(None), WRITE_TIMEOUT).await;
                     break CLOSE_NOT_ALLOWED;
                 }
             }
             // Browser → runner.
             msg = b_stream.next() => {
+                if msg.as_ref().is_some_and(Result::is_ok) {
+                    idle.as_mut().reset(tokio::time::Instant::now() + TERMINAL_IDLE_TIMEOUT);
+                }
                 match msg {
                     Some(Ok(WsMessage::Binary(b))) => {
                         if b.len() > TERMINAL_CHUNK {
                             break CLOSE_REFUSED;
                         }
-                        if u_sink.send(Ws2Message::Binary(b)).await.is_err() {
+                        if !bounded_send(&mut u_sink, Ws2Message::Binary(b), WRITE_TIMEOUT).await {
                             break CLOSE_CHANNEL_LOST;
                         }
                     }
-                    // `pty.resize` controls ride as text; anything else is dropped (bytes are
-                    // never interpreted as text on this leg).
+                    // `pty.resize` controls ride as text (a few dozen bytes); a longer text
+                    // message is a violation and is never forwarded (C-617).
                     Some(Ok(WsMessage::Text(t))) => {
-                        if u_sink
-                            .send(Ws2Message::Text(t.as_str().into()))
-                            .await
-                            .is_err()
-                        {
+                        if t.len() > TEXT_MAX {
+                            break CLOSE_REFUSED;
+                        }
+                        if !bounded_send(&mut u_sink, Ws2Message::Text(t.as_str().into()), WRITE_TIMEOUT).await {
                             break CLOSE_CHANNEL_LOST;
                         }
                     }
-                    Some(Ok(WsMessage::Ping(p))) => {
-                        // Answered by axum below; forward as pong on the upstream leg only.
-                        let _ = u_sink.send(Ws2Message::Pong(p)).await;
-                    }
-                    Some(Ok(WsMessage::Pong(_))) => {}
+                    // A browser ping is answered by axum itself; the idle clock was reset above.
+                    Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_))) => {}
                     // The browser ended the leg: pass the close frame's reason upstream (the
                     // runner releases the route; the code the browser chose is final).
                     Some(Ok(WsMessage::Close(code))) => {
@@ -538,30 +596,31 @@ async fn proxy_leg(
             msg = u_stream.next() => {
                 match msg {
                     Some(Ok(Ws2Message::Binary(b))) => {
-                        if b_sink.send(WsMessage::Binary(b)).await.is_err() {
+                        idle.as_mut().reset(tokio::time::Instant::now() + TERMINAL_IDLE_TIMEOUT);
+                        // A tab that stops reading must not hold the slot: the write is
+                        // bounded and a timeout ends the leg.
+                        if !bounded_send(&mut b_sink, WsMessage::Binary(b), WRITE_TIMEOUT).await {
                             break CLOSE_NORMAL;
                         }
                     }
                     // The runner's `stream.opened`-style text frames are not for the browser;
                     // the leg-1 contract after 101 is bytes + close codes only. Drop them.
                     Some(Ok(Ws2Message::Text(_) | Ws2Message::Frame(_))) => {}
-                    Some(Ok(Ws2Message::Ping(p))) => {
-                        let _ = b_sink.send(WsMessage::Pong(p)).await;
-                    }
-                    Some(Ok(Ws2Message::Pong(_))) => {}
+                    // The upstream socket answers the runner's pings itself.
+                    Some(Ok(Ws2Message::Ping(_) | Ws2Message::Pong(_))) => {}
                     Some(Ok(Ws2Message::Close(frame))) => {
                         let code: u16 = frame
                             .as_ref()
                             .map(|f| u16::from(f.code))
                             .unwrap_or(CLOSE_NORMAL);
-                        let _ = b_sink.send(WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                        let _ = bounded_send(&mut b_sink, WsMessage::Close(Some(axum::extract::ws::CloseFrame {
                             code,
                             reason: frame
                                 .as_ref()
                                 .map(|f| f.reason.as_str())
                                 .unwrap_or_default()
                                 .into(),
-                        })))
+                        })), WRITE_TIMEOUT)
                         .await;
                         break code;
                     }
@@ -577,15 +636,49 @@ async fn proxy_leg(
     } else {
         reason
     };
-    let _ = b_sink
-        .send(WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+    let _ = bounded_send(
+        &mut b_sink,
+        WsMessage::Close(Some(axum::extract::ws::CloseFrame {
             code,
             reason: "".into(),
-        })))
-        .await;
+        })),
+        WRITE_TIMEOUT,
+    )
+    .await;
     // Byte totals ride the runner's `pty.close` informational fields only; nothing is logged
     // here (the endpoint string is host:port only, no grant, no bytes).
     tracing::debug!(endpoint, code, "terminal leg ended");
+    // (D-178, C-618) Best-effort `agent.terminal.close`: the close code and the session's
+    // duration — never bytes, never content (SEC-87).
+    crate::audit::record(
+        &recheck.s,
+        AuditEvent::new(
+            AuditActor::from_caller(&recheck.c),
+            "agent.terminal.close",
+            Outcome::Success,
+        )
+        .org(recheck.org)
+        .workspace(recheck.workspace)
+        .target("agent", recheck.agent)
+        .metadata(serde_json::json!({
+            "agent": recheck.agent,
+            "workspace": recheck.workspace,
+            "close_code": code,
+            "duration_secs": started.elapsed().as_secs(),
+        })),
+    );
+}
+
+/// One write under a deadline: `false` when it failed or stalled (a client that stopped reading
+/// must not hold the leg, and with it a [`TerminalSlot`], forever).
+async fn bounded_send<S, M>(sink: &mut S, msg: M, within: Duration) -> bool
+where
+    S: futures::Sink<M> + Unpin,
+{
+    matches!(
+        tokio::time::timeout(within, sink.send(msg)).await,
+        Ok(Ok(()))
+    )
 }
 
 /// Lower-case hex of a SHA-256 (the `grant_hash` column is text, like the previews plane's).
@@ -595,4 +688,48 @@ fn hex(bytes: &[u8]) -> String {
         out.push_str(&format!("{b:02x}"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sink whose writes never complete: a browser tab that stopped reading.
+    struct Stalled;
+    impl futures::Sink<u8> for Stalled {
+        type Error = ();
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), ()>> {
+            std::task::Poll::Pending
+        }
+        fn start_send(self: std::pin::Pin<&mut Self>, _: u8) -> Result<(), ()> {
+            Ok(())
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), ()>> {
+            std::task::Poll::Pending
+        }
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), ()>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    /// FIX-092: a write toward a peer that never reads ends at the deadline (`false`), so the
+    /// leg returns and its slot is released by `Drop`.
+    #[tokio::test]
+    async fn a_stalled_write_ends_at_the_deadline() {
+        let mut sink = Stalled;
+        assert!(!bounded_send(&mut sink, 1u8, Duration::from_millis(50)).await);
+        let (user, agent) = (Uuid::now_v7(), Uuid::now_v7());
+        let slot = TerminalSlot::acquire(user, agent).unwrap();
+        drop(slot);
+        assert!(TerminalSlot::acquire(user, agent).is_some(), "slot freed");
+    }
 }

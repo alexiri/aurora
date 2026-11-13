@@ -537,8 +537,9 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   open (423); restart/park → sessions closed (4503/`channel_lost`), the tab shows "Waking…"
   and reopens on ready; harness change or runner move → sessions closed; agent deleted →
   destroyed with the sandbox. Bytes are never logged, stored or request-log-rowed (byte
-  totals in metrics only); the best-effort audit row `agent.terminal.open` records the open
-  (agent, workspace), never content (`04 §Audit`).
+  totals in metrics only); the best-effort audit rows `agent.terminal.open` and
+  `agent.terminal.close` record the open (agent, workspace) and the end (close code, duration),
+  never content (`04 §Audit`).
 - **Listener and capabilities**: the runner opens :4108 when previews **or** the terminal is
   enabled and registers the matching capabilities (`previews`, `terminal`, plus `stream_tls`
   when `runner.stream_tls` is on — the API derives the endpoint scheme it hands the relay

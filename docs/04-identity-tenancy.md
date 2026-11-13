@@ -1199,7 +1199,8 @@ schedules, webhooks, conversation reads, `conversation.owner_view`,
 `agent.sandbox_retry` (FIX-029: retrying a failed sandbox start, metadata: the
 previous `failure_code`; the start failure itself is not an audited action, the
 `sandbox_start_failures` row is its record), `agent.terminal.open` (P4-TERM:
-opening a web-terminal session, metadata: agent and workspace; the terminal's
+opening a web-terminal session, metadata: agent and workspace) and
+`agent.terminal.close` (D-178: its end, metadata: agent, workspace, close code and duration in seconds); the terminal's
 bytes are never recorded anywhere, the `terminal_stream_grants` row is its
 record) — is
 best-effort.

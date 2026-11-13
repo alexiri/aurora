@@ -37,6 +37,10 @@ fn caps_base(max: u32) -> Value {
 }
 
 async fn rig() -> Rig {
+    rig_cfg(|_| {}).await
+}
+
+async fn rig_cfg(extra: impl FnOnce(&mut aurora_config::ApiConfig) + 'static) -> Rig {
     let dir = std::env::temp_dir().join(format!("aurora-ca-{}", Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
@@ -44,6 +48,7 @@ async fn rig() -> Rig {
     let h = Harness::with_config(move |c| {
         c.gateway_ca_dir = d;
         c.hosted.allow_fake_harness = true;
+        extra(c);
     })
     .await;
     let admin = h.user("admin@x.io", true).await;
@@ -1486,6 +1491,35 @@ async fn start_caps(
     .await
     .unwrap();
     (doc["capabilities"].clone(), db)
+}
+
+/// FIX-092 (STRM-12, C-623): `terminal` rides the boot document only when the operator enabled
+/// it **and** the runner advertised it — a runner that did not could not serve the `pty.*`
+/// frames the boot would promise.
+#[tokio::test]
+async fn boot_terminal_capability_needs_the_runner_to_advertise_it() {
+    let r = rig_cfg(|c| c.terminal.enabled = true).await;
+    // runner-a registers without `terminal`.
+    let (doc, db) = start_caps(&r, "runner-a", Some(&[]), "daneel").await;
+    assert_eq!(
+        doc,
+        json!([]),
+        "no terminal without the runner's advertisement"
+    );
+    assert!(db.is_empty(), "{db:?}");
+}
+
+/// The other half: the same instance with a runner that advertised `terminal` gets it.
+#[tokio::test]
+async fn boot_terminal_capability_is_present_when_both_sides_agree() {
+    let r = rig_cfg(|c| c.terminal.enabled = true).await;
+    let mut caps = caps_with_image(&[]);
+    caps["terminal"] = json!(true);
+    let rep = r.register_with("runner-a", caps).await;
+    r.agent_with_turn("daneel").await;
+    let w = r.work(rep, 0).await;
+    let doc = boot_doc(first(&w, "sandbox.start"));
+    assert_eq!(doc["capabilities"], json!(["terminal"]));
 }
 
 #[tokio::test]

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use aurora_runner::api::{ApiClient, RetryPolicy};
 use aurora_runner::channel::{ChannelServer, ChannelSettings};
 use aurora_runner::hub::ChannelHub as _;
-use aurora_runner::stream_listener::{CLOSE_TIMEOUT, StreamListener};
+use aurora_runner::stream_listener::{Bounds, CLOSE_TIMEOUT, StreamListener};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
@@ -49,7 +49,25 @@ struct Rig {
 
 /// The runner half with leg limits `idle` / `lifetime`.
 async fn rig(api: &MockServer, idle: Duration, lifetime: Duration) -> Rig {
-    let server = ChannelServer::new(ChannelSettings::new(KEY));
+    rig_with(
+        api,
+        idle,
+        lifetime,
+        ChannelSettings::new(KEY),
+        Bounds::default(),
+    )
+    .await
+}
+
+/// [`rig`] with explicit channel settings and listener abuse bounds (FIX-092).
+async fn rig_with(
+    api: &MockServer,
+    idle: Duration,
+    lifetime: Duration,
+    settings: ChannelSettings,
+    bounds: Bounds,
+) -> Rig {
+    let server = ChannelServer::new(settings);
     let retry = RetryPolicy {
         attempts: 1,
         initial: Duration::from_millis(5),
@@ -58,7 +76,7 @@ async fn rig(api: &MockServer, idle: Duration, lifetime: Duration) -> Rig {
     server.attach_api(Arc::new(
         ApiClient::new(&api.uri(), "aur_test", retry).unwrap(),
     ));
-    let streams = StreamListener::with_limits(server.clone(), idle, lifetime);
+    let streams = StreamListener::with_bounds(server.clone(), idle, lifetime, bounds);
     server.set_streams(streams.clone());
     let ch = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let ch_addr = ch.local_addr().unwrap();
@@ -303,4 +321,194 @@ async fn older_supervisor_ignoring_pty_open_ends_in_a_clean_refusal() {
     .await
     .unwrap();
     assert!(term2.await.unwrap().is_err());
+}
+
+/// Drains the supervisor side for `window` and returns every `pty.resize` it received.
+async fn collect_resizes(sup: &mut Client, window: Duration) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    let end = tokio::time::Instant::now() + window;
+    while let Ok(Some(Ok(m))) = tokio::time::timeout_at(end, sup.next()).await {
+        if let Message::Text(t) = m {
+            let v: Value = serde_json::from_str(&t).unwrap();
+            if v["kind"] == "pty.resize" {
+                out.push((
+                    v["body"]["cols"].as_u64().unwrap(),
+                    v["body"]["rows"].as_u64().unwrap(),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// FIX-092 (STRM-5): the browser's `pty.resize` messages are coalesced to the latest size —
+/// 100,000 of them reach the supervisor as a handful of frames, the last one being the final
+/// size. Before the fix every message was a queued frame on the runner's outbound queue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_resize_flood_is_coalesced_to_the_latest_size() {
+    let api = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    mount_runner_api(&api, sandbox, boot).await;
+    let r = rig(&api, HOUR, HOUR).await;
+    let (mut term, mut sup, _pty) = open_terminal(&r).await;
+    for i in 0..100_000u32 {
+        let cols = if i == 99_999 { 999 } else { 20 + i % 100 };
+        term.feed(Message::text(
+            json!({"kind": "pty.resize", "pty_id": 0, "cols": cols, "rows": 40}).to_string(),
+        ))
+        .await
+        .unwrap();
+    }
+    term.flush().await.unwrap();
+    let got = collect_resizes(&mut sup, Duration::from_secs(3)).await;
+    assert!(
+        got.len() < 1_000,
+        "100,000 resizes must be coalesced, the supervisor got {}",
+        got.len()
+    );
+    assert_eq!(got.last(), Some(&(999, 40)), "the latest size is delivered");
+}
+
+/// FIX-092 (STRM-5): the runner's per-sandbox live-leg cap (here 1 PTY) answers 429 before any
+/// supervisor traffic.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legs_beyond_the_per_sandbox_cap_are_refused_429() {
+    let api = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    mount_runner_api(&api, sandbox, boot).await;
+    let r = rig_with(
+        &api,
+        HOUR,
+        HOUR,
+        ChannelSettings::new(KEY),
+        Bounds {
+            max_ptys: 1,
+            ..Bounds::default()
+        },
+    )
+    .await;
+    let (_term, _sup, _pty) = open_terminal(&r).await;
+    let err = dial(r.st_addr).await.unwrap().expect_err("over the cap");
+    let WsError::Http(resp) = err else {
+        panic!("expected an HTTP refusal, got {err:?}");
+    };
+    assert_eq!(resp.status().as_u16(), 429);
+}
+
+/// FIX-092 (STRM-6): unauthenticated connections are capped (32 here, 256 in production):
+/// the sockets beyond the cap are closed at once, the others at the head deadline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn silent_sockets_are_capped_and_closed_at_the_head_deadline() {
+    use tokio::io::AsyncReadExt as _;
+    let api = MockServer::start().await;
+    let r = rig_with(
+        &api,
+        HOUR,
+        HOUR,
+        ChannelSettings::new(KEY),
+        Bounds {
+            pre_auth_cap: 32,
+            head_deadline: Duration::from_secs(2),
+            ..Bounds::default()
+        },
+    )
+    .await;
+    let mut socks = Vec::new();
+    for _ in 0..40 {
+        socks.push(TcpStream::connect(r.st_addr).await.unwrap());
+    }
+    // The refused ones see EOF well before the head deadline.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut closed_early = 0;
+    for s in &mut socks {
+        let mut b = [0u8; 1];
+        if let Ok(Ok(0)) = tokio::time::timeout(Duration::from_millis(20), s.read(&mut b)).await {
+            closed_early += 1;
+        }
+    }
+    assert_eq!(closed_early, 8, "exactly the sockets beyond the cap");
+    // The rest are closed at the deadline (2 s; the bound below is generous).
+    for s in &mut socks {
+        let mut b = [0u8; 1];
+        let n = tokio::time::timeout(Duration::from_secs(6), s.read(&mut b))
+            .await
+            .expect("a silent socket outlived the head deadline");
+        assert!(matches!(n, Ok(0) | Err(_)));
+    }
+}
+
+/// FIX-092 (STRM-6): a request head that trickles in one byte at a time is cut at the total
+/// deadline, not held by a per-read timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_loris_head_is_closed_at_the_total_deadline() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let api = MockServer::start().await;
+    let r = rig_with(
+        &api,
+        HOUR,
+        HOUR,
+        ChannelSettings::new(KEY),
+        Bounds {
+            head_deadline: Duration::from_secs(1),
+            ..Bounds::default()
+        },
+    )
+    .await;
+    let mut s = TcpStream::connect(r.st_addr).await.unwrap();
+    let t = Instant::now();
+    let mut closed = false;
+    while t.elapsed() < Duration::from_secs(6) {
+        if s.write_all(b"G").await.is_err() {
+            closed = true;
+            break;
+        }
+        let mut b = [0u8; 1];
+        if let Ok(Ok(0) | Err(_)) =
+            tokio::time::timeout(Duration::from_millis(200), s.read(&mut b)).await
+        {
+            closed = true;
+            break;
+        }
+    }
+    assert!(closed, "the trickling socket was never closed");
+    assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
+}
+
+/// FIX-092 (CONV-5, C-617): a runner that does not hold the sandbox's channel answers 404 with
+/// the standard error body `not_here`, not a bare status line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn not_here_carries_the_standard_error_body() {
+    let api = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    mount_runner_api(&api, sandbox, boot).await;
+    let r = rig(&api, HOUR, HOUR).await; // no supervisor ever connects
+    let err = dial(r.st_addr).await.unwrap().expect_err("not here");
+    let WsError::Http(resp) = err else {
+        panic!("expected an HTTP refusal, got {err:?}");
+    };
+    assert_eq!(resp.status().as_u16(), 404);
+    let body: Value = serde_json::from_slice(resp.body().as_deref().unwrap_or_default()).unwrap();
+    assert_eq!(body["error"]["code"], "not_here", "{body}");
+}
+
+/// FIX-092 (STRM-7): `Pong`s are liveness. A leg that receives only pongs stays open past the
+/// idle limit (600 ms here); with nothing at all it closes `4504`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pongs_keep_a_terminal_leg_open_and_silence_closes_it() {
+    let api = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    mount_runner_api(&api, sandbox, boot).await;
+    let r = rig(&api, Duration::from_millis(600), HOUR).await;
+    let (mut term, _sup, _pty) = open_terminal(&r).await;
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_millis(2000) {
+        term.send(Message::Pong(Vec::new().into())).await.unwrap();
+        // A close in this window would be the idle rule ignoring the pongs.
+        if let Ok(Some(Ok(Message::Close(c)))) =
+            tokio::time::timeout(Duration::from_millis(150), term.next()).await
+        {
+            panic!("closed while pongs were flowing: {c:?}");
+        }
+    }
+    assert_eq!(close_code(&mut term).await, CLOSE_TIMEOUT);
 }

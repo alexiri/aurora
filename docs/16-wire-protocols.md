@@ -452,6 +452,15 @@ agent cannot add to the list.
 replica 64; idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
 lifetime 4 h; connect 10 s; response header timeout 60 s; request body 100 MiB; bytes per share per day
 (`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day).
+**Runner-side bounds** (FIX-092): the stream listener closes a connection that has not delivered its
+whole request head within 10 s (a total deadline, not a per-read one) and holds at most 256
+unauthenticated connections per runner replica (further ones are closed at once; a connection leaves the
+count when its grant is redeemed). The runner caps live legs per sandbox at the supervisor's own limits
+(64 streams, 2 PTYs; 429 beyond). A leg's idle clock resets on any byte **or ping/pong** from the peer, but
+only bytes stamp keep-awake, so an idle open tab does not hold a sandbox awake. The runner's outbound queue
+per supervisor connection is bounded: when the supervisor stops reading, the offending leg (for a sequenced
+frame, the connection — the replay buffer redelivers on reconnect) is closed instead of queued without
+limit. `pty.resize` from the browser is coalesced to the latest size.
 **Enforcement** (FIX-072, C-636/C-637): the relay reserves a per-share and a per-user slot (per replica;
 `relay.max_streams_per_user` may lower the per-user value) before it asks the API for a stream grant and
 releases it on every exit; over a cap a plain request answers 429 `preview_streams_limit` and a WebSocket
@@ -507,7 +516,10 @@ A W6 reconnect ends every PTY (leg 1 closes 4503, nothing is resumed); a
 supervisor that does not know the kinds ignores them (the runner's `pty.open`
 times out 5 s → 4502): harmless. Limits: `TERMINALS_PER_SANDBOX` 2,
 `TERMINALS_PER_AGENT` 4, `TERMINALS_PER_USER` 2 (per API replica), idle 600 s
-(pings count), lifetime 4 h per session. Terminal bytes are never logged or
+(pings count: the API pings the browser every 20 s and any frame from it, a pong included, resets the
+idle clock, which the API enforces with 4504), lifetime 4 h per session. A browser text message above
+256 bytes (a `pty.resize` is a few dozen) closes the leg 4502 without being forwarded, and a write toward
+the browser or the runner that stalls for 30 s ends the leg and frees its slot. Terminal bytes are never logged or
 stored; the supervisor's PTY posture (environment minus every `AURORA_*`
 variable and the boot document, agent uid, `/workspace`, `TIOCSWINSZ` resize)
 is `12 §Terminal`, the wake/keep-awake semantics `11 §Web terminal`.
