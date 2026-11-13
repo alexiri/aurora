@@ -159,7 +159,7 @@ export function UpdateReviewDialog({
       <DialogContent
         title={`Update to ${skill.name}`}
         description="Review exactly what the agents will be told. Nothing changes until it is approved."
-        className="w-[min(56rem,calc(100vw-2rem))]"
+        size="2xl"
       >
         {info.isPending ? <Loading /> : null}
         {info.isError ? <ErrorState error={info.error} onRetry={() => info.refetch()} /> : null}
@@ -392,7 +392,7 @@ export function AddFromLibrary({
         Add from library…
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent title="Add from a library" description="Skills are pinned to the commit you see here." className="w-[min(48rem,calc(100vw-2rem))]">
+        <DialogContent title="Add from a library" description="Skills are pinned to the commit you see here." size="xl">
           <div className="space-y-4">
             {active.length > 1 ? (
               <label className="block text-sm font-medium text-ink">

@@ -184,7 +184,7 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
   const broad = rules.filter(appliesToAllAgents);
 
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader
         title={title}
         description="Rules that decide which requests agents may make, and which wait for approval."

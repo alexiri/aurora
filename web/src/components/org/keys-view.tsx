@@ -48,7 +48,7 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
   }
 
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader title="Organization API keys" description="Keys that act for the whole organization, for scripts and integrations." className="mb-6" />
       <Section id="okey-create" title="Create a key" description="The key is shown once, right after you create it." card>
         <form onSubmit={(e) => void submit(e)} noValidate className="flex flex-wrap items-start gap-x-4 gap-y-3">
@@ -70,7 +70,7 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
               onChange={(e) => setExpires(e.target.value)}
             />
           </Field>
-          <Button type="submit" disabled={create.isPending} className="sm:mt-[1.625rem]">
+          <Button type="submit" disabled={create.isPending} className="sm:mt-label-offset">
             Create key
           </Button>
           {create.error && Object.keys(fe).length === 0 ? (

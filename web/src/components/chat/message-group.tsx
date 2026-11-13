@@ -117,8 +117,8 @@ function Bubble({
         className={cn(
           "min-w-0 space-y-2 break-words px-3.5 py-2.5 text-sm",
           side === "person"
-            ? "max-w-[80%] rounded-card rounded-tr-[4px] bg-bubble text-bubble-ink"
-            : "max-w-[80%] rounded-card rounded-tl-[4px] bg-subtle text-ink",
+            ? "max-w-bubble rounded-card rounded-tr-tail bg-bubble text-bubble-ink"
+            : "max-w-bubble rounded-card rounded-tl-tail bg-subtle text-ink",
           "[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-surface [&_code]:px-1 [&_code]:text-ink dark:[&_code]:bg-canvas",
           "[&_pre]:border [&_pre]:border-line [&_pre]:bg-surface dark:[&_pre]:bg-canvas [&_pre_code]:border-0 [&_pre_code]:px-0",
         )}
@@ -331,7 +331,7 @@ export function StreamingBubble({ text, agent }: { text: string; agent?: AgentId
   return (
     <div className="flex items-start gap-2">
       <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={32} />
-      <div className="min-w-0 max-w-[80%] rounded-card rounded-tl-[4px] bg-subtle px-3.5 py-2.5 text-sm text-ink">
+      <div className="min-w-0 max-w-bubble rounded-card rounded-tl-tail bg-subtle px-3.5 py-2.5 text-sm text-ink">
         <Markdown source={text} />
       </div>
     </div>

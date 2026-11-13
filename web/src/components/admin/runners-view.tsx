@@ -102,7 +102,7 @@ function StartDiagnostics({ agentId, open, onOpenChange }: { agentId: string; op
   });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Start diagnostics" description={`Start failures of agent ${agentId} (newest first, kept 30 days).`} className="w-[min(42rem,calc(100vw-2rem))]">
+      <DialogContent title="Start diagnostics" description={`Start failures of agent ${agentId} (newest first, kept 30 days).`} size="lg">
         {q.isPending ? (
           <Loading />
         ) : q.isError ? (
@@ -132,8 +132,8 @@ function StartDiagnostics({ agentId, open, onOpenChange }: { agentId: string; op
                       {f.code}
                     </Badge>
                   </Td>
-                  <Td className="max-w-[10rem] truncate font-mono text-xs">{f.runner_id ?? ""}</Td>
-                  <Td className="max-w-[24rem] break-words">{f.message}</Td>
+                  <Td className="max-w-40 truncate font-mono text-xs">{f.runner_id ?? ""}</Td>
+                  <Td className="max-w-sm break-words">{f.message}</Td>
                   <Td>{f.phase ?? ""}</Td>
                   <Td className="whitespace-nowrap">{f.elapsed_secs !== null ? `${f.elapsed_secs} s` : ""}</Td>
                 </tr>
@@ -196,7 +196,7 @@ function StartFailures({ runnerId }: { runnerId: string }) {
                   {f.code}
                 </Badge>
               </Td>
-              <Td className="max-w-[28rem] break-words">{f.message}</Td>
+              <Td className="max-w-md break-words">{f.message}</Td>
               <Td>{f.phase ?? ""}</Td>
               <Td className="whitespace-nowrap">{f.elapsed_secs !== null ? `${f.elapsed_secs} s` : ""}</Td>
             </tr>

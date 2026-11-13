@@ -96,7 +96,7 @@ export function PluginsView() {
   const [open, setOpen] = useState(false);
   const q = usePlugins(status);
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader
         title="Plugins"
         description="Signed packages that add apps and connectors to this instance."

@@ -47,7 +47,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
   const items = q.data?.pages.flatMap((p) => p.items) ?? [];
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader
         title="Activity"
         description="Every request your agents made through the gateway, and what the policy decided."
@@ -99,7 +99,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
             onChange={(e) => setHostInput(e.target.value)}
           />
         </Field>
-        <Button type="submit" variant="outline" className="sm:mt-[1.625rem]">
+        <Button type="submit" variant="outline" className="sm:mt-label-offset">
           Filter
         </Button>
       </form>

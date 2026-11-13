@@ -145,7 +145,7 @@ export function OrgStorageView({ orgId }: { orgId: string }) {
   const s = storage.data;
   const notice = NOTICE[s.notice] ?? NOTICE.clear;
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader title="Storage" description="Attachment bytes used by this organization, by workspace and direction." className="mb-6" />
       <Section id="usage" title="Usage" actions={<Badge tone={notice.tone}>{notice.label}</Badge>} card>
         <div className="space-y-3">

@@ -194,7 +194,7 @@ function ShareRow({ agentId, s, frozen }: { agentId: string; s: PreviewShare; fr
   const err = del.error ?? start.error ?? upd.error;
   return (
     <tr>
-      <Td className="max-w-[16rem]">
+      <Td className="max-w-64">
         <span className="block break-all font-mono text-xs text-ink-2">{s.hostname}</span>
         <span className="mt-1 flex gap-2 text-xs text-muted">
           <button
@@ -213,7 +213,7 @@ function ShareRow({ agentId, s, frozen }: { agentId: string; s: PreviewShare; fr
       <Td>
         <StatusChip status={s.status} />
       </Td>
-      <Td className="max-w-[14rem]">
+      <Td className="max-w-56">
         {s.start_command ? (
           <button type="button" className="break-all text-left text-link underline" onClick={() => setLastStart(true)}>
             {s.start_command.length > 40 ? `${s.start_command.slice(0, 40)}…` : s.start_command}

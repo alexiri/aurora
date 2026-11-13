@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import { useOrg } from "./queries";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -87,7 +88,11 @@ export function useFreezeOrg(orgId: string) {
 export function useAdminOrgs(frozenOnly: boolean) {
   return useQuery({
     queryKey: ["admin", "orgs", frozenOnly] as const,
-    queryFn: () => unwrap(api.GET("/v1/admin/orgs", { params: { query: { frozen: frozenOnly || undefined } } })),
+    // Every page: an operator must be able to freeze an org past the first page (FIX-117).
+    queryFn: () =>
+      fetchAllPages((cursor) =>
+        unwrap(api.GET("/v1/admin/orgs", { params: { query: { frozen: frozenOnly || undefined, limit: PAGE_LIMIT, cursor } } })),
+      ),
   });
 }
 

@@ -25,7 +25,7 @@ export function ToolCallGroup({ calls, running }: { calls: ToolCall[]; running: 
     <details
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
-      className="group max-w-[min(88%,720px)] rounded-control border border-line bg-surface text-sm dark:bg-canvas"
+      className="group max-w-chat-card rounded-control border border-line bg-surface text-sm dark:bg-canvas"
     >
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 py-2 text-ink-2 md:min-h-9 [&::-webkit-details-marker]:hidden">
         <WrenchIcon aria-hidden="true" className="shrink-0" />

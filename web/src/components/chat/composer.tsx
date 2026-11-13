@@ -149,7 +149,7 @@ export function Composer({
       ) : null}
       <form
         onSubmit={(e) => void submit(e)}
-        className="rounded-[12px] border border-line-strong bg-surface p-2 focus-within:border-accent dark:bg-canvas md:p-2.5"
+        className="rounded-card border border-line-strong bg-surface p-2 focus-within:border-accent dark:bg-canvas md:p-2.5"
       >
         {pending.length > 0 ? (
           <ul aria-label="Pending attachments" className="mb-2 flex flex-wrap gap-2">

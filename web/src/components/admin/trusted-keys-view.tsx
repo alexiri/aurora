@@ -70,7 +70,7 @@ export function TrustedKeysView() {
   const revoke = useRevokeTrustedKey();
   const [target, setTarget] = useState<TrustedKey | null>(null);
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader title="Trusted keys" description="Publishers whose signed plugin packages this instance accepts." className="mb-6" />
       <Section id="tk-add" title="Add a trusted key" card>
         <AddKeyForm />

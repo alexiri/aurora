@@ -104,7 +104,7 @@ export function AvailabilityView({ orgId, canEdit }: { orgId: string; canEdit: b
   if (avail.isError) return <ErrorState error={avail.error} onRetry={() => avail.refetch()} />;
   if (apps.isError) return <ErrorState error={apps.error} onRetry={() => apps.refetch()} />;
   return (
-    <div className="max-w-[880px]">
+    <div className="max-w-page-narrow">
       <PageHeader title="Apps" description="Choose which installed apps can be connected in this organization." />
       <AvailabilityEditor orgId={orgId} initial={avail.data} apps={apps.data.items} canEdit={canEdit} />
     </div>

@@ -24,7 +24,7 @@ export function WorkspaceSkills() {
   if (!wsId || !workspace.data) return <ErrorState error={{ code: "not_found" }} />;
   const canOwn = workspace.data.my_role === "owner";
   return (
-    <div className="max-w-[1160px]">
+    <div className="max-w-page">
       <PageHeader title="Workspace skills" description="Skills every agent in this workspace receives." />
       <div className="mb-4">
         <Notice role="status">

@@ -44,7 +44,7 @@ export function AdminAuditView() {
           {all ? (
             <select
               aria-label="Organization"
-              className={`${inputClass} max-w-[14rem]`}
+              className={`${inputClass} max-w-56`}
               value={f.org}
               onChange={(e) => setF({ ...f, org: e.target.value })}
             >

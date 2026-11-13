@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -34,8 +35,15 @@ export function usePendingActionApprovals(ws: string) {
   const visible = usePageVisible();
   return useQuery({
     queryKey: actionApprovalKeys.pending(ws),
+    // Every page: later action approvals must be decidable from the dashboard (FIX-117).
     queryFn: () =>
-      unwrap(api.GET("/v1/workspaces/{ws}/action-approvals", { params: { path: { ws }, query: { status: "pending", limit: 100 } } })),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/workspaces/{ws}/action-approvals", {
+            params: { path: { ws }, query: { status: "pending", limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
+      ),
     enabled: !!ws,
     refetchInterval: visible ? ACTION_POLL_MS : false,
     retry: false,

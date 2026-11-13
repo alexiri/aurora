@@ -171,7 +171,7 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
         narrow ? "inset-x-4 bottom-4" : "w-80",
       )}
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">
+      <p className="text-xs font-semibold uppercase tracking-label text-muted">
         Stop {index + 1} of {stops.length}
       </p>
       <h2 id="tour-title" className="mt-1 font-display text-base font-semibold">

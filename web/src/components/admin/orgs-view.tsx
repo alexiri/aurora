@@ -5,6 +5,8 @@ import { useState } from "react";
 import { AdminOrgFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { Card } from "@/components/ui/card";
+import { CheckboxField } from "@/components/ui/form";
+import { MoreNotShown } from "@/components/ui/more-not-shown";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAdminOrgs } from "@/lib/api/freeze";
 
@@ -20,10 +22,8 @@ export function AdminOrgsView() {
         title="Organizations"
         description="Freeze an organization as the operator, for an incident such as a compromised account. Freezing gives you no access to the organization's data."
       />
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={frozenOnly} onChange={(e) => setFrozenOnly(e.target.checked)} />
-        Frozen organizations only
-      </label>
+      <CheckboxField id="orgs-frozen-only" label="Frozen organizations only" checked={frozenOnly} onChange={setFrozenOnly} />
+      {q.data.truncated ? <MoreNotShown what="organizations" narrow="Show frozen organizations only to narrow the list." /> : null}
       {q.data.items.length === 0 ? (
         <p className="text-sm text-ink-2">{frozenOnly ? "No organization is frozen." : "No organizations."}</p>
       ) : (

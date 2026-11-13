@@ -63,20 +63,20 @@ describe("agent page header", () => {
     renderPage();
     // Default tab is Instructions: the full header, with the Freeze button in the page.
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1 }).className).toContain("text-[30px]");
+    expect(screen.getByRole("heading", { level: 1 }).className).toContain("text-3xl");
     expect(await screen.findByRole("button", { name: "Freeze agent" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Agent actions" })).toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
     expect(await screen.findByTestId("chat-tab")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1 }).className).not.toContain("text-[30px]");
+    expect(screen.getByRole("heading", { level: 1 }).className).not.toContain("text-3xl");
     expect(screen.getByRole("heading", { level: 1 }).className).toContain("text-xl");
     expect(screen.getByRole("button", { name: "Agent actions" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Freeze agent" })).toBeNull();
 
     // Back to another tab: the header is the full one again.
     fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
-    expect(screen.getByRole("heading", { level: 1 }).className).toContain("text-[30px]");
+    expect(screen.getByRole("heading", { level: 1 }).className).toContain("text-3xl");
     expect(await screen.findByRole("button", { name: "Freeze agent" })).toBeInTheDocument();
   });
 

@@ -333,7 +333,7 @@ export function OrgSettingsView({ org }: { org: Org }) {
   const router = useRouter();
   const isOwner = org.my_role === "owner";
   return (
-    <div className="max-w-[880px] space-y-8">
+    <div className="max-w-page-narrow space-y-8">
       <PageHeader title="Organization settings" description="Name, limits, conversation retention and deletion." className="mb-6" />
       <Section id="org-general" title="General" card>
         <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={isOwner} />

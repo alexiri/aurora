@@ -387,7 +387,7 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
     ? oidcStartUrl(providers[0]!.id, { reauth: true, returnTo: `/o/${org.slug}/settings/directory` })
     : null;
   return (
-    <div className="max-w-[880px] space-y-8">
+    <div className="max-w-page-narrow space-y-8">
       <PageHeader
         title="Directory sync"
         description="Provision members from your identity provider over SCIM 2.0."

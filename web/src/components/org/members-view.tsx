@@ -332,7 +332,7 @@ function Invitations({ orgId }: { orgId: string }) {
 export function MembersView({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const instance = useInstance();
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader
         title="Members"
         description="People in this organization and the invitations still waiting."

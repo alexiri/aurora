@@ -123,7 +123,7 @@ function AddGroup({ wsId, orgId, bound }: { wsId: string; orgId: string; bound: 
             <option value="owner">owner</option>
           </select>
         </Field>
-        <Button type="submit" disabled={!group || put.isPending} className="sm:mt-[1.625rem]">
+        <Button type="submit" disabled={!group || put.isPending} className="sm:mt-label-offset">
           Add
         </Button>
         {put.error ? (

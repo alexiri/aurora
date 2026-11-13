@@ -326,7 +326,7 @@ export function AccessDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={`Access to ${title}`} description="The agents that can use this credential." className="w-[min(34rem,calc(100vw-2rem))]">
+      <DialogContent title={`Access to ${title}`} description="The agents that can use this credential." size="md">
         {open ? <AccessDialogBody subject={subject} onClose={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>

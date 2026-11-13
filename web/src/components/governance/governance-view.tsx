@@ -115,7 +115,7 @@ function Body({
     put.mutate({ document: formToDocument(form), revision }, { onSuccess: () => setSaved(true) });
 
   return (
-    <div className="max-w-[880px] space-y-4">
+    <div className="max-w-page-narrow space-y-4">
       <PageHeader
         title="Governance"
         description={

@@ -138,7 +138,7 @@ function OverviewBody({
                 </Link>
               </li>
             ))}
-            <li className="flex min-h-[5.5rem] items-center justify-center rounded-card border border-dashed border-line-strong bg-surface p-4">
+            <li className="flex min-h-22 items-center justify-center rounded-card border border-dashed border-line-strong bg-surface p-4">
               <CreateAgentDialog wsId={wsId} />
             </li>
           </ul>

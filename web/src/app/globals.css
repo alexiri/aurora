@@ -125,6 +125,34 @@
   --font-mono: var(--font-jbmono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius-control: 8px;
   --radius-card: 14px;
+  /* The flat corner of a chat bubble next to its speaker (docs/14 §Visual design, chat). */
+  --radius-tail: 4px;
+  /* Page widths (docs/14 §Visual design, page patterns): `max-w-page` for list/detail pages, `max-w-page-narrow`
+     for single-column pages such as Approvals. The agent page uses neither (the full content width). */
+  --container-page: 72.5rem;
+  --container-page-narrow: 55rem;
+  /* Chat thread widths: a bubble, a card in the thread, a centred notice. */
+  --container-bubble: 80%;
+  --container-chat-card: min(88%, 45rem);
+  --container-chat-notice: min(100%, 38.75rem);
+  /* Small caps labels (table heads, field group labels, badges): 11/600 with 0.06em tracking. */
+  --text-label: 0.6875rem;
+  --text-micro: 0.625rem;
+  --tracking-label: 0.06em;
+  --tracking-brand: 0.22em;
+  /* Offset that aligns a button with the input of the field beside it (label height + gap). */
+  --spacing-label-offset: 1.625rem;
+}
+
+/* Two-column layouts: a fixed aside next to a fluid main column from `md` up (one column below). */
+@utility layout-aside-sm {
+  grid-template-columns: 12rem 1fr;
+}
+@utility layout-aside-md {
+  grid-template-columns: 16rem 1fr;
+}
+@utility layout-aside-lg {
+  grid-template-columns: 18rem 1fr;
 }
 
 html {

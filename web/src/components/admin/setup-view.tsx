@@ -268,7 +268,7 @@ export function SetupView() {
   const step = (id: string) => setup.data?.steps.find((s) => s.id === id);
 
   return (
-    <div className="max-w-[1160px] space-y-6">
+    <div className="max-w-page space-y-6">
       <PageHeader
         title="Set up Aurora"
         description="Six steps from a fresh install to your first answer. Each shows what is ready now."

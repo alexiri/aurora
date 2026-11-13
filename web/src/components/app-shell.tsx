@@ -104,7 +104,7 @@ function SidebarSelect({
   const id = useId();
   return (
     <div data-testid={testId} className="space-y-1.5">
-      <p id={`${id}-caption`} className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+      <p id={`${id}-caption`} className="px-1 text-label font-semibold uppercase tracking-label text-muted">
         {caption}
       </p>
       <Menu>
@@ -325,7 +325,7 @@ function PendingPill({ wsId }: { wsId: string }) {
   const n = pending.data?.items.length ?? 0;
   if (n === 0) return null;
   return (
-    <span className="rounded-full bg-pending-soft px-1.5 text-[11px] font-semibold leading-5 tabular-nums text-pending-ink">
+    <span className="rounded-full bg-pending-soft px-1.5 text-label font-semibold leading-5 tabular-nums text-pending-ink">
       {n}
     </span>
   );
@@ -431,7 +431,7 @@ function SidebarContent({
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
-        <AuroraLogo className="h-[38px] w-auto" />
+        <AuroraLogo className="h-9.5 w-auto" />
       </Link>
       {/* FIX-027: two stacked selects on every page — organization, then (only with an active
           organization) its workspaces. "All organizations" in the first one is the single path
@@ -525,7 +525,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DialogPrimitive.Portal>
           </DialogPrimitive.Root>
         </div>
-        <main className="mx-auto w-full max-w-[1160px] space-y-4 px-4 py-6 md:px-8 md:py-8">
+        <main className="mx-auto w-full max-w-page space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
           {children}

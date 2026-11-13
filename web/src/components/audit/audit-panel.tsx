@@ -56,7 +56,7 @@ export function AuditPanel({
   const [input, setInput] = useState(filters.action);
   const items = feed.data?.pages.flatMap((p) => p.items) ?? [];
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader title={title} description={description} className="mb-2" />
       <form
         role="search"

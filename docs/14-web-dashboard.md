@@ -195,8 +195,25 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   content, inside the shell.
 - **Page header** on every shell page: breadcrumb (org/workspace/section
   links), title, one-line description where the page has one, primary actions
-  right-aligned (wrapping on narrow screens). Content max width is 1160 px, or
-  880 px for single-column pages such as Approvals.
+  right-aligned (wrapping on narrow screens). **Page widths are theme tokens**,
+  never arbitrary values: `max-w-page` (1160 px) for list and detail pages,
+  `max-w-page-narrow` (880 px) for single-column pages such as Approvals; the
+  agent page uses neither (FIX-129: the full content width). Other one-off sizes
+  that recur are tokens too: `tracking-label`/`text-label` (caps labels),
+  `max-w-bubble`/`max-w-chat-card`/`max-w-chat-notice` and `rounded-*-tail`
+  (chat), `layout-aside-sm|md|lg` (a fixed aside next to a fluid column from
+  `md`), `sm:mt-label-offset` (aligns a button with the input of the field
+  beside it). `web/tests/arbitrary-values.test.ts` fails on any other
+  arbitrary Tailwind value (`[12px]`, `[80%]`, `[min(…)]`) except the few on its
+  commented allow-list.
+- **Lists follow their cursors** (`docs/05` list convention, FIX-117): the API pages
+  at 50 by default and 200 at most, so a dashboard list that must be complete
+  (pickers, approvals, keys, members, organizations, connections, conversations)
+  reads every page through the shared `fetchAllPages` (`lib/api/paging.ts`, ceiling
+  10 pages) and shows `MoreNotShown` if the ceiling was hit; lists that can be
+  longer use an infinite query with "Load more". A picker with more than eight
+  options gets a text filter (`PickerFilter`: "add by name or e-mail"). A
+  conversation deep link outside the loaded pages is fetched by id.
 
 **Components** (`web/src/components/ui/`):
 - **Button**: `primary` (ink), `outline`, `approve` (accent), `ghost`,
@@ -430,7 +447,7 @@ here, add it here and document it.
 | Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
-| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. |
+| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
 | Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The strip scrolls within itself at 390 px. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
