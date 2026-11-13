@@ -16,12 +16,17 @@ fn real_limits(c: &mut ApiConfig) {
     c.ratelimit.api.multiplier = 1.0;
 }
 
-fn class(c: &mut ApiConfig, name: &str, per_minute: u32, burst: u32) {
+/// A class with `burst` tokens and **no meaningful refill** (1 per hour): the tests that use it
+/// assert a refusal right after the burst, and a per-minute refill (60/min = one token per second)
+/// let a token come back whenever the burst took over a second on a loaded host — the
+/// `general_bucket_applies_to_every_authenticated_request` flake (2026-11-13, load ~20), the same
+/// window `real_bursts_no_refill` below closed for the defaults table. Time is not injectable.
+fn class(c: &mut ApiConfig, name: &str, burst: u32) {
     c.ratelimit.api.multiplier = 1.0;
     c.ratelimit.api.classes.insert(
         name.into(),
         RateClassOverride {
-            per_minute: Some(per_minute),
+            per_hour: Some(1),
             burst: Some(burst),
             ..Default::default()
         },
@@ -182,7 +187,7 @@ async fn each_class_has_its_own_limit() {
 
 #[tokio::test]
 async fn general_bucket_applies_to_every_authenticated_request() {
-    let w = world(|c| class(c, "general", 60, 3)).await;
+    let w = world(|c| class(c, "general", 3)).await;
     for _ in 0..3 {
         assert_eq!(
             as_session(&w.h, &w.sess, Method::GET, "/v1/me").await,
@@ -200,7 +205,7 @@ async fn general_bucket_applies_to_every_authenticated_request() {
 
 #[tokio::test]
 async fn principals_are_isolated_and_a_users_sessions_share_one_budget() {
-    let w = world(|c| class(c, "general", 60, 2)).await;
+    let w = world(|c| class(c, "general", 2)).await;
     for _ in 0..2 {
         as_session(&w.h, &w.sess, Method::GET, "/v1/me").await;
     }
@@ -291,7 +296,7 @@ async fn a_non_member_cannot_drain_another_orgs_bucket() {
 
 #[tokio::test]
 async fn refused_requests_never_reach_the_handler() {
-    let w = world(|c| class(c, "message", 30, 1)).await;
+    let w = world(|c| class(c, "message", 1)).await;
     let uri = msg_uri();
     assert_ne!(
         as_key(&w.h, &w.key, Method::POST, &uri).await,
@@ -313,8 +318,8 @@ async fn refused_requests_never_reach_the_handler() {
 #[tokio::test]
 async fn exempt_routes_are_never_limited() {
     let w = world(|c| {
-        class(c, "general", 60, 1);
-        class(c, "write", 60, 1);
+        class(c, "general", 1);
+        class(c, "write", 1);
     })
     .await;
     for _ in 0..8 {
