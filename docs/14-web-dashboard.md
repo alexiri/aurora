@@ -769,7 +769,7 @@ hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze actio
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host
-claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
+claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
 (provision, token, replicas, capacity; FIX-025, D-158, C-586: each runner has a

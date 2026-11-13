@@ -398,6 +398,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/trusted-keys", G::Inst, false),
     r("POST", "/v1/admin/trusted-keys", G::Inst, false),
     r("DELETE", "/v1/admin/trusted-keys/{id}", G::Inst, false),
+    r("GET", "/v1/admin/audit", G::Inst, false),
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
     r("GET", "/v1/admin/storage", G::Inst, false),

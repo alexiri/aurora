@@ -56,6 +56,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Instance audit log (instance administrators): instance-level rows, or every row. */
+        get: operations["listInstanceAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/connector-types": {
         parameters: {
             query?: never;
@@ -6209,6 +6226,11 @@ export interface components {
             /** Format: int32 */
             max_age_days?: number | null;
         };
+        /** @description An audit row with the organization it concerns (instance view). */
+        InstanceAuditEntry: components["schemas"]["AuditEntry"] & {
+            /** @description Slug of `org_id` (`null` for instance-level rows). */
+            org_slug?: string | null;
+        };
         /** @description (phase 2, RFE-025) The instance level of BYO governance (`[byo]`). */
         InstanceByo: {
             default_source_cidrs: string[];
@@ -7368,6 +7390,13 @@ export interface components {
                 synced_at?: string | null;
                 user: components["schemas"]["UserRef"];
             }[];
+            next_cursor?: string | null;
+        };
+        Page_InstanceAuditEntry: {
+            items: (components["schemas"]["AuditEntry"] & {
+                /** @description Slug of `org_id` (`null` for instance-level rows). */
+                org_slug?: string | null;
+            })[];
             next_cursor?: string | null;
         };
         Page_Invitation: {
@@ -10099,6 +10128,56 @@ export interface operations {
             };
             /** @description app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listInstanceAudit: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                /** @description `instance` (default): rows without an organization; `all`: every row, orgs included. */
+                scope?: string;
+                /** @description Only this organization's rows (implies `scope=all`). */
+                org?: string;
+                /** @description Action prefix, e.g. `plugin.` or `trusted_key.create`. */
+                action?: string;
+                actor_id?: string;
+                critical?: boolean;
+                /** @description Inclusive lower bound on `created_at` (RFC 3339). */
+                since?: string;
+                /** @description Exclusive upper bound on `created_at` (RFC 3339). */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_InstanceAuditEntry"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

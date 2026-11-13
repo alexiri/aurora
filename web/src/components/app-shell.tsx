@@ -393,6 +393,7 @@ const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/instances", label: "Instances", icon: ServerIcon },
   { href: "/admin/oauth-clients", label: "OAuth clients", icon: KeyIcon },
   { href: "/admin/trusted-keys", label: "Trusted keys", icon: ShieldIcon },
+  { href: "/admin/audit", label: "Audit", icon: ShieldIcon },
 ];
 
 function AdminNavList({ pathname }: { pathname: string }) {

@@ -287,6 +287,137 @@
         ]
       }
     },
+    "/v1/admin/audit": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Instance audit log (instance administrators): instance-level rows, or every row.",
+        "operationId": "listInstanceAudit",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`instance` (default): rows without an organization; `all`: every row, orgs included.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "Only this organization's rows (implies `scope=all`).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Action prefix, e.g. `plugin.` or `trusted_key.create`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "critical",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive lower bound on `created_at` (RFC 3339).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Exclusive upper bound on `created_at` (RFC 3339).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_InstanceAuditEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/connector-types": {
       "get": {
         "tags": [
@@ -28453,6 +28584,26 @@
           }
         }
       },
+      "InstanceAuditEntry": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AuditEntry"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "org_slug": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Slug of `org_id` (`null` for instance-level rows)."
+              }
+            }
+          }
+        ],
+        "description": "An audit row with the organization it concerns (instance view)."
+      },
       "InstanceByo": {
         "type": "object",
         "description": "(phase 2, RFE-025) The instance level of BYO governance (`[byo]`).",
@@ -32298,6 +32449,43 @@
                   "$ref": "#/components/schemas/UserRef"
                 }
               }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_InstanceAuditEntry": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/AuditEntry"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "org_slug": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Slug of `org_id` (`null` for instance-level rows)."
+                    }
+                  }
+                }
+              ],
+              "description": "An audit row with the organization it concerns (instance view)."
             }
           },
           "next_cursor": {
