@@ -261,3 +261,5 @@ REVIEW-5 (2026-11-13): an independent review of the whole codebase found defects
 | P4/R5§dashboard-pagination | Dashboard lists follow their cursors; one-off styling replaced by tokens and primitives (`FIX-117`) | P4 | — | FIX-117 | FIX-099, FIX-100 | planned | — |
 | P4/R5§packages-cli | Approval cards show every recipient and the content; classifier and claim gaps; CLI forwarder and login protect credentials (`FIX-118`) | P4 | FIX-118 | — | FIX-107; reopens SEC-49, SEC-60 | planned | — |
 | P4/R5§docs-truthful | Phase tags on unbuilt features, quota notice, OpenAPI 401/429 and enums, operator procedures that work (`FIX-119`) | P4 | FIX-119 | FIX-119 (banner) | FIX-081, FIX-090 | planned | — |
+| P4/R5§connector-host-tokens | One connector-host token per host, bound to the connector types it announced; no host can receive another type's credentials (`FIX-120`, D-178 / Q-R5-8) | P4 | FIX-120 | FIX-120 | plugins chain | planned | — |
+| P4/R5§runners-admin | Admin › Runners shows capacity and rotates runner tokens with a grace period; provisioning stays in Helm/CLI (`FIX-121`, D-178 / Q-R5-10) | P4 | FIX-121 | FIX-121 | FIX-093 | planned | — |
