@@ -737,7 +737,13 @@ maintains the list twice.
   org they are an **active member** of are set to exactly the groups whose value the
   validated claim contains: added if present, removed if absent (an absent claim removes
   them all). Only rows with `group_members.source = idp` of that provider are touched;
-  values that link no group are ignored and stored nowhere. A group never creates or
+  values that link no group are ignored and stored nowhere. **When a person's
+  membership of an org leaves `active`** (suspended or removed, in the dashboard or by
+  SCIM), their IdP-linked rows in that org are deleted in the same transaction, and the
+  next sign-in after reactivation adds back whatever the claim then says: access the IdP
+  took away during a suspension never returns with the reactivation (SEC-71; REVIEW-5,
+  FIX-083). A provider whose `group_claim` is removed from the configuration syncs as an
+  absent claim. A group never creates or
   reactivates an org membership (above): a user who is not a member of the org gains
   nothing from the claim, and admission stays with invitations, JIT, D-143 role claims,
   placement and SCIM.
