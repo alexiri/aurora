@@ -273,6 +273,7 @@
       "expires_at",
       "hostname",
       "id",
+      "requested_addr",
       "status",
       "user_code",
       "workspace_id"
@@ -495,6 +496,11 @@
       "app_id",
       "org_id",
       "workspace_id"
+    ],
+    "org_member_removals": [
+      "org_id",
+      "removed_at",
+      "user_id"
     ],
     "org_members": [
       "base_role",

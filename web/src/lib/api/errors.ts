@@ -28,6 +28,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   email_mismatch: "This invitation was sent to a different email address.",
   email_unverified:
     "Your sign-in provider has not verified this email address, so Aurora cannot trust it. Verify it with the provider and sign in again.",
+  email_linked_elsewhere:
+    "An account with this email address already exists through another sign-in provider, and this provider is not allowed to take it over. Sign in with the provider you used before.",
   invalid_token: "This link is invalid, has already been used, or has expired.",
   reauth_required: "Please confirm it is you by signing in again with your provider.",
   reauth_user_mismatch: "You signed in as a different user. Sign in again as the account you are using.",

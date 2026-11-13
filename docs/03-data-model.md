@@ -106,6 +106,14 @@ External identities linked to a user (OIDC).
 Invariant: every org has ≥1 active `owner` (enforced by the service; the last
 owner cannot be demoted or removed).
 
+### `org_member_removals`
+(FIX-108, D-183) The removal marker: an admin removed this user from this org, so OIDC JIT provisioning does not restore the membership. Written by the admin removal, deleted by the next `org_members` insert for the pair (invitation acceptance, admin add, claim, SCIM).
+| Column | Type | Notes |
+|---|---|---|
+| org_id | uuid FK→organizations (cascade) | pk part |
+| user_id | uuid FK→users (cascade) | pk part |
+| removed_at | timestamptz not null default now() | |
+
 ### `invitations`
 | Column | Type | Notes |
 |---|---|---|
@@ -272,6 +280,7 @@ Device-style CLI login.
 | workspace_id | uuid null FK→workspaces (cascade) | chosen at approval |
 | api_key_id | uuid null FK→api_keys (cascade) | minted on consume (nothing reversible is stored), token returned once; spec fix S-04 |
 | hostname | text null | sanitized client hostname from `POST /v1/auth/cli` (key name `CLI on <hostname>`); spec fix S-04 |
+| requested_addr | text null | (FIX-108) coarse address of the `POST /v1/auth/cli` request (IPv4 /24, IPv6 /48), shown on the approval screen; start time = `created_at` |
 | expires_at | timestamptz | 10 min |
 
 ### `audit_log` — *no FKs*

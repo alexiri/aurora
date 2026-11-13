@@ -204,7 +204,14 @@ ID token lacks `email_verified = true`, for IdPs that never send the claim.
 Exact, case-insensitive domain match, no subdomains; any other address still
 needs the claim. Only list domains whose mailboxes the provider's own accounts
 own: a federated IdP that also admits external accounts must not let them
-assert an address in the domain), `jit`
+assert an address in the domain), (FIX-108, D-178 Q-R5-12) `link_existing_users`
+(optional boolean: may a first sign-in through this provider link to an existing
+account that was created through **another** provider with the same e-mail? Unset =
+yes, except for a provider that lists `trusted_email_domains`, which is then
+refused `email_linked_elsewhere`: its addresses are asserted by the operator, not
+proven by an `email_verified` claim, so linking would take that account over;
+accounts without any identity — `bootstrap-admin`, SCIM-provisioned — still bind by
+the e-mail), `jit`
 (optional: `{ org_slug, role: member|admin, workspace_slugs: [] }`; phase 2, RFE-012: optional `workspace_role: member|approver`, default `member`).
 (phase 1, RFE-004) At least one provider MUST be configured, or startup fails
 (`no_oidc_provider`) unless the development IdP is enabled
@@ -228,8 +235,14 @@ Flow:
    applies). A user created here has `email_verified_at = now()` (the provider
    verified it) and no local password. A disabled user (`users.disabled_at`)
    is refused (`user_disabled`).
-4. JIT: if the provider has a `jit` block and the user is not a member of that
-   org, add membership with the configured role and workspace bindings.
+4. JIT: if the provider has a `jit` block, add membership with the configured
+   role and workspace bindings. (FIX-108) JIT membership and bindings are applied
+   on the sign-in that creates the user, and later only for an org the user has
+   never been a member of: **a membership removed by an admin is not restored by
+   JIT.** The mechanism is a removal marker per `(org, user)` (`org_member_removals`),
+   written by the admin removal, consulted by JIT, and cleared when anything creates
+   the membership again (an accepted invitation, an admin add, a claim, SCIM).
+   Removals made before the marker existed leave none.
 5. Create a session; 302 to `return_to`.
 
 (phase 4, P4-GRP-2, D-132, SEC-73) **SCIM and sign-in.** SCIM provisions *directory
@@ -245,8 +258,11 @@ re-enter through JIT while their IdP session lingers (*SCIM*).
 
 **Re-authentication** (phase 1, RFE-004). `GET /v1/auth/oidc/{provider}/start?
 return_to=…&reauth=1` sends `prompt=login` and `max_age=0`; on the callback the
-core requires the same user and (when the IdP returns `auth_time`) a value within
-60 s, then stamps `sessions.reauth_at = now()`. Operations that formerly
+core requires the same user, and a re-authentication is accepted only when the ID
+token carries `auth_time` within 60 s (allowing clock skew, so a value up to 60 s in
+the future passes and further ahead is refused); a missing claim is refused
+`reauth_stale` (OIDC Core requires the claim once `max_age` is sent, so an IdP that
+ignores `prompt=login` cannot let a stolen session stamp it). Then it stamps `sessions.reauth_at = now()`. Operations that formerly
 required the password (account deletion) require `reauth_at` within 10 minutes
 (412 `reauth_required` otherwise; the dashboard starts the flow).
 
@@ -345,7 +361,8 @@ mapped to. That is the claim debugger an operator needs when "it doesn't work".
 
 **Audit** (security-critical): `instance_admin.grant|revoke`, `org_member.add|update|remove`
 and `workspace_access.set|remove` rows written by the sync carry `actor_kind = service`,
-`actor_label = idp:<provider>` and `metadata.claim_value`.
+`actor_label = idp:<provider>` and `metadata.claim_value`. (FIX-108) The admission of a
+new user by a role claim (`user.admit_by_claim`, D-143) is security-critical too.
 
 ### Development and end-to-end sign-in (phase 1, RFE-004)
 
@@ -416,9 +433,16 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
 1. `POST /v1/auth/cli` → `{ device_code, user_code, verification_url, interval, expires_in }`.
 2. The person opens `<external>/auth/cli?code=ABCD-EFGH`, signs in (phase 1:
    through OIDC, returning to this page), chooses a workspace, approves.
+   (FIX-108) The approval screen first shows what the code asks for, read with
+   `GET /v1/auth/cli/pending?code=` (session only): the requesting **hostname**
+   (as reported by the program: unverified), the **start time** and a **coarse
+   address** (IPv4 /24, IPv6 /48, from the request to `POST /v1/auth/cli`), and it
+   states that approval creates a key that acts as the approver and when it expires.
 3. CLI polls `POST /v1/auth/cli/token { device_code }` → `authorization_pending`
    | `{ api_key, workspace }` once (status → `consumed`). The key is a `user`
-   workspace key named `CLI on <hostname>`.
+   workspace key named `CLI on <hostname>`. (D-178, Q-R5-16) It **expires** after
+   `auth.cli_key_ttl_days` (default 90; `0` = never). Keys minted before the setting
+   have no expiry and keep working until revoked (no migration).
 
 ### Rate limits (auth)
 

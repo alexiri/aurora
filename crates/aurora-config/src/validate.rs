@@ -1743,6 +1743,12 @@ fn check_auth(
         "auth.session_absolute_secs",
         Some(a.session_absolute_secs),
     );
+    if a.cli_key_ttl_days > 3650 {
+        c.err(
+            "auth.cli_key_ttl_days",
+            "must be at most 3650 (0 = never expires)",
+        );
+    }
     if a.session_idle_secs > a.session_absolute_secs {
         c.err(
             "auth.session_idle_secs",

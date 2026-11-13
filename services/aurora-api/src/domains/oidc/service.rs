@@ -45,7 +45,8 @@ struct FlowState {
     ra: Option<(Uuid, Uuid)>,
 }
 
-/// A re-authentication callback must carry an `auth_time` at most this old (docs/04 §OIDC).
+/// A re-authentication callback must carry an `auth_time` at most this old, and at most this far
+/// in the future (clock skew) (docs/04 §OIDC).
 const REAUTH_AUTH_TIME_MAX_AGE_SECS: i64 = 60;
 
 fn aad(provider: &str) -> Vec<u8> {
@@ -498,8 +499,8 @@ pub async fn callback(
     }
 }
 
-/// Re-authentication callback (docs/04 §OIDC): the same user, a fresh `auth_time` when the IdP
-/// returns one, then `sessions.reauth_at = now()`.
+/// Re-authentication callback (docs/04 §OIDC): the same user, a fresh `auth_time` (required),
+/// then `sessions.reauth_at = now()`.
 async fn reauthenticate(
     state: &AppState,
     client: &Client,
@@ -517,9 +518,13 @@ async fn reauthenticate(
     if user.disabled_at.is_some() {
         return Err(Fail("user_disabled"));
     }
-    if let Some(t) = v.auth_time
-        && Utc::now().timestamp() - t > REAUTH_AUTH_TIME_MAX_AGE_SECS
-    {
+    // (FIX-108, OIDC Core §3.1.2.1) `max_age` was sent, so the claim is required: a missing one
+    // is as stale as an old one, and a value in the future beyond the skew is not believed.
+    let age = v
+        .auth_time
+        .map(|t| Utc::now().timestamp() - t)
+        .ok_or(Fail("reauth_stale"))?;
+    if !(-REAUTH_AUTH_TIME_MAX_AGE_SECS..=REAUTH_AUTH_TIME_MAX_AGE_SECS).contains(&age) {
         return Err(Fail("reauth_stale"));
     }
     if !sessions::stamp_reauth(&state.pool, session, user_id).await? {
@@ -584,6 +589,19 @@ async fn sign_in(
                 match existing {
                     // Link only on a provider-verified email.
                     Some(u) if v.email_verified => {
+                        // (FIX-108, D-178 Q-R5-12) A provider that does not link existing
+                        // users never takes over an account created through another provider
+                        // (by default that is every provider relying on
+                        // `trusted_email_domains`). Accounts without an identity (bootstrap
+                        // admin, SCIM-provisioned) still bind by their e-mail.
+                        if !p.links_existing_users()
+                            && identities::by_user(&mut *tx, u.id)
+                                .await?
+                                .iter()
+                                .any(|(provider, _)| provider != &p.id)
+                        {
+                            return Err(Fail("email_linked_elsewhere"));
+                        }
                         if u.email_verified_at.is_some() {
                             break u;
                         }
@@ -842,6 +860,13 @@ async fn apply_jit(
         } else {
             Err(Fail("scim_refused"))
         };
+    }
+    // (FIX-108, docs/04 §JIT) JIT applies on the sign-in that creates the user and later only
+    // for an org the user has never been a member of: a membership an admin removed is not
+    // restored. An invitation or an admin add clears the marker. (After the SCIM gate, whose
+    // refusal of a deprovisioned person is audited and fails the sign-in.)
+    if members::was_removed(&mut *tx, org_id, user.id).await? {
+        return Ok(());
     }
     let role = if j.role == "admin" { "admin" } else { "member" };
     members::insert(&mut *tx, org_id, user.id, role).await?;
