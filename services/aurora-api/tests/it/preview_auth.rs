@@ -1813,13 +1813,11 @@ async fn preview_shares_gauge_has_no_tenant_label() {
         .fetch_one(p.r.h.pool())
         .await
         .unwrap();
-    // This test binary's only metrics recorder.
-    let handle = aurora_core::service::install_metrics("test")
-        .expect("no other test installs a recorder in this process");
+    let _ = metrics_text(); // the recorder must exist before the gauge is set
     aurora_api::jobs::preview_housekeeping(p.r.h.pool())
         .await
         .unwrap();
-    let text = handle.render();
+    let text = metrics_text();
     let lines: Vec<&str> = text
         .lines()
         .filter(|l| l.starts_with("aurora_preview_shares"))
