@@ -221,19 +221,17 @@ impl Guard {
         if let Ok(ip) = h.parse::<IpAddr>() {
             return self.check_ip(ip, host, port);
         }
-        let addrs = tokio::net::lookup_host((h.as_str(), port))
-            .await
-            .map_err(|e| DialError::Resolution(e.to_string()))?;
-        let mut any = false;
+        // A name this host cannot resolve (split-horizon DNS: only the egress proxy's resolver
+        // knows it) is left to the egress proxy: nothing was resolved here, so there is nothing to
+        // judge, and a resolver that answers differently to the two lookups is the accepted
+        // rebinding window anyway.
+        let Ok(addrs) = tokio::net::lookup_host((h.as_str(), port)).await else {
+            return Ok(());
+        };
         for a in addrs {
-            any = true;
             self.check_ip(a.ip(), host, port)?;
         }
-        if any {
-            Ok(())
-        } else {
-            Err(DialError::Resolution("no addresses".into()))
-        }
+        Ok(())
     }
 
     /// Resolves through the guard; only checked addresses are returned, so the
@@ -435,6 +433,8 @@ mod tests {
             Err(DialError::Refused(_))
         ));
         assert!(strict.judge_name("93.184.216.34", 443).await.is_ok());
+        // Unresolvable here (split-horizon): left to the egress proxy.
+        assert!(strict.judge_name("nope.invalid", 443).await.is_ok());
         // An allow-listed name passes.
         assert!(allow_localhost.judge_name("localhost", 443).await.is_ok());
     }

@@ -477,8 +477,9 @@ minted.
    `allowed_private` covers the pod network. When `gateway.egress_proxy` is set,
    the **local name check** is: resolve the name here with the system resolver
    (decimal and hex IP spellings included) and refuse (403) if **any** resolved
-   address is refused, before the egress proxy is contacted; resolution that fails
-   locally answers 502 `resolution_failed`. The egress proxy then resolves the
+   address is refused, before the egress proxy is contacted; a name this host cannot
+   resolve at all (split-horizon DNS that only the proxy knows) is left to the
+   egress proxy, since nothing was resolved here to judge. The egress proxy then resolves the
    name itself, so a DNS-rebinding window between the two lookups remains; it is
    accepted, and the proxy's own policy is the second line.
 3. **Method-override and path hygiene.** Requests carrying
