@@ -186,12 +186,16 @@ async fn admit(shared: &Shared, ws: &mut Ws) -> Result<Admitted, u16> {
         Ok(()) => false,
         // Boot no longer current / not ours.
         Err(e) if !e.retryable() => return Err(CLOSE_UNAUTHORIZED),
-        // API outage: a locally valid session stays connected.
-        Err(_) if from_session => true,
-        Err(_) => return Err(CLOSE_TRY_LATER),
+        // API outage: the connection stays up and the hold is retried in the background. This
+        // holds for a bootstrap admission too (FIX-094): the claim already succeeded, and a
+        // supervisor sent away with 1013 would present a token the API may by then regard as
+        // spent. (A session is locally valid by its MAC; a claimed bootstrap by the API's
+        // answer a moment ago.)
+        Err(_) => true,
     };
-    // Without the API we cannot tell which of two boots is current: keep the known one.
-    let replace = !hold_pending;
+    // Without the API we cannot tell which of two boots is current for a *session*: keep the
+    // known one. A fresh claim just proved its boot current.
+    let replace = !hold_pending || !from_session;
     let session = shared
         .session_for(sandbox, boot, replace)
         .ok_or(CLOSE_UNAUTHORIZED)?;

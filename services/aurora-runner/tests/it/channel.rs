@@ -37,7 +37,11 @@ struct Rig {
 }
 
 async fn rig(api: &MockServer) -> Rig {
-    let hub = ChannelServer::new(ChannelSettings::new(KEY));
+    rig_with(api, ChannelSettings::new(KEY)).await
+}
+
+async fn rig_with(api: &MockServer, settings: ChannelSettings) -> Rig {
+    let hub = ChannelServer::new(settings);
     let retry = RetryPolicy {
         attempts: 1,
         initial: Duration::from_millis(5),
@@ -454,4 +458,122 @@ async fn fast_reconnect_is_never_followed_by_a_stale_release() {
         "release after the newest hold: {paths:?}"
     );
     assert!(r.hub.is_connected(sandbox));
+}
+
+/// FIX-094 (LIFE-4): the claim succeeds and `channel/hold` then fails with a retryable error
+/// (503): the supervisor is admitted with a welcome (the hold is retried in the background), not
+/// sent away with 1013 to present a token the API now regards as spent.
+#[tokio::test]
+async fn bootstrap_claim_then_hold_503_still_admits_with_a_welcome() {
+    let api = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    mount_claim(&api, sandbox, boot).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/channel/hold"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&api)
+        .await;
+    let mut settings = ChannelSettings::new(KEY);
+    settings.hold_retry = Duration::from_secs(3600); // no background retry within the test
+    let r = rig_with(&api, settings).await;
+    let mut ws = connect(r.addr, bootstrap_hello()).await;
+    let w = next(&mut ws).await;
+    assert_eq!(
+        w["welcome"]["session"]["sandbox_id"],
+        sandbox.to_string(),
+        "welcome, not a 1013 close: {w}"
+    );
+    wait_for(|| r.hub.is_connected(sandbox)).await;
+}
+
+/// FIX-094 (RUN-1/2): the runner claims **once** per connection. When the claim's response is
+/// lost (a 503 after the API committed), the connection closes 1013 and the supervisor's
+/// re-presentation is answered again (the API's idempotence while no channel was held) and
+/// admitted; the claim was never retried inside one connection.
+#[tokio::test]
+async fn a_claim_whose_response_was_lost_is_answered_again_on_the_next_connection() {
+    let api = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/channel/claim"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(&api)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/channel/claim"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"sandbox_id": sandbox, "boot_id": boot})),
+        )
+        .mount(&api)
+        .await;
+    mount_hold(&api).await;
+    // A runner that retries (as the pre-fix `call` did, five attempts) would swallow the 503.
+    let hub = ChannelServer::new(ChannelSettings::new(KEY));
+    hub.attach_api(Arc::new(
+        ApiClient::new(
+            &api.uri(),
+            "aur_test",
+            RetryPolicy {
+                attempts: 5,
+                initial: Duration::from_millis(5),
+                max: Duration::from_millis(10),
+            },
+        )
+        .unwrap(),
+    ));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (_stop, stop_rx) = watch::channel(false);
+    let h = hub.clone();
+    tokio::spawn(async move { h.serve(listener, stop_rx).await });
+
+    let mut first = connect(addr, bootstrap_hello()).await;
+    assert_eq!(next(&mut first).await, json!({"close": 1013}));
+    let claims = |reqs: Vec<wiremock::Request>| {
+        reqs.iter()
+            .filter(|q| q.url.path().ends_with("/channel/claim"))
+            .count()
+    };
+    assert_eq!(
+        claims(api.received_requests().await.unwrap()),
+        1,
+        "one claim attempt per connection"
+    );
+    let mut second = connect(addr, bootstrap_hello()).await;
+    let w = next(&mut second).await;
+    assert_eq!(w["welcome"]["session"]["boot_id"], boot.to_string(), "{w}");
+}
+
+/// FIX-094 (RUN-3): silent TCP connections to the supervisor port are capped (here 8; 256 in
+/// production): the ones beyond the cap are closed at once, the rest at the handshake deadline.
+#[tokio::test]
+async fn silent_connections_to_the_channel_port_are_capped_and_time_out() {
+    use tokio::io::AsyncReadExt as _;
+    let api = MockServer::start().await;
+    let mut settings = ChannelSettings::new(KEY);
+    settings.preauth_cap = 8;
+    settings.hello_timeout = Duration::from_secs(2);
+    let r = rig_with(&api, settings).await;
+    let mut socks = Vec::new();
+    for _ in 0..12 {
+        socks.push(TcpStream::connect(r.addr).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut early = 0;
+    for s in &mut socks {
+        let mut b = [0u8; 1];
+        if let Ok(Ok(0)) = tokio::time::timeout(Duration::from_millis(20), s.read(&mut b)).await {
+            early += 1;
+        }
+    }
+    assert_eq!(early, 4, "exactly the connections beyond the cap");
+    for s in &mut socks {
+        let mut b = [0u8; 1];
+        let n = tokio::time::timeout(Duration::from_secs(6), s.read(&mut b))
+            .await
+            .expect("a silent connection outlived the handshake deadline");
+        assert!(matches!(n, Ok(0) | Err(_)));
+    }
 }

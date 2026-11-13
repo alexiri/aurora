@@ -259,6 +259,10 @@ Sandbox states: `unprovisioned → starting → running → stopping → stopped
 
 ### Start readiness deadline (FIX-025, D-158, C-580)
 
+A failed or timed-out Kubernetes API call during a start is retried at the next poll; only the start
+deadline or a terminal pod/claim state ends the attempt (FIX-094). A home claim in phase `Lost` is a
+terminal claim state and maps to `home_volume_unbound`.
+
 The whole path from step 1 to the `ready` of step 4 is bounded by
 `hosted.sandbox_ready_timeout_secs` (60–1800, default 300, `15`): the runner's
 capacity wait counts inside it. The API's readiness sweep (10 s interval,

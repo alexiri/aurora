@@ -562,6 +562,8 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
         ),
         (sb, boot)
     );
+    // FIX-094 (SEC-25): the claim is idempotent while the boot has never held a channel — a
+    // claim whose response was lost is answered again with the same `(sandbox, boot)`.
     let (s, v) = r
         .call(
             Some(rep),
@@ -569,8 +571,15 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
             Some(json!({"bootstrap_token": tok})),
         )
         .await;
-    assert_eq!(s, 409);
-    assert_eq!(v["error"]["code"], "bootstrap_spent");
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (
+            v["sandbox_id"].as_str().unwrap(),
+            v["boot_id"].as_str().unwrap()
+        ),
+        (sb, boot),
+        "the same (sandbox, boot) is returned"
+    );
     let (s, _) = r
         .call(
             Some(rep),
@@ -587,6 +596,16 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
         )
         .await;
     assert_eq!(s, 200);
+    // Once a channel was held the token is spent, even after the channel is released.
+    let (s, v) = r
+        .call(
+            Some(rep),
+            "/v1/runner/channel/claim",
+            Some(json!({"bootstrap_token": tok})),
+        )
+        .await;
+    assert_eq!(s, 409);
+    assert_eq!(v["error"]["code"], "bootstrap_spent");
     let (s, v) = r
         .call(
             Some(rep),
@@ -617,11 +636,58 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
         .await;
     assert_eq!(s, 200);
     assert_eq!(v["known"].as_array().unwrap().len(), 1);
+    // After the release the spent token still answers 409 (the boot did hold a channel).
+    let (s, _) = r
+        .call(
+            Some(rep),
+            "/v1/runner/channel/claim",
+            Some(json!({"bootstrap_token": tok})),
+        )
+        .await;
+    assert_eq!(s, 409, "a released channel does not unspend the token");
     let (s, v) = r
         .call(Some(rep), "/v1/runner/tool-calls", Some(json!({})))
         .await;
     // Implemented by BE-053 (see tests/tools.rs): an empty body is now a 4xx.
     assert_eq!(s, 400, "{v}");
+}
+
+/// FIX-094 (SEC-1): `sandboxes/check` answers only for the calling runner's own sandboxes — a
+/// runner cannot learn (or keep alive) another runner's sandbox ids.
+#[tokio::test]
+async fn sandboxes_check_knows_only_the_callers_sandboxes() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    r.agent_with_turn("chk").await;
+    let w = r.work(rep, 0).await;
+    let sb: Uuid = first(&w, "sandbox.start")["sandbox_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    // The owner knows it (through the route)…
+    let (s, v) = r
+        .call(
+            Some(rep),
+            "/v1/runner/sandboxes/check",
+            Some(json!({"sandbox_ids": [sb]})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["known"].as_array().unwrap().len(), 1);
+    // …another runner does not.
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let other = aurora_db::repo::sandboxes::known_ids(&mut conn, Uuid::now_v7(), &[sb])
+        .await
+        .unwrap();
+    assert!(
+        other.is_empty(),
+        "another runner's id is not known: {other:?}"
+    );
+    let own = aurora_db::repo::sandboxes::known_ids(&mut conn, r.runner_id, &[sb])
+        .await
+        .unwrap();
+    assert_eq!(own, [sb]);
 }
 
 #[tokio::test]

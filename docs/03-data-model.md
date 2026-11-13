@@ -1099,6 +1099,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | home_ref | text null | |
 | bootstrap_token_hash | bytea null | `aup_`; single use |
 | bootstrap_used_at | timestamptz null | |
+| channel_held_at | timestamptz null | the first `channel/hold` of the current boot; NULL until the supervisor's channel was admitted, reset by every new boot. A bootstrap token may be re-presented (idempotent claim) while it is NULL, then it is spent (FIX-094, SEC-25) |
 | stop_reason | text null CHECK in (`idle`,`cap`,`evict`,`restart`,`delete`,`failure`,`frozen`) | `frozen` (phase 2, RFE-006): agent effectively frozen (`11`) |
 | stop_requested_at | timestamptz null | |
 | restart_requested_at | timestamptz null | |

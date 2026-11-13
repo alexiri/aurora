@@ -53,7 +53,7 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 | `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners; optional `stream_tls`: the stream listener speaks TLS, default false — the API derives the endpoint scheme it hands the relay from it, `§W18`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
 | `POST /work` | `{ wait_secs ≤ 25, capacity: { running, max } }` → `{ items: [WorkItem], reconciler: bool }` (also the heartbeat; `reconciler` is true only for the oldest live replica of this runner, computed at poll time — spec fix S-08) |
 | `POST /reports` | `{ reports: [Report] }` (≤ 200, ≤ 1 MiB) → `{ results: [{ report_id, status: "applied"|"duplicate"|"fenced"|"invalid", detail? }] }` |
-| `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404 |
+| `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404; idempotent for the same `(sandbox, boot)` while the boot has never held a channel (`channel_held_at` is NULL), spent afterwards (SEC-25) |
 | `POST /channel/hold` | `{ sandbox_id, boot_id }` → `{ ok }` (records `channel_replica_id`; also used after HMAC-session reconnects) |
 | `POST /channel/release` | `{ sandbox_id, boot_id }` |
 | `POST /tool-calls` | `ToolCall` → `ToolResult` (synchronous, ≤ `TOOL_CALL_TIMEOUT`) |
@@ -138,6 +138,13 @@ are dropped.
   `{ "hello": { "protocol": 1, "session": { "sandbox_id", "boot_id", "issued_at", "mac" } } }`.
   Answer: `{ "welcome": { "session": {…new…}, "resume_from": <last acked seq> } }`
   or close with code 4401 (unauthorized) / 4409 (spent).
+- A bootstrap token admits one supervisor connection. Re-presenting it is accepted only while the boot
+  has never held a channel (the first admission did not complete: the claim's answer was lost, or the
+  runner closed 1013 before the welcome); once a channel was held it is spent (4409). The runner makes
+  one `channel/claim` attempt per connection, and when the claim succeeded but `channel/hold` fails with
+  a retryable error it admits the connection with the welcome and retries the hold in the background
+  (FIX-094). The supervisor port admits at most 256 unadmitted connections per runner replica (further
+  ones are closed at once) and gives each `hello_timeout` (10 s) for the upgrade and the hello.
 - Frames: JSON text messages `{ "seq": u64, "ack": u64, "kind": string, "body": {} }`,
   each ≤ `WS_FRAME_MAX`. `seq` is per direction and per connection lineage
   (survives reconnects within a boot); receivers apply each seq at most once

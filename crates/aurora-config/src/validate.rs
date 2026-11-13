@@ -868,12 +868,32 @@ impl RawConfig {
             check_dev_supervisor_binary(&mut c, bin, backend, &self.server, &r.api_url);
         }
         check_common(&mut c, &self.tls, &self.telemetry);
+        // (FIX-094, SEC-09) On podman the ops listener (health, metrics) defaults to loopback:
+        // the host's bridge address is sandbox-reachable, so falling back to the
+        // sandbox-facing `server.bind` (documented `0.0.0.0`) exposed it. Other backends keep
+        // the fallback — in a cluster the ops port is isolated by NetworkPolicy and probes need
+        // the pod address (the chart sets `runner.ops_bind` itself).
+        let ops_default = if backend == Some(RunnerBackend::Podman) {
+            "127.0.0.1"
+        } else {
+            self.server.bind.as_str()
+        };
         let ops_bind = resolve_bind(
             &mut c,
             "runner.ops_bind",
             r.ops_bind.as_deref(),
-            &self.server.bind,
+            ops_default,
         );
+        // A podman ops listener that shares an address with (or covers) the sandbox-facing one
+        // is a configuration error, not a warning. A loopback ops address is never reachable
+        // from a sandbox's own network namespace, even when `server.bind` is loopback too
+        // (the dev layout).
+        if backend == Some(RunnerBackend::Podman)
+            && !is_loopback_host(&ops_bind)
+            && let Some(why) = bind_overlap_warning(&self.server.bind, &ops_bind)
+        {
+            c.err("runner.ops_bind", why);
+        }
         c.finish()?;
         Ok(RunnerConfig {
             ops_bind,

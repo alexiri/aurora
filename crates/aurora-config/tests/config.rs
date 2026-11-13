@@ -698,6 +698,46 @@ fn overlap_warning_logic() {
     assert!(bind_overlap_warning("0.0.0.0", "127.0.0.1").is_none());
 }
 
+/// FIX-094 (SEC-09): on podman the ops listener defaults to loopback (not to the documented
+/// `0.0.0.0` sandbox-facing bind), and an explicit ops bind that overlaps the sandbox-facing
+/// one is refused. Other backends keep the fallback (the chart sets its own value).
+#[test]
+fn podman_ops_bind_defaults_to_loopback_and_overlap_is_refused() {
+    let podman = |extra: &str| {
+        load_with(
+            &format!(
+                "{BASE}bind = \"0.0.0.0\"\n[runner]\nbackend = \"podman\"\napi_url = \"http://a:1\"\n{extra}"
+            ),
+            &[],
+        )
+        .unwrap()
+    };
+    assert_eq!(podman("").runner_config().unwrap().ops_bind, "127.0.0.1");
+    assert_eq!(
+        podman("ops_bind = \"127.0.0.5\"\n")
+            .runner_config()
+            .unwrap()
+            .ops_bind,
+        "127.0.0.5"
+    );
+    for bad in ["0.0.0.0", "::"] {
+        let err = podman(&format!("ops_bind = \"{bad}\"\n"))
+            .runner_config()
+            .unwrap_err();
+        assert!(err.has_key("runner.ops_bind"), "{bad}: {err}");
+    }
+    // Kubernetes keeps the fallback to `server.bind`.
+    let k8s = load_with(
+        &format!(
+            "{BASE}bind = \"0.0.0.0\"\n[runner]\nbackend = \"kubernetes\"\napi_url = \"http://a:1\"\n\
+             [runner.k8s]\nnamespace = \"sbx\"\ncore_namespace = \"core\"\n"
+        ),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(k8s.runner_config().unwrap().ops_bind, "0.0.0.0");
+}
+
 #[test]
 fn k8s_core_namespace_is_accepted() {
     let raw = load_with(

@@ -306,6 +306,7 @@ pub async fn sandboxes_list(
 
 pub async fn sandboxes_check(
     s: &AppState,
+    runner: &RunnerRow,
     req: SandboxesCheckRequest,
 ) -> Result<SandboxesCheckResponse, ApiError> {
     if req.sandbox_ids.len() > 10_000 {
@@ -313,7 +314,7 @@ pub async fn sandboxes_check(
     }
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     Ok(SandboxesCheckResponse {
-        known: sandboxes::known_ids(&mut conn, &req.sandbox_ids).await?,
+        known: sandboxes::known_ids(&mut conn, runner.id, &req.sandbox_ids).await?,
     })
 }
 

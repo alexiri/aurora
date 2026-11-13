@@ -373,6 +373,14 @@ impl KubernetesBackend {
         let Some(pvc) = self.pvcs().get_opt(home).await.ok().flatten() else {
             return Ok(None);
         };
+        // (FIX-094) A `Lost` claim's volume is gone: waiting cannot bind it. Classify it now
+        // instead of letting the start run to its deadline with a generic reason.
+        if pvc.status.as_ref().and_then(|s| s.phase.as_deref()) == Some("Lost") {
+            return Ok(Some(format!(
+                "the sandbox home volume `{home}` is Lost: its volume no longer exists; \
+                 an operator must recover or recreate it"
+            )));
+        }
         let pending = pvc
             .status
             .as_ref()
@@ -604,7 +612,20 @@ impl KubernetesBackend {
             let pod = match self.pods().get_opt(name).await {
                 Ok(Some(p)) => p,
                 Ok(None) => break Err(other(format!("pod `{name}` disappeared while starting"))),
-                Err(e) => break Err(other(e)),
+                // (FIX-094) A failed or timed-out API call is retried at the next poll; only the
+                // start deadline or a terminal pod/claim state ends the attempt. One 503 from
+                // the apiserver during an image pull must not delete a healthy starting pod.
+                Err(e) => {
+                    tracing::warn!(pod = name, error = %e, "pod status read failed; retrying at the next poll");
+                    if started.elapsed() >= self.s.start_timeout {
+                        break Err(BackendError::StartTimeout(format!(
+                            "the Kubernetes API was unreachable for {} s while the pod was starting: {e}",
+                            self.s.start_timeout.as_secs()
+                        )));
+                    }
+                    tokio::time::sleep(self.s.poll).await;
+                    continue;
+                }
             };
             match classify(&pod) {
                 PodState::Running => break Ok(()),
@@ -741,7 +762,20 @@ impl Backend for KubernetesBackend {
 
         // Idempotent per boot; other boots of this sandbox are removed first.
         let mut existing: Option<String> = None;
-        for p in self.pods().list(&sandbox).await.map_err(other)? {
+        // (FIX-094) A transient apiserver error on the list is retried at the poll interval
+        // until the start deadline instead of failing the start.
+        let listing_began = tokio::time::Instant::now();
+        let listed = loop {
+            match self.pods().list(&sandbox).await {
+                Ok(l) => break l,
+                Err(e) if listing_began.elapsed() < self.s.start_timeout => {
+                    tracing::warn!(error = %e, "pod list failed; retrying");
+                    tokio::time::sleep(self.s.poll).await;
+                }
+                Err(e) => return Err(other(e)),
+            }
+        };
+        for p in listed {
             let name = p.name_any();
             let same_boot = label(&p, LABEL_BOOT).is_some_and(|b| *b == boot);
             let usable = matches!(
