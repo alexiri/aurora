@@ -1174,6 +1174,80 @@ async fn stream_closed_is_accounting_only() {
     assert_eq!(s, 200, "{v}");
 }
 
+/// FIX-061: a preview session is bound to the share (label) it was minted for. Share A's
+/// credential presented on share B's hostname is answered like a dead session (`login`),
+/// `streams` answers 404, `validate` revokes the pair; the correct label still works.
+#[tokio::test]
+async fn preview_session_is_bound_to_its_own_label() {
+    let p = prv_rig().await;
+    let (a, tok_a, _) = p.share_with_session(3000).await;
+    let (b, _tok_b, _) = p.share_with_session(3001).await;
+    let (la, lb) = (a["label"].as_str().unwrap(), b["label"].as_str().unwrap());
+    assert_ne!(la, lb);
+    let h = sess_hash(&tok_a);
+
+    // The right label: allow.
+    let (s, v) = p.resolve(la, Some(&h), true).await;
+    assert_eq!((s, v["decision"].as_str()), (200, Some("allow")), "{v}");
+    // Share B's hostname with A's session: the flow restarts (`login`), never A's route.
+    let (s, v) = p.resolve(lb, Some(&h), true).await;
+    assert_eq!((s, v["decision"].as_str()), (200, Some("login")), "{v}");
+    assert!(v["route"].is_null() && v["share"].is_null(), "{v}");
+
+    // Streams: uniform 404 on the wrong label; the right label passes the binding (it then
+    // answers 409 `not_running`: no sandbox in this rig — anything but 404 proves it).
+    let (s, v) = p.streams_grant(lb, &tok_a).await;
+    assert_eq!((s, code(&v)), (404, "not_found"), "{v}");
+    let (s, v) = p.streams_grant(la, &tok_a).await;
+    assert_ne!(s, 404, "the correct label passes the binding: {v}");
+
+    // `validate` (the relay's periodic sweep) revokes the mismatched pair only.
+    let (s, v) = p
+        .relay(
+            "/v1/relay/validate",
+            json!({"sessions": [
+                {"label": la, "session_hash": h},
+                {"label": lb, "session_hash": h},
+            ]}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let revoked = v["revoked"].as_array().unwrap();
+    assert_eq!(revoked.len(), 1, "{v}");
+    assert_eq!(revoked[0]["label"], lb, "{v}");
+}
+
+/// FIX-061 item 4: the runner-plane `closed` report needs the runner credential.
+#[tokio::test]
+async fn stream_closed_requires_the_runner_credential() {
+    let p = prv_rig().await;
+    let (share, _tok, _sid) = p.share_with_session(3000).await;
+    let (s, _, v) =
+        p.r.h
+            .send(
+                Method::POST,
+                "/v1/runner/preview-streams/closed",
+                &[("x-aurora-replica", &p.r.rep.to_string())],
+                Some(json!({"share_id": share["id"], "reason": "done"})),
+            )
+            .await;
+    assert_eq!(s.as_u16(), 401, "{v}");
+    // A relay (`aul_`) token is not a runner credential either.
+    let (s, _, v) =
+        p.r.h
+            .send(
+                Method::POST,
+                "/v1/runner/preview-streams/closed",
+                &[
+                    ("authorization", &bearer(&p.relay_tok)),
+                    ("x-aurora-replica", &p.r.rep.to_string()),
+                ],
+                Some(json!({"share_id": share["id"], "reason": "done"})),
+            )
+            .await;
+    assert_eq!(s.as_u16(), 401, "{v}");
+}
+
 // ---------------------------------------------------------------- token hygiene
 
 /// The relay plane itself: 401 without/with a wrong `aul_`, 426 on a newer protocol,

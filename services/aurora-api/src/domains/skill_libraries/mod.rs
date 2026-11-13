@@ -7,7 +7,7 @@ pub mod content;
 pub mod dto;
 pub mod gateway;
 pub mod refresh;
-mod routes;
+pub(crate) mod routes;
 pub mod service;
 
 use std::collections::HashMap;

@@ -192,6 +192,14 @@ pub async fn add(
     if lib.org_id != org {
         return Err(ApiError::not_found("Skill library not found."));
     }
+    // A paused/errored library is invisible to members (C-570); only admins may still add.
+    if lib.status != "active"
+        && !crate::domains::skill_libraries::routes::browse_audience(caller, state, org)
+            .await
+            .unwrap_or(false)
+    {
+        return Err(ApiError::not_found("Skill library not found."));
+    }
     let loaded = lib_service::load_for_add(state, &lib, &from.path, commit).await?;
     let blobs =
         serde_json::to_value(&loaded.blobs).map_err(|e| ApiError::internal(e.to_string()))?;

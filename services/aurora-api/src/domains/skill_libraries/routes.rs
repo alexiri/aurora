@@ -42,7 +42,13 @@ async fn browse_of(
 ) -> Result<aurora_db::repo::skill_libraries::LibraryRow, ApiError> {
     service::ensure_enabled(s)?;
     let row = service::get(s, library).await?;
-    browse_audience(c, s, row.org_id).await?;
+    let admin = browse_audience(c, s, row.org_id).await?;
+    // C-570: members see only `active` libraries (the list hides the rest); pausing is the
+    // admin's stop control, so a member who holds the id gets the same 404 as for a missing
+    // library. Owners/admins keep browsing every status.
+    if !admin && row.status != "active" {
+        return Err(ApiError::not_found("Skill library not found."));
+    }
     Ok(row)
 }
 

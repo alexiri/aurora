@@ -705,7 +705,9 @@ pub struct RefreshDone<'a> {
 pub async fn finish_refresh(conn: &mut PgConnection, d: &RefreshDone<'_>) -> Result<bool, DbError> {
     Ok(sqlx::query(
         "UPDATE skill_libraries SET status = $3, last_error = $4, refresh_failures = $5,
-            last_head_sha = COALESCE($6, last_head_sha), last_refresh_at = now(),
+            last_head_sha = CASE WHEN $3 = 'over_budget' THEN NULL
+                                 ELSE COALESCE($6, last_head_sha) END,
+            last_refresh_at = now(),
             next_refresh_at = now() + make_interval(secs => $7),
             refresh_lease_until = NULL, lease_owner = NULL, updated_at = now()
          WHERE id = $1 AND lease_owner = $2 AND status <> 'paused'",
