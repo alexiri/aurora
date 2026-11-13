@@ -116,6 +116,8 @@ log_level = "info"
 
 [gateway]
 allowed_private = ["127.0.0.1/32", "127.0.0.2/32"]
+# FIX-104 (D-180): the mock upstreams are plain HTTP on random loopback ports.
+insecure_loopback_injection = true
 {egress}ca_dir = "{ca}"
 advertised_proxy_url = "https://{GW_A_IP}:4102"
 hookhost_url = "{hh_url}"

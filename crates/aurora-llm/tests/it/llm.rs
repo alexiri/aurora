@@ -29,6 +29,7 @@ fn ep(provider: &str, base: &str) -> Endpoint {
         models: vec![],
         allowed_models: vec![],
         key_origin: None,
+        allowed_paths: vec![],
     }
 }
 

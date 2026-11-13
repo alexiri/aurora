@@ -82,6 +82,7 @@ impl ProviderRegistry {
                 models: vec![],
                 allowed_models: vec![],
                 key_origin: None,
+                allowed_paths: vec![],
             });
         }
         Ok(Self {
@@ -122,6 +123,39 @@ impl ProviderRegistry {
         out
     }
 
+    /// (D-177, SEC-65) Whether the sanctioned key of endpoint `endpoint_id` may be injected into
+    /// this request. Endpoints of providers without an inference-path set (`anthropic` until
+    /// phase 5) and unknown endpoints are not restricted here.
+    pub fn path_permitted(&self, endpoint_id: &str, method: &http::Method, path: &str) -> bool {
+        let Some(ep) = self.endpoint(endpoint_id) else {
+            return true;
+        };
+        !matches!(ep.provider.as_str(), "litellm" | "openai_compatible")
+            || crate::inference_path_permitted(method, path, &ep.allowed_paths)
+    }
+
+    /// (FIX-104, D-180) Whether a key of `provider` (and `endpoint_id` when the secret names
+    /// one) may be injected into a request that leaves over `https` (or plain HTTP) to
+    /// `host:port`: only to the exact scheme, host and port an operator configured as the
+    /// endpoint's base URL. Anything else fails closed.
+    pub fn accepts_injection(
+        &self,
+        endpoint_id: Option<&str>,
+        provider: Option<&str>,
+        https: bool,
+        host: &str,
+        port: u16,
+    ) -> bool {
+        self.endpoints
+            .iter()
+            .filter(|e| match endpoint_id {
+                Some(id) => e.id == id,
+                None => provider.is_none_or(|p| e.provider == p),
+            })
+            .filter_map(|e| self.provider_for(e).map(|p| p.base_url(e)))
+            .any(|b| origin_matches(&b, https, host, port))
+    }
+
     /// `host` may carry `:port`; a pattern without a port matches any port.
     pub fn is_endpoint_host(&self, host: &str) -> bool {
         let host = host.to_ascii_lowercase();
@@ -130,6 +164,26 @@ impl ProviderRegistry {
             .iter()
             .any(|p| *p == host || (!p.contains(':') && p == bare))
     }
+}
+
+/// `base_url`'s scheme, host and port (the scheme's default when absent) equal the request's.
+fn origin_matches(base_url: &str, https: bool, host: &str, port: u16) -> bool {
+    let Ok(uri) = base_url.parse::<http::Uri>() else {
+        return false;
+    };
+    let (Some(scheme), Some(h)) = (uri.scheme_str(), uri.host()) else {
+        return false;
+    };
+    let base_https = match scheme {
+        "https" => true,
+        "http" => false,
+        _ => return false,
+    };
+    let base_port = uri.port_u16().unwrap_or(if base_https { 443 } else { 80 });
+    base_https == https
+        && base_port == port
+        && h.trim_matches(['[', ']'])
+            .eq_ignore_ascii_case(host.trim_matches(['[', ']']))
 }
 
 fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
@@ -191,6 +245,7 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
         models: e.models.clone(),
         allowed_models: e.allowed_models.clone(),
         key_origin,
+        allowed_paths: e.allowed_paths.clone(),
     })
 }
 

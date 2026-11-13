@@ -372,6 +372,23 @@ fn execute(
         return Ok(obs);
     }
 
+    // (FIX-104, D-180) The transport rule the gateway applies: a claimed host's credential leaves
+    // only over TLS to the claimed port; anything else is an uncredentialed request.
+    if !crate::mechanisms::route::claim_transport_ok(
+        crate::mechanisms::route::claim_port(&m.entry.host),
+        scheme == Scheme::Https,
+        port,
+    ) {
+        if let Some(o) = obs.as_object_mut() {
+            o.insert(
+                "refused".into(),
+                json!({ "code": "uncredentialed_transport",
+                        "detail": "credentials are injected only over TLS to the claimed port" }),
+            );
+        }
+        return Ok(obs);
+    }
+
     if let Some(t) = &m.entry.tenant {
         match tenant_guard(t, c.connection.tenant_host.as_deref(), &host) {
             Ok(()) => {}

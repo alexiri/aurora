@@ -83,6 +83,8 @@ pub struct Proxy {
     live: Arc<Live>,
     byo: ByoParts,
     refusals: crate::byo::RefusalLimiter,
+    /// (FIX-086) Rate limit of the CONNECT-authentication refusal log line, per source address.
+    connect_log: SourceLimiter,
     /// (phase 2, P2-DBL-1) Cancel keys of live database sessions.
     db_cancel: crate::db::pg::CancelRegistry,
 }
@@ -131,6 +133,7 @@ impl Proxy {
             live: Arc::default(),
             byo,
             refusals: crate::byo::RefusalLimiter::default(),
+            connect_log: SourceLimiter::default(),
             db_cancel: crate::db::pg::CancelRegistry::default(),
         }))
     }
@@ -215,7 +218,7 @@ impl Proxy {
             });
         }
         let Some((lane, token)) = parse_proxy_authorization(headers) else {
-            connect_refused(client, "unknown", None);
+            self.connect_refused(client, "unknown", None);
             return Err(guidance::proxy_auth_required());
         };
         match self.resolver.resolve(&token).await {
@@ -225,21 +228,21 @@ impl Proxy {
             // unknown one, and classified in the log and the metric. `Ok(None)` stays the
             // unclassified `unknown`.
             Ok(None) => {
-                connect_refused(client, "unknown", None);
+                self.connect_refused(client, "unknown", None);
                 Err(guidance::proxy_auth_required())
             }
             Err(e @ crate::auth::ResolveError::Refused { .. }) => {
-                connect_refused(client, e.reason(), e.credential_kind());
+                self.connect_refused(client, e.reason(), e.credential_kind());
                 Err(guidance::proxy_auth_required())
             }
             Err(crate::auth::ResolveError::Expired) => {
                 metrics::counter!("aurora_gateway_agent_token_expired_total").increment(1);
-                connect_refused(client, "expired", Some("agent"));
+                self.connect_refused(client, "expired", Some("agent"));
                 Err(guidance::agent_token_expired())
             }
             Err(crate::auth::ResolveError::Frozen { level }) => {
                 metrics::counter!("aurora_gateway_frozen_refused_total").increment(1);
-                connect_refused(client, "frozen", None);
+                self.connect_refused(client, "frozen", None);
                 Err(guidance::frozen(level))
             }
             // (RFE-014) The gateway cannot tell an invalid token from an unreadable store: 503,
@@ -248,7 +251,7 @@ impl Proxy {
                 e @ (crate::auth::ResolveError::DatabaseUnavailable
                 | crate::auth::ResolveError::Unavailable(_)),
             ) => {
-                connect_refused(client, "store_unavailable", None);
+                self.connect_refused(client, "store_unavailable", None);
                 match e {
                     crate::auth::ResolveError::DatabaseUnavailable => {
                         Err(guidance::gateway_degraded("database_unavailable"))
@@ -364,7 +367,9 @@ impl Proxy {
                     Ok(r2) => {
                         // The first response is dropped unread.
                         drop(replay);
-                        return self.finish(r2, hook, response_headers, upgrade_fut, kill);
+                        return self
+                            .finish(r2, hook, response_headers, upgrade_fut, kill)
+                            .await;
                     }
                     Err(e) => {
                         if let Some(h) = hook {
@@ -375,6 +380,17 @@ impl Proxy {
                 }
             }
             let mut resp = Response::from_parts(parts, replay);
+            if let Some(h) = &hook {
+                match echo_check(&h.echo_needles(), resp).await {
+                    Ok(r) => resp = r,
+                    Err(e) => {
+                        if let Some(h) = hook {
+                            h.on_error(&e);
+                        }
+                        return guidance::response(&e);
+                    }
+                }
+            }
             if let Some(h) = hook
                 && let Some(replacement) = h.on_response(resp.status(), resp.headers())
             {
@@ -387,10 +403,11 @@ impl Proxy {
             return resp;
         }
         self.finish(resp, hook, response_headers, upgrade_fut, kill)
+            .await
     }
 
     /// 14-15. guidance replacement, request log, upgrade bridging, response hygiene.
-    fn finish(
+    async fn finish(
         &self,
         mut resp: Response<hyper::body::Incoming>,
         hook: Option<Box<dyn crate::pipeline::PostHook>>,
@@ -398,6 +415,42 @@ impl Proxy {
         upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
         kill: Option<watch::Receiver<bool>>,
     ) -> Response<Body> {
+        // (FIX-086) A `101` to a request that asked for no (honoured) upgrade is a protocol error:
+        // never bridged. The response is dropped, which closes that upstream connection; the agent
+        // gets 502 and the exchange is logged once through the hook.
+        if resp.status() == http::StatusCode::SWITCHING_PROTOCOLS && upgrade_fut.is_none() {
+            tracing::warn!("upstream answered 101 to a request that asked for no upgrade");
+            let e = guidance::bad_gateway();
+            if let Some(h) = hook {
+                h.on_error(&e);
+            }
+            return guidance::response(&e);
+        }
+        // (FIX-104, SEC-01) A credential placed in the URL never comes back to the agent.
+        let needles = hook.as_ref().map(|h| h.echo_needles()).unwrap_or_default();
+        if !needles.is_empty() && resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            let (parts, inc) = resp.into_parts();
+            let body: Body = inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
+            let mut checked = match echo_check(&needles, Response::from_parts(parts, body)).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if let Some(h) = hook {
+                        h.on_error(&e);
+                    }
+                    return guidance::response(&e);
+                }
+            };
+            if let Some(h) = hook
+                && let Some(replacement) = h.on_response(checked.status(), checked.headers())
+            {
+                return replacement;
+            }
+            for (k, v) in &response_headers {
+                checked.headers_mut().insert(k.clone(), v.clone());
+            }
+            hygiene::strip_hop_by_hop(checked.headers_mut());
+            return checked;
+        }
         if let Some(h) = hook
             && let Some(replacement) = h.on_response(resp.status(), resp.headers())
         {
@@ -444,6 +497,38 @@ impl Proxy {
     }
 }
 
+/// Bytes of a response body searched for an injected value (docs/17 SEC-01); what follows is
+/// streamed on unchecked.
+const ECHO_BODY_CHECK: usize = 64 * 1024;
+
+/// (FIX-104, SEC-01) 502 `upstream_echoed_credential` when the response headers or the first
+/// 64 KiB of its body carry one of `needles`; otherwise the response with its body intact.
+async fn echo_check(needles: &[Vec<u8>], resp: Response<Body>) -> Result<Response<Body>, ApiError> {
+    if needles.is_empty() {
+        return Ok(resp);
+    }
+    let echoed = || {
+        ApiError::new(
+            http::StatusCode::BAD_GATEWAY,
+            "upstream_echoed_credential",
+            "The upstream answered with a credential Aurora injected into the request URL, so the response was withheld.",
+        )
+    };
+    if resp
+        .headers()
+        .values()
+        .any(|v| crate::inject::echoes(needles, v.as_bytes()))
+    {
+        return Err(echoed());
+    }
+    let (parts, body) = resp.into_parts();
+    let (prefix, _, rest) = crate::decide::buffer_prefix(body, ECHO_BODY_CHECK).await;
+    if crate::inject::echoes(needles, &prefix[..prefix.len().min(ECHO_BODY_CHECK)]) {
+        return Err(echoed());
+    }
+    Ok(Response::from_parts(parts, rest))
+}
+
 fn dial_error(e: &DialError) -> ApiError {
     match e {
         DialError::Refused(h) => guidance::destination_refused(h),
@@ -452,16 +537,80 @@ fn dial_error(e: &DialError) -> ApiError {
     }
 }
 
-/// (FIX-050, C-630) One warn line and one metric per CONNECT-stage authentication refusal
-/// (`unknown | revoked | expired | no_active_owner | frozen | store_unavailable`), with the
-/// reason class, the credential kind when known and the source address — never the token, a
-/// prefix or its hash. The answer itself is the caller's, unchanged.
-fn connect_refused(client: std::net::IpAddr, reason: &'static str, kind: Option<&'static str>) {
-    metrics::counter!("aurora_gateway_connect_refused_total", "reason" => reason).increment(1);
-    tracing::warn!(
-        reason,
-        kind = kind.unwrap_or(""),
-        source = %client,
-        "connect_auth_refused"
-    );
+/// (FIX-086) At most one `connect_auth_refused` log line per source address per
+/// [`aurora_core::limits::BYO_REFUSAL_LOG_INTERVAL`]; the metric counts every refusal.
+#[derive(Default)]
+pub struct SourceLimiter {
+    /// Keyed by source address and reason class: every class stays observable (FIX-050, C-630)
+    /// while a flood of one class from one address writes one line per interval.
+    last: std::sync::Mutex<
+        std::collections::HashMap<(std::net::IpAddr, &'static str), std::time::Instant>,
+    >,
+    counted: std::sync::atomic::AtomicU64,
+    logged: std::sync::atomic::AtomicU64,
+}
+
+impl SourceLimiter {
+    fn should_log(&self, source: std::net::IpAddr, reason: &'static str) -> bool {
+        let key = (source, reason);
+        self.counted.fetch_add(1, Ordering::Relaxed);
+        let interval = aurora_core::limits::BYO_REFUSAL_LOG_INTERVAL;
+        let now = std::time::Instant::now();
+        let log = match self.last.lock() {
+            Ok(mut m) => {
+                if m.len() > 10_000 {
+                    m.retain(|_, t| now.duration_since(*t) < interval);
+                }
+                match m.get(&key) {
+                    Some(t) if now.duration_since(*t) < interval => false,
+                    _ => {
+                        m.insert(key, now);
+                        true
+                    }
+                }
+            }
+            Err(_) => true,
+        };
+        if log {
+            self.logged.fetch_add(1, Ordering::Relaxed);
+        }
+        log
+    }
+
+    /// `(refusals counted, log lines written)`.
+    pub fn stats(&self) -> (u64, u64) {
+        (
+            self.counted.load(Ordering::Relaxed),
+            self.logged.load(Ordering::Relaxed),
+        )
+    }
+}
+
+impl Proxy {
+    /// (FIX-086) `(CONNECT-stage refusals, log lines written for them)`.
+    pub fn connect_refusal_stats(&self) -> (u64, u64) {
+        self.connect_log.stats()
+    }
+
+    /// (FIX-050, C-630) One metric per CONNECT-stage authentication refusal
+    /// (`unknown | revoked | expired | no_active_owner | frozen | store_unavailable`), and (FIX-086)
+    /// a warn line with the reason class, the credential kind when known and the source address
+    /// — never the token, a prefix or its hash — at most once per source per interval. The answer
+    /// itself is the caller's, unchanged.
+    fn connect_refused(
+        &self,
+        client: std::net::IpAddr,
+        reason: &'static str,
+        kind: Option<&'static str>,
+    ) {
+        metrics::counter!("aurora_gateway_connect_refused_total", "reason" => reason).increment(1);
+        if self.connect_log.should_log(client, reason) {
+            tracing::warn!(
+                reason,
+                kind = kind.unwrap_or(""),
+                source = %client,
+                "connect_auth_refused"
+            );
+        }
+    }
 }

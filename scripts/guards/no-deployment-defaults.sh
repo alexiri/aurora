@@ -35,5 +35,23 @@ if git grep -nI 'ALMA_BASE' -- scripts deploy images .github docs/operator crate
   fail=1
 fi
 
+# 4. (FIX-104, D-180) `gateway.insecure_loopback_injection` is test-only: the Helm chart never sets
+# it (no value, template line or env name beyond the one `fail` that refuses it in `config`), and
+# the gateway refuses to start with it inside a cluster.
+chart_hits=$(git grep -nI 'insecure_loopback_injection\|INSECURE_LOOPBACK_INJECTION' -- deploy ':!deploy/helm/aurora/templates/configmap.yaml' || true)
+if [ -n "$chart_hits" ]; then
+  echo "no-deployment-defaults: FAIL: gateway.insecure_loopback_injection is test-only; deploy/ must not set it:" >&2
+  echo "$chart_hits" >&2
+  fail=1
+fi
+if ! grep -q 'hasKey (default (dict) \$cfg.gateway) "insecure_loopback_injection"' deploy/helm/aurora/templates/configmap.yaml; then
+  echo "no-deployment-defaults: FAIL: configmap.yaml must refuse config.gateway.insecure_loopback_injection" >&2
+  fail=1
+fi
+if ! grep -q 'KUBERNETES_SERVICE_HOST' services/aurora-gateway/src/main.rs; then
+  echo "no-deployment-defaults: FAIL: the gateway must refuse insecure_loopback_injection in a cluster (main.rs)" >&2
+  fail=1
+fi
+
 [ "$fail" -eq 0 ] || exit 1
 echo "no-deployment-defaults: ok"

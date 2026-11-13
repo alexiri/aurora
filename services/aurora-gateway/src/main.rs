@@ -221,7 +221,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             .with_key_id(&hook_key_id),
     );
     let tokens = Arc::new(
-        aurora_gateway::refresh::TokenManager::new(pool.clone(), vault.clone(), Some(minter))
+        aurora_gateway::refresh::TokenManager::try_new(pool.clone(), vault.clone(), Some(minter))?
             .with_health(health.clone()),
     );
     let plaintext = Arc::new(PlaintextCache::new(vault).with_health(health.clone()));
@@ -255,6 +255,12 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
             _ => aurora_gateway::ratelimit::RuleCounters::local(),
         };
+    // (FIX-104, D-180) A test-only key: never inside a cluster, whatever put it in the config.
+    if cfg.gateway.insecure_loopback_injection
+        && std::env::var_os("KUBERNETES_SERVICE_HOST").is_some()
+    {
+        return Err("gateway.insecure_loopback_injection is for tests only and is refused inside a Kubernetes cluster".into());
+    }
     let handler = Arc::new(
         PolicyHandler::new(PolicyHandlerParts {
             resolver: policy_resolver,
@@ -269,8 +275,15 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .with_health(health.clone())
         .with_tokens(tokens.clone())
         .with_summarizer(summarizer)
-        .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize),
+        .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize)
+        .with_insecure_loopback_injection(cfg.gateway.insecure_loopback_injection),
     );
+    if cfg.gateway.insecure_loopback_injection {
+        tracing::warn!(
+            "gateway.insecure_loopback_injection is on: credentials are injected over plain \
+             HTTP and any port to loopback destinations (tests and development only)"
+        );
+    }
     let reqlog_task = tokio::spawn(reqlog.clone().run(FLUSH_INTERVAL, rx.clone()));
     let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));

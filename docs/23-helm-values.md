@@ -52,6 +52,7 @@ a conflicting `config` entry is merged away or fails the render:
 | `gateway.ca_dir` | — | always `/var/lib/aurora/ca` |
 | `gateway.proxy_tls.names` / `cert_file` / `key_file` | `gateway.proxy.tls.*` | Service names + `externalHost` + `names`; `existingSecret` sets the cert/key files |
 | `gateway.trusted_proxies` | `gateway.proxy.trustedProxies` | |
+| `gateway.insecure_loopback_injection` | **none, by design** | test-only (FIX-104, D-180); the chart refuses it even in `config`, and the gateway refuses it in a cluster |
 | `plugins.dir` | `plugins.dir` | do not set it in `config` |
 | `tls.extra_ca_bundle` | `extraCaBundle.*` | set when either `existingConfigMap` or `existingSecret` is set |
 | `auth.dev_idp.*` | `devIdp.*` | only when `devIdp.enabled` |

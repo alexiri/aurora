@@ -15,6 +15,9 @@ pub struct Endpoint {
     /// Instance-wide model allow-list; empty = any.
     pub allowed_models: Vec<String>,
     pub key_origin: Option<KeyOriginRule>,
+    /// (D-177, FIX-105) Extra paths the sanctioned key may be injected on, beyond the inference
+    /// set (`litellm`, `openai_compatible`); absolute paths, a trailing `/*` allows a subtree.
+    pub allowed_paths: Vec<String>,
 }
 
 impl Endpoint {

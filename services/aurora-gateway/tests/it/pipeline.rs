@@ -192,6 +192,9 @@ struct Env {
     w: Arc<World>,
     proxy: SocketAddr,
     up: SocketAddr,
+    /// TLS upstream the gateway trusts (`UP_TLS`).
+    tls_up: Option<SocketAddr>,
+    plaintext: Arc<PlaintextCache>,
     src: Arc<Src>,
     resolver: Arc<Resolver>,
     log: Arc<RequestLog>,
@@ -199,18 +202,45 @@ struct Env {
     gets: Arc<AtomicUsize>,
 }
 
+fn hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
 async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
-    let mut out = format!(
-        "path={}\nquery={}\n",
-        req.uri().path(),
-        req.uri().query().unwrap_or("")
-    );
+    // (FIX-104) The gateway withholds a response that echoes an injected URL value, so a test
+    // that wants to see the URL asks for it hex-encoded (`x-echo-url: hex`).
+    let mut out = if req.headers().get("x-echo-url").is_some_and(|v| v == "hex") {
+        format!(
+            "path_hex={}\nquery_hex={}\n",
+            hex(req.uri().path()),
+            hex(req.uri().query().unwrap_or(""))
+        )
+    } else {
+        format!(
+            "path={}\nquery={}\n",
+            req.uri().path(),
+            req.uri().query().unwrap_or("")
+        )
+    };
     for (k, v) in req.headers() {
         out.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
     }
     let mut r = Response::new(Full::new(Bytes::from(out)));
     if req.uri().path() == "/401" {
         *r.status_mut() = http::StatusCode::UNAUTHORIZED;
+    }
+    if req.uri().path() == "/redir" {
+        // (FIX-104) an upstream that echoes the request URL in a redirect.
+        *r.status_mut() = http::StatusCode::FOUND;
+        r.headers_mut().insert(
+            "location",
+            format!(
+                "https://elsewhere.test/cb?{}",
+                req.uri().query().unwrap_or("")
+            )
+            .parse()
+            .unwrap(),
+        );
     }
     Ok(r)
 }
@@ -265,6 +295,10 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     /// (P4-CNT) reuse this world (same agent) for the next `start*`: a second gateway replica.
     static WORLD: std::cell::RefCell<Option<Arc<World>>> = const { std::cell::RefCell::new(None) };
+    /// (FIX-104) run the next `start*` WITHOUT `gateway.insecure_loopback_injection`.
+    static NO_INSECURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// (FIX-104) also serve a TLS upstream (`Env::tls_up`) that the gateway trusts.
+    static UP_TLS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn world() -> Arc<World> {
@@ -329,6 +363,31 @@ async fn start_backed(
             });
         }
     });
+    let (tls_up, up_ca_pem) = if UP_TLS.with(std::cell::Cell::get) {
+        let up_ca = ca::generate("up").unwrap();
+        let cfg = ca::Ca::from_pem(&up_ca.cert_pem, &up_ca.key_pem)
+            .unwrap()
+            .server_config("127.0.0.1")
+            .unwrap();
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let acc = tokio_rustls::TlsAcceptor::from(cfg);
+            loop {
+                let (s, _) = l.accept().await.unwrap();
+                let acc = acc.clone();
+                tokio::spawn(async move {
+                    let Ok(tls) = acc.accept(s).await else { return };
+                    let _ = auto::Builder::new(TokioExecutor::new())
+                        .serve_connection(TokioIo::new(tls), service_fn(upstream))
+                        .await;
+                });
+            }
+        });
+        (Some(addr), Some(up_ca.cert_pem.into_bytes()))
+    } else {
+        (None, None)
+    };
     let llm = Arc::new(aurora_llm::ProviderRegistry::from_config(&llm).unwrap());
     let resolver = Arc::new(Resolver::new(src.clone(), llm));
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
@@ -336,12 +395,14 @@ async fn start_backed(
     let log = RequestLog::new(captured.clone());
     let mut handler = PolicyHandler::new(PolicyHandlerParts {
         resolver: resolver.clone(),
-        plaintext,
+        plaintext: plaintext.clone(),
         log: log.clone(),
         external_url: "https://aurora.test/".into(),
         holds: None,
         touch_pool: None,
     });
+    // `without_insecure` runs prove the rule itself (FIX-104).
+    handler = handler.with_insecure_loopback_injection(!NO_INSECURE.with(std::cell::Cell::get));
     if let Some(n) = body_limit {
         handler = handler.with_condition_body_limit(n);
     }
@@ -361,7 +422,7 @@ async fn start_backed(
         handler,
         guard,
         header_timeout: Duration::from_secs(5),
-        extra_ca_pem: None,
+        extra_ca_pem: up_ca_pem,
         egress_proxy: None,
     })
     .unwrap();
@@ -370,6 +431,8 @@ async fn start_backed(
         w,
         proxy,
         up,
+        tls_up,
+        plaintext,
         src,
         resolver,
         log,
@@ -611,15 +674,25 @@ async fn injects_each_recipe_and_overwrites_agent_values() {
         no_llm(),
     )
     .await;
-    let r = get(&env, "/x?api_key=agent&z=1", "").await;
-    assert!(r.body.contains("query=z=1&api_key=s3cr3t"), "{}", r.body);
+    let r = get(&env, "/x?api_key=agent&z=1", "X-Echo-Url: hex\r\n").await;
+    assert!(
+        r.body
+            .contains(&format!("query_hex={}", hex("z=1&api_key=s3cr3t"))),
+        "{}",
+        r.body
+    );
     let env = start(
         grant_env(json!({"kind":"path_template","prefix":"/bot"})),
         no_llm(),
     )
     .await;
-    let r = get(&env, "/botPLACEHOLDER/send", "").await;
-    assert!(r.body.contains("path=/bots3cr3t/send"), "{}", r.body);
+    let r = get(&env, "/botPLACEHOLDER/send", "X-Echo-Url: hex\r\n").await;
+    assert!(
+        r.body
+            .contains(&format!("path_hex={}", hex("/bots3cr3t/send"))),
+        "{}",
+        r.body
+    );
 }
 
 #[tokio::test]
@@ -1484,5 +1557,251 @@ async fn blocked_request_consumes_nothing_from_the_shared_store() {
     assert!(
         store.inner.keys().is_empty(),
         "a blocked request consumes nothing"
+    );
+}
+
+/// CONNECT to `target` through the proxy, MITM TLS inside, one GET (FIX-104: the TLS lane).
+async fn get_tunnel(env: &Env, target: SocketAddr, path_and_query: &str, extra: &str) -> Reply {
+    use rustls::pki_types::ServerName;
+    let mut s = crate::common::connect(env.proxy).await;
+    let a = auth();
+    s.write_all(format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{a}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut head = Vec::new();
+    let mut b = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        assert!(s.read(&mut b).await.unwrap() > 0, "eof in CONNECT head");
+        head.push(b[0]);
+    }
+    assert!(String::from_utf8_lossy(&head).contains(" 200"), "{head:?}");
+    let cfg = crate::common::client_config(&crate::common::trust_pem(env.proxy), &[b"http/1.1"]);
+    let mut t = tokio_rustls::TlsConnector::from(cfg)
+        .connect(ServerName::try_from("127.0.0.1".to_owned()).unwrap(), s)
+        .await
+        .unwrap();
+    let req = format!(
+        "GET {path_and_query} HTTP/1.1\r\nHost: {target}\r\n{extra}Connection: close\r\n\r\n"
+    );
+    t.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), t.read_to_end(&mut out)).await;
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    Reply {
+        status: head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        head: head.to_owned(),
+        body: dechunk(body),
+    }
+}
+
+/// (FIX-104, D-180, SEC-04) Without `gateway.insecure_loopback_injection` a claimed host's
+/// credential leaves only over TLS to the claimed port (443 when the claim names none): plain
+/// HTTP and any other port are uncredentialed requests.
+#[tokio::test]
+async fn sec04_injection_only_over_tls_to_the_claimed_port() {
+    NO_INSECURE.with(|c| c.set(true));
+    UP_TLS.with(|c| c.set(true));
+    let env = start(grant_env(json!({"kind":"bearer"})), no_llm()).await;
+    let tls = env.tls_up.unwrap();
+    let injected = |r: &Reply| r.body.contains("authorization: Bearer s3cr3t");
+    // A claim naming no port means 443: neither plain HTTP nor the TLS server's port gets it.
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(!r.body.contains("s3cr3t"), "plain http: {}", r.body);
+    let r = get_tunnel(&env, tls, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(!r.body.contains("s3cr3t"), "tls, other port: {}", r.body);
+    assert_eq!(env.gets.load(Ordering::SeqCst), 0, "nothing was decrypted");
+    // A claim naming the port: TLS to it is injected, plain HTTP to the other port is not.
+    env.src.0.lock().unwrap().secrets[0].host_pattern = format!("127.0.0.1:{}", tls.port());
+    env.resolver.cache().invalidate(&Invalidate {
+        scope: Scope::Workspace(env.w.ws),
+    });
+    let r = get_tunnel(&env, tls, "/x", "").await;
+    assert!(injected(&r), "claimed port over TLS: {}", r.body);
+    let r = get(&env, "/x", "").await;
+    assert!(!r.body.contains("s3cr3t"), "unclaimed port: {}", r.body);
+}
+
+/// (FIX-104, D-180) A governed LLM key goes only to the exact scheme, host and port the operator
+/// configured as the endpoint's base URL.
+#[tokio::test]
+async fn sec04_llm_key_only_to_the_configured_origin() {
+    for (scheme, expect_key) in [("http", true), ("https", false)] {
+        NO_INSECURE.with(|c| c.set(true));
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let up = l.local_addr().unwrap();
+        let llm = LlmSection {
+            enabled_providers: vec!["litellm".into()],
+            provider_preference: vec![],
+            endpoints: vec![LlmEndpoint {
+                id: "central".into(),
+                provider: "litellm".into(),
+                base_url: Some(format!("{scheme}://127.0.0.1:{}", up.port())),
+                ..Default::default()
+            }],
+        };
+        let env = start(
+            |w, v| {
+                let mut s = secret(w, "llm", json!({}), v);
+                s.kind = "llm".into();
+                s.llm_provider = Some("litellm".into());
+                s.llm_auth_mode = Some("api_key".into());
+                s.llm_endpoint_id = Some("central".into());
+                s.host_pattern = format!("127.0.0.1:{}", up.port());
+                let mut rows = Rows::default();
+                rows.ws.rules.push(rule(
+                    "llm",
+                    "allow",
+                    json!([{"type":"secrets","scope":"any","kind":"llm"}]),
+                    json!({}),
+                ));
+                rows.secrets.push(s);
+                rows
+            },
+            llm,
+        )
+        .await;
+        tokio::spawn(async move {
+            loop {
+                let (s, _) = l.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let _ = auto::Builder::new(TokioExecutor::new())
+                        .serve_connection(TokioIo::new(s), service_fn(upstream))
+                        .await;
+                });
+            }
+        });
+        let env = Env { up, ..env };
+        let r = get(&env, "/v1/models", "").await;
+        assert_eq!(
+            r.body.contains("authorization: Bearer s3cr3t"),
+            expect_key,
+            "configured {scheme}, requested http: {}",
+            r.body
+        );
+        if !expect_key {
+            assert_eq!(env.gets.load(Ordering::SeqCst), 0, "no key was decrypted");
+        }
+    }
+}
+
+/// (FIX-104, SEC-01) A response that carries a credential the gateway put in the URL (path,
+/// query, raw or percent-encoded; headers or the first 64 KiB of the body) never reaches the
+/// agent: 502 `upstream_echoed_credential`.
+#[tokio::test]
+async fn sec01_an_upstream_echoing_a_url_credential_is_withheld() {
+    let env = start(
+        grant_env(json!({"kind":"path_template","prefix":"/bot"})),
+        no_llm(),
+    )
+    .await;
+    let r = get(&env, "/botPLACEHOLDER/send", "").await;
+    assert_eq!(r.status, 502, "{}", r.body);
+    assert_eq!(r.json()["error"]["code"], "upstream_echoed_credential");
+    assert!(!r.body.contains("s3cr3t") && !r.head.contains("s3cr3t"));
+    let env = start(
+        grant_env(json!({"kind":"query","name":"api_key","format":"{value}"})),
+        no_llm(),
+    )
+    .await;
+    // The query echoed in a body ...
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.status, 502, "{}", r.body);
+    assert_eq!(r.json()["error"]["code"], "upstream_echoed_credential");
+    // ... and in a `Location` header.
+    let r = get(&env, "/redir", "").await;
+    assert_eq!(r.status, 502, "{}", r.head);
+    assert!(
+        !r.head.to_ascii_lowercase().contains("s3cr3t"),
+        "{}",
+        r.head
+    );
+    assert_eq!(r.json()["error"]["code"], "upstream_echoed_credential");
+    // A credential in a header is not searched for (the check is for URL-placed ones).
+    let env = start(grant_env(json!({"kind":"bearer"})), no_llm()).await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+}
+
+/// (D-178, Q-R5-14) A block names the rule and the workspace policy URL for a workspace rule; an
+/// organization rule is answered generically.
+#[tokio::test]
+async fn a_blocking_org_rule_is_not_named_to_the_agent() {
+    let env = start(
+        |_, _| {
+            let mut rows = Rows::default();
+            rows.org.rules.push(rule(
+                "org-secret-rule-name",
+                "block",
+                json!([{"type":"network","host":"127.0.0.1"}]),
+                json!({}),
+            ));
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    let j = r.json();
+    assert_eq!(j["error"]["code"], "blocked_by_policy", "{}", r.body);
+    assert!(!r.body.contains("org-secret-rule-name"), "{}", r.body);
+    assert!(
+        j["error"]["details"].get("rule_name").is_none(),
+        "{}",
+        r.body
+    );
+    assert!(
+        j["error"]["details"].get("manage_url").is_none(),
+        "{}",
+        r.body
+    );
+    assert!(!r.body.contains("/policy"), "no policy URL: {}", r.body);
+    // The workspace rule keeps naming itself (`blocks_and_never_decrypts`).
+    let env = start(
+        |_, _| {
+            let mut rows = Rows::default();
+            rows.ws
+                .rules
+                .push(rule("ws-rule", "block", json!([]), json!({})));
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    let j = get(&env, "/x", "").await.json();
+    assert_eq!(j["error"]["details"]["rule_name"], "ws-rule");
+    assert!(j["error"]["details"]["manage_url"].is_string());
+}
+
+/// (FIX-104) A cached plaintext does not outlive the invalidation the API publishes when a secret
+/// is revoked: the next decision opens the vault again.
+#[tokio::test]
+async fn invalidation_drops_the_cached_plaintext() {
+    let env = start(grant_env(json!({"kind":"bearer"})), no_llm()).await;
+    assert_eq!(get(&env, "/x", "").await.status, 200);
+    assert_eq!(get(&env, "/x", "").await.status, 200);
+    assert_eq!(
+        env.gets.load(Ordering::SeqCst),
+        1,
+        "second request served from the cache"
+    );
+    // The API's secret-revoke notification names the secret's scope (workspace or organization).
+    let ev = Invalidate {
+        scope: Scope::Workspace(env.w.ws),
+    };
+    env.plaintext.invalidate(&ev);
+    env.resolver.cache().invalidate(&ev);
+    assert_eq!(get(&env, "/x", "").await.status, 200);
+    assert_eq!(
+        env.gets.load(Ordering::SeqCst),
+        2,
+        "the cached plaintext was dropped"
     );
 }

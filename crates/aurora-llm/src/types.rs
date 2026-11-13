@@ -134,6 +134,11 @@ pub trait LlmProvider: Send + Sync {
     fn dialects(&self, ep: &Endpoint) -> Vec<Dialect>;
     /// Host patterns (`host` or `host:port`) of the endpoint.
     fn hosts(&self, ep: &Endpoint) -> Vec<String>;
+    /// The base URL the gateway sends the endpoint's requests to (FIX-104: a key is injected
+    /// only to exactly this scheme, host and port).
+    fn base_url(&self, ep: &Endpoint) -> String {
+        ep.base_url.clone()
+    }
     fn injection(&self, mode: &AuthMode) -> LlmInjection;
     async fn list_models(
         &self,
@@ -141,6 +146,16 @@ pub trait LlmProvider: Send + Sync {
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<Vec<ModelInfo>>;
+    /// (FIX-105, CRED-6) The provider's own answer, without the static-list fallback of
+    /// [`Self::list_models`]: key verification must see an unreachable endpoint as unreachable.
+    async fn list_models_strict(
+        &self,
+        ep: &Endpoint,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<Vec<ModelInfo>> {
+        self.list_models(ep, key, http).await
+    }
     fn default_model(&self, ep: &Endpoint) -> Option<String>;
     /// Placeholder-only environment for a sandboxed client.
     fn client_env(&self, ep: &Endpoint, dialect: Dialect, mode: &AuthMode)

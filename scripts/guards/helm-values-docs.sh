@@ -29,7 +29,7 @@ ALLOW_LEAF=""
 # chart block too (`gateway`, `runner`, `secrets`, `database`, `terminal`, `counters`). They are not
 # chart values. Exact keys only: a new, misspelt or removed chart key still fails.
 ALLOW_NAMED="database.max_connections database.gateway_role gateway.allowed_private gateway.proxy_tls.names
-  gateway.trusted_proxies runner.max_sandboxes runner.k8s.namespace secrets.default_store secrets.stores
+  gateway.trusted_proxies gateway.insecure_loopback_injection runner.max_sandboxes runner.k8s.namespace secrets.default_store secrets.stores
   secrets.stores.id terminal.awake_cap_secs"
 
 fail() { echo "helm-values-docs: FAIL: $*" >&2; exit 1; }

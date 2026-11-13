@@ -564,7 +564,7 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 | POST `/v1/secrets/{id}/accept` | S | agent proposal: `{ value }` → secret `active` + grant to the proposing agent |
 | POST `/v1/secrets/{id}/reject` | S/K | agent proposal → `rejected`; a notice goes to the proposing conversation |
 | GET `/v1/secret-stores` | S/K | configured stores: id, kind, capabilities (no config) |
-| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 5 (D-138, moved from phase 4), P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals |
+| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 5 (D-138, moved from phase 4), P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals. (FIX-105) An endpoint's `base_url` is **not secret**: it is the address agents' clients already dial through the proxy and the dashboard shows when keys are added; it is returned to every authenticated caller (S/K), and an operator who must keep an internal address private fronts it with a public name |
 | GET `/v1/secrets/{id}/models` | S/K | model catalogue for an LLM secret (only allowed models) |
 | POST `/v1/secrets/{id}/verify` | S/K | re-run key-origin verification (`08 §11.3`) and return `origin` |
 

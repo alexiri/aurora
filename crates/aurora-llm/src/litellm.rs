@@ -92,6 +92,14 @@ impl LlmProvider for LitellmProvider {
             other => other,
         }
     }
+    async fn list_models_strict(
+        &self,
+        ep: &Endpoint,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<Vec<ModelInfo>> {
+        Self::fetch_models(ep, key, http).await
+    }
     fn default_model(&self, ep: &Endpoint) -> Option<String> {
         ep.default_model.clone()
     }

@@ -426,4 +426,9 @@ impl<'a> Exec<'a> {
     pub fn credential(&self, name: &str) -> Option<&str> {
         self.creds.get(name).and_then(|v| v.as_str())
     }
+
+    /// Every string credential value (FIX-104: which of them ended up in the URL).
+    pub fn string_values(&self) -> impl Iterator<Item = &str> {
+        self.creds.values().filter_map(|v| v.as_str())
+    }
 }

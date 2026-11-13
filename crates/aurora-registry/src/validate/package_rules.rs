@@ -42,6 +42,7 @@ pub fn package(
     out.extend(super::wildcard::wildcards(&m));
     super::params_rules::fixtures(&m, pkg, &mut out);
     zones(&m, &mut out);
+    host_claims(&m, &mut out);
     reserved_claims(&m, ctx, &mut out);
     egress(&m, ctx, &mut out);
     hooks_wasm(&m, pkg, &mut out);
@@ -89,6 +90,39 @@ pub fn zone_too_broad(zone: &str) -> bool {
         return zone == "*" || zone.contains('*');
     };
     !suffix.is_empty() && psl::domain(suffix.as_bytes()).is_none() || suffix.is_empty()
+}
+
+/// (FIX-104, SEC-17) A wildcard in a host claim must leave a registrable domain (public-suffix
+/// check, as for zones) to its right: a claim on a public suffix (a shared hosting domain such as
+/// a PSL private-section entry) would let an approved package have a connection's credential
+/// injected on any tenant of that domain; `s3.*.<registrable domain>` is fine. Exact hosts and the `{instance}` placeholder are not wildcards.
+pub fn host_claim_too_broad(claim: &str) -> bool {
+    let host = match claim.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => claim,
+    };
+    let Some((_, after)) = host.rsplit_once('*') else {
+        return false;
+    };
+    let suffix = after.trim_start_matches('.');
+    suffix.is_empty() || psl::domain(suffix.as_bytes()).is_none()
+}
+
+fn host_claims(m: &Manifest, out: &mut Vec<Violation>) {
+    for (i, a) in m.apps.iter().enumerate() {
+        for (j, h) in a.hosts.iter().enumerate() {
+            if host_claim_too_broad(&h.matcher.host) {
+                out.push(Violation::new(
+                    "zone_too_broad",
+                    format!("/apps/{i}/hosts/{j}/match/host"),
+                    format!(
+                        "host claim `{}` has a wildcard that does not leave a registrable domain to its right",
+                        h.matcher.host
+                    ),
+                ));
+            }
+        }
+    }
 }
 
 fn zones(m: &Manifest, out: &mut Vec<Violation>) {

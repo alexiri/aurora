@@ -13,6 +13,31 @@ pub enum GuardError {
     Unavailable,
 }
 
+/// (FIX-104, D-180, SEC-04) A credential claimed by a package's host entry or a generic secret's
+/// host pattern is injected only into a request that leaves over TLS to the claimed port (443
+/// when the claim names none). Plain HTTP or another port: an uncredentialed request.
+pub fn claim_transport_ok(claim_port: Option<u16>, https: bool, port: u16) -> bool {
+    https && port == claim_port.unwrap_or(443)
+}
+
+/// The port a host-entry claim names (`host:port`), if any.
+pub fn claim_port(claim: &str) -> Option<u16> {
+    HostPattern::lenient(claim).port()
+}
+
+/// `gateway.insecure_loopback_injection` (tests only): the destination is a loopback address
+/// literal or `localhost`, which no network peer can be reached through.
+pub fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim_matches(['[', ']']);
+    h.eq_ignore_ascii_case("localhost")
+        || h.parse::<std::net::IpAddr>().is_ok_and(|ip| match ip {
+            std::net::IpAddr::V4(v4) => v4.is_loopback(),
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+            }
+        })
+}
+
 fn in_zone(zone: &str, host: &str) -> bool {
     let z = HostPattern::lenient(zone);
     z.is_valid() && z.matches(host, 443)
@@ -87,6 +112,37 @@ mod tests {
         Tenant {
             field: "connection.tenant_host".into(),
             zone: "*.example.com".into(),
+        }
+    }
+
+    #[test]
+    fn claim_transport_is_tls_to_the_claimed_port() {
+        assert!(claim_transport_ok(None, true, 443));
+        assert!(!claim_transport_ok(None, false, 443));
+        assert!(!claim_transport_ok(None, false, 80));
+        assert!(!claim_transport_ok(None, true, 8443));
+        assert!(claim_transport_ok(Some(8443), true, 8443));
+        assert!(!claim_transport_ok(Some(8443), true, 443));
+        assert!(!claim_transport_ok(Some(8443), false, 8443));
+        assert_eq!(claim_port("api.example.com:8443"), Some(8443));
+        assert_eq!(claim_port("*.example.com"), None);
+        for h in [
+            "127.0.0.1",
+            "127.9.9.9",
+            "::1",
+            "[::1]",
+            "localhost",
+            "LOCALHOST",
+        ] {
+            assert!(is_loopback_host(h), "{h}");
+        }
+        for h in [
+            "10.0.0.1",
+            "api.example.com",
+            "localhost.evil.test",
+            "0.0.0.0",
+        ] {
+            assert!(!is_loopback_host(h), "{h}");
         }
     }
 
