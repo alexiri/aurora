@@ -21,6 +21,11 @@ export function proxy(request: NextRequest) {
     `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'${dev ? " 'unsafe-eval'" : ""}`,
     // Dev only: Next injects inline styles for HMR/error overlay.
     `style-src 'self'${dev ? " 'unsafe-inline'" : ` 'nonce-${nonce}'`}`,
+    // (D-176, FIX-098) Inline style *attributes* only: wterm's DOM renderer sets each run's
+    // colours and its cell span (`--term-span-cols`) as an inline style attribute. Without it every run
+    // collapses to one cell wide, so the cursor lands near column 0 and multi-run lines (top)
+    // overlap. `<style>` elements and stylesheets stay bound to `'self'` and the nonce.
+    "style-src-attr 'unsafe-inline'",
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
