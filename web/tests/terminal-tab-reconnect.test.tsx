@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
@@ -44,7 +44,7 @@ afterEach(() => {
 
 async function mount() {
   render(<TerminalTab agentId="agent-1" frozen={false} />);
-  await vi.waitFor(() => expect(Socket.instances).toHaveLength(1));
+  await waitFor(() => expect(Socket.instances).toHaveLength(1));
   // Only timers are faked, so the core load's promise chain keeps running.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 }

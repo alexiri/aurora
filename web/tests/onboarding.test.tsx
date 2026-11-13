@@ -330,13 +330,13 @@ describe("instance setup wizard (D-141)", () => {
     };
     wrap(<SetupView />);
     const sw = await screen.findByRole("checkbox", { name: "Give it to every new user's agent" });
-    await waitFor(() => expect(sw).toBeEnabled(), { timeout: 3000 });
+    await waitFor(() => expect(sw).toBeEnabled());
     fireEvent.click(sw);
-    // (3s windows: the PUT -> refetch -> re-render chain has to fit, which can be slow on a loaded host.)
+    // (The PUT -> refetch -> re-render chain has to fit, which can be slow on a loaded host.)
     await waitFor(() => expect(calls.find((c) => c.key === "PUT /v1/admin/placement")?.body).toMatchObject({
       mode: "shared_org", default_org_id: "o1", starter_grants: [{ kind: "secret", id: "k9" }],
-    }), { timeout: 3000 });
-    await waitFor(() => expect(sw).toBeChecked(), { timeout: 3000 });
+    }));
+    await waitFor(() => expect(sw).toBeChecked());
   });
 
   it("without a saved shared placement the switch is off and says why", async () => {
@@ -413,7 +413,7 @@ describe("tour (D-141)", () => {
     const opener = screen.getByRole("button", { name: "Show me around" });
     opener.focus();
     act(() => startTour());
-    const dialog = await screen.findByRole("dialog", { name: "Overview" }, { timeout: 3000 });
+    const dialog = await screen.findByRole("dialog", { name: "Overview" });
     await waitFor(() => expect(dialog).toHaveFocus());
     expect(within(dialog).getByText("Stop 1 of 8")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "overview" })).toHaveAttribute("data-tour-active", "true");
@@ -448,7 +448,7 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    await screen.findByRole("dialog", { name: "Overview" }, { timeout: 3000 });
+    await screen.findByRole("dialog", { name: "Overview" });
     fireEvent.click(screen.getByRole("button", { name: "Skip tour" }));
     await waitFor(() => expect(calls.find((c) => c.key === "PATCH /v1/me/onboarding")?.body).toEqual({ tour_completed: true }));
   });
@@ -466,7 +466,7 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    await screen.findByRole("dialog", { name: "Overview" }, { timeout: 3000 });
+    await screen.findByRole("dialog", { name: "Overview" });
     // fireEvent returns false when a handler called preventDefault.
     expect(fireEvent.keyDown(screen.getByLabelText("Name"), { key: "ArrowRight" })).toBe(true);
     expect(fireEvent.keyDown(screen.getByRole("button", { name: "Inside" }), { key: "ArrowRight" })).toBe(true);
@@ -495,7 +495,7 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    expect(await screen.findByText("Stop 1 of 6", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText("Stop 1 of 6", undefined)).toBeInTheDocument();
     for (let i = 0; i < 5; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText("Stop 6 of 6")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
@@ -514,7 +514,7 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    const dialog = await screen.findByRole("dialog", undefined, { timeout: 3000 });
+    const dialog = await screen.findByRole("dialog", undefined);
     expect(setNavOpen).toHaveBeenCalledWith(true);
     expect(dialog.className).toContain("bottom-4");
     fireEvent.click(screen.getByRole("button", { name: "Skip tour" }));
@@ -530,7 +530,7 @@ describe("tour (D-141)", () => {
         <Tour setNavOpen={vi.fn()} />
       </>,
     );
-    expect(await screen.findByRole("dialog", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", undefined)).toBeInTheDocument();
     expect(window.location.search).toBe("");
   });
 });
