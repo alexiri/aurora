@@ -16,7 +16,6 @@ use crate::domains::hosted::lifecycle;
 use crate::domains::runner_plane::service as plane;
 use aurora_core::{ApiError, limits, sanitize};
 use aurora_db::DbError;
-use aurora_db::repo::conversations as convs;
 use aurora_db::repo::hosted::{self, OverdueTurn};
 use aurora_db::repo::sandboxes;
 use chrono::{DateTime, Utc};
@@ -31,10 +30,63 @@ const REASON_MAX: usize = 1000;
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Swept {
     pub unreachable: usize,
+    /// (FIX-093) `starting` sandboxes failed with no turn waiting (C-580).
+    pub starts_failed: usize,
     pub turns_failed: usize,
 }
 
-/// The `supervisor_unreachable` reason; `detail` is the runner's `running` message
+/// (D-178 Q-R5-5) What members who can use an agent see of a start failure: the class and a hint.
+pub fn member_hint(code: &str) -> &'static str {
+    match code {
+        "runner_unavailable" => {
+            "No runner could start the agent's computer. An instance admin can check Admin › Runners."
+        }
+        "at_capacity" => "No sandbox slot was free. Try again in a moment.",
+        "image_unavailable" => {
+            "The agent's computer image could not be pulled. An instance admin can check the start log."
+        }
+        "pod_refused" | "pod_failed" => {
+            "The cluster refused or ended the agent's computer. An instance admin can check the start log."
+        }
+        "home_volume_unbound" => {
+            "The agent's home volume could not be bound. An instance admin can check the storage class."
+        }
+        "supervisor_unreachable" => {
+            "The agent's computer started but could not reach the platform. An instance admin can check network policy."
+        }
+        "supervisor_boot_failed" => {
+            "The agent's computer started but did not finish booting. A workspace owner can check the start log."
+        }
+        "harness_unsupported" => "The agent's harness is not available in this sandbox image.",
+        _ => {
+            "The agent's computer did not start. A workspace owner or an instance admin can check the start log."
+        }
+    }
+}
+
+/// (FIX-093, C-581/C-585) The member-facing `supervisor_unreachable` reason: never an address or
+/// a service name (the runner endpoint is shown in the admin start log only).
+pub fn unreachable_member_message() -> String {
+    format!(
+        "The agent's computer started, but its supervisor could not reach the runner within {} s. \
+         An instance admin can check NetworkPolicy/CNI egress from the sandboxes namespace to the \
+         runner on port {} (Cilium: networkPolicy.cilium.enabled) in the Admin › Runners start log.",
+        limits::RUNNER_SUPERVISOR_HELLO.as_secs(),
+        crate::domains::runner_plane::boot::SUPERVISOR_PORT,
+    )
+}
+
+/// The admin copy of a verdict: the member text, except `supervisor_unreachable`, which names the
+/// runner endpoint (start log and Admin › Runners only).
+pub fn admin_message(code: &str, member: &str, detail: Option<&str>) -> String {
+    if code == "supervisor_unreachable" {
+        unreachable_message(detail)
+    } else {
+        member.to_owned()
+    }
+}
+
+/// The `supervisor_unreachable` reason **for admins**; `detail` is the runner's `running` message
 /// ("waiting for the supervisor to connect to the runner at <endpoint>").
 pub fn unreachable_message(detail: Option<&str>) -> String {
     let at = detail
@@ -92,7 +144,11 @@ pub fn classify(
         "running" if t.channel_held && t.harness_ready && t.home_synced => return None,
         // (FIX-058) No live runner holds the attempt: give it up terminally (`fail_attempt` with
         // `runner_gone` lands the sandbox in `failed`, never `stopping`, which nothing would drive).
-        _ if !t.any_runner_live => ("runner_unavailable".to_owned(), runner_gone(&None), true),
+        // (FIX-093) A `failed` sandbox keeps its specific reason (home_volume_unbound, …) even
+        // when no runner happens to be live now: the `failed` arm below names it.
+        _ if !t.any_runner_live && state != "failed" => {
+            ("runner_unavailable".to_owned(), runner_gone(&None), true)
+        }
         "starting" | "running" | "stopping"
             if t.sandbox_id.is_some() && t.runner_name.is_some() && !t.runner_live =>
         {
@@ -112,7 +168,7 @@ pub fn classify(
         ),
         "running" if !t.bootstrap_used => (
             "supervisor_unreachable".to_owned(),
-            unreachable_message(t.start_detail.as_deref()),
+            unreachable_member_message(),
             true,
         ),
         "running" => {
@@ -212,15 +268,17 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
         .await?
     };
     for (sandbox, boot, detail) in overdue {
-        let msg = sanitize::reason(&unreachable_message(detail.as_deref()), REASON_MAX);
+        let msg = sanitize::reason(&unreachable_member_message(), REASON_MAX);
+        let admin = sanitize::reason(&unreachable_message(detail.as_deref()), REASON_MAX);
         let mut tx = s.pool.begin().await.map_err(DbError::from)?;
         // (FIX-071) Fenced on "supervisor still not connected" as well as on "not ready".
-        if let Some(revoked) = sandboxes::fail_attempt_unconnected(
+        if let Some(revoked) = sandboxes::fail_attempt_unconnected_detail(
             &mut tx,
             sandbox,
             boot,
             "supervisor_unreachable",
             &msg,
+            &admin,
         )
         .await?
         {
@@ -232,11 +290,13 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
         tx.commit().await.map_err(DbError::from)?;
     }
 
-    // 2. Turns past the readiness deadline.
     let ready_secs = s.config.hosted.sandbox_ready_timeout_secs;
-    let turns = {
+
+    // 2. (FIX-093, C-580) A start attempt with no waiting turn is bounded too: a `starting`
+    // sandbox past the deadline, or whose lease lapsed with its runner gone.
+    let stale = {
         let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
-        hosted::overdue_turns(
+        sandboxes::stale_starts(
             &mut conn,
             ready_secs as f64,
             limits::REPLICA_ONLINE_THRESHOLD.as_secs_f64(),
@@ -244,51 +304,138 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
         )
         .await?
     };
+    for st in stale {
+        let (code, message) = if st.runner_live {
+            (
+                "sandbox_start_failed",
+                format!(
+                    "The agent's computer did not start within {ready_secs} s (last phase: {}).",
+                    phase_text(st.start_phase.as_deref(), None)
+                ),
+            )
+        } else {
+            (
+                "runner_unavailable",
+                "The runner that was starting the agent's computer is not connected, so the computer cannot start. \
+                 An instance admin can check Admin › Runners."
+                    .to_owned(),
+            )
+        };
+        let message = sanitize::reason(&message, REASON_MAX);
+        let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+        if let Some(revoked) = sandboxes::fail_attempt_detail(
+            &mut tx,
+            st.sandbox_id,
+            st.boot_id,
+            code,
+            &message,
+            code == "runner_unavailable",
+            &message,
+        )
+        .await?
+        {
+            invalidate(&mut tx, revoked).await?;
+            plane::fail_start(&mut tx, st.sandbox_id, Some(code), Some(&message)).await?;
+            out.starts_failed += 1;
+            woke = true;
+        }
+        tx.commit().await.map_err(DbError::from)?;
+    }
+
+    // 3. Turns past the readiness deadline.
+    let turns = overdue_snapshot(s).await?;
+    sweep_turns(s, turns, &mut out, &mut woke).await?;
+    if woke {
+        plane::notify_work(s, "readiness").await;
+    }
+    Ok(out)
+}
+
+/// (FIX-093) The sweep's lock-free snapshot of overdue turns (tests interleave between this and
+/// [`sweep_turns`]).
+pub async fn overdue_snapshot(s: &AppState) -> Result<Vec<OverdueTurn>, ApiError> {
+    let ready_secs = s.config.hosted.sandbox_ready_timeout_secs;
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    Ok(hosted::overdue_turns(
+        &mut conn,
+        ready_secs as f64,
+        limits::REPLICA_ONLINE_THRESHOLD.as_secs_f64(),
+        LIMIT,
+    )
+    .await?)
+}
+
+/// Apply the readiness verdicts to a snapshot. Every decision is re-checked under the locks: a
+/// sandbox that became ready is left alone (and its turns with it), and a turn is failed only
+/// while it is still `queued`.
+pub async fn sweep_turns(
+    s: &AppState,
+    turns: Vec<OverdueTurn>,
+    out: &mut Swept,
+    woke: &mut bool,
+) -> Result<(), ApiError> {
+    let ready_secs = s.config.hosted.sandbox_ready_timeout_secs;
     let now = Utc::now();
-    let mut given_up: Vec<Uuid> = Vec::new();
+    // Sandboxes this pass already decided on: `true` = given up, `false` = found ready.
+    let mut decided: std::collections::HashMap<Uuid, bool> = std::collections::HashMap::new();
     for t in turns {
         let Some((code, message, give_up)) = classify(&t, ready_secs, now) else {
             continue;
         };
         let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-        if give_up
-            && let (Some(sb), Some(boot)) = (t.sandbox_id, t.boot_id)
-            && !given_up.contains(&sb)
-        {
-            given_up.push(sb);
-            if let Some(revoked) = sandboxes::fail_attempt(
-                &mut tx,
-                sb,
-                boot,
-                &code,
-                &message,
-                code == "runner_unavailable",
-            )
-            .await?
-            {
-                invalidate(&mut tx, revoked).await?;
-                // Every queued turn of the agent fails with the same reason (10 §Failure semantics).
-                plane::fail_start(&mut tx, sb, Some(&code), Some(&message)).await?;
-                woke = true;
+        if give_up && let (Some(sb), Some(boot)) = (t.sandbox_id, t.boot_id) {
+            let verdict = match decided.get(&sb) {
+                Some(v) => *v,
+                None => {
+                    let admin = admin_message(&code, &message, t.start_detail.as_deref());
+                    let admin = sanitize::reason(&admin, REASON_MAX);
+                    let v = if let Some(revoked) = sandboxes::fail_attempt_detail(
+                        &mut tx,
+                        sb,
+                        boot,
+                        &code,
+                        &message,
+                        code == "runner_unavailable",
+                        &admin,
+                    )
+                    .await?
+                    {
+                        invalidate(&mut tx, revoked).await?;
+                        // Every queued turn of the agent fails with the same reason
+                        // (10 §Failure semantics).
+                        plane::fail_start(&mut tx, sb, Some(&code), Some(&message)).await?;
+                        *woke = true;
+                        true
+                    } else {
+                        // Nothing to give up. Ready now (it became ready after the snapshot):
+                        // dispatch owns the turn. Otherwise the sandbox is already `failed` or
+                        // `stopped` and the turn still waits for nothing.
+                        !sandboxes::is_ready(&mut tx, sb).await?
+                    };
+                    decided.insert(sb, v);
+                    v
+                }
+            };
+            if !verdict {
+                // (FIX-093) The sandbox is ready: leave the turn to dispatch.
+                tx.commit().await.map_err(DbError::from)?;
+                continue;
             }
         }
-        convs::lock(&mut tx, t.conversation_id).await?;
-        // A no-op when `fail_start` already ended it (fenced).
-        let failed = lifecycle::fail(&mut tx, t.turn_id, t.conversation_id, &code, &message)
+        // Only a turn still `queued` fails, decided under the conversation lock.
+        let failed = lifecycle::fail_queued(&mut tx, t.turn_id, t.conversation_id, &code, &message)
             .await?
             .is_some();
         tx.commit().await.map_err(DbError::from)?;
         lifecycle::flush_deltas(s, t.conversation_id, t.turn_id).await;
+        // `fail_start` may have ended the turn already (the give-up path above): still counted.
         if failed || give_up {
             out.turns_failed += 1;
+            tracing::warn!(turn = %t.turn_id, agent = %t.agent_id, code = %code, reason = %message,
+                "turn failed: sandbox not ready before the deadline");
         }
-        tracing::warn!(turn = %t.turn_id, agent = %t.agent_id, code = %code, reason = %message,
-            "turn failed: sandbox not ready before the deadline");
     }
-    if woke {
-        plane::notify_work(s, "readiness").await;
-    }
-    Ok(out)
+    Ok(())
 }
 
 /// Run [`sweep`] every `SANDBOX_READINESS_SWEEP` on this replica.
@@ -362,11 +509,18 @@ mod tests {
         r.start_detail = Some("waiting for the supervisor to connect to the runner at aurora-runner.aurora (10.0.0.9):4105".into());
         let c = classify(&r, 300, now).unwrap();
         assert_eq!(c.0, "supervisor_unreachable");
+        // (FIX-093) Member-facing text carries no address or service name; the admin copy does.
         assert!(
-            c.1.contains("aurora-runner.aurora (10.0.0.9):4105")
+            !c.1.contains("10.0.0.9")
+                && !c.1.contains("aurora-runner.aurora")
                 && c.1.contains("networkPolicy.cilium.enabled"),
             "{}",
             c.1
+        );
+        let admin = admin_message(&c.0, &c.1, r.start_detail.as_deref());
+        assert!(
+            admin.contains("aurora-runner.aurora (10.0.0.9):4105"),
+            "{admin}"
         );
         let mut r = row(Some("running"));
         r.bootstrap_used = true;
@@ -408,6 +562,19 @@ mod tests {
             "{}",
             c.1
         );
+    }
+
+    /// (FIX-093) A failed sandbox reports its own code even when no runner is live right now.
+    #[test]
+    fn failed_reason_wins_over_no_runner() {
+        let mut r = row(Some("failed"));
+        r.any_runner_live = false;
+        r.runner_live = false;
+        r.failure_code = Some("home_volume_unbound".into());
+        r.failure_message = Some("the sandbox home volume cannot be bound".into());
+        let c = classify(&r, 300, Utc::now()).unwrap();
+        assert_eq!(c.0, "home_volume_unbound");
+        assert!(!c.2);
     }
 
     #[test]

@@ -46,10 +46,43 @@ pub async fn fail(
     code: &str,
     message: &str,
 ) -> Result<Option<TurnRow>, ApiError> {
+    fail_in(
+        conn,
+        turn,
+        conversation,
+        code,
+        message,
+        &["queued", "dispatched", "running"],
+    )
+    .await
+}
+
+/// (FIX-093) Fail a turn only while it is still `queued`, decided under the conversation lock: the
+/// readiness sweep works from a snapshot, and a turn dispatch has since handed to a ready
+/// sandbox must not be ended while its harness runs.
+pub async fn fail_queued(
+    conn: &mut PgConnection,
+    turn: Uuid,
+    conversation: Uuid,
+    code: &str,
+    message: &str,
+) -> Result<Option<TurnRow>, ApiError> {
+    aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
+    fail_in(conn, turn, conversation, code, message, &["queued"]).await
+}
+
+async fn fail_in(
+    conn: &mut PgConnection,
+    turn: Uuid,
+    conversation: Uuid,
+    code: &str,
+    message: &str,
+    from: &[&str],
+) -> Result<Option<TurnRow>, ApiError> {
     let Some(t) = aurora_db::repo::turns::get(&mut *conn, turn).await? else {
         return Ok(None);
     };
-    if t.role != "turn" || !matches!(t.status.as_str(), "queued" | "dispatched" | "running") {
+    if t.role != "turn" || !from.contains(&t.status.as_str()) {
         return Ok(None);
     }
     aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
