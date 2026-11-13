@@ -321,7 +321,8 @@ done when its tests exist, pass in CI, and the security invariants it touches
   with the supervisor's real `HomeProjector` (which seals the trailer) and scans with the
   real `Harvester`: an unmodified projection is not harvested, and an appended line, a
   changed body under the old trailer, an altered digest and a removed trailer each are. It
-  lives in `aurora-api` because that crate already depends on `aurora-supervisor`.
+  lives in `aurora-api` because it needs the API's test harness; `aurora-supervisor` is a
+  dev-dependency of `aurora-api` only (VEL-007).
 - (P2-TEST-1) **Running hosted e2e next to another run.** Every name and address of
   `scripts/e2e/hosted.sh` derives from `AURORA_E2EH_PREFIX` (default `aurora-e2eh`:
   networks `<prefix>-sbx`/`-db`, containers `-pg`/`-dbtarget`/`-anchor`, image
