@@ -39,6 +39,9 @@ enum Behaviour {
     Terminated,
     /// (FIX-025) The pod waits for its unbound home PVC (no storage class).
     PvcUnbound,
+    /// (FIX-049) The pod waits for its home PVC for the first `n` reads, then runs (the
+    /// provisioner caught up).
+    PvcUnboundFor(usize),
 }
 
 #[derive(Default)]
@@ -220,7 +223,10 @@ impl Fake {
                     }
                 }
                 if *kind == "persistentvolumeclaims"
-                    && matches!(st.behaviour, Some(Behaviour::PvcUnbound))
+                    && matches!(
+                        st.behaviour,
+                        Some(Behaviour::PvcUnbound | Behaviour::PvcUnboundFor(_))
+                    )
                 {
                     o["status"] = json!({"phase": "Pending"});
                 }
@@ -312,6 +318,11 @@ fn pod_view(st: &mut State, kind: &str, name: &str) -> Value {
             "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable",
                 "message": "0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. preemption: 0/3 nodes are available"}]
         }),
+        Behaviour::PvcUnboundFor(n) if reads <= n => json!({
+            "phase": "Pending",
+            "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable",
+                "message": "0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. preemption: 0/3 nodes are available"}]
+        }),
         Behaviour::ImagePull => json!({
             "phase": "Pending",
             "conditions": [{"type": "PodScheduled", "status": "True"}],
@@ -325,15 +336,28 @@ fn pod_view(st: &mut State, kind: &str, name: &str) -> Value {
 }
 
 #[derive(Default)]
-struct Holds(AtomicUsize);
+struct Holds(AtomicUsize, Mutex<Vec<(String, String)>>);
 impl HoldCallback for Holds {
     fn on_hold(&self) {
         self.0.fetch_add(1, Ordering::SeqCst);
+    }
+    fn progress(&self, phase: &str, detail: &str) {
+        self.1.lock().unwrap().push((phase.into(), detail.into()));
     }
 }
 impl Holds {
     fn count(&self) -> usize {
         self.0.load(Ordering::SeqCst)
+    }
+    /// (FIX-049) Detail of every progress report of `phase`.
+    fn progress_of(&self, phase: &str) -> Vec<String> {
+        self.1
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(p, _)| p == phase)
+            .map(|(_, d)| d.clone())
+            .collect()
     }
 }
 
@@ -590,6 +614,144 @@ async fn unbound_home_volume_fails_fast_with_its_own_reason() {
     assert!(fake.names("pods").is_empty(), "the pod is removed");
     let ev = b.start_events(&req).await;
     assert!(ev.iter().any(|e| e.starts_with("FailedBinding:")), "{ev:?}");
+}
+
+fn normal(kind: &str, name: &str, reason: &str, message: &str, at: &str) -> Value {
+    let mut e = warning(kind, name, reason, message, at);
+    e["type"] = json!("Normal");
+    e
+}
+
+const RACE: &str = "Error saving claim: Operation cannot be fulfilled on persistentvolumeclaims: \
+    the object has been modified; please apply your changes to the latest version and try again";
+
+/// (FIX-049) The owner's manila CephFS sequence: the claim pins a class, the in-tree controller
+/// loses the annotation race (`ProvisioningFailed`), then the external provisioner works.
+fn seed_manila_claim(fake: &Fake, home: &str) {
+    fake.put(
+        "persistentvolumeclaims",
+        home,
+        json!({"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+               "metadata": {"name": home, "labels": {"aurora.managed": "true"}},
+               "spec": {"accessModes": ["ReadWriteOnce"],
+                        "storageClassName": "prevessin-cephfs-ssd-a-delete",
+                        "resources": {"requests": {"storage": "5Gi"}}},
+               "status": {"phase": "Pending"}}),
+    );
+}
+
+fn rfc3339(ago_secs: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::seconds(ago_secs))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// (FIX-049, a) `ProvisioningFailed` followed by the provisioner's own `Provisioning` /
+/// `ProvisioningSucceeded` is slow provisioning, not a failure: the start waits and proceeds,
+/// the pod is kept. Fails without the fix (the old code failed on the warning alone).
+#[tokio::test]
+async fn provisioning_failed_superseded_by_the_provisioner_does_not_fail_the_start() {
+    let fake = Fake::with(Behaviour::PvcUnboundFor(3));
+    let req = request(Uuid::now_v7(), Uuid::now_v7());
+    let home = req.spec.home_ref.clone();
+    let pvc = "PersistentVolumeClaim";
+    // Old enough that only the supersession keeps the start alive.
+    fake.put(
+        "events",
+        "e1",
+        warning(pvc, &home, "ProvisioningFailed", RACE, &rfc3339(600)),
+    );
+    fake.put(
+        "events",
+        "e2",
+        normal(
+            pvc,
+            &home,
+            "Provisioning",
+            "External provisioner is provisioning volume",
+            &rfc3339(590),
+        ),
+    );
+    fake.put(
+        "events",
+        "e3",
+        normal(
+            pvc,
+            &home,
+            "ProvisioningSucceeded",
+            "Successfully provisioned volume pvc-8e931fc3",
+            &rfc3339(580),
+        ),
+    );
+    let b = backend(&fake, 4, Duration::from_secs(600));
+    let holds = Holds::default();
+    let c = b.start(&req, &holds).await.unwrap();
+    assert!(fake.names("pods").contains(&c.0), "pod kept");
+    assert_eq!(holds.count(), 0, "not a capacity hold");
+    assert!(
+        !holds.progress_of("provisioning").is_empty()
+            || !holds.progress_of("scheduling").is_empty(),
+        "waited for the volume"
+    );
+}
+
+/// (FIX-049, b) A `ProvisioningFailed` that is the newest event and older than the grace fails
+/// fast with the event's message; the claim pins a class, so no storage-class hint but the
+/// class name.
+#[tokio::test]
+async fn stale_unrecovered_provisioning_failed_fails_fast_without_the_class_hint() {
+    let fake = Fake::with(Behaviour::PvcUnbound);
+    let req = request(Uuid::now_v7(), Uuid::now_v7());
+    let home = req.spec.home_ref.clone();
+    seed_manila_claim(&fake, &home);
+    fake.put(
+        "events",
+        "e1",
+        warning(
+            "PersistentVolumeClaim",
+            &home,
+            "ProvisioningFailed",
+            RACE,
+            &rfc3339(300),
+        ),
+    );
+    let b = backend(&fake, 4, Duration::from_secs(600));
+    let holds = Holds::default();
+    let err = b.start(&req, &holds).await.unwrap_err();
+    assert!(matches!(err, BackendError::HomeVolumeUnbound(_)), "{err:?}");
+    assert_eq!(err.reason_code(), "home_volume_unbound");
+    let m = err.sanitized_message();
+    assert!(m.contains("the object has been modified"), "{m}");
+    assert!(m.contains("`prevessin-cephfs-ssd-a-delete`"), "{m}");
+    assert!(!m.contains("runner.k8s.storageClass"), "{m}");
+    assert!(fake.names("pods").is_empty(), "the pod is removed");
+}
+
+/// (FIX-049, c) A fresh `ProvisioningFailed` (within the grace) keeps the start waiting and
+/// reports `provisioning` progress with the warning; the pod is kept.
+#[tokio::test]
+async fn fresh_provisioning_failed_keeps_waiting_with_provisioning_progress() {
+    let fake = Fake::with(Behaviour::PvcUnboundFor(3));
+    let req = request(Uuid::now_v7(), Uuid::now_v7());
+    let home = req.spec.home_ref.clone();
+    seed_manila_claim(&fake, &home);
+    fake.put(
+        "events",
+        "e1",
+        warning(
+            "PersistentVolumeClaim",
+            &home,
+            "ProvisioningFailed",
+            RACE,
+            &rfc3339(5),
+        ),
+    );
+    let b = backend(&fake, 4, Duration::from_secs(600));
+    let holds = Holds::default();
+    let c = b.start(&req, &holds).await.unwrap();
+    assert!(fake.names("pods").contains(&c.0), "pod kept");
+    let p = holds.progress_of("provisioning");
+    assert!(!p.is_empty(), "provisioning progress reported");
+    assert!(p[0].contains("the object has been modified"), "{p:?}");
 }
 
 /// (FIX-025) After `runner.k8s.storageClass` is set, a never-bound home claim with another

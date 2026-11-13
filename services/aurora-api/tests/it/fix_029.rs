@@ -213,6 +213,26 @@ impl Rig {
         rows
     }
 
+    /// `(previous_failure_code, via)` of the agent's `agent.sandbox_retry` audit row. The audit
+    /// write is fire-and-forget (best-effort): polls with a deadline.
+    async fn retry_audit(&self, agent: Uuid) -> (String, String) {
+        for _ in 0..100 {
+            let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT metadata->>'previous_failure_code', metadata->>'via' FROM audit_log
+                 WHERE action = 'agent.sandbox_retry' AND target_id = $1",
+            )
+            .bind(agent.to_string())
+            .fetch_optional(self.h.pool())
+            .await
+            .unwrap();
+            if let Some((code, via)) = row {
+                return (code.unwrap_or_default(), via.unwrap_or_default());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("no agent.sandbox_retry audit row within 5 s");
+    }
+
     /// Session caller for the workspace owner (a member bound as owner).
     async fn owner_headers(&self, n: u32) -> Vec<(&'static str, String)> {
         let u = self.h.user(&format!("owner{n}@x.io"), false).await;
@@ -239,25 +259,9 @@ async fn retry_happy_path_clears_failure_and_claims_once() {
         "the failure leaves the backoff lease live"
     );
 
-    // While the lease is live the retry is 409.
+    // (FIX-049, D-164) An explicit retry overrides the live backoff lease.
     let hd = r.owner_headers(1).await;
     let hdr: Vec<(&str, &str)> = hd.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let (s, _, v) =
-        r.h.send(
-            Method::POST,
-            &format!("/v1/agents/{agent}/sandbox/retry"),
-            &hdr,
-            None,
-        )
-        .await;
-    assert_eq!(s, 409, "{v}");
-    assert_eq!(v["error"]["code"], "sandbox_not_failed");
-
-    // Expire the lease, retry.
-    sqlx::query("UPDATE sandboxes SET lifecycle_lease_until = now() - interval '1 second'")
-        .execute(r.h.pool())
-        .await
-        .unwrap();
     let (s, _, v) =
         r.h.send(
             Method::POST,
@@ -393,10 +397,6 @@ async fn retry_writes_the_audit_row_with_the_previous_code() {
     let rep = r.register("runner-a", 4).await;
     let agent = r.agent("audited").await;
     fail_a_start(&r, rep, agent).await;
-    sqlx::query("UPDATE sandboxes SET lifecycle_lease_until = now() - interval '1 second'")
-        .execute(r.h.pool())
-        .await
-        .unwrap();
     let hd = r.owner_headers(1).await;
     let hdr: Vec<(&str, &str)> = hd.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let (s, _, _) =
@@ -408,23 +408,122 @@ async fn retry_writes_the_audit_row_with_the_previous_code() {
         )
         .await;
     assert_eq!(s, 202);
-    // The audit write is fire-and-forget (best-effort): poll for the row.
-    let mut code: Option<String> = None;
-    for _ in 0..40 {
-        code = sqlx::query_scalar(
-            "SELECT metadata->>'previous_failure_code' FROM audit_log
-             WHERE action = 'agent.sandbox_retry' AND target_id = $1",
+    assert_eq!(
+        r.retry_audit(agent).await,
+        ("pod_failed".to_owned(), "retry".to_owned())
+    );
+}
+
+/// (FIX-049, C-626) Restart from `failed` is the C-610 recovery — while the backoff lease is
+/// live — with `via: "restart"` in the audit row; no second start path.
+#[tokio::test]
+async fn restart_from_failed_performs_the_retry_recovery() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("restart-failed").await;
+    let (sb, boot, _turn) = fail_a_start(&r, rep, agent).await;
+    let (state, _, _, lease_live) = r.facts(agent).await;
+    assert_eq!((state.as_str(), lease_live), ("failed", true));
+
+    let hd = r.owner_headers(1).await;
+    let hdr: Vec<(&str, &str)> = hd.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/agents/{agent}/restart"),
+            &hdr,
+            None,
         )
-        .bind(agent.to_string())
-        .fetch_optional(r.h.pool())
+        .await;
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(
+        v["state"], "stopped",
+        "parked until the start arm claims it"
+    );
+    let (state, code, failures, lease_live) = r.facts(agent).await;
+    assert_eq!(state, "stopped");
+    assert_eq!(code, None, "failure fields cleared");
+    assert_eq!(failures, 0, "start_failures reset");
+    assert!(!lease_live);
+    assert_eq!(
+        r.start_log(agent).await[0],
+        ("note".to_owned(), Some("retry".to_owned())),
+        "the retry note"
+    );
+    assert_eq!(
+        r.retry_audit(agent).await,
+        ("pod_failed".to_owned(), "restart".to_owned())
+    );
+
+    // The ordinary start arm claims exactly one fresh start.
+    let _ = r.turn(agent).await;
+    let item = first(&r.work(rep, 0).await, "sandbox.start").clone();
+    assert_ne!(item["boot_id"].as_str().unwrap(), boot.to_string());
+    assert_eq!(item["sandbox_id"].as_str().unwrap(), sb);
+    assert_eq!(r.sandbox_state(&sb).await, "starting");
+}
+
+/// (FIX-049, C-626) Restart has nothing to do from `stopped` (or `unprovisioned`, `stopping`):
+/// 409 `restart_not_applicable` naming the state, not a silent 202.
+#[tokio::test]
+async fn restart_from_stopped_is_409_restart_not_applicable() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("restart-stopped").await;
+    let hd = r.owner_headers(1).await;
+    let hdr: Vec<(&str, &str)> = hd.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let url = format!("/v1/agents/{agent}/restart");
+    // A fresh agent has no computer yet.
+    let (s, _, v) = r.h.send(Method::POST, &url, &hdr, None).await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "restart_not_applicable");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unprovisioned"),
+        "{v}"
+    );
+    // A failed start recovered by Restart parks the sandbox in `stopped`: a second Restart has
+    // nothing to do.
+    fail_a_start(&r, rep, agent).await;
+    let (s, _, v) = r.h.send(Method::POST, &url, &hdr, None).await;
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(r.facts(agent).await.0, "stopped");
+    let (s, _, v) = r.h.send(Method::POST, &url, &hdr, None).await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "restart_not_applicable");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("stopped"),
+        "{v}"
+    );
+}
+
+/// (FIX-049, C-626) The restart fall-through from `failed` honours the freeze (423) and leaves
+/// the failure in place.
+#[tokio::test]
+async fn restart_from_failed_on_a_frozen_agent_is_423() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("frozen-restart").await;
+    fail_a_start(&r, rep, agent).await;
+    sqlx::query("UPDATE agents SET frozen_at = now(), frozen_reason = 'matrix', frozen_authority = 'workspace_owner'")
+        .execute(r.h.pool())
         .await
         .unwrap();
-        if code.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert_eq!(code.as_deref(), Some("pod_failed"));
+    let hd = r.owner_headers(1).await;
+    let hdr: Vec<(&str, &str)> = hd.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/agents/{agent}/restart"),
+            &hdr,
+            None,
+        )
+        .await;
+    assert_eq!(s, 423, "{v}");
+    assert_eq!(v["error"]["code"], "frozen");
+    assert_eq!(r.facts(agent).await.0, "failed", "failure untouched");
 }
 
 /// (C-612) The start log is a ring: 30 entries cap, oldest dropped, sanitised details, reset by

@@ -657,7 +657,10 @@ again" and "Show the getting-started guide again".
     (C-613). The failed state's notice shows the human reason
     (`failure_message`) beside the code and a **Retry now** button (FIX-029,
     D-160, C-610/C-615): disabled with "Start in flight…" once the retry is
-    accepted, hidden on frozen agents.
+    accepted, hidden on frozen agents. (FIX-049, D-164, C-626) **Restart** is disabled
+    on `stopping`/`stopped`/`unprovisioned` (the API answers 409
+    `restart_not_applicable`) and enabled on `failed`, where it runs the same
+    recovery as Retry now (disabled there on a frozen agent: 423).
     BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect
     tab shows the effective BYO posture (phase 3, RFE-013: the token's **expiry** and **last used** time, a "Stale" / "Expiring" badge, and a Regenerate call to action; agent lists carry the same badges for owners) and, when set, its source ('Disabled by

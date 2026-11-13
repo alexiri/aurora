@@ -124,7 +124,10 @@ function StartLog({ agentId, log }: { agentId: string; log: StartLogEntry[] }) {
   );
 }
 
-export function ComputerTab({ agentId }: { agentId: string }) {
+/** States where Restart has nothing to do (the API answers 409 `restart_not_applicable`, C-626). */
+const RESTART_NOT_APPLICABLE = new Set(["stopping", "stopped", "unprovisioned"]);
+
+export function ComputerTab({ agentId, frozen = false }: { agentId: string; frozen?: boolean }) {
   const q = useSandbox(agentId);
   const restart = useRestartSandbox(agentId);
   const retry = useRetrySandbox(agentId);
@@ -140,6 +143,9 @@ export function ComputerTab({ agentId }: { agentId: string }) {
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const v = q.data;
+  // (FIX-049, C-626) Restart is disabled where it would answer 409 (nothing to restart), and on a
+  // failed computer of a frozen agent (the recovery would start work: 423).
+  const restartBlocked = RESTART_NOT_APPLICABLE.has(v.state) || (v.state === "failed" && frozen);
   const tone = v.state === "running" ? "accent" : v.state === "failed" ? "danger" : v.state === "starting" || v.state === "stopping" ? "pending" : "neutral";
   return (
     <div className="space-y-8">
@@ -148,7 +154,7 @@ export function ComputerTab({ agentId }: { agentId: string }) {
         title="Computer"
         description={v.image ? `Image: ${v.image}` : undefined}
         actions={
-          <Button variant="outline" size="sm" disabled={restart.isPending} onClick={() => setOpen(true)}>
+          <Button variant="outline" size="sm" disabled={restart.isPending || restartBlocked} onClick={() => setOpen(true)}>
             Restart
           </Button>
         }
@@ -216,7 +222,8 @@ export function ComputerTab({ agentId }: { agentId: string }) {
               {errorCopy(v.failure_code).message} {v.failure_message ?? ""}
             </span>
             {/* (FIX-029, C-615) Retry now: disabled "Start in flight…" once the start leaves `failed` (the 202 view parks it in `stopped`). */}
-            {v.retryable || retry.isPending ? (
+            {/* (FIX-049, C-615) Hidden on a frozen agent: the API would answer 423. */}
+            {!frozen && (v.retryable || retry.isPending) ? (
               <Button
                 size="sm"
                 variant="outline"

@@ -341,7 +341,9 @@ async fn notify_conv_work(conn: &mut sqlx::PgConnection) -> Result<(), ApiError>
 
 /// Start-failure codes a runner or supervisor may report (`10 §Failure semantics`, C-581); any
 /// other code becomes `agent_start_failed`.
-pub const START_FAILURE_CODES: [&str; 10] = [
+pub const START_FAILURE_CODES: [&str; 11] = [
+    // (FIX-058) the readiness sweep's verdict when no live runner holds the start
+    "runner_unavailable",
     "image_unavailable",
     "at_capacity",
     "agent_start_failed",

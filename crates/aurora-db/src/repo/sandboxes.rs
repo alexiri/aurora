@@ -509,29 +509,74 @@ pub async fn hello_overdue(
 /// (FIX-025, D-158) The API gives up on the current start attempt of `boot`: the sandbox moves to
 /// `stopping` (reason `failure`, lease cleared so arm 2 sends the stop at the next poll) with the
 /// failure recorded; the `stopped` report then lands it in `failed` with the backoff. Fenced on
-/// state `starting`/`running` and the boot; `false` when nothing changed.
+/// state `starting`/`running` and the boot, and (FIX-058) on "still not ready": a sandbox that
+/// became ready between the sweep's snapshot and this update (supervisor connected, channel held,
+/// harness ready, home synced) is left alone.
+///
+/// (FIX-058) With `runner_gone` — no live runner holds the sandbox, so nothing would ever send the
+/// stop — the attempt ends terminally instead: the sandbox goes straight to `failed` with the
+/// backoff `apply_status` uses for a `failed` report (the boot ends, its credentials are
+/// revoked), and a `stopping` row is resolved the same way instead of wedging. Returns `None`
+/// when nothing changed, else the boot-credential ids revoked (empty unless `runner_gone`; the
+/// caller notifies the gateway).
 pub async fn fail_attempt(
     conn: &mut PgConnection,
     sandbox: Uuid,
     boot: Uuid,
     code: &str,
     message: &str,
-) -> Result<bool, DbError> {
-    let n = sqlx::query(
-        "UPDATE sandboxes SET state = 'stopping', stop_reason = 'failure',
-             failure_code = $3, failure_message = $4, start_failures = start_failures + 1,
-             lifecycle_lease_until = NULL, updated_at = now()
-         WHERE id = $1 AND boot_id = $2 AND state IN ('starting','running')",
+    runner_gone: bool,
+) -> Result<Option<Vec<Uuid>>, DbError> {
+    let row: Option<(Uuid, i32)> = sqlx::query_as(
+        "SELECT s.agent_id, s.start_failures FROM sandboxes s
+           JOIN agents a ON a.id = s.agent_id JOIN workspaces w ON w.id = a.workspace_id
+         WHERE s.id = $1 AND s.boot_id = $2
+           AND (s.state IN ('starting','running') OR ($3 AND s.state = 'stopping'))
+           AND NOT (s.state = 'running' AND s.bootstrap_used_at IS NOT NULL
+                AND s.channel_replica_id IS NOT NULL AND s.resource_profile ? 'harness'
+                AND s.home_applied_generation >=
+                    (a.home_sync_generation + w.home_sync_generation + 1))
+         FOR UPDATE OF s",
     )
     .bind(sandbox)
     .bind(boot)
-    .bind(code)
-    .bind(message)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
-    if n == 0 {
-        return Ok(false);
+    .bind(runner_gone)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((agent, failures)) = row else {
+        return Ok(None);
+    };
+    let mut revoked = Vec::new();
+    if runner_gone {
+        sqlx::query(
+            "UPDATE sandboxes SET state = 'failed', stop_reason = 'failure',
+                 failure_code = $2, failure_message = $3, start_failures = $4,
+                 lifecycle_lease_until = now() + make_interval(secs => $5),
+                 channel_replica_id = NULL, listening_ports = '{}', container_ref = NULL,
+                 stop_requested_at = NULL, restart_requested_at = NULL, updated_at = now()
+             WHERE id = $1",
+        )
+        .bind(sandbox)
+        .bind(code)
+        .bind(message)
+        .bind(failures + 1)
+        .bind(backoff_secs(failures + 1))
+        .execute(&mut *conn)
+        .await?;
+        end_boot(conn, sandbox, boot, "failure", "parked").await?;
+        revoked = revoke_boot_credentials(conn, agent, Some(boot)).await?;
+    } else {
+        sqlx::query(
+            "UPDATE sandboxes SET state = 'stopping', stop_reason = 'failure',
+                 failure_code = $2, failure_message = $3, start_failures = start_failures + 1,
+                 lifecycle_lease_until = NULL, updated_at = now()
+             WHERE id = $1",
+        )
+        .bind(sandbox)
+        .bind(code)
+        .bind(message)
+        .execute(&mut *conn)
+        .await?;
     }
     // (FIX-029, C-612) The readiness sweep's verdict enters the boot's start log.
     append_start_log(conn, sandbox, "phase", Some("failed"), Some(message)).await?;
@@ -544,7 +589,7 @@ pub async fn fail_attempt(
         &serde_json::json!([]),
     )
     .await?;
-    Ok(true)
+    Ok(Some(revoked))
 }
 
 fn events_json(events: &[String]) -> serde_json::Value {
@@ -651,8 +696,10 @@ pub async fn append_start_log(
 /// caller's transaction. The ordinary due-work start arm (`claim_starts`, notified right after)
 /// then claims the sandbox with a fresh `boot_id` and the ordinary `lifecycle_lease_until` —
 /// the retry itself never sets a lease, because a live lease would block that claim (and the
-/// readiness deadline is shorter than a start lease). Returns `false` when nothing was retried
-/// (the state is not `failed` or a lifecycle lease is still live) so the caller answers 409
+/// readiness deadline is shorter than a start lease). (FIX-049, D-164) An explicit retry overrides
+/// the failure-backoff lease (it stops only *automatic* storms, C-583; a live lease on a `failed`
+/// row fences no in-flight start, which would leave the row `starting`). Returns `false` when
+/// nothing was retried (the state is not `failed`) so the caller answers 409
 /// `sandbox_not_failed`; the conditional UPDATE also fences concurrent retries.
 pub async fn retry_failed_start(
     conn: &mut PgConnection,
@@ -665,15 +712,14 @@ pub async fn retry_failed_start(
              start_failures = 0, lifecycle_lease_until = NULL,
              stop_reason = NULL, stop_requested_at = NULL, restart_requested_at = NULL,
              updated_at = now()
-         WHERE agent_id = $1 AND state = 'failed'
-           AND (lifecycle_lease_until IS NULL OR lifecycle_lease_until < now())",
+         WHERE agent_id = $1 AND state = 'failed'",
     )
     .bind(agent)
     .execute(&mut *conn)
     .await?
     .rows_affected();
     if n == 0 {
-        // Another caller won, or the lease is live: 409 `sandbox_not_failed`.
+        // Another caller won, or the state is not `failed`: 409 `sandbox_not_failed`.
         return Ok(false);
     }
     let sandbox: Uuid = sqlx::query_scalar("SELECT id FROM sandboxes WHERE agent_id = $1")

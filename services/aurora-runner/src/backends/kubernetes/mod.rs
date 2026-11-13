@@ -167,9 +167,24 @@ fn refused(what: &str, e: kube::Error) -> BackendError {
     }
 }
 
-/// Hint appended to `home_volume_unbound`.
+/// Hint appended to `home_volume_unbound` when the claim pins no storage class (a claim that
+/// does pin one gets its name instead: the setting was already applied).
 const STORAGE_CLASS_HINT: &str = "set runner.k8s.storageClass (Helm runner.k8s.storageClass) to an \
     existing StorageClass or mark one as the cluster default";
+
+/// (FIX-049, D-164) How long a `ProvisioningFailed` warning on a still-Pending home claim is
+/// treated as a slow-provisioning signal rather than a verdict (the in-tree controller's
+/// "object has been modified" race, recovered by the external provisioner).
+const PVC_PROVISION_GRACE: Duration = Duration::from_secs(90);
+
+/// One Kubernetes event of an object, reduced to what the start diagnostics use.
+struct ObjectEvent {
+    at: i64,
+    warning: bool,
+    reason: String,
+    /// `Reason: message`.
+    line: String,
+}
 
 /// `Ok(())` for success or "already gone".
 fn ignore_missing<T>(r: Result<T, kube::Error>) -> Result<(), BackendError> {
@@ -292,7 +307,20 @@ impl KubernetesBackend {
     /// `Reason: message`. A listing error (e.g. RBAC without `events`) yields none: diagnostics
     /// never fail a start.
     async fn warning_events(&self, kind: &str, name: &str) -> Vec<String> {
-        let fields = format!("involvedObject.kind={kind},involvedObject.name={name},type=Warning");
+        let mut out: Vec<String> = Vec::new();
+        for e in self.object_events(kind, name).await {
+            if e.warning && !out.contains(&e.line) {
+                out.push(e.line);
+            }
+        }
+        out
+    }
+
+    /// (FIX-049) All events (Normal and Warning) of one object, newest first. A listing error
+    /// yields none. The type is classified client-side: a Warning can be superseded by a later
+    /// Normal event of the same object.
+    async fn object_events(&self, kind: &str, name: &str) -> Vec<ObjectEvent> {
+        let fields = format!("involvedObject.kind={kind},involvedObject.name={name}");
         let list = match self
             .events()
             .list(&ListParams::default().fields(&fields))
@@ -304,9 +332,8 @@ impl KubernetesBackend {
                 return Vec::new();
             }
         };
-        let mut items: Vec<(i64, String)> = list
+        let mut items: Vec<ObjectEvent> = list
             .into_iter()
-            .filter(|e| e.type_.as_deref().is_none_or(|t| t == "Warning"))
             .map(|e| {
                 let at = e
                     .last_timestamp
@@ -322,40 +349,79 @@ impl KubernetesBackend {
                     .unwrap_or(0);
                 let reason = e.reason.unwrap_or_default();
                 let msg = e.message.unwrap_or_default();
-                (at, format!("{reason}: {msg}"))
+                ObjectEvent {
+                    at,
+                    // An event without a type is treated as a warning (the pre-FIX-049 rule).
+                    warning: e.type_.as_deref().is_none_or(|t| t == "Warning"),
+                    line: format!("{reason}: {msg}"),
+                    reason,
+                }
             })
             .collect();
-        items.sort_by_key(|a| std::cmp::Reverse(a.0));
-        let mut out: Vec<String> = Vec::new();
-        for (_, line) in items {
-            if !out.contains(&line) {
-                out.push(line);
-            }
-        }
-        out
+        items.sort_by_key(|e| std::cmp::Reverse(e.at));
+        items
     }
 
-    /// (FIX-025) The home PVC is unbound and will not bind by waiting: `Some(reason)`.
-    /// A Pending claim with a `FailedBinding` or `ProvisioningFailed` warning qualifies; one still
-    /// provisioning (no warning yet) does not.
-    async fn unbound_home(&self, home: &str) -> Option<String> {
-        let pvc = self.pvcs().get_opt(home).await.ok().flatten()?;
+    /// (FIX-025, FIX-049, D-164) The home PVC is unbound and will not bind by waiting:
+    /// `Ok(Some(reason))` to fail the start, `Err(detail)` while the claim is still provisioning
+    /// despite a `ProvisioningFailed` warning, `Ok(None)` when there is nothing to report.
+    /// A `FailedBinding` warning always qualifies. A `ProvisioningFailed` one qualifies only when
+    /// no Normal `Provisioning`/`ProvisioningSucceeded` event is as new as it and it is older than
+    /// [`PVC_PROVISION_GRACE`]: the in-tree controller's annotation race is superseded by the
+    /// external provisioner within seconds to minutes.
+    async fn unbound_home(&self, home: &str) -> Result<Option<String>, String> {
+        let Some(pvc) = self.pvcs().get_opt(home).await.ok().flatten() else {
+            return Ok(None);
+        };
         let pending = pvc
             .status
             .as_ref()
             .and_then(|s| s.phase.as_deref())
             .is_none_or(|p| p == "Pending");
-        if !pending {
-            return None;
+        if !pending || pvc.spec.as_ref().is_some_and(|s| s.volume_name.is_some()) {
+            return Ok(None);
         }
-        let ev = self
-            .warning_events("PersistentVolumeClaim", home)
-            .await
-            .into_iter()
-            .find(|e| e.starts_with("FailedBinding:") || e.starts_with("ProvisioningFailed:"))?;
-        Some(format!(
-            "the sandbox home volume `{home}` cannot be bound: {ev}; {STORAGE_CLASS_HINT}"
-        ))
+        let class = pvc
+            .spec
+            .as_ref()
+            .and_then(|s| s.storage_class_name.clone())
+            .filter(|c| !c.is_empty());
+        let events = self.object_events("PersistentVolumeClaim", home).await;
+        let provisioned_at = events
+            .iter()
+            .filter(|e| {
+                !e.warning && matches!(e.reason.as_str(), "Provisioning" | "ProvisioningSucceeded")
+            })
+            .map(|e| e.at)
+            .max();
+        let now = Utc::now().timestamp();
+        let mut waiting = None;
+        let mut verdict = None;
+        for e in events.iter().filter(|e| e.warning) {
+            if e.reason == "FailedBinding" {
+                verdict = Some(e);
+                break;
+            }
+            if e.reason == "ProvisioningFailed" {
+                let superseded = provisioned_at.is_some_and(|p| p >= e.at);
+                if !superseded && now - e.at >= PVC_PROVISION_GRACE.as_secs() as i64 {
+                    verdict = Some(e);
+                    break;
+                }
+                waiting.get_or_insert_with(|| e.line.clone());
+            }
+        }
+        let Some(ev) = verdict else {
+            return waiting.map_or(Ok(None), Err);
+        };
+        let hint = match &class {
+            Some(c) => format!("the claim's storage class is `{c}`"),
+            None => STORAGE_CLASS_HINT.to_owned(),
+        };
+        Ok(Some(format!(
+            "the sandbox home volume `{home}` cannot be bound: {}; {hint}",
+            ev.line
+        )))
     }
 
     async fn cluster_ip(&self, name: &str) -> Result<String, BackendError> {
@@ -560,10 +626,16 @@ impl KubernetesBackend {
                 // fast with the claim's own event once it has one.
                 PodState::Unschedulable(m) if waits_for_unbound_pvc(&m) => {
                     cap.unblocked();
-                    if let Some(why) = self.unbound_home(home).await {
-                        break Err(BackendError::HomeVolumeUnbound(why));
+                    match self.unbound_home(home).await {
+                        Ok(Some(why)) => break Err(BackendError::HomeVolumeUnbound(why)),
+                        // (FIX-049) A `ProvisioningFailed` the provisioner may still recover from.
+                        Err(warning) => hold.progress(
+                            "provisioning",
+                            &format!("waiting for the home volume to be provisioned: {warning}"),
+                        ),
+                        Ok(None) => hold
+                            .progress("scheduling", &format!("waiting for the home volume: {m}")),
                     }
-                    hold.progress("scheduling", &format!("waiting for the home volume: {m}"));
                 }
                 PodState::Unschedulable(m) => {
                     hold.progress("waiting_capacity", &format!("pod unschedulable: {m}"));
