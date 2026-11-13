@@ -241,6 +241,8 @@ log_level = "info"
 [gateway]
 internal_bind = "{ops_ip}"
 allowed_private = ["127.0.0.1/32", "127.0.0.2/32"{db_target_allowed}]
+# FIX-104 (D-180): the mock upstreams are plain HTTP on random loopback ports.
+insecure_loopback_injection = true
 ca_dir = "{ca}"
 advertised_proxy_url = "https://aurora-gateway:4102"
 
