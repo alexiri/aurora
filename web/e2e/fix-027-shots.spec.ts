@@ -4,10 +4,9 @@ import { mockApi } from "./support/mock-api";
 import { CANVAS, overflow, type Scheme } from "./support/open";
 
 // FIX-027: owner-review screenshots of the two stacked sidebar selectors — org page, workspace
-// page, admin and account, in both themes — under /tmp/aurora-screens/fix-027/. Same mocked-API
+// page, admin and account, in both themes — under test-results/ (per-test `testInfo.outputPath`, so
+// parallel workers never share a path). Same mocked-API
 // open as the stage-4 specs: themed, no horizontal scroll, page rendered (no page errors).
-
-const SHOTS = "/tmp/aurora-screens/fix-027";
 
 const SCREENS: { name: string; path: string }[] = [
   { name: "org", path: "/o/acme" },
@@ -21,13 +20,16 @@ for (const scheme of ["light", "dark"] as const) {
     test.use({ viewport: { width: 1280, height: 900 } });
 
     for (const s of SCREENS) {
-      test(`${s.name}: sidebar screenshot, themed, no horizontal scroll`, async ({ page }) => {
+      test(`${s.name}: sidebar screenshot, themed, no horizontal scroll`, async ({ page }, testInfo) => {
         await openShell(page, s.path, scheme);
         const sidebar = page.getByRole("complementary", { name: "Sidebar" });
         await expect(sidebar.getByTestId("org-selector").getByRole("button")).toBeVisible();
-        // Let lists settle before the picture.
-        await page.waitForTimeout(300);
-        await page.screenshot({ path: `${SHOTS}/${s.name}-${scheme}-1280.png` });
+        // Settle before the picture: web fonts loaded, no pending animation frame.
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        });
+        await page.screenshot({ path: testInfo.outputPath(`${s.name}-${scheme}-1280.png`) });
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
       });

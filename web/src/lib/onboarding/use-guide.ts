@@ -10,6 +10,20 @@ import { useSecrets, type SecretScope } from "@/lib/api/secrets";
 import { computeGuide, type Guide, type GuideKey } from "./guide";
 
 /**
+ * How long until the next look for an answer (ms), or `false` to stop polling. Each look costs one list request plus
+ * up to three event reads, so a workspace whose agent never answers backs off — 10 s for the first minute, then 30 s,
+ * then 60 s — and stops after about 22 minutes. Focusing the window still refetches (react-query's default), and a
+ * background tab does not poll at all.
+ */
+export function repliedPollInterval(looks: number, replied: boolean | undefined): number | false {
+  if (replied === true) return false;
+  if (looks < 6) return 10_000;
+  if (looks < 12) return 30_000;
+  if (looks < 30) return 60_000;
+  return false;
+}
+
+/**
  * Has any conversation of the agent an answer from it? A `text` event is the agent's own words; an `error`
  * event (no key, no model) is not an answer. Looks at the three most recently active conversations.
  */
@@ -19,7 +33,7 @@ export function useAgentReplied(agentId: string | undefined, enabled = true) {
     enabled: enabled && !!agentId,
     retry: false,
     // While there is no answer yet the guide keeps watching, so the step ticks when the reply lands.
-    refetchInterval: (q) => (q.state.data === true ? false : 10_000),
+    refetchInterval: (q) => repliedPollInterval(q.state.dataUpdateCount, q.state.data),
     queryFn: async (): Promise<boolean> => {
       const list = await chatApi.list(agentId!, false);
       const recent = [...list.items]

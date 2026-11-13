@@ -199,6 +199,39 @@ describe("getting-started guide: every state", () => {
     expect(screen.getByRole("button", { name: "Show" })).toBeInTheDocument();
   });
 
+  it("Dismiss keeps the other dismissals (the PATCH replaces the list) and waits for the GET (FIX-067)", async () => {
+    world({ readiness: readiness([]) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    routes["GET /v1/me/onboarding"] = async () => {
+      await gate;
+      return json(200, { welcome_seen: true, guide_dismissed: ["w9", "w8"], tour_completed_at: null });
+    };
+    routes["PATCH /v1/me/onboarding"] = (_r, body) =>
+      json(200, { welcome_seen: true, guide_dismissed: (body as { guide_dismissed: string[] }).guide_dismissed, tour_completed_at: null });
+    guide({ variant: "overview" });
+    const button = await screen.findByRole("button", { name: "Dismiss" });
+    // The list is unknown while the GET is pending: Dismiss cannot send a one-entry replacement.
+    expect(button).toBeDisabled();
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Dismiss" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "PATCH /v1/me/onboarding")).toBe(true));
+    expect(calls.find((c) => c.key === "PATCH /v1/me/onboarding")?.body).toEqual({ guide_dismissed: ["w9", "w8", "w1"] });
+  });
+
+  it("access step: Not now puts the panel away and Give access brings it back (FIX-067)", async () => {
+    world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
+    routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: [llmSecret("k2", "Mine", "workspace")] });
+    routes["GET /v1/agents/a1/model-readiness"] = () => json(200, readiness([]));
+    guide();
+    const notNow = await screen.findByRole("button", { name: "Not now" });
+    fireEvent.click(notNow);
+    expect(screen.queryByRole("button", { name: "Not now" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Give access" }));
+    expect(await screen.findByRole("button", { name: "Not now" })).toBeInTheDocument();
+  });
+
   it("never shows a secret value", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
     const { container } = guide();
@@ -297,13 +330,13 @@ describe("instance setup wizard (D-141)", () => {
     };
     wrap(<SetupView />);
     const sw = await screen.findByRole("checkbox", { name: "Give it to every new user's agent" });
-    await waitFor(() => expect(sw).toBeEnabled(), { timeout: 3000 });
+    await waitFor(() => expect(sw).toBeEnabled());
     fireEvent.click(sw);
-    // (3s windows: the PUT -> refetch -> re-render chain has to fit, which can be slow on a loaded host.)
+    // (The PUT -> refetch -> re-render chain has to fit, which can be slow on a loaded host.)
     await waitFor(() => expect(calls.find((c) => c.key === "PUT /v1/admin/placement")?.body).toMatchObject({
       mode: "shared_org", default_org_id: "o1", starter_grants: [{ kind: "secret", id: "k9" }],
-    }), { timeout: 3000 });
-    await waitFor(() => expect(sw).toBeChecked(), { timeout: 3000 });
+    }));
+    await waitFor(() => expect(sw).toBeChecked());
   });
 
   it("without a saved shared placement the switch is off and says why", async () => {
@@ -321,6 +354,23 @@ describe("instance setup wizard (D-141)", () => {
     wrap(<SetupView />);
     expect(await screen.findByText("Add an organization LLM key for Users")).toBeInTheDocument();
     expect(await screen.findByLabelText("New LLM key")).toBeInTheDocument();
+  });
+
+  it("adding the key refetches the wizard status, so step 3 does not stay stale (FIX-067)", async () => {
+    setupWorld();
+    routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: [] });
+    routes["GET /v1/llm/providers"] = () =>
+      json(200, { providers: [{ id: "litellm", display_name: "LiteLLM", auth_modes: ["bearer"] }], endpoints: [{ id: "litellm", provider: "litellm", display_name: "AIGW", permitted: true, key_scopes: [] }] });
+    routes["POST /v1/orgs/o1/secrets"] = () => json(201, llmSecret("k10", "AIGW", "organization"));
+    wrap(<SetupView />);
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "AIGW" } });
+    fireEvent.change(await screen.findByLabelText("Provider endpoint"), { target: { value: "litellm" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-test" } });
+    const statusReads = () => calls.filter((c) => c.key === "GET /v1/admin/setup").length;
+    const before = statusReads();
+    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /v1/orgs/o1/secrets")).toBe(true));
+    await waitFor(() => expect(statusReads()).toBeGreaterThan(before));
   });
 });
 
@@ -363,7 +413,7 @@ describe("tour (D-141)", () => {
     const opener = screen.getByRole("button", { name: "Show me around" });
     opener.focus();
     act(() => startTour());
-    const dialog = await screen.findByRole("dialog", { name: "Overview" }, { timeout: 3000 });
+    const dialog = await screen.findByRole("dialog", { name: "Overview" });
     await waitFor(() => expect(dialog).toHaveFocus());
     expect(within(dialog).getByText("Stop 1 of 8")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "overview" })).toHaveAttribute("data-tour-active", "true");
@@ -382,9 +432,51 @@ describe("tour (D-141)", () => {
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(calls.find((c) => c.key === "PATCH /v1/me/onboarding")?.body).toEqual({ tour_completed: true });
+    // Esc only leaves (FIX-067): the tour stays replayable and is not recorded as completed.
+    expect(calls.some((c) => c.key === "PATCH /v1/me/onboarding")).toBe(false);
     expect(opener).toHaveFocus();
     expect(document.querySelector("[data-tour-active]")).toBeNull();
+  });
+
+  it("Skip tour records the tour as completed", async () => {
+    stubLayout(false);
+    routes["PATCH /v1/me/onboarding"] = () => json(200, { welcome_seen: true, guide_dismissed: [], tour_completed_at: "2026-11-10T10:00:00Z" });
+    wrap(
+      <>
+        {nav()}
+        <Tour setNavOpen={vi.fn()} />
+      </>,
+    );
+    act(() => startTour());
+    await screen.findByRole("dialog", { name: "Overview" });
+    fireEvent.click(screen.getByRole("button", { name: "Skip tour" }));
+    await waitFor(() => expect(calls.find((c) => c.key === "PATCH /v1/me/onboarding")?.body).toEqual({ tour_completed: true }));
+  });
+
+  it("leaves the arrow keys alone in a field and inside another dialog (FIX-067)", async () => {
+    stubLayout(false);
+    wrap(
+      <>
+        {nav()}
+        <input aria-label="Name" />
+        <div role="dialog" aria-label="Other">
+          <button type="button">Inside</button>
+        </div>
+        <Tour setNavOpen={vi.fn()} />
+      </>,
+    );
+    act(() => startTour());
+    await screen.findByRole("dialog", { name: "Overview" });
+    // fireEvent returns false when a handler called preventDefault.
+    expect(fireEvent.keyDown(screen.getByLabelText("Name"), { key: "ArrowRight" })).toBe(true);
+    expect(fireEvent.keyDown(screen.getByRole("button", { name: "Inside" }), { key: "ArrowRight" })).toBe(true);
+    expect(screen.getByRole("dialog", { name: "Overview" })).toBeInTheDocument();
+    // Escape in the other dialog does not close the tour either.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Inside" }), { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Overview" })).toBeInTheDocument();
+    // Elsewhere the arrow still moves it.
+    expect(fireEvent.keyDown(window, { key: "ArrowRight" })).toBe(false);
+    expect(await screen.findByRole("dialog", { name: "Agents and Chat" })).toBeInTheDocument();
   });
 
   it("skips stops whose link is not there (a member has no Approvals or Members) and ends on Done", async () => {
@@ -403,7 +495,7 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    expect(await screen.findByText("Stop 1 of 6", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText("Stop 1 of 6", undefined)).toBeInTheDocument();
     for (let i = 0; i < 5; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText("Stop 6 of 6")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
@@ -422,7 +514,7 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    const dialog = await screen.findByRole("dialog", undefined, { timeout: 3000 });
+    const dialog = await screen.findByRole("dialog", undefined);
     expect(setNavOpen).toHaveBeenCalledWith(true);
     expect(dialog.className).toContain("bottom-4");
     fireEvent.click(screen.getByRole("button", { name: "Skip tour" }));
@@ -438,7 +530,7 @@ describe("tour (D-141)", () => {
         <Tour setNavOpen={vi.fn()} />
       </>,
     );
-    expect(await screen.findByRole("dialog", undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", undefined)).toBeInTheDocument();
     expect(window.location.search).toBe("");
   });
 });

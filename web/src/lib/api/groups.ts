@@ -38,15 +38,37 @@ export function sourceLabel(s: GroupSource): string {
 /** Members of the group are edited by the IdP, not by hand. */
 export const isManaged = (g: Pick<Group, "source">) => g.source !== "manual";
 
-/** Groups of an org (names and counts; org owners/admins, or workspace owners for the picker). */
+const PAGE_LIMIT = 200;
+/** C-460 allows 500 groups per org (and a group binds to a bounded set of workspaces); a few pages of
+ *  200 cover it, the bound only guards against a server that never ends the cursor chain. */
+const MAX_PAGES = 10;
+
+/** Follows `next_cursor` until the list ends, so nothing past the first page vanishes (FIX-067). */
+async function fetchAllPages<T>(
+  page: (cursor: string | undefined) => Promise<{ items: T[]; next_cursor?: string | null }>,
+): Promise<{ items: T[]; next_cursor: null }> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+  for (let i = 0; i < MAX_PAGES; i += 1) {
+    const p = await page(cursor);
+    items.push(...p.items);
+    if (!p.next_cursor) break;
+    cursor = p.next_cursor;
+  }
+  return { items, next_cursor: null };
+}
+
+/** Groups of an org (names and counts; org owners/admins, or workspace owners for the picker). Every page. */
 export function useGroups(orgId: string | undefined, q = "") {
   return useQuery({
     queryKey: [...groupKeys.list(orgId ?? ""), q] as const,
     queryFn: () =>
-      unwrap(
-        api.GET("/v1/orgs/{org}/groups", {
-          params: { path: { org: orgId! }, query: { limit: 200, q: q || undefined } },
-        }),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/orgs/{org}/groups", {
+            params: { path: { org: orgId! }, query: { limit: PAGE_LIMIT, q: q || undefined, cursor } },
+          }),
+        ),
       ),
     enabled: !!orgId,
     retry,
@@ -80,8 +102,12 @@ export function useGroupWorkspaces(id: string) {
   return useQuery({
     queryKey: groupKeys.workspaces(id),
     queryFn: () =>
-      unwrap(
-        api.GET("/v1/groups/{id}/workspaces", { params: { path: { id }, query: { limit: 200 } } }),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/groups/{id}/workspaces", {
+            params: { path: { id }, query: { limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
       ),
     retry,
   });

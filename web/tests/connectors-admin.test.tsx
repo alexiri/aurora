@@ -422,6 +422,32 @@ describe("Managed connector detail", () => {
     await waitFor(() => expect(calls.find((c) => c.key.endsWith("/approve"))?.body).toEqual({ manifest_digest: "sha256:two" }));
   });
 
+  it("a manifest that changes under the open panel un-ticks the review box (FIX-067)", async () => {
+    const pending = (digest: string) => ({ ...fakeConnector(), status: "pending_approval", manifest_digest: digest, widening: ["adds capability edits"] });
+    let current = pending("sha256:two");
+    mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [current] }),
+      "GET /v1/admin/connector-types": () => json(200, types([fakeType()])),
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ConnectorsAdminView />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^Manage / }));
+    const box = await screen.findByLabelText(/I have reviewed/);
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    expect(screen.getByRole("button", { name: "Approve manifest" })).toBeEnabled();
+    // The manifest changes on the server while the admin is looking at the old one.
+    current = pending("sha256:three");
+    await qc.invalidateQueries({ queryKey: ["admin", "connectors"] });
+    await qc.invalidateQueries();
+    await waitFor(() => expect(screen.getByLabelText(/I have reviewed/)).not.toBeChecked());
+    expect(screen.getByRole("button", { name: "Approve manifest" })).toBeDisabled();
+  });
+
   it("shows Mattermost's own instance settings in its detail view", async () => {
     await openDetail(mmConnector, mattermost, {}, "Callback URL (optional)");
     expect(screen.getByLabelText("Catch-up window (seconds) (optional)")).toHaveValue(600);

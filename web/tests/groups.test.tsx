@@ -87,6 +87,22 @@ describe("Groups list", () => {
     expect(screen.getByText("admin")).toBeInTheDocument();
   });
 
+  it("follows next_cursor: groups past the first page are listed (FIX-067)", async () => {
+    // Two pages: the first names a cursor, the second (a differently named group) ends the chain.
+    let page = 0;
+    const calls = stub({
+      [`GET /v1/orgs/${ORG}/groups`]: () =>
+        page++ === 0
+          ? json(200, { items: [group(G1, "manual")], next_cursor: "c2" })
+          : json(200, { items: [group(G2, "manual", { name: "Late group" })], next_cursor: null }),
+      "GET /v1/instance": () => json(200, { oidc_providers: [] }),
+    });
+    wrap(<GroupsView orgId={ORG} orgSlug="acme" />);
+    expect(await screen.findByRole("link", { name: "Platform team" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Late group" })).toBeInTheDocument();
+    expect(calls.some((c) => c.includes("cursor=c2"))).toBe(true);
+  });
+
   it("offers the sign-in link only for providers with a group claim", async () => {
     stub({
       [`GET /v1/orgs/${ORG}/groups`]: () => json(200, { items: [], next_cursor: null }),

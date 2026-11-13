@@ -60,8 +60,12 @@ const CLOSE_COPY: Record<number, string> = {
   4504: "The terminal session timed out.",
 };
 
-/** Close codes a reconnect can plausibly fix (transient): everything else ends the pane. */
-const RETRYABLE = new Set([4502, 4503]);
+/**
+ * Close codes a reconnect can plausibly fix (transient): everything else ends the pane. 1006 is an
+ * abnormal close — a dropped connection, or the failed handshake the browser reports while a sandbox
+ * wakes or the API restarts. The terminal ones (4403 revoked, 4404 gone, 4409 limit) stay final.
+ */
+const RETRYABLE = new Set([1006, 4502, 4503]);
 
 type Phase =
   | { kind: "connecting" }

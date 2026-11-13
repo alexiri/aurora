@@ -5,12 +5,18 @@ import { mockApi, readinessEmpty } from "./support/mock-api";
 import { overflow, type Scheme } from "./support/open";
 
 // P4-ONB-2 (D-141): the instance setup wizard, the Welcome page and guide, and the tour, with the API mocked
-// (no backend). Screenshots of each screen in both themes at 1280 and 390 px go to /tmp/aurora-screens/p4-onb-2/;
+// (no backend). Screenshots of each screen in both themes at 1280 and 390 px go to test-results/ (testInfo.outputPath);
 // axe has no serious or critical violation; nothing scrolls sideways at 390 px; the tour works from the keyboard.
 // The three journeys against a real stack (admin wizard to a chat answer, Welcome with and without a starter grant)
 // are in onboarding-journeys.spec.ts.
 
-const SHOTS = "/tmp/aurora-screens/p4-onb-2";
+/** Settle before a picture: fonts loaded and two animation frames painted (no fixed sleep). */
+async function settle(page: Page) {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+}
 
 async function serious(page: Page) {
   const { violations } = await new AxeBuilder({ page }).analyze();
@@ -70,18 +76,17 @@ for (const scheme of ["light", "dark"] as const) {
       test.use({ viewport: { width, height: 900 } });
 
       for (const s of SCREENS) {
-        test(`${s.name}: screenshot, axe, no horizontal scroll`, async ({ page }) => {
+        test(`${s.name}: screenshot, axe, no horizontal scroll`, async ({ page }, testInfo) => {
           await open(page, s.path, scheme, s.scenario);
           await expect(page.getByRole("heading", { name: new RegExp(s.ready) }).first()).toBeVisible();
-          // Let lists and the form settle before the picture.
-          await page.waitForTimeout(300);
-          await page.screenshot({ path: `${SHOTS}/${s.name}-${scheme}-${width}.png`, fullPage: true });
+          await settle(page);
+          await page.screenshot({ path: testInfo.outputPath(`${s.name}-${scheme}-${width}.png`), fullPage: true });
           expect(await serious(page)).toEqual([]);
           if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
         });
       }
 
-      test("tour: coach marks over the navigation", async ({ page }) => {
+      test("tour: coach marks over the navigation", async ({ page }, testInfo) => {
         await open(page, "/o/acme/w/main/welcome", scheme, "welcome-ready");
         await page.getByRole("button", { name: "Show me around" }).click();
         const card = page.getByRole("dialog", { name: "Overview" });
@@ -90,11 +95,11 @@ for (const scheme of ["light", "dark"] as const) {
           // The drawer opens as the tour goes.
           await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
         }
-        await page.screenshot({ path: `${SHOTS}/tour-${scheme}-${width}.png` });
+        await page.screenshot({ path: testInfo.outputPath(`tour-${scheme}-${width}.png`) });
         expect(await serious(page)).toEqual([]);
         await page.getByRole("dialog").getByRole("button", { name: "Next" }).click();
         await expect(page.getByRole("dialog", { name: "Agents and Chat" })).toBeVisible();
-        await page.screenshot({ path: `${SHOTS}/tour-2-${scheme}-${width}.png` });
+        await page.screenshot({ path: testInfo.outputPath(`tour-2-${scheme}-${width}.png`) });
         if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
       });
     });

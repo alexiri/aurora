@@ -411,8 +411,8 @@ describe("Add from library", () => {
     wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} orgId="o1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Add from library…" }));
     // (a heavier render than the other tests: allow for a loaded machine)
-    fireEvent.click(await screen.findByRole("button", { name: /^release-notes/ }, { timeout: 8000 }));
-    expect(await screen.findByText(/26 of 25 skills/, undefined, { timeout: 8000 })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /^release-notes/ }));
+    expect(await screen.findByText(/26 of 25 skills/, undefined)).toBeTruthy();
     expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

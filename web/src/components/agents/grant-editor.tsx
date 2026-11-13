@@ -136,6 +136,9 @@ function EditorForm({
   const anyAsk = counts(decisions).ask > 0;
   const timeoutHint = anyAsk ? timeoutProblem(timeout) : undefined;
   const effectiveMode: Mode = customOnly ? "custom" : mode;
+  // The server answers a custom grant that allows and asks nothing with 422 `empty_custom`: say so up front
+  // and keep Save off (as the give-access panel does with `needsTools`).
+  const emptyCustom = effectiveMode === "custom" && counts(decisions).allow + counts(decisions).ask === 0;
 
   const choose = (id: string, d: Decision) => {
     setDecisions((cur) => ({ ...cur, [id]: d }));
@@ -267,6 +270,11 @@ function EditorForm({
         </div>
       ) : null}
 
+      {emptyCustom ? (
+        <p role="status" className="text-xs text-muted">
+          Allow or ask at least one tool to save.
+        </p>
+      ) : null}
       {errors.general ? (
         <Notice tone="danger" role="alert">
           {errors.general}
@@ -282,7 +290,7 @@ function EditorForm({
             Cancel
           </Button>
         </DialogClose>
-        <Button type="submit" disabled={put.isPending || (effectiveMode === "custom" && anyAsk && (timeoutHint !== undefined || parseTimeout(timeout) === "invalid"))}>
+        <Button type="submit" disabled={put.isPending || emptyCustom || (effectiveMode === "custom" && anyAsk && (timeoutHint !== undefined || parseTimeout(timeout) === "invalid"))}>
           {put.isPending ? "Saving…" : "Save access"}
         </Button>
       </div>

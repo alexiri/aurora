@@ -149,8 +149,14 @@ export function GettingStarted(props: GuideProps) {
           <Button
             variant="ghost"
             size="sm"
-            disabled={patch.isPending}
-            onClick={() => patch.mutate({ guide_dismissed: [...(onboarding.data?.guide_dismissed ?? []), props.wsId] })}
+            // `guide_dismissed` REPLACES the whole list (PatchOnboarding): never send it before the
+            // current list is known, and build it from a fresh read, not from a possibly stale render.
+            disabled={patch.isPending || !onboarding.data || onboarding.isFetching}
+            onClick={async () => {
+              const fresh = (await onboarding.refetch()).data;
+              if (!fresh) return;
+              patch.mutate({ guide_dismissed: [...new Set([...(fresh.guide_dismissed ?? []), props.wsId])] });
+            }}
           >
             Dismiss
           </Button>
@@ -206,6 +212,8 @@ function StepBody({
   ownerNames,
   keysCount,
 }: GuideProps & { step: GuideStep; agent: Agent; base: string; ownerNames: string[]; keysCount: number }) {
+  // "Not now" on the access panel: put the panel away for this visit; the step stays open.
+  const [accessDeferred, setAccessDeferred] = useState(false);
   if (step.state === "done") return null;
   if (step.state === "owner" && step.id !== "hello") {
     return <p>{ownerAsk(ownerNames, step.id === "key" ? "add an LLM key" : `give ${agent.name} access to it`)}</p>;
@@ -219,6 +227,16 @@ function StepBody({
       );
     case "access":
       if (step.state === "waiting") return <p>Comes after the key.</p>;
+      if (step.keyToGrant && accessDeferred) {
+        return (
+          <div className="flex flex-wrap items-center gap-2">
+            <p>{agent.name} cannot use {step.keyToGrant.name} until it has access.</p>
+            <Button size="sm" variant="outline" onClick={() => setAccessDeferred(false)}>
+              Give access
+            </Button>
+          </div>
+        );
+      }
       return step.keyToGrant ? (
         <div className="space-y-2">
           <p>
@@ -227,7 +245,7 @@ function StepBody({
           <GiveAccessPanel
             heading={false}
             dismissLabel="Not now"
-            onDismiss={() => undefined}
+            onDismiss={() => setAccessDeferred(true)}
             subject={{
               target: { kind: "secret", id: step.keyToGrant.id },
               scope: { kind: step.keyToGrant.scope, id: step.keyToGrant.scope === "workspace" ? wsId : orgId },
@@ -243,12 +261,16 @@ function StepBody({
       return (
         <div className="space-y-2">
           {step.state === "waiting" ? <p>Comes after the steps above.</p> : <p>Open the chat and send a first message. The answer proves everything works.</p>}
-          {isOwner || step.state === "todo" ? (
+          {step.state === "waiting" && isOwner ? (
+            // Not a link: an `aria-disabled` anchor is still focusable and navigable.
+            <Button size="sm" disabled>
+              Say hello to {agent.name}
+            </Button>
+          ) : isOwner || step.state === "todo" ? (
             <Link
               href={`${base}/agents/${agent.handle}?tab=chat&draft=${encodeURIComponent(HELLO_MESSAGE)}`}
               // `text-on-primary!`: the global `a { color: inherit }` would otherwise win over the utility.
-              className={cn(buttonVariants({ size: "sm" }), "text-on-primary!", step.state === "waiting" && "pointer-events-none opacity-50")}
-              aria-disabled={step.state === "waiting"}
+              className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}
             >
               Say hello to {agent.name}
             </Link>
