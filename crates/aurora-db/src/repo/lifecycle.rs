@@ -393,6 +393,8 @@ pub async fn switch_harness_sessions(
 // ------------------------------------------------------------------ retention sweep
 
 /// Conversations of an org older than `days`, without an active turn or a pending approval.
+/// (FIX-097, docs/04 §Freeze) Retention is suspended for a frozen agent, workspace or
+/// organization: freeze keeps every byte of state for forensics; the sweep resumes at unfreeze.
 pub async fn retention_candidates(
     conn: &mut PgConnection,
     org: Uuid,
@@ -400,8 +402,12 @@ pub async fn retention_candidates(
     limit: i64,
 ) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT c.id FROM conversations c JOIN workspaces w ON w.id = c.workspace_id
+        "SELECT c.id FROM conversations c
+           JOIN workspaces w ON w.id = c.workspace_id
+           JOIN organizations o ON o.id = w.org_id
+           JOIN agents ag ON ag.id = c.agent_id
          WHERE w.org_id = $1 AND c.last_activity_at < now() - make_interval(days => $2::int)
+           AND w.frozen_at IS NULL AND o.frozen_at IS NULL AND ag.frozen_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = c.id AND t.role = 'turn'
                            AND t.status IN ('queued','dispatched','running'))
            AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.conversation_id = c.id AND a.status = 'pending')

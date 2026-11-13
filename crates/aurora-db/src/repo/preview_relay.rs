@@ -63,12 +63,16 @@ pub async fn find_live_preview_session<'e, E: PgExecutor<'e>>(
     idle_secs: i64,
 ) -> Result<Option<PreviewSessionRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, token_hash, display_prefix, share_id, user_id, session_id, \
-                created_at, last_seen_at, expires_at \
-           FROM preview_sessions \
-          WHERE token_hash = $1 \
-            AND expires_at > now() \
-            AND last_seen_at > now() - make_interval(secs => $2)",
+        // (FIX-097) The dashboard session behind the preview session must still be live: a
+        // revoked session keeps its row, so the FK cascade alone never ends preview access.
+        "SELECT p.id, p.token_hash, p.display_prefix, p.share_id, p.user_id, p.session_id, \
+                p.created_at, p.last_seen_at, p.expires_at \
+           FROM preview_sessions p \
+           JOIN sessions s ON s.id = p.session_id \
+          WHERE p.token_hash = $1 \
+            AND p.expires_at > now() \
+            AND p.last_seen_at > now() - make_interval(secs => $2) \
+            AND s.revoked_at IS NULL AND s.expires_at > now()",
     )
     .bind(token_hash)
     .bind(idle_secs)

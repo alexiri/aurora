@@ -103,23 +103,100 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// Tables `delete_cascade` empties by `org_id`, in dependency order (workspaces first: they
+/// cascade agents and every workspace-scoped row; `groups` after `scim_users`/`scim_tokens`
+/// only by convention, none of the three references another). Every table with a `RESTRICT`
+/// foreign key into `organizations` is in this list or in [`ORG_VIA_WORKSPACES`]: the
+/// `deletion` test in `crates/aurora-db/tests` reads `pg_constraint` and fails otherwise.
+pub const ORG_CASCADE_TABLES: [&str; 14] = [
+    "workspaces",
+    "channel_integrations",
+    "skills",
+    "derived_rules",
+    "app_connections",
+    "app_oauth_clients",
+    "app_instances",
+    "secrets",
+    "policy_generations",
+    "api_keys",
+    "scim_users",
+    "scim_tokens",
+    "groups",
+    "preview_shares",
+];
+
+/// Tables that restrict `organizations` too but whose rows are only ever workspace- or
+/// agent-scoped: the `workspaces` delete above removes them by cascade.
+pub const ORG_VIA_WORKSPACES: [&str; 1] = ["agents"];
+
+/// What a managed secret value belongs to (the seal purpose the API rebuilds the context with).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedKind {
+    SecretValue,
+    ConnectionCredentials,
+    OauthClientSecret,
+}
+
+/// A managed secret value that is about to lose its owning row: collected before the delete,
+/// discarded in the store after the commit (docs/08 §Secret stores, `discard`).
+#[derive(Debug, Clone)]
+pub struct ManagedRef {
+    pub kind: ManagedKind,
+    pub owner_id: Uuid,
+    pub org_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
+    pub value_ref: String,
+}
+
+/// Managed values of the secrets, connections and OAuth clients of one scope (`org` when
+/// `workspace` is `None`, else that workspace only). Call inside the deleting transaction,
+/// before the delete.
+pub async fn managed_refs(
+    conn: &mut PgConnection,
+    org: Uuid,
+    workspace: Option<Uuid>,
+) -> Result<Vec<ManagedRef>, DbError> {
+    let mut out = Vec::new();
+    for (kind, sql) in [
+        (
+            ManagedKind::SecretValue,
+            "SELECT id, org_id, workspace_id, value_ref FROM secrets WHERE value_source = 'managed'",
+        ),
+        (
+            ManagedKind::ConnectionCredentials,
+            "SELECT id, org_id, workspace_id, credentials_ref FROM app_connections WHERE true",
+        ),
+        (
+            ManagedKind::OauthClientSecret,
+            "SELECT id, org_id, workspace_id, secret_ref FROM app_oauth_clients WHERE true",
+        ),
+    ] {
+        let rows: Vec<(Uuid, Option<Uuid>, Option<Uuid>, String)> = sqlx::query_as(&format!(
+            "{sql} AND org_id = $1 AND ($2::uuid IS NULL OR workspace_id = $2) ORDER BY id"
+        ))
+        .bind(org)
+        .bind(workspace)
+        .fetch_all(&mut *conn)
+        .await?;
+        out.extend(
+            rows.into_iter()
+                .map(|(owner_id, org_id, workspace_id, value_ref)| ManagedRef {
+                    kind,
+                    owner_id,
+                    org_id,
+                    workspace_id,
+                    value_ref,
+                }),
+        );
+    }
+    Ok(out)
+}
+
 /// Delete an organization and its children in dependency order. Ledgers
 /// (`audit_log`, `request_log`, `runtime_*`) are not FK-linked and remain.
 /// M6: connector deprovisioning must be enqueued before calling this.
 pub async fn delete_cascade(conn: &mut PgConnection, org: Uuid) -> Result<(), DbError> {
-    // Workspaces first: cascades agents and every workspace-scoped row.
-    for table in [
-        "workspaces",
-        "channel_integrations",
-        "skills",
-        "derived_rules",
-        "app_connections",
-        "app_oauth_clients",
-        "app_instances",
-        "secrets",
-        "policy_generations",
-        "api_keys",
-    ] {
+    for table in ORG_CASCADE_TABLES {
         sqlx::query(&format!("DELETE FROM {table} WHERE org_id = $1"))
             .bind(org)
             .execute(&mut *conn)

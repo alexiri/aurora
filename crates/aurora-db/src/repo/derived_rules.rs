@@ -62,6 +62,22 @@ pub async fn delete_for_secret_grants<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (FIX-097) Remove the compiled rules of every grant of an agent (call before deleting the
+/// agent, whose grants cascade without touching derived rules).
+pub async fn delete_for_agent_grants<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_id: Uuid,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "DELETE FROM derived_rules WHERE source_kind = 'grant' \
+         AND source_id IN (SELECT id FROM grants WHERE agent_id = $1)",
+    )
+    .bind(agent_id)
+    .execute(exec)
+    .await?
+    .rows_affected())
+}
+
 /// Delete the rules of a source whose ordinal is not in `keep`.
 pub async fn delete_except<'e, E: PgExecutor<'e>>(
     exec: E,

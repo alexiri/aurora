@@ -1,6 +1,7 @@
 use super::dto::*;
 use crate::app::AppState;
 use crate::domains::tenancy::dto::{OrgSummary, parse_org_role, parse_status, parse_ws_role};
+use crate::domains::tenancy::service::WorkspaceDeletion;
 use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::repo::{account, notify_auth_revoked, sessions, users};
@@ -146,17 +147,106 @@ pub async fn delete_me(
     if !age.is_some_and(|a| (0.0..=REAUTH_WINDOW_SECS).contains(&a)) {
         return Err(reauth_required());
     }
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    let sole = account::sole_owner_orgs(&mut tx, user_id).await?;
-    if !sole.is_empty() {
-        return Err(ApiError::conflict(
-            "last_owner",
-            "You are the last owner of an organization. Transfer ownership or delete it first.",
-        ));
+    // (FIX-097, docs/04 §Deletion semantics) A personal workspace nobody else is bound to goes
+    // with its person; seal each deletion's deprovision copies before the transaction.
+    let personal_hint: Vec<Uuid> =
+        account::sole_member_personal_workspaces(&state.pool, user_id, false)
+            .await?
+            .into_iter()
+            .map(|(w, _, _)| w)
+            .collect();
+    let mut prepared: Vec<(Uuid, WorkspaceDeletion)> = Vec::new();
+    for ws in personal_hint {
+        match WorkspaceDeletion::prepare(state, ws).await {
+            Ok(p) => prepared.push((ws, p)),
+            Err(e) => {
+                for (_, p) in &prepared {
+                    p.rollback(state).await;
+                }
+                return Err(e);
+            }
+        }
     }
-    notify_auth_revoked(&mut *tx, "user", user_id).await?;
-    account::delete_user(&mut tx, user_id).await?;
-    crate::audit::commit_critical(tx, ev).await?;
+    let mut blobs = Vec::new();
+    let mut done_ws: Vec<Uuid> = Vec::new();
+    let done = async {
+        let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+        let sole = account::sole_owner_orgs(&mut tx, user_id).await?;
+        if !sole.is_empty() {
+            return Err(ApiError::conflict(
+                "last_owner",
+                "You are the last owner of an organization. Transfer ownership or delete it first.",
+            ));
+        }
+        let mut events = Vec::new();
+        // Personal workspaces nobody shares: re-read under lock; ones that gained a member
+        // since the hint stay (marked personal, never offered as shared).
+        let sole_ws = account::sole_member_personal_workspaces(&mut *tx, user_id, true).await?;
+        let skip: Vec<Uuid> = sole_ws.iter().map(|(w, _, _)| *w).collect();
+        // Direct conversations first, through the conversation-deletion path: the session
+        // purge and the content-free audit row that the SQL cascade would skip.
+        for c in account::lock_direct_conversations(&mut tx, user_id, &skip).await? {
+            let gone = aurora_db::repo::lifecycle::delete_conversation(&mut tx, c.id).await?;
+            events.push(
+                crate::audit::AuditEvent::new(
+                    ev.actor.clone(),
+                    "conversation.delete",
+                    crate::audit::Outcome::Success,
+                )
+                .org(c.org_id)
+                .workspace(c.workspace_id)
+                .target("conversation", c.id)
+                .metadata(crate::domains::conversations::lifecycle::delete_meta(
+                    &[(c.id, &c.kind)],
+                    c.agent_id,
+                    &gone,
+                    Some("account_deleted"),
+                )),
+            );
+            blobs.extend(gone.blobs);
+        }
+        for (ws, org, slug) in &sole_ws {
+            let Some((_, del)) = prepared.iter_mut().find(|(w, _)| w == ws) else {
+                // Became sole after the hint: its deprovision copies were never sealed.
+                return Err(ApiError::conflict(
+                    "conflict",
+                    "A workspace changed while the account was being deleted; retry.",
+                ));
+            };
+            del.run(&mut tx, *org, *ws).await?;
+            done_ws.push(*ws);
+            events.push(
+                crate::audit::AuditEvent::new(
+                    ev.actor.clone(),
+                    "workspace.delete",
+                    crate::audit::Outcome::Success,
+                )
+                .org(*org)
+                .workspace(*ws)
+                .target("workspace", *ws)
+                .metadata(serde_json::json!({"slug": slug, "via": "account_deletion"})),
+            );
+        }
+        notify_auth_revoked(&mut *tx, "user", user_id).await?;
+        account::delete_user(&mut tx, user_id).await?;
+        events.push(ev.clone());
+        crate::audit::commit_critical_many(tx, &events).await
+    }
+    .await;
+    if let Err(e) = done {
+        for (_, p) in &prepared {
+            p.rollback(state).await;
+        }
+        return Err(e);
+    }
+    for (ws, p) in prepared {
+        if done_ws.contains(&ws) {
+            p.committed(state).await;
+        } else {
+            p.rollback(state).await;
+        }
+    }
+    crate::domains::conversations::lifecycle::remove_blobs(&state.pool, &blobs).await;
     state
         .session_cache
         .invalidate(&serde_json::json!({"kind": "user", "id": user_id}));

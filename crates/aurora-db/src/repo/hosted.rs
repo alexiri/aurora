@@ -328,6 +328,9 @@ pub async fn session_of(
 }
 
 /// `session` report: ignored when the epoch is stale or the conversation is another agent's.
+/// (FIX-097) A session reference this report replaces is queued for purge in the same
+/// transaction: deletion purges only the current reference, so a superseded one would
+/// otherwise stay readable in the agent's home (SEC-47).
 pub async fn set_session(
     conn: &mut PgConnection,
     conversation: Uuid,
@@ -335,19 +338,26 @@ pub async fn set_session(
     session_ref: &str,
     epoch: i64,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query(
-        "UPDATE conversations SET harness_session_ref = $3, harness_session_epoch = $4,
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "UPDATE conversations c SET harness_session_ref = $3, harness_session_epoch = $4,
              updated_at = now()
-         WHERE id = $1 AND agent_id = $2 AND harness_session_epoch <= $4",
+         FROM (SELECT id, harness_session_ref AS old FROM conversations
+                WHERE id = $1 AND agent_id = $2 AND harness_session_epoch <= $4 FOR UPDATE) o
+         WHERE c.id = o.id RETURNING o.old",
     )
     .bind(conversation)
     .bind(agent)
     .bind(session_ref)
     .bind(epoch)
-    .execute(conn)
-    .await?
-    .rows_affected()
-        > 0)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((old,)) = row else {
+        return Ok(false);
+    };
+    if let Some(old) = old.filter(|o| !o.is_empty() && o != session_ref) {
+        super::lifecycle::enqueue_purge(&mut *conn, agent, Some(conversation), &old).await?;
+    }
+    Ok(true)
 }
 
 /// `memory/index.md` lines: `(key, title, description, first content line)`.

@@ -137,6 +137,11 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// Tables with a `RESTRICT`/`NO ACTION` foreign key into `workspaces` (rows that must be gone
+/// before the workspace row can be). The `deletion` test in `crates/aurora-db/tests` compares
+/// this list with `pg_constraint`, so a new restricting table fails loudly there.
+pub const WORKSPACE_RESTRICT_CHILDREN: &[&str] = &[];
+
 pub async fn delete<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<(), DbError> {
     sqlx::query("DELETE FROM workspaces WHERE id = $1")
         .bind(id)

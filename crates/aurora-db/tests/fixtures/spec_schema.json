@@ -1142,6 +1142,7 @@
       "memory_language",
       "name",
       "org_id",
+      "personal",
       "personal_owner_user_id",
       "slug",
       "timezone"

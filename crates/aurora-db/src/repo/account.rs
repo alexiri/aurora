@@ -133,8 +133,62 @@ pub async fn sole_owner_orgs(conn: &mut PgConnection, user: Uuid) -> Result<Vec<
     Ok(sole)
 }
 
-/// Delete the user row; memberships, bindings, sessions, keys, identities, tokens and
-/// `direct` conversations go by FK cascade, creator/actor references are set to NULL.
+/// A `direct` conversation of the user (FIX-097), locked for deletion.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DirectConversation {
+    pub id: Uuid,
+    pub agent_id: Uuid,
+    pub workspace_id: Uuid,
+    pub org_id: Uuid,
+    pub kind: String,
+}
+
+/// The user's `direct` conversations, rows locked (call inside the deleting transaction).
+/// `skip_workspaces` are being deleted whole: their conversations go with the workspace.
+pub async fn lock_direct_conversations(
+    conn: &mut PgConnection,
+    user: Uuid,
+    skip_workspaces: &[Uuid],
+) -> Result<Vec<DirectConversation>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT c.id, c.agent_id, c.workspace_id, w.org_id, c.kind
+           FROM conversations c JOIN workspaces w ON w.id = c.workspace_id
+          WHERE c.direct_user_id = $1 AND NOT (c.workspace_id = ANY($2))
+          ORDER BY c.id FOR UPDATE OF c",
+    )
+    .bind(user)
+    .bind(skip_workspaces)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// `(workspace, org, slug)` of the personal workspaces of `user` that nobody else is bound to
+/// (no other direct binding, no group binding): deleted with the account (docs/04 §Deletion
+/// semantics). Rows locked with `lock` (inside the deleting transaction). A personal workspace
+/// others use stays, marked `personal`.
+pub async fn sole_member_personal_workspaces<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    lock: bool,
+) -> Result<Vec<(Uuid, Uuid, String)>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT w.id, w.org_id, w.slug FROM workspaces w
+          WHERE w.personal_owner_user_id = $1
+            AND NOT EXISTS (SELECT 1 FROM workspace_access a
+                             WHERE a.workspace_id = w.id AND a.user_id <> $1)
+            AND NOT EXISTS (SELECT 1 FROM group_workspace_access g WHERE g.workspace_id = w.id)
+          ORDER BY w.id{}",
+        if lock { " FOR UPDATE OF w" } else { "" }
+    ))
+    .bind(user)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Delete the user row; memberships, bindings, sessions, keys, identities and tokens go by FK
+/// cascade, creator/actor references are set to NULL. (FIX-097) `direct` conversations also
+/// cascade in SQL, which would skip the session purge and the audit row: delete them first
+/// through [`super::lifecycle::delete_conversation`].
 pub async fn delete_user(conn: &mut PgConnection, user: Uuid) -> Result<(), DbError> {
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user)

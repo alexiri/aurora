@@ -1066,6 +1066,10 @@ original record, returns 200).
    (phase 4, P4-PRV-1/2) **Previews** of an effectively frozen agent answer 423 `frozen`, never
    wake or start anything, and their open streams close within `PREVIEW_AUTH_CACHE`; the shares
    and preview sessions are kept (`11 §Port previews`, `§Preview access`).
+   (FIX-097) **Retention is suspended** for a frozen agent, workspace or organization: the
+   conversation retention sweep (`§Deletion semantics`, `10`) skips every conversation of an
+   effectively frozen scope, because freeze keeps every byte of state for forensics; the
+   sweep resumes at unfreeze and then deletes what has aged out meanwhile.
 7. **Reversal**: unfreezing clears the flags, invalidates the gateway and wakes due
    work. Nothing is replayed: aborted turns stay aborted, schedules resume at
    their next occurrence, sandboxes start on demand.
@@ -1091,13 +1095,27 @@ original record, returns 200).
   within 10 min; phase 1: recent OIDC re-authentication only, RFE-004): refused while the user is the last owner of any org
   (409 `last_owner`). Removes memberships, bindings, (phase 4) group memberships, sessions, keys, identities;
   conversations of kind `direct` with that user are deleted; authored content
-  keeps a denormalized label.
+  keeps a denormalized label. (FIX-097) The `direct` conversations go through the
+  **conversation-deletion path** in the same transaction (the harness session file is
+  queued for purge, SEC-47; one content-free `conversation.delete` audit row each), never by
+  the SQL cascade alone. The person's **personal workspace** (`§New-user placement`) is
+  deleted with the account when they are its only member (no other binding, direct or
+  through a group); otherwise it stays, keeps its `personal` marker after its owner id is
+  cleared, and is **never offered as a shared workspace** (placement choices) nor accepted by
+  `PUT /v1/admin/placement`.
 - **Workspace deletion**: cascades; agents' sandboxes are destroyed through
   runner reconciliation (`11`); channel presences on platforms are
   deprovisioned through connector operations enqueued before the delete.
+  (FIX-097) The managed secret values of the workspace's secrets, connections and OAuth
+  clients are discarded in their store after the commit (`08 §Secret stores`) and the
+  gateways are invalidated (`workspace` scope); deleting an **agent** also removes the
+  compiled rules of its grants.
 - **Org deletion**: owner only, typed confirmation; hand-written service deletes
-  children in dependency order, enqueues connector deprovisioning, then deletes
-  the org. Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
+  children in dependency order (including directory groups, SCIM tokens and SCIM links,
+  which restrict the organization row), enqueues connector deprovisioning, then deletes
+  the org; the managed secret values of every secret, connection and OAuth client of
+  the org are discarded after the commit and the gateways invalidated (`org` scope).
+  Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
 - **Deprovision ordering and content (phase 3, RFE-024).** For agent, workspace and
   org deletion the connector `presence.deprovision` operations are **inserted in
   the same transaction as the delete, before the cascade**, and are

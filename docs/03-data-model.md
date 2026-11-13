@@ -138,6 +138,7 @@ owner cannot be demoted or removed).
 | frozen_reason | text null | (phase 2, RFE-006) |
 | frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | (phase 2, RFE-006) |
 | personal_owner_user_id | uuid null FK→users (set null) | (phase 4, P4-ONB-1, D-140, SEC-79) the user this personal workspace was created for; unique per (`org_id`, user) (partial index); the only way sign-in finds a personal workspace |
+| personal | boolean not null default false | (phase 4, FIX-097) sticky marker: set with `personal_owner_user_id` and kept when that id is nulled by the user's deletion; a personal workspace is never offered as a shared workspace (readers treat a row with an owner id as personal too) |
 
 ### `instance_placement`
 (phase 4, P4-ONB-1, D-140) The instance admin's new-user placement (`04 §New-user placement`). At most one row; no row = unsaved (behaves as `personal_org` under `open`).
