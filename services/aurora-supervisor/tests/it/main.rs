@@ -6,6 +6,7 @@ mod inbound;
 mod pgrelay;
 mod previews;
 mod pty_env_probe;
+mod pty_leak;
 mod spawn_env;
 mod tools;
 mod turns;
