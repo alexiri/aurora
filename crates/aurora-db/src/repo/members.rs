@@ -68,13 +68,50 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     user: Uuid,
     role: &str,
 ) -> Result<(), DbError> {
-    sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES ($1,$2,$3)")
-        .bind(org)
-        .bind(user)
-        .bind(role)
-        .execute(exec)
-        .await?;
+    // (FIX-108) Any new membership row clears the removal marker, in the same statement.
+    sqlx::query(
+        "WITH cleared AS (DELETE FROM org_member_removals WHERE org_id = $1 AND user_id = $2)
+         INSERT INTO org_members (org_id, user_id, role) VALUES ($1,$2,$3)",
+    )
+    .bind(org)
+    .bind(user)
+    .bind(role)
+    .execute(exec)
+    .await?;
     Ok(())
+}
+
+/// (FIX-108) Record that an admin removed `user` from `org`: JIT provisioning does not restore
+/// a membership with a marker. Cleared by the next membership insert (invitation, admin add).
+pub async fn record_removal<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO org_member_removals (org_id, user_id) VALUES ($1, $2)
+         ON CONFLICT (org_id, user_id) DO UPDATE SET removed_at = now()",
+    )
+    .bind(org)
+    .bind(user)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// (FIX-108) Whether an admin removed `user` from `org` and nothing has added them back since.
+pub async fn was_removed<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_member_removals WHERE org_id = $1 AND user_id = $2)",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_one(exec)
+    .await?)
 }
 
 /// (D-175, FIX-082) A membership SCIM prepares for an existing account: `pending`, role
@@ -86,7 +123,8 @@ pub async fn insert_pending<'e, E: PgExecutor<'e>>(
     user: Uuid,
 ) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, role, status) VALUES ($1, $2, 'member', 'pending')",
+        "WITH cleared AS (DELETE FROM org_member_removals WHERE org_id = $1 AND user_id = $2)
+         INSERT INTO org_members (org_id, user_id, role, status) VALUES ($1, $2, 'member', 'pending')",
     )
     .bind(org)
     .bind(user)

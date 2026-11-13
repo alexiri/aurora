@@ -1640,6 +1640,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/cli/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a pending login is asking for: host name, start time, coarse address (session only). */
+        get: operations["getPendingCliLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/cli/token": {
         parameters: {
             query?: never;
@@ -8093,6 +8110,25 @@ export interface components {
         };
         PendingList: {
             items: components["schemas"]["Approval"][];
+        };
+        /** @description (FIX-108) The pending login as the approving session sees it. */
+        PendingResponse: {
+            /** @description Coarse address the request came from (IPv4 /24, IPv6 /48); absent when unknown. */
+            address?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The host name the CLI gave (sanitized, **unverified**: anyone can claim any name). */
+            hostname: string;
+            /**
+             * Format: int32
+             * @description Lifetime of the key an approval creates, in days; absent = it never expires.
+             */
+            key_expires_in_days?: number | null;
+            /**
+             * Format: date-time
+             * @description When the login was started.
+             */
+            requested_at: string;
         };
         PendingUpdateLibrary: {
             /** Format: uuid */
@@ -14637,6 +14673,52 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getPendingCliLogin: {
+        parameters: {
+            query: {
+                /** @description The `ABCD-EFGH` code shown by the CLI. */
+                code: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -224,6 +224,10 @@ pub struct AuthCache {
     /// org's (`None`) effective access changed; open streams re-authorize themselves.
     access: tokio::sync::broadcast::Sender<AccessPing>,
     map: Mutex<HashMap<[u8; 32], (Instant, Caller)>>,
+    /// (FIX-108) Bumped, under the map lock, by every invalidation. A reader takes the value
+    /// before its database read and `put`s only if it is unchanged, so a revocation that lands
+    /// between the read and the `put` is never cached as live.
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl Default for AuthCache {
@@ -239,7 +243,13 @@ impl AuthCache {
             revoked: tokio::sync::broadcast::channel(16).0,
             access: tokio::sync::broadcast::channel(256).0,
             map: Mutex::new(HashMap::new()),
+            generation: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// The invalidation generation to take **before** reading the database for a `put`.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<[u8; 32], (Instant, Caller)>> {
@@ -258,8 +268,12 @@ impl AuthCache {
         }
     }
 
-    fn put(&self, h: [u8; 32], c: Caller) {
+    /// Cache `c` unless an invalidation happened since `generation` was taken.
+    pub fn put(&self, generation: u64, h: [u8; 32], c: Caller) {
         let mut m = self.lock();
+        if self.generation.load(std::sync::atomic::Ordering::Acquire) != generation {
+            return;
+        }
         if m.len() > 10_000 {
             let ttl = self.ttl;
             m.retain(|_, (at, _)| at.elapsed() < ttl);
@@ -268,7 +282,12 @@ impl AuthCache {
     }
 
     pub fn clear(&self) {
-        self.lock().clear();
+        {
+            let mut m = self.lock();
+            self.generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            m.clear();
+        }
         let _ = self.revoked.send(());
     }
 
@@ -309,6 +328,8 @@ impl AuthCache {
         };
         let _ping = Pinger(&self.revoked);
         let mut m = self.lock();
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         match kind {
             "session" => m.retain(
                 |_, (_, c)| !matches!(c.principal, Principal::Session { id: s } if s == id),
@@ -474,6 +495,7 @@ async fn authenticate_key(state: &AppState, tok: &str) -> Result<Caller, ApiErro
     if let Some(c) = state.session_cache.get(&h) {
         return Ok(c);
     }
+    let generation = state.session_cache.generation();
     let rec = api_keys::find_by_hash(&state.pool, &h)
         .await?
         .filter(|r| r.live)
@@ -497,7 +519,7 @@ async fn authenticate_key(state: &AppState, tok: &str) -> Result<Caller, ApiErro
         },
         ip: None,
     };
-    state.session_cache.put(h, c.clone());
+    state.session_cache.put(generation, h, c.clone());
     Ok(c)
 }
 
@@ -509,6 +531,7 @@ async fn authenticate_session(state: &AppState, tok: &str) -> Result<Caller, Api
     if let Some(c) = state.session_cache.get(&h) {
         return Ok(c);
     }
+    let generation = state.session_cache.generation();
     let rec = sessions::find_by_hash(&state.pool, &h, state.config.auth.session_idle_secs)
         .await?
         .filter(|r| r.live)
@@ -523,7 +546,7 @@ async fn authenticate_session(state: &AppState, tok: &str) -> Result<Caller, Api
         principal: Principal::Session { id: rec.id },
         ip: None,
     };
-    state.session_cache.put(h, c.clone());
+    state.session_cache.put(generation, h, c.clone());
     Ok(c)
 }
 
@@ -697,5 +720,41 @@ impl FromRequestParts<AppState> for AgentCaller {
             org_id: rec.org_id,
             credential_id: rec.credential_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn caller(user: Uuid, admin: bool) -> Caller {
+        Caller {
+            user_id: user,
+            email: "u@example.com".into(),
+            is_instance_admin: admin,
+            principal: Principal::Session { id: Uuid::now_v7() },
+            ip: None,
+        }
+    }
+
+    /// (FIX-108) A revocation between the database read and the `put` must not be cached as live.
+    #[test]
+    fn invalidate_between_read_and_put_caches_nothing() {
+        let cache = AuthCache::default();
+        let user = Uuid::now_v7();
+        let h = [7u8; 32];
+        let generation = cache.generation(); // before the database read
+        cache.invalidate(&json!({"kind": "user", "id": user})); // the revoke lands
+        cache.put(generation, h, caller(user, true)); // the stale read is stored: refused
+        assert!(cache.get(&h).is_none());
+        // A read that started after the revocation is cached normally.
+        cache.put(cache.generation(), h, caller(user, false));
+        assert!(cache.get(&h).is_some());
+        // `clear` (listener resync) counts as an invalidation too.
+        let generation = cache.generation();
+        cache.clear();
+        cache.put(generation, [8u8; 32], caller(user, false));
+        assert!(cache.get(&[8u8; 32]).is_none());
     }
 }

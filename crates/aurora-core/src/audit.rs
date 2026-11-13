@@ -79,6 +79,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "member.add",
     "member.remove",
     "member.update",
+    // (FIX-108, D-143, SEC-78) a user admitted to a closed instance by the IdP's role mapping
+    "user.admit_by_claim",
     "user.delete",
     "workspace_access.remove",
     "workspace_access.set",

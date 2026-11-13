@@ -587,6 +587,8 @@ pub async fn remove_member(
         reassign_org_member(&mut tx, actor, org_id, target, to).await?;
     }
     members::remove(&mut tx, org_id, target).await?;
+    // (FIX-108) The removal is remembered, so JIT provisioning never restores the membership.
+    members::record_removal(&mut *tx, org_id, target).await?;
     // (FIX-037) A human removal of a SCIM-linked member tombstones the link in the same
     // transaction (04 §SCIM, D-135(f)): `state = removed` (with `removed_at`, flag false) so
     // JIT, invitations and sign-in re-admission are refused exactly as for a SCIM-side

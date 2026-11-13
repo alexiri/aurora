@@ -173,6 +173,7 @@ interface Page<T> { items: T[]; next_cursor: string | null }
 | GET `/v1/auth/oidc/{provider}/callback` | none | provider params | 302 `return_to` + cookie | 302 `/auth/login?error=<code>` (`oidc_state_invalid`, `oidc_failed`, `signup_closed`, `email_unverified`, `email_domain_not_allowed`) | _Phase 1: also `email_unverified` always, `user_disabled`, `reauth_user_mismatch`, `reauth_stale`; 429; C-151._
 | POST `/v1/auth/cli` | none | `{ hostname? }` | 200 `{ device_code, user_code: "ABCD-EFGH", verification_url, interval: 5, expires_in: 600 }` | 429 |
 | POST `/v1/auth/cli/token` | none | `{ device_code }` | 200 `{ api_key: string, workspace: {id, slug, name, org_id, org_slug} }` (once) | 400 `authorization_pending` \| `slow_down` \| `expired_token` \| `access_denied` \| `invalid_token` |
+| GET `/v1/auth/cli/pending?code=` | SO | — | 200 `{ hostname, requested_at, expires_at, address?: "a.b.c.0/24"\|"x:y:z::/48", key_expires_in_days?: int }` (FIX-108, D-183) | 400 malformed code; 403 `session_required`; 404 unknown/expired; 429 |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` | 204 | 404 `not_found` (unknown/expired code); 404 workspace not visible |
 | GET `/v1/me` | S | — | 200 `Me` | 401 |
 | PATCH `/v1/me` | S | `{ display_name?, default_org_id? }` | 200 `Me` | 400; 404 org not a membership |

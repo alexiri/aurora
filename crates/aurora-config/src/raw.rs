@@ -132,6 +132,9 @@ pub struct AuthSection {
     pub trusted_origins: Vec<String>,
     pub session_idle_secs: u64,
     pub session_absolute_secs: u64,
+    /// (FIX-108, D-178 Q-R5-16) Lifetime in days of an API key minted by the CLI device login;
+    /// `0` = never expires. Keys minted before the setting keep their stored expiry.
+    pub cli_key_ttl_days: u32,
     pub oidc_providers: Vec<OidcProvider>,
     /// (phase 1, RFE-004) The development IdP, `docs/04 §Development and end-to-end sign-in`.
     pub dev_idp: DevIdp,
@@ -172,6 +175,7 @@ impl Default for AuthSection {
             trusted_origins: vec![],
             session_idle_secs: 1_209_600,
             session_absolute_secs: 2_592_000,
+            cli_key_ttl_days: 90,
             oidc_providers: vec![],
             dev_idp: DevIdp::default(),
         }
@@ -198,6 +202,11 @@ pub struct OidcProvider {
     /// domain, case-insensitive, no subdomains) counts as verified even when the ID token has no
     /// `email_verified = true`. For IdPs that never send the claim. Empty = claim required.
     pub trusted_email_domains: Vec<String>,
+    /// (FIX-108, D-178 Q-R5-12) May a first sign-in through this provider link to an existing
+    /// account that was created through **another** provider with the same e-mail? Unset: yes,
+    /// except for a provider that relies on `trusted_email_domains` (its addresses are not
+    /// proven by a `email_verified` claim, so linking would let it take that account over).
+    pub link_existing_users: Option<bool>,
     pub jit: Option<OidcJit>,
     /// (phase 4, P4-IDP-1, D-139) Dot path into the validated ID token (or userinfo response)
     /// holding the IdP's role values, e.g. `cern_roles` or `resource_access.aurora.roles`.
@@ -226,6 +235,7 @@ impl Default for OidcProvider {
             require_email_verified: None,
             allowed_email_domains: vec![],
             trusted_email_domains: vec![],
+            link_existing_users: None,
             jit: None,
             role_claim: None,
             role_claim_source: String::new(),
@@ -265,6 +275,13 @@ pub struct OidcWorkspaceRole {
 }
 
 impl OidcProvider {
+    /// (FIX-108, D-178) The effective `link_existing_users`: the explicit value, else `true`
+    /// unless the provider relies on `trusted_email_domains`.
+    pub fn links_existing_users(&self) -> bool {
+        self.link_existing_users
+            .unwrap_or(self.trusted_email_domains.is_empty())
+    }
+
     /// Whether the role claim is read from the userinfo response instead of the ID token.
     pub fn role_claim_from_userinfo(&self) -> bool {
         self.role_claim_source == "userinfo"

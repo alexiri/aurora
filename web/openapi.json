@@ -7392,6 +7392,73 @@
         ]
       }
     },
+    "/v1/auth/cli/pending": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "What a pending login is asking for: host name, start time, coarse address (session only).",
+        "operationId": "getPendingCliLogin",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "The `ABCD-EFGH` code shown by the CLI.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/auth/cli/token": {
       "post": {
         "tags": [
@@ -34926,6 +34993,46 @@
             "items": {
               "$ref": "#/components/schemas/Approval"
             }
+          }
+        }
+      },
+      "PendingResponse": {
+        "type": "object",
+        "description": "(FIX-108) The pending login as the approving session sees it.",
+        "required": [
+          "hostname",
+          "requested_at",
+          "expires_at"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Coarse address the request came from (IPv4 /24, IPv6 /48); absent when unknown."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "hostname": {
+            "type": "string",
+            "description": "The host name the CLI gave (sanitized, **unverified**: anyone can claim any name)."
+          },
+          "key_expires_in_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Lifetime of the key an approval creates, in days; absent = it never expires.",
+            "minimum": 0
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the login was started."
           }
         }
       },

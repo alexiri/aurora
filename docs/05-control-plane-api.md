@@ -479,6 +479,7 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `/v1/auth/sessions/revoke-others` | SO | |
 | GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
+| GET `/v1/auth/cli/pending?code=` | SO | (FIX-108) `{ hostname, requested_at, expires_at, address?, key_expires_in_days? }` for the approval screen; 404 unknown/expired, 400 malformed code |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
 | GET/PATCH `/v1/me/onboarding` | S | (phase 4, P4-ONB-2, D-141) the caller's onboarding progress: `{ welcome_seen, guide_dismissed: [workspace_id], tour_completed_at }`; guide step completion itself is computed by the client from real state (model readiness, grants, conversations), never stored |
 | GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | (phase 1, RFE-004: DELETE needs a recent OIDC re-authentication, 412 `reauth_required`, no body) profile, memberships (phase 2, RFE-012: with the effective role per workspace), default org; (phase 2, RFE-011a) `PATCH { approval_email: bool }`; (phase 2, C-195) `client_address: string \| null`, the caller's address as the API sees it behind `server.trusted_proxies` |

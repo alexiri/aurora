@@ -441,6 +441,7 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/auth/logout", G::Auth, false),
     r("POST", "/v1/auth/sessions/revoke-others", G::Auth, true),
     r("POST", "/v1/auth/cli/approve", G::Auth, true),
+    r("GET", "/v1/auth/cli/pending", G::Auth, true),
     r("POST", "/v1/invitations/accept", G::Auth, true),
     r("GET", "/v1/orgs", G::Auth, false),
     r("GET", "/v1/resolve", G::Auth, false),
