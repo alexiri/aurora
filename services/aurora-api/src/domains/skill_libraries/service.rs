@@ -178,6 +178,19 @@ fn refresh_interval(state: &AppState) -> f64 {
         .max(limits::LIBRARY_REFRESH_INTERVAL_MIN.as_secs()) as f64
 }
 
+async fn check_library_cap(conn: &mut sqlx::PgConnection, org: Uuid) -> Result<(), ApiError> {
+    if repo::count_libraries(conn, org).await? >= limits::LIBRARIES_PER_ORG as i64 {
+        return Err(ApiError::conflict(
+            "library_limit",
+            format!(
+                "An organization can have at most {} libraries.",
+                limits::LIBRARIES_PER_ORG
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn create(
     state: &AppState,
     caller: &Caller,
@@ -197,16 +210,10 @@ pub async fn create(
         check_ref(r)?;
     }
     let path = normalize_path(req.path.as_deref().unwrap_or(""))?;
+    // Early refusal before the slow read of the repository; the authoritative check is made
+    // under the org's advisory lock right before the insert (below).
     let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    if repo::count_libraries(&mut c, org).await? >= limits::LIBRARIES_PER_ORG as i64 {
-        return Err(ApiError::conflict(
-            "library_limit",
-            format!(
-                "An organization can have at most {} libraries.",
-                limits::LIBRARIES_PER_ORG
-            ),
-        ));
-    }
+    check_library_cap(&mut c, org).await?;
     drop(c);
     let reader = Reader {
         gw: state.library.gateway.as_ref(),
@@ -220,6 +227,14 @@ pub async fn create(
         .await
         .map_err(|e| unreachable_on_create(&e))?;
     let mut tx = audit::begin(state).await?;
+    // Serialise creates per organization: without the lock, concurrent creates at 9 libraries
+    // all pass the count and exceed `LIBRARIES_PER_ORG`.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("skill_library_count:{org}"))
+        .execute(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+    check_library_cap(&mut tx, org).await?;
     let row = repo::insert_library(
         &mut tx,
         &NewLibrary {

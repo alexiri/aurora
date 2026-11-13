@@ -113,13 +113,30 @@ pub fn next_in_secs(interval: u64, failures: i32) -> f64 {
 
 /// Refreshes one claimed library and records the outcome (only the lease owner may).
 pub async fn refresh_library(state: &AppState, lib: LibraryRow, owner: Uuid) {
+    refresh_library_within(state, lib, owner, limits::LIBRARY_REFRESH_BUDGET).await;
+}
+
+/// [`refresh_library`] with an explicit overall bound. A read of a library is many gateway
+/// calls (tree pages, up to 50 blobs per skill, each with its own timeout and busy retries);
+/// the whole pass must end — and record its outcome, releasing the lease — before
+/// `LIBRARY_LEASE` runs out, or another replica claims the library and repeats the work. On the
+/// bound the pass is recorded as a failure (backoff) and the next run starts from scratch.
+pub async fn refresh_library_within(
+    state: &AppState,
+    lib: LibraryRow,
+    owner: Uuid,
+    budget: Duration,
+) {
     let started = Instant::now();
     let interval = state
         .config
         .skills_library
         .refresh_interval_secs
         .max(limits::LIBRARY_REFRESH_INTERVAL_MIN.as_secs());
-    let result = compare(state, &lib, owner).await;
+    let result = match tokio::time::timeout(budget, compare(state, &lib, owner)).await {
+        Ok(r) => r,
+        Err(_) => Err("the refresh took too long and was stopped; it will retry".to_owned()),
+    };
     metrics::histogram!("aurora_skill_library_refresh_duration_seconds")
         .record(started.elapsed().as_secs_f64());
     let (status, error, failures, head, label) = match &result {
@@ -326,8 +343,14 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
                 bytes,
             },
         )
-        .await
-        .map_err(db)?;
+        .await;
+        let u = match u {
+            Ok(u) => u,
+            // The partial unique index on the skill's pending proposal: a concurrent refresh
+            // (a lease that expired under a slow pass) proposed it first — nothing to add.
+            Err(aurora_db::DbError::UniqueViolation { .. }) => continue,
+            Err(e) => return Err(db(e)),
+        };
         pending_bytes += i64::from(bytes) - replaced;
         done.proposed += 1;
         audit::record(

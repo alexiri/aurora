@@ -118,6 +118,9 @@ pub const LIBRARY_PENDING_BYTES_PER_ORG: usize = 4 * MIB;
 pub const LIBRARY_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 pub const LIBRARY_REFRESH_INTERVAL_MIN: Duration = Duration::from_secs(5 * 60);
 pub const LIBRARY_LEASE: Duration = Duration::from_secs(5 * 60);
+/// overall bound of one library's refresh pass: safely below `LIBRARY_LEASE` so the outcome is
+/// recorded (and the lease released) before another replica can claim the library.
+pub const LIBRARY_REFRESH_BUDGET: Duration = Duration::from_secs(5 * 60 - 30);
 pub const LIBRARY_REFRESH_CONCURRENCY: usize = 4;
 pub const LIBRARY_CHECK_NOW_INTERVAL: Duration = Duration::from_secs(60);
 pub const LIBRARY_BROWSE_CACHE: Duration = Duration::from_secs(5 * 60);

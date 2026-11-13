@@ -2008,6 +2008,171 @@ async fn open_proposals_are_bounded_per_organization() {
     assert_eq!(w.library_row(lib).await["status"], "active");
 }
 
+/// FIX-066: a pass cut short by the budget must not record the head it was comparing — or a
+/// later pass at the same head (e.g. after an intervening error/active flip) would short-circuit
+/// as "unchanged" and never compare the skills the pass did not reach.
+#[tokio::test]
+async fn over_budget_pass_does_not_advance_the_head_and_the_next_pass_compares_the_rest() {
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    let (_, v) = w.add_org(lib, "alpha", &sha).await;
+    let alpha: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (_, v) = w.add_org(lib, "beta", &sha).await;
+    let beta: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query("INSERT INTO skill_library_updates (id, skill_id, library_id, kind, status, commit_sha, content_sha256, bytes) VALUES ($1,$2,$3,'removed','pending','x','\\x00',4194300)")
+        .bind(Uuid::now_v7()).bind(beta).bind(lib).execute(w.h.pool()).await.unwrap();
+    let head = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("alpha/SKILL.md", md("Alpha v2", "v2"))],
+    );
+    w.refresh(lib).await;
+    assert_eq!(w.library_row(lib).await["status"], "over_budget");
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT last_head_sha FROM skill_libraries WHERE id = $1")
+            .bind(lib)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_ne!(
+        recorded.as_deref(),
+        Some(head.as_str()),
+        "a partial pass records no head"
+    );
+    // The state an intervening pass would leave (status back to active, same head), and the
+    // space freed: the remaining skill is compared on the next pass.
+    sqlx::query("UPDATE skill_libraries SET status = 'active' WHERE id = $1")
+        .bind(lib)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM skill_library_updates")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.refresh(lib).await;
+    assert_eq!(w.pending(alpha).await["update"]["kind"], "changed");
+}
+
+/// A gateway that never answers (a stalled git host).
+struct Stall;
+
+#[async_trait]
+impl LibraryGateway for Stall {
+    async fn fetch(&self, _r: &FetchRequest) -> Result<FetchOk, GatewayError> {
+        std::future::pending().await
+    }
+}
+
+/// FIX-066: a stalled refresh gives up inside its bound (below the lease), records the failure
+/// and releases the lease; while it ran, no other replica could claim the library.
+#[tokio::test]
+async fn a_stalled_refresh_gives_up_before_the_lease_and_releases_it() {
+    assert!(
+        aurora_core::limits::LIBRARY_REFRESH_BUDGET < aurora_core::limits::LIBRARY_LEASE,
+        "the refresh bound is below the lease"
+    );
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    w.add_org(lib, "alpha", &sha).await;
+    sqlx::query("UPDATE skill_libraries SET next_refresh_at = now() - interval '1 second', refresh_lease_until = NULL, lease_owner = NULL WHERE id = $1")
+        .bind(lib)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+    let mut c = w.h.pool().acquire().await.unwrap();
+    let mut mine = repo::claim_due(&mut c, a, 4, 300.0).await.unwrap();
+    assert_eq!(mine.len(), 1);
+    // A second replica cannot claim it while the lease runs.
+    assert!(
+        repo::claim_due(&mut c, b, 4, 300.0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let stalled = w.h.state.clone().with_library_gateway(Arc::new(Stall));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        refresh::refresh_library_within(
+            &stalled,
+            mine.remove(0),
+            a,
+            std::time::Duration::from_millis(300),
+        ),
+    )
+    .await
+    .expect("the refresh must give up on its own bound");
+    let (status, err, lease): (String, Option<String>, Option<Uuid>) =
+        sqlx::query_as("SELECT status, last_error, lease_owner FROM skill_libraries WHERE id = $1")
+            .bind(lib)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(status, "error");
+    assert!(err.unwrap_or_default().contains("too long"));
+    assert!(lease.is_none(), "the lease is released");
+}
+
+/// FIX-066: members cannot browse, read or add from a paused library (404, like the list
+/// hides it); admins still can.
+#[tokio::test]
+async fn paused_libraries_are_invisible_to_members_but_not_admins() {
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    let ok = w.add_agent(lib, "alpha", &sha).await.0;
+    assert_eq!(ok, 201, "an active library is usable by a member");
+    sqlx::query("UPDATE skill_libraries SET status = 'paused' WHERE id = $1")
+        .bind(lib)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    for uri in [
+        format!("/v1/skill-libraries/{lib}/skills"),
+        format!("/v1/skill-libraries/{lib}/skills/beta?commit_sha={sha}"),
+    ] {
+        let (s, v) = w.call(&w.member, Method::GET, &uri, None).await;
+        assert_eq!((s, code(&v)), (404, "not_found"), "member {uri}: {v}");
+        let (s, v) = w.call(&w.admin, Method::GET, &uri, None).await;
+        assert_eq!(s, 200, "admin {uri}: {v}");
+    }
+    let (s, v) = w.add_agent(lib, "beta", &sha).await;
+    assert_eq!((s, code(&v)), (404, "not_found"), "{v}");
+    let (s, v) = w.add_org(lib, "beta", &sha).await;
+    assert_eq!(s, 201, "an admin may still add: {v}");
+}
+
+/// FIX-066: concurrent creates at 9 libraries admit exactly one (the cap is checked under the
+/// organization's lock).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_creates_at_the_cap_admit_exactly_one() {
+    let w = world().await;
+    w.seed();
+    for i in 0..9 {
+        w.library_at(&format!("l{i}"), "").await;
+    }
+    let uri = format!("/v1/orgs/{}/skill-libraries", w.org);
+    let results = futures::future::join_all((0..4).map(|i| {
+        let body = json!({"label": format!("race{i}"), "connection_id": w.conn,
+            "repo": "acme/skills", "path": ""});
+        w.call(&w.admin, Method::POST, &uri, Some(body))
+    }))
+    .await;
+    let created = results.iter().filter(|(s, _)| *s == 201).count();
+    assert_eq!(created, 1, "{results:?}");
+    assert!(
+        results
+            .iter()
+            .filter(|(s, _)| *s != 201)
+            .all(|(s, v)| *s == 409 && code(v) == "library_limit"),
+        "{results:?}"
+    );
+    assert_eq!(w.count("SELECT count(*) FROM skill_libraries").await, 10);
+}
+
 // ---- approve --------------------------------------------------------------------------------
 
 async fn propose_v2(w: &W, _lib: Uuid) -> String {
