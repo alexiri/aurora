@@ -556,7 +556,13 @@ done when its tests exist, pass in CI, and the security invariants it touches
   chunked, HTTP keep-alive over one stream, WebSocket echo, server-sent events, slow-loris, idle/lifetime
   timeouts, per-share/sandbox/user stream limits, daily byte quota; wake wait (parked sandbox → 503 page with
   refresh after 45 s; success when the port starts in time), start-command exit page, uniform 404/423 pages,
-  resolve cache (15 s) and revalidation closing streams.
+  resolve cache (15 s) and revalidation closing streams. Where they live (FIX-072/073): `relay
+  tests/limits.rs` (per-share and per-user stream caps, 429/`4409`, `preview_quota` refusal, grant
+  rate, byte report; the shared quota counter and its two-replica case are `api it/preview_auth.rs
+  quota::*`), `tests/behaviour.rs` (slow-loris, plain/upgraded idle, lifetime, SSE, ranges,
+  keep-alive, WebSocket `Origin`, revocation within `PREVIEW_AUTH_CACHE`, wake-wait page, start-command
+  exit page; time limits shortened through `Streams::with_timeouts`), `tests/big_body.rs` (1 GiB
+  in a flat resident set).
 - **Streams** (`run` and `sup` crates, the W6 mock): `stream.open` for an unshared port, a reserved
   port, with an empty list, after the share was removed → refused; connect only to loopback (a share whose
   port is bound only on another interface fails, no other address is tried); credit accounting (a sender never
@@ -594,8 +600,12 @@ done when its tests exist, pass in CI, and the security invariants it touches
   bounds hold under a hostile fast writer, tag `0x02` framing beside a concurrent W18
   `0x01` stream), `pty.refused` reasons (`limit`, `disabled`), environment probe — no
   `AURORA_*` variable, no boot-document trace in the PTY's `/proc/self/environ` (SEC-34
-  probe), idle/lifetime closes, `shutdown` closes everything, an older supervisor ignores
-  `pty.*` frames harmlessly.
+  probe), `shutdown` closes every PTY (`pty_leak::shutdown_closes_every_pty`; FIX-073 made the
+  supervisor do it). **Idle and lifetime closes are the runner's** (`stream_listener.rs`; the
+  supervisor's `pty.rs` has no timers): `run it/leg_limits.rs`
+  `terminal_leg_closes_4504_when_idle` / `_at_its_lifetime` with shortened limits
+  (`StreamListener::with_limits`), and `older_supervisor_ignoring_pty_open_ends_in_a_clean_refusal`
+  (an older supervisor never answers `pty.open`; the dial is refused pre-101 and the PTY released).
 - **Dashboard** (`web/tests`): tab gating (off/BYO/no-`can_use` hidden; frozen banner),
   "Waking…" → attach, resize round trip sends `pty.resize`, reconnect notice, session-end
   notices, both themes, the CSP render test asserts `'wasm-unsafe-eval'` present and nothing

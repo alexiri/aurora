@@ -190,3 +190,70 @@ async fn output_beyond_the_credit_is_held_not_dropped() {
         "credit was not returned piecewise ({pieces} chunks)"
     );
 }
+
+/// (FIX-073, `docs/18 §Web terminal`) The supervisor's `shutdown` frame ends every PTY: each
+/// shell exits (its master closed) and the runner is told `pty.close { channel_lost }` for
+/// every id, before `run` returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_closes_every_pty() {
+    use aurora_supervisor::channel::ChannelSender;
+    use aurora_supervisor::fake::FakeHarness;
+    use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
+
+    let home = TempDir::new();
+    let mut r = rig(home.path(), true);
+    open(&mut r, 1).await;
+    open(&mut r, 2).await;
+    let p1 = shell_pid(&mut r, 1).await;
+    let p2 = shell_pid(&mut r, 2).await;
+
+    let (out_tx, _out_rx) = tokio::sync::mpsc::channel(256);
+    let (in_tx, in_rx) = tokio::sync::mpsc::channel(8);
+    let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
+    cfg.working_dir = home.path().to_path_buf();
+    cfg.process = aurora_supervisor::process::ProcessConfig::new(home.path().to_path_buf());
+    cfg.process.uid = None;
+    let sup = Supervisor::new(
+        cfg,
+        ChannelSender::from_mpsc(out_tx),
+        std::sync::Arc::new(FakeHarness),
+        aurora_supervisor::streams::StreamsHandle::noop(),
+        r.handle(),
+    );
+    let run = tokio::spawn(sup.run(in_rx));
+    in_tx
+        .send(
+            serde_json::from_value(
+                serde_json::json!({"kind": "shutdown", "body": {"grace_secs": 1}}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(15), run)
+        .await
+        .expect("the supervisor never finished its shutdown")
+        .unwrap();
+
+    // The runner was told for each PTY.
+    let mut closed = std::collections::BTreeSet::new();
+    while closed.len() < 2 {
+        let f = r.next_frame().await;
+        if f["kind"] == "pty.close" {
+            assert_eq!(f["body"]["reason"], "channel_lost", "{f}");
+            closed.insert(f["body"]["pty_id"].as_u64().unwrap());
+        }
+    }
+    assert_eq!(closed, [1u64, 2].into_iter().collect());
+    // And both shells are gone.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    for pid in [p1, p2] {
+        while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "shell {pid} survived the supervisor's shutdown"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
