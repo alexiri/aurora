@@ -124,6 +124,8 @@ struct Env {
     gw_ca_pem: String,
     up_ca_pem: String,
     tls: Arc<ProxyTls>,
+    /// The running proxy (FIX-086: refusal-log statistics).
+    handle: Arc<Proxy>,
 }
 
 async fn start(allow: &[&str], header_timeout: Duration) -> Env {
@@ -191,7 +193,7 @@ async fn start_with(
         egress_proxy: None,
     })
     .unwrap();
-    tokio::spawn(p.run(l, std::future::pending()));
+    tokio::spawn(p.clone().run(l, std::future::pending()));
     Env {
         proxy,
         https,
@@ -199,6 +201,7 @@ async fn start_with(
         gw_ca_pem: gw.cert_pem,
         up_ca_pem: up_ca.cert_pem,
         tls,
+        handle: p,
     }
 }
 
@@ -378,6 +381,25 @@ async fn sse_streams_intact() {
     let (st, _, body) = text(c.send(get(env.https, "/sse", &[])).await).await;
     assert_eq!(st, 200);
     assert_eq!(body, "data: 0\n\ndata: 1\n\ndata: 2\n\n");
+}
+
+/// (FIX-086, CNT-8) Every refused CONNECT authentication is counted, but a flood from one address
+/// writes a bounded number of warnings (one per source per interval).
+#[tokio::test]
+async fn refused_connect_authentications_are_logged_at_a_bounded_rate() {
+    let env = start(&["127.0.0.0/8"], Duration::from_secs(10)).await;
+    let t = env.https.to_string();
+    for _ in 0..50 {
+        let r = raw(
+            env.proxy,
+            &format!("CONNECT {t} HTTP/1.1\r\nHost: {t}\r\nConnection: close\r\n\r\n"),
+        )
+        .await;
+        assert!(r.starts_with("HTTP/1.1 407"), "{r}");
+    }
+    let (counted, logged) = env.handle.connect_refusal_stats();
+    assert_eq!(counted, 50, "every refusal is counted");
+    assert_eq!(logged, 1, "one log line for one source within the interval");
 }
 
 #[tokio::test]

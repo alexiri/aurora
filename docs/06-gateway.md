@@ -560,7 +560,10 @@ minted.
 
 **WebSocket upgrades**: steps 1–11 run on the upgrade request; then the
 connection becomes a byte pipe with `WEBSOCKET_IDLE_TIMEOUT` idle limit across
-both directions.
+both directions. (FIX-086) Only `Upgrade: websocket` (one token, ASCII case-insensitive) is
+honoured: any other token (`h2c`, a list, …) is stripped and the request is forwarded as a plain
+one, and a `101` from an upstream to a request that asked for no honoured upgrade is a protocol
+error — 502 to the agent, never a byte pipe — so nothing can bypass the per-request pipeline.
 
 **Plain HTTP (absolute-form)**: same pipeline without TLS termination. (FIX-104, D-180)
 **No credential is injected into a plain-HTTP request**, nor into one to a port other

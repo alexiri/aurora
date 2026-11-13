@@ -43,13 +43,24 @@ fn connection_tokens(headers: &HeaderMap) -> Vec<String> {
         .collect()
 }
 
-/// Returns the `Upgrade` value if the message asks for a protocol upgrade.
+/// Returns `websocket` if the message asks for a WebSocket upgrade (FIX-086, `06 §WebSocket
+/// upgrades`): `Connection` names `upgrade` and `Upgrade` is exactly one token, `websocket`, ASCII
+/// case-insensitively. Any other `Upgrade` value (`h2c`, `foo`, a list) is not honoured: hygiene
+/// strips it and the request is forwarded as a plain one, so nothing after a `101` can bypass the
+/// per-request pipeline.
 pub fn requested_upgrade(headers: &HeaderMap) -> Option<HeaderValue> {
-    if connection_tokens(headers).iter().any(|t| t == "upgrade") {
-        headers.get(header::UPGRADE).cloned()
-    } else {
-        None
+    if !connection_tokens(headers).iter().any(|t| t == "upgrade") {
+        return None;
     }
+    let mut values = headers.get_all(header::UPGRADE).iter();
+    let only = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    only.to_str()
+        .ok()
+        .filter(|v| v.trim().eq_ignore_ascii_case("websocket"))
+        .map(|_| HeaderValue::from_static("websocket"))
 }
 
 /// Removes hop-by-hop headers, `Proxy-*`, `Upgrade` and anything named by
@@ -222,6 +233,36 @@ mod tests {
             check_request_line(&h, "/a", None),
             Err(PathError::MethodOverride)
         );
+    }
+
+    #[test]
+    fn only_websocket_is_an_upgrade() {
+        let req = |conn: &str, ups: &[&str]| {
+            let mut h = HeaderMap::new();
+            h.insert("connection", conn.parse().unwrap());
+            for u in ups {
+                h.append("upgrade", u.parse().unwrap());
+            }
+            requested_upgrade(&h)
+        };
+        assert_eq!(req("Upgrade", &["websocket"]).unwrap(), "websocket");
+        assert_eq!(
+            req("keep-alive, upgrade", &[" WebSocket "]).unwrap(),
+            "websocket"
+        );
+        for ups in [
+            &["h2c"][..],
+            &["foo"],
+            &["websocket, h2c"],
+            &["websocket", "h2c"],
+            &[],
+        ] {
+            assert_eq!(req("upgrade", ups), None, "{ups:?}");
+        }
+        // Without `Connection: upgrade` the header asks for nothing.
+        let mut h = HeaderMap::new();
+        h.insert("upgrade", "websocket".parse().unwrap());
+        assert_eq!(requested_upgrade(&h), None);
     }
 
     #[test]
