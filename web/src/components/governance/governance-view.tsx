@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { AppsPosturePanel } from "./apps-posture-panel";
 import { ByoPanel } from "./byo-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,10 +37,12 @@ import {
 import { useWorkspaces } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
-type Tab = "models" | "egress" | "byo" | "compliance";
+type Tab = "models" | "egress" | "apps" | "byo" | "compliance";
 const TABS: { id: Tab; label: string }[] = [
   { id: "models", label: "Model access" },
   { id: "egress", label: "Egress" },
+  // (FIX-130) The app posture (open / restricted); it saves on its own route, so no "Save governance" here.
+  { id: "apps", label: "Apps" },
   { id: "byo", label: "BYO agents" },
   { id: "compliance", label: "Compliance" },
 ];
@@ -120,13 +123,13 @@ function Body({
         title="Governance"
         description={
           canEdit
-            ? "Model access, egress and BYO rules for the whole organization."
+            ? "Model access, egress, app and BYO rules for the whole organization."
             : "These rules apply to your organization. Only owners and admins can change them."
         }
         className="mb-2"
       />
       <Tabs
-        items={TABS.map((t) => ({
+        items={TABS.filter((t) => t.id !== "apps" || canEdit).map((t) => ({
           value: t.id,
           label: `${t.label}${t.id === "compliance" && eff.non_compliant_secrets.length > 0 ? ` (${eff.non_compliant_secrets.length})` : ""}`,
         }))}
@@ -141,10 +144,11 @@ function Body({
         {tab === "egress" ? (
           <EgressTab form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} />
         ) : null}
+        {tab === "apps" && canEdit ? <AppsPosturePanel orgId={orgId} orgSlug={orgSlug} readOnly={!canEdit} /> : null}
         {tab === "byo" ? <ByoPanel form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} /> : null}
         {tab === "compliance" ? <ComplianceTab eff={eff} orgId={orgId} orgSlug={orgSlug} /> : null}
       </div>
-      {canEdit && tab !== "compliance" ? (
+      {canEdit && tab !== "compliance" && tab !== "apps" ? (
         <div className="space-y-3 border-t border-line pt-4">
           {stale ? (
             <Notice tone="pending" role="alert">

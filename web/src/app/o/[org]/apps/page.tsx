@@ -9,7 +9,7 @@ export default function Page() {
   const { org: slug } = useParams<{ org: string }>();
   return (
     <OrgGate slug={slug} allow={["owner", "admin"]}>
-      {(org) => <AvailabilityView orgId={org.id} canEdit />}
+      {(org) => <AvailabilityView orgId={org.id} orgSlug={org.slug} canEdit />}
     </OrgGate>
   );
 }
