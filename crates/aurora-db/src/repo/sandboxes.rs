@@ -506,6 +506,34 @@ pub async fn hello_overdue(
     .await?)
 }
 
+/// (FIX-071) The hello-overdue give-up: `fail_attempt`, additionally fenced on the supervisor
+/// still not having connected — the predicate `hello_overdue` selects on (`running`,
+/// `bootstrap_used_at IS NULL`). The row is locked first (held to the end of the caller's
+/// transaction), so a supervisor that connected between the selection and this update leaves the
+/// sandbox to the ordinary readiness deadline, which names the correct later-phase reason.
+/// Call inside a transaction.
+pub async fn fail_attempt_unconnected(
+    conn: &mut PgConnection,
+    sandbox: Uuid,
+    boot: Uuid,
+    code: &str,
+    message: &str,
+) -> Result<Option<Vec<Uuid>>, DbError> {
+    let still: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM sandboxes
+         WHERE id = $1 AND boot_id = $2 AND state = 'running' AND bootstrap_used_at IS NULL
+         FOR UPDATE",
+    )
+    .bind(sandbox)
+    .bind(boot)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if still.is_none() {
+        return Ok(None);
+    }
+    fail_attempt(conn, sandbox, boot, code, message, false).await
+}
+
 /// (FIX-025, D-158) The API gives up on the current start attempt of `boot`: the sandbox moves to
 /// `stopping` (reason `failure`, lease cleared so arm 2 sends the stop at the next poll) with the
 /// failure recorded; the `stopped` report then lands it in `failed` with the backoff. Fenced on

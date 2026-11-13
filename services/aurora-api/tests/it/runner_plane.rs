@@ -1611,6 +1611,72 @@ async fn give_up_on_a_dead_runner_keeps_runner_unavailable_and_ends_failed() {
     }
 }
 
+/// (FIX-071) A sandbox selected as hello-overdue whose supervisor connects before the update —
+/// but which is not yet fully ready (no channel/harness/home) — is not given up as
+/// `supervisor_unreachable`; while still unconnected it is.
+#[tokio::test]
+async fn hello_overdue_give_up_is_fenced_on_still_unconnected() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("half-ready").await;
+    let (sb, boot, _turn) = claimed_start(&r, rep, agent).await;
+    sqlx::query(
+        "UPDATE sandboxes SET state = 'running', running_at = now() - interval '1 hour',
+             bootstrap_used_at = NULL WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let overdue = aurora_db::repo::sandboxes::hello_overdue(&mut conn, 60.0, 10)
+        .await
+        .unwrap();
+    assert!(
+        overdue.iter().any(|(s, b, _)| (*s, *b) == (sb, boot)),
+        "selected"
+    );
+    // The supervisor connects (hello) but the sandbox is not ready: no channel, harness, home.
+    sqlx::query("UPDATE sandboxes SET bootstrap_used_at = now() WHERE id = $1")
+        .bind(sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let ran = aurora_db::repo::sandboxes::fail_attempt_unconnected(
+        &mut conn,
+        sb,
+        boot,
+        "supervisor_unreachable",
+        "x",
+    )
+    .await
+    .unwrap();
+    assert!(ran.is_none(), "a connected supervisor is not given up on");
+    let (st, failures): (String, i32) =
+        sqlx::query_as("SELECT state, start_failures FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((st.as_str(), failures), ("running", 0));
+    // Still unconnected: given up.
+    sqlx::query("UPDATE sandboxes SET bootstrap_used_at = NULL WHERE id = $1")
+        .bind(sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let ran = aurora_db::repo::sandboxes::fail_attempt_unconnected(
+        &mut conn,
+        sb,
+        boot,
+        "supervisor_unreachable",
+        "x",
+    )
+    .await
+    .unwrap();
+    assert!(ran.is_some());
+}
+
 /// (FIX-071) The hello-overdue give-up goes through `fail_attempt`: a sandbox selected as
 /// hello-overdue whose supervisor then connected and became ready before the update is not
 /// failed, and is no longer selected on the next pass.
