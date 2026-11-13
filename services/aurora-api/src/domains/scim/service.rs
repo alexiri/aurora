@@ -106,47 +106,80 @@ impl Filter {
     }
 }
 
+const SINGLE_EQ: &str = "Only a single `attr eq \"value\"` filter is supported.";
+
+/// Tokenize `attrPath SP compareOp SP compValue` (RFC 7644 §3.4.2.2). The operator and
+/// parenthesis restrictions apply to the *structure*: a quoted value may contain anything
+/// (`"R and D"`, `"Ops (EU)"`, `"a\"b@x.io"`). `compValue` is a JSON string (JSON escape
+/// rules), or a bare token (`true`/`false`/`null`/a number, or — leniently, as before — an
+/// unquoted or single-quoted string without whitespace). Anything after the value (`or …`,
+/// `and …`), a grouping, a value filter (`emails[…]`) or a second operator is 400.
+fn tokenize_filter(raw: &str) -> ScimResult<(&str, String)> {
+    let bad = || ScimError::invalid_filter(SINGLE_EQ);
+    // attrPath: ATTRNAME *("." ATTRNAME), optionally URI-prefixed; no grouping or brackets.
+    let attr_end = raw.find(char::is_whitespace).ok_or_else(bad)?;
+    let attr = &raw[..attr_end];
+    if attr.is_empty()
+        || !attr
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '$'))
+    {
+        return Err(bad());
+    }
+    let rest = raw[attr_end..].trim_start();
+    let op_end = rest.find(char::is_whitespace).ok_or_else(bad)?;
+    let op = &rest[..op_end];
+    if !op.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(bad());
+    }
+    if !op.eq_ignore_ascii_case("eq") {
+        return Err(ScimError::invalid_filter("Unsupported filter operator."));
+    }
+    let rest = rest[op_end..].trim_start();
+    let (value, tail) = if rest.starts_with('"') {
+        // A JSON string: escapes (`\"`, `\\`, `\uXXXX`) follow JSON rules.
+        let mut it = serde_json::Deserializer::from_str(rest).into_iter::<String>();
+        let v = match it.next() {
+            Some(Ok(v)) => v,
+            _ => {
+                return Err(ScimError::invalid_filter(
+                    "The filter value is not a valid quoted string.",
+                ));
+            }
+        };
+        (v, &rest[it.byte_offset()..])
+    } else if let Some(body) = rest.strip_prefix('\'') {
+        // Lenient single quotes (no escapes), accepted before RFC parsing as well.
+        let end = body.find('\'').ok_or_else(|| {
+            ScimError::invalid_filter("The filter value is not a valid quoted string.")
+        })?;
+        (body[..end].to_owned(), &body[end + 1..])
+    } else {
+        // A bare token: `true`, `false`, `null`, a number, or a lenient unquoted string.
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let tok = &rest[..end];
+        if tok.contains(['"', '\'', '(', ')', '[', ']']) {
+            return Err(bad());
+        }
+        (tok.to_owned(), &rest[end..])
+    };
+    if !tail.trim().is_empty() {
+        return Err(bad());
+    }
+    Ok((attr, value))
+}
+
 pub fn parse_filter(raw: &str) -> ScimResult<Option<Filter>> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Ok(None);
     }
-    // Reject every operator/structure beyond one `eq`: parentheses, and/or/not, comparison
-    // operators, and attribute paths (`name.givenName eq`).
-    let lower = raw.to_ascii_lowercase();
-    for op in [
-        " and ", " or ", " not ", " ne ", " co ", " sw ", " ew ", " pr ", " gt ", " lt ", " ge ",
-        " le ", " ca ", " st ", " ew(", "pr)", "and(", "or(",
-    ] {
-        if lower.contains(op) || raw.contains(['(', ')']) {
-            return Err(ScimError::invalid_filter(
-                "Only a single `attr eq \"value\"` filter is supported.",
-            ));
-        }
-    }
-    let (attr, value) = raw.split_once(char::is_whitespace).ok_or_else(|| {
-        ScimError::invalid_filter("Only a single `attr eq \"value\"` filter is supported.")
-    })?;
-    let rest = value.trim();
-    let Some((op, value)) = rest.split_once(char::is_whitespace) else {
-        return Err(ScimError::invalid_filter(
-            "Only a single `attr eq \"value\"` filter is supported.",
-        ));
-    };
-    if !op.eq_ignore_ascii_case("eq") {
-        return Err(ScimError::invalid_filter("Unsupported filter operator."));
-    }
-    let value = value.trim();
-    // Strip quotes (single or double) when present.
-    let value = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-        .unwrap_or(value);
+    let (attr, value) = tokenize_filter(raw)?;
+    let value = value.as_str();
     if value.is_empty() {
         return Err(ScimError::invalid_filter("The filter value is empty."));
     }
-    match attr.trim().to_ascii_lowercase().as_str() {
+    match attr.to_ascii_lowercase().as_str() {
         "username" => Ok(Some(Filter::UserName(value.to_owned()))),
         "externalid" => Ok(Some(Filter::ExternalId(value.to_owned()))),
         "id" => {
@@ -192,4 +225,98 @@ pub fn refused_attr(body: &serde_json::Value, attrs: &[&'static str]) -> Option<
         }
     }
     None
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn ok(raw: &str) -> Filter {
+        parse_filter(raw).unwrap().expect("a filter")
+    }
+
+    fn invalid(raw: &str) {
+        let e = parse_filter(raw).expect_err(raw);
+        assert_eq!(e.status, axum::http::StatusCode::BAD_REQUEST, "{raw}");
+        assert_eq!(
+            e.scim_type,
+            super::super::error::ScimType::InvalidFilter,
+            "{raw}"
+        );
+    }
+
+    /// FIX-062: operators and parentheses inside a quoted value are data, not structure.
+    #[test]
+    fn quoted_values_carry_operators_and_parentheses() {
+        assert_eq!(
+            ok(r#"displayName eq "R and D""#),
+            Filter::DisplayName("R and D".into())
+        );
+        assert_eq!(
+            ok(r#"displayName eq "Ops (EU)""#),
+            Filter::DisplayName("Ops (EU)".into())
+        );
+        assert_eq!(
+            ok(r#"userName eq "a or b""#),
+            Filter::UserName("a or b".into())
+        );
+        assert_eq!(
+            ok(r#"userName eq "a\"b@x.io""#),
+            Filter::UserName("a\"b@x.io".into())
+        );
+        assert_eq!(
+            ok(r#"displayName eq "café \\ not pr""#),
+            Filter::DisplayName("café \\ not pr".into())
+        );
+        // Case-insensitive attribute and operator; surrounding whitespace is fine.
+        assert_eq!(
+            ok(r#"  USERNAME   EQ   "ann@x.io"  "#),
+            Filter::UserName("ann@x.io".into())
+        );
+        assert_eq!(
+            ok(r#"emails.value eq "bob@x.io""#),
+            Filter::Email("bob@x.io".into())
+        );
+    }
+
+    /// The lenient forms accepted before the tokenizer still parse.
+    #[test]
+    fn bare_and_single_quoted_values_still_parse() {
+        assert_eq!(
+            ok("userName eq ann@x.io"),
+            Filter::UserName("ann@x.io".into())
+        );
+        assert_eq!(
+            ok("displayName eq 'Ops (EU)'"),
+            Filter::DisplayName("Ops (EU)".into())
+        );
+        assert_eq!(ok("externalId eq 42"), Filter::ExternalId("42".into()));
+        let id = Uuid::nil();
+        assert_eq!(ok(&format!("id eq \"{id}\"")), Filter::Id(id));
+    }
+
+    /// Structure beyond one `attr eq value` is still refused.
+    #[test]
+    fn compound_and_unsupported_filters_stay_invalid() {
+        for f in [
+            r#"userName eq "x" or 1 eq 1"#,
+            r#"userName eq "x" and displayName eq "y""#,
+            r#"not (userName eq "x")"#,
+            r#"(userName eq "x")"#,
+            r#"emails[type eq "work"].value eq "x""#,
+            r#"userName sw "a""#,
+            r#"userName ne "a""#,
+            "userName pr",
+            r#"userName eq "unterminated"#,
+            r#"userName eq "a"b"#,
+            r#"userName eq """#,
+            r#"title eq "x""#,
+            r#"id eq "not-a-uuid""#,
+            "userName eq x)",
+        ] {
+            invalid(f);
+        }
+        assert!(parse_filter("   ").unwrap().is_none());
+    }
 }

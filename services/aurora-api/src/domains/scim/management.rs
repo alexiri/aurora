@@ -283,6 +283,11 @@ pub async fn create_token(
         .min(state.config.scim.token_max_days)
         .max(1);
     let mut tx = state.pool.begin().await.map_err(sqlerr)?;
+    // Serialize the count + insert per org (the `organizations` row lock the codebase uses
+    // for per-org caps): concurrent creates cannot both see 4 and exceed the cap (FIX-062).
+    aurora_db::repo::groups::lock_org(&mut tx, org)
+        .await
+        .map_err(dberr)?;
     let live = repo::live_token_count(&mut *tx, org, chrono::Utc::now())
         .await
         .map_err(dberr)?;

@@ -142,17 +142,25 @@ pub async fn revoke_sessions_if_last(conn: &mut PgConnection, user: Uuid) -> Res
         .map_err(ApiError::from)
 }
 
-/// Pending invitations for the e-mail are cancelled. Returns the cancelled ids with their
-/// orgs (the caller may audit per org).
+/// Pending invitations of **this org** for the person are cancelled: addressed to the link's
+/// `userName` or to the account's `users.email` — the two differ once the IdP renamed a
+/// signed-in person (D-167(a)). Another org's invitations are never touched (SEC-73).
+/// Returns the cancelled ids with their org.
 pub async fn cancel_invitations(
     conn: &mut PgConnection,
-    email: &str,
+    org: Uuid,
+    user_name: &str,
+    user: Uuid,
 ) -> Result<Vec<(Uuid, Uuid)>, ApiError> {
     Ok(sqlx::query_as(
         "UPDATE invitations SET status = 'cancelled', updated_at = now()
-         WHERE email = $1::citext AND status = 'pending' RETURNING id, org_id",
+         WHERE org_id = $1 AND status = 'pending'
+           AND (email = $2::citext OR email = (SELECT email FROM users WHERE id = $3))
+         RETURNING id, org_id",
     )
-    .bind(email)
+    .bind(org)
+    .bind(user_name)
+    .bind(user)
     .fetch_all(&mut *conn)
     .await
     .map_err(aurora_db::DbError::from)?)

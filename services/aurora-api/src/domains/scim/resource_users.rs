@@ -323,11 +323,16 @@ pub async fn create_user(
         ));
     }
     // A removed link with this e-mail is revived (C-474: "POST of a removed user
-    // re-provisions"): the tombstone keeps its id and its `user_id` under
-    // `UNIQUE (org_id, user_id)`, so the row is updated in place instead of re-inserted.
-    // Its global user always still exists (a `users` delete cascades the tombstone away,
-    // so a found tombstone implies a live global user behind it).
-    let removed = by_email.iter().find(|u| u.state == "removed").map(|u| u.id);
+    // re-provisions"): the tombstone keeps its id and its pinned `user_id` under
+    // `UNIQUE (org_id, user_id)`, so the row is updated in place instead of re-inserted, on
+    // the person it was removed from — the e-mail is not re-resolved (D-167: the link's
+    // `userName` may differ from that person's `users.email` after an IdP rename, and the
+    // revival must neither 500 nor re-point). Its global user always still exists (a
+    // `users` delete cascades the tombstone away).
+    let removed = by_email
+        .iter()
+        .find(|u| u.state == "removed")
+        .map(|u| (u.id, u.user_id));
     if let Some(ext) = &external_id
         && repo::user_by_external_id(&mut *tx, org.org_id, ext)
             .await
@@ -338,29 +343,24 @@ pub async fn create_user(
             "A user with this externalId already exists in this organization.",
         ));
     }
-    // Resolve the global user by e-mail only (never `externalId`, 04 §SCIM).
-    let (user_id, created_user) = match users_repo::find_by_email(&mut *tx, &email)
-        .await
-        .map_err(db)?
-    {
-        Some(u) => (u.id, false),
-        None => {
-            // A removed link with no global user behind it cannot happen (a `users` delete
-            // cascades the link away); refuse loudly rather than resurrect blindly.
-            if removed.is_some() {
-                return Err(ScimError::internal());
+    // Resolve the global user by e-mail only (never `externalId`, 04 §SCIM) — unless a
+    // tombstone is revived, which stays on its pinned user.
+    let (user_id, created_user) = match removed {
+        Some((_, pinned)) => (pinned, false),
+        None => match users_repo::find_by_email(&mut *tx, &email)
+            .await
+            .map_err(db)?
+        {
+            Some(u) => (u.id, false),
+            None => {
+                let id = ids::new_id();
+                let name = global_display(&input, &names).unwrap_or_else(|| email.clone());
+                repo::insert_preprovisioned_user(&mut tx, id, &email, &name)
+                    .await
+                    .map_err(uniqueness)?;
+                (id, true)
             }
-            let id = ids::new_id();
-            let name = global_display(&input, &names).unwrap_or_else(|| email.clone());
-            sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2::citext, $3)")
-                .bind(id)
-                .bind(&email)
-                .bind(&name)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| uniqueness(aurora_db::DbError::from(e)))?;
-            (id, true)
-        }
+        },
     };
     // The org_members row: created (role member) or adopted as it is; owners never mutated.
     let active = input.active.map(|a| a.0).unwrap_or(true);
@@ -417,11 +417,10 @@ pub async fn create_user(
     // A revived tombstone is updated in place (its `scim_users.id` survives); otherwise a
     // fresh link row is inserted.
     let row = match removed {
-        Some(id) => repo::revive_user(
+        Some((id, _)) => repo::revive_user(
             &mut tx,
             org.org_id,
             id,
-            user_id,
             external_id.as_deref(),
             &email,
             display.as_deref(),
@@ -571,6 +570,9 @@ pub async fn list_users(
 
 /// One PUT/PATCH update after the operations merged over the current state.
 struct Update {
+    /// `PUT` (a full replacement: refused for an owner whatever the body, C-473) or `PATCH`
+    /// (refused for an owner only when it deactivates).
+    put: bool,
     email: String,
     external_id: Option<String>,
     display: Option<String>,
@@ -606,6 +608,7 @@ pub async fn put_user(
         caller,
         id,
         Update {
+            put: true,
             email,
             external_id,
             display,
@@ -651,11 +654,11 @@ pub async fn patch_user(
             family_name: current.family_name.clone(),
             formatted: current.display_name.clone(),
         }),
-        emails: Some(vec![Email {
-            value: current.user_name.clone(),
-            type_: Some("work".to_owned()),
-            primary: true,
-        }]),
+        // The stored e-mail *is* `userName` (rendered as the one primary `emails` entry), so
+        // it is seeded once: a `replace userName` must change it (FIX-062 — a seeded
+        // `emails` copy would win in `resolved_email` and silently ignore the operation),
+        // while an `emails` operation still wins over `userName` like on POST.
+        emails: None,
         active: Some(Active(current.state == "active")),
         raw: json!({}),
     };
@@ -684,6 +687,7 @@ pub async fn patch_user(
         caller,
         id,
         Update {
+            put: false,
             email,
             external_id,
             display,
@@ -854,6 +858,17 @@ fn apply_leaf(target: &mut UserInput, lower_path: &str, v: &serde_json::Value) -
 
 /// The shared body of `PUT`/`PATCH` (one transaction; the state change with its critical
 /// audit rows and the full deprovisioning matrix).
+///
+/// **D-167: an update never moves a link to another account.** The link's `user_id` is
+/// immutable, with one exception that cannot hurt a person:
+/// - (a) the linked user signed in (an identity or a verified e-mail), or the membership is
+///   an owner's: a new `userName`/e-mail is stored on the link only; `users` is untouched.
+/// - (b) the linked user is a still-unbound placeholder (no identity, unverified e-mail):
+///   a new e-mail that is free globally renames the placeholder in place when no other org
+///   holds it (membership or link in any state); otherwise — the address belongs to another
+///   user, or the placeholder is shared — the link moves exactly like a `POST` would link
+///   it ([`move_link`]): to that user, or to a new pre-provisioned one. The placeholder's
+///   membership in this org is removed; the `users` row is never deleted (SEC-73).
 async fn apply_update(
     state: &AppState,
     caller: ScimToken,
@@ -861,18 +876,31 @@ async fn apply_update(
     u: Update,
 ) -> ScimResult<axum::Json<UserResource>> {
     let org = caller.org.clone();
+    let actor = service::actor(&caller.token.name);
     let mut tx = state.pool.begin().await.map_err(sq)?;
-    let _current = repo::user_by_id(&mut *tx, org.org_id, id)
+    // The link row is locked: concurrent updates of one link serialize.
+    let current = repo::lock_user(&mut tx, org.org_id, id)
         .await
         .map_err(db)?
         .filter(|r| r.state != "removed")
         .ok_or_else(ScimError::not_found)?;
-    // Uniqueness: the new e-mail / externalId must belong to this very link (or be free).
-    // A removed link in the result is a tombstone: its `user_name` always mirrors
-    // `users.email` of the `user_id` it pins under `UNIQUE (org_id, user_id)`, so this
-    // e-mail resolves onto that pinned identity and re-pointing the link would violate
-    // the index. That is a deterministic 409 here — never the raw index error (FIX-040);
-    // POST treats the tombstone differently (revival), PUT cannot.
+    // Owners are never mutated by SCIM (C-473, SEC-72): a `PUT` (whatever its body) and a
+    // deactivating `PATCH` are refused before any write.
+    let member = members::get(&mut *tx, org.org_id, current.user_id)
+        .await
+        .map_err(db)?;
+    let is_owner = member.as_ref().is_some_and(|m| m.role == "owner");
+    let want_active = u.active.map(|a| a.0).unwrap_or(current.state == "active");
+    if is_owner && (u.put || !want_active) {
+        return Err(ScimError::forbidden(
+            "Organization owners are managed in Aurora.",
+        ));
+    }
+    // Uniqueness: the new e-mail / externalId must belong to this very link (or be free)
+    // among the org's links. A removed link in the result is a tombstone that still owns
+    // its `userName` (a POST of it revives the tombstone on its pinned user); an update
+    // claiming it is a deterministic 409 here — never a raw index error (FIX-040). POST
+    // treats the tombstone differently (revival), PUT/PATCH cannot.
     for other in repo::users_by_email(&mut *tx, org.org_id, &u.email)
         .await
         .map_err(db)?
@@ -893,41 +921,59 @@ async fn apply_update(
             "A user with this externalId already exists in this organization.",
         ));
     }
-    // Resolve the (possibly new) global user by e-mail. Aurora never changes `users.email`
-    // or the display name of a user with an identity or a verified e-mail; a new address
-    // creates a new pre-provisioned user and the link follows it (04 §SCIM). The new global
-    // user needs an org_members row of its own (a member; seats like any other provision).
-    let user_id = match users_repo::find_by_email(&mut *tx, &u.email)
+    // D-167: what the asserted e-mail means for the account behind the link. The account row
+    // is locked so a concurrent sign-in binding it serializes with this decision.
+    let account = repo::lock_account(&mut tx, current.user_id)
         .await
         .map_err(db)?
-    {
-        Some(existing) => existing.id,
-        None => {
-            let id = ids::new_id();
-            let name = u
-                .display
-                .clone()
-                .map(|d| sanitize::one_line(&d, 80))
-                .unwrap_or_else(|| u.email.clone());
-            sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1, $2::citext, $3)")
-                .bind(id)
-                .bind(&u.email)
-                .bind(&name)
-                .execute(&mut *tx)
+        .ok_or_else(ScimError::internal)?;
+    let email_differs = !account.email.eq_ignore_ascii_case(&u.email);
+    let mut account_renamed = false;
+    let move_to: Option<Uuid> = if is_owner || account.signed_in || !email_differs {
+        // (a) — or nothing to change: the e-mail lands on the link only.
+        None
+    } else {
+        // (b) a still-unbound placeholder (no identity, unverified e-mail).
+        match users_repo::find_by_email(&mut *tx, &u.email)
+            .await
+            .map_err(db)?
+        {
+            Some(other) => Some(other.id),
+            None if !repo::user_elsewhere(&mut tx, org.org_id, current.user_id)
                 .await
-                .map_err(|e| uniqueness(aurora_db::DbError::from(e)))?;
-            ensure_seat(&mut tx, org.org_id).await?;
-            members::insert(&mut *tx, org.org_id, id, "member")
-                .await
-                .map_err(db)?;
-            id
+                .map_err(db)? =>
+            {
+                // Free globally and the placeholder is this org's alone: renamed in place.
+                if !repo::set_placeholder_email(&mut tx, current.user_id, &u.email)
+                    .await
+                    .map_err(uniqueness)?
+                {
+                    // The locked row was unbound a statement ago; refuse rather than guess.
+                    return Err(ScimError::internal());
+                }
+                account_renamed = true;
+                None
+            }
+            None => {
+                // Free globally but the placeholder is shared with another org: a new
+                // pre-provisioned user, created exactly like a POST would.
+                let nid = ids::new_id();
+                let name = u
+                    .display
+                    .clone()
+                    .map(|d| sanitize::one_line(&d, 80))
+                    .unwrap_or_else(|| u.email.clone());
+                repo::insert_preprovisioned_user(&mut tx, nid, &u.email, &name)
+                    .await
+                    .map_err(uniqueness)?;
+                Some(nid)
+            }
         }
     };
     let row = repo::update_user(
         &mut tx,
         org.org_id,
         id,
-        user_id,
         u.external_id.as_deref(),
         &u.email,
         u.display.as_deref(),
@@ -937,45 +983,30 @@ async fn apply_update(
     .await
     .map_err(db)?
     .ok_or_else(ScimError::not_found)?;
-    // `active` drives deprovisioning; owners are never mutated (403). A global user with no
-    // membership in this org (provisioned, invited or JIT'd in another org — the state this
-    // code creates itself when the new e-mail is free here but taken globally) gains a fresh
-    // member seat instead of answering 500 (FIX-036): the same `ensure_seat` + insert the
-    // new-global-user arm runs. An existing membership is adopted as it is.
-    let want_active = u.active.map(|a| a.0).unwrap_or(row.state == "active");
-    let mut added_member = false;
-    let member = match members::get(&mut *tx, org.org_id, row.user_id)
-        .await
-        .map_err(db)?
-    {
-        Some(m) => m,
-        None => {
-            ensure_seat(&mut tx, org.org_id).await?;
-            members::insert(&mut *tx, org.org_id, row.user_id, "member")
-                .await
-                .map_err(db)?;
-            // `active: false` while the link is already suspended: the deprovision arm below
-            // only fires on a link state change, so the fresh row is suspended in place —
-            // `create_user`'s `active: false` semantics for a fresh membership.
-            if !want_active && row.state == "suspended" {
-                members::update(&mut *tx, org.org_id, row.user_id, None, Some("suspended"))
-                    .await
-                    .map_err(db)?;
-            }
-            added_member = true;
-            members::get(&mut *tx, org.org_id, row.user_id)
-                .await
-                .map_err(db)?
-                .ok_or_else(ScimError::internal)?
-        }
-    };
-    if member.role == "owner" && u.active.is_some_and(|a| !a.0) {
-        return Err(ScimError::forbidden(
-            "Organization owners are managed in Aurora.",
-        ));
-    }
+    let mut evs = Vec::with_capacity(2);
     let mut flush: Vec<(Uuid, Uuid)> = Vec::new();
-    if !want_active && row.state != "suspended" {
+    let change: &str;
+    if let Some(to) = move_to {
+        flush = move_link(&mut tx, &actor, org.org_id, &row, to, want_active, &mut evs).await?;
+        change = "moved";
+    } else {
+        // The link keeps its user, whose membership exists (a link without one is a broken
+        // invariant: a human removal tombstones the link, FIX-037).
+        if member.is_none() {
+            tracing::error!(scim_id = %id, "scim: unremoved link without a membership");
+            return Err(ScimError::internal());
+        }
+        change = if want_active && row.state == "suspended" {
+            "reactivated"
+        } else if !want_active && row.state != "suspended" {
+            "suspended"
+        } else {
+            "attributes"
+        };
+    }
+    if move_to.is_some() {
+        // State was decided by the move (POST semantics).
+    } else if !want_active && row.state != "suspended" {
         // Suspend (deprovisioning matrix, D-135).
         repo::set_user_state(&mut tx, org.org_id, id, "suspended", true)
             .await
@@ -997,7 +1028,7 @@ async fn apply_update(
         deprovision::revoke_sessions_if_last(&mut tx, row.user_id)
             .await
             .map_err(scim_of_api)?;
-        deprovision::cancel_invitations(&mut tx, &row.user_name)
+        deprovision::cancel_invitations(&mut tx, org.org_id, &row.user_name, row.user_id)
             .await
             .map_err(scim_of_api)?;
     } else if want_active && row.state == "suspended" {
@@ -1019,41 +1050,17 @@ async fn apply_update(
         .await
         .map_err(scim_of_api)?;
     }
-    // Attribute update + state change + audit rows + invalidations commit atomically. An
-    // adopted-from-another-org user contributes a `member.add` row alongside `scim.update`
-    // (the same slice pattern as the delete handler's `member.remove`).
-    let mut evs = Vec::with_capacity(2);
-    if added_member {
-        evs.push(
-            AuditEvent::new(
-                service::actor(&caller.token.name),
-                "member.add",
-                Outcome::Success,
-            )
+    // Attribute update + state change + audit rows + invalidations commit atomically.
+    evs.push(
+        AuditEvent::new(actor.clone(), "scim.update", Outcome::Success)
             .org(org.org_id)
-            .target("user", row.user_id)
+            .target("scim_user", id)
             .metadata(json!({
                 "via": VIA,
-                "scim_id": id,
-                "role": "member",
-                "status": member.status,
+                "change": change,
+                // D-167(b): the placeholder's own e-mail was renamed in place.
+                "account_email": account_renamed,
             })),
-        );
-    }
-    evs.push(
-        AuditEvent::new(
-            service::actor(&caller.token.name),
-            "scim.update",
-            Outcome::Success,
-        )
-        .org(org.org_id)
-        .target("scim_user", id)
-        .metadata(json!({
-            "via": VIA,
-            "change": if want_active && row.state == "suspended" { "reactivated" }
-                      else if !want_active && row.state != "suspended" { "suspended" }
-                      else { "attributes" },
-        })),
     );
     crate::audit::commit_critical_many(tx, &evs)
         .await
@@ -1067,6 +1074,156 @@ async fn apply_update(
         .map_err(db)?
         .ok_or_else(ScimError::not_found)?;
     Ok(axum::Json(render_user(state, org.org_id, &row).await?))
+}
+
+/// D-167(b): move the link of a still-unbound placeholder to `to` — exactly what a `POST`
+/// of the new e-mail would do (adopt `to`'s membership as it is, or insert one under the
+/// seat cap; `active: false` suspends through the C-474 path), plus what keeps the IdP's
+/// view whole: the placeholder's membership in this org is removed (audited, its bindings
+/// cascade) and its SCIM-group memberships follow the link (the group resources reference
+/// the link, not the account; `GROUPS_PER_USER` applies). The placeholder's `users` row is
+/// never touched or deleted (SEC-73). Returns the turns to flush after commit.
+async fn move_link(
+    tx: &mut sqlx::PgConnection,
+    actor: &crate::audit::AuditActor,
+    org: Uuid,
+    link: &repo::UserRow,
+    to: Uuid,
+    want_active: bool,
+    evs: &mut Vec<AuditEvent>,
+) -> ScimResult<Vec<(Uuid, Uuid)>> {
+    let from = link.user_id;
+    // The org lock first: the seat cap and the group cap below count under it (the lock
+    // `ensure_member_limit` documents).
+    groups::lock_org(&mut *tx, org).await.map_err(db)?;
+    // `to` already linked in this org (any state, a tombstone included): the same 409 a
+    // POST would answer — never two links of one person.
+    if repo::user_link(&mut *tx, org, to)
+        .await
+        .map_err(db)?
+        .is_some()
+    {
+        return Err(ScimError::uniqueness(
+            "A user with this e-mail already exists in this organization.",
+        ));
+    }
+    let moved_groups: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT m.group_id FROM group_members m
+         JOIN groups g ON g.id = m.group_id AND g.org_id = m.org_id
+         WHERE m.org_id = $1 AND m.user_id = $2 AND g.source = 'scim'
+         ORDER BY m.group_id",
+    )
+    .bind(org)
+    .bind(from)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(sq)?;
+    // The placeholder leaves this org (it never signed in: no session, key or turn to end).
+    deprovision::remove_membership(&mut *tx, org, from, actor)
+        .await
+        .map_err(scim_of_api)?;
+    for g in &moved_groups {
+        evs.push(
+            AuditEvent::new(actor.clone(), "group_member.remove", Outcome::Success)
+                .org(org)
+                .target("group", *g)
+                .metadata(json!({"via": VIA, "user": from, "reason": "scim_link_moved"})),
+        );
+    }
+    // `to`'s membership, exactly like `create_user`.
+    let existing = members::get(&mut *tx, org, to).await.map_err(db)?;
+    let mut flush = Vec::new();
+    match &existing {
+        None => {
+            ensure_seat(&mut *tx, org).await?;
+            members::insert(&mut *tx, org, to, "member")
+                .await
+                .map_err(db)?;
+            if !want_active {
+                members::update(&mut *tx, org, to, None, Some("suspended"))
+                    .await
+                    .map_err(db)?;
+            }
+            evs.push(
+                AuditEvent::new(actor.clone(), "member.add", Outcome::Success)
+                    .org(org)
+                    .target("user", to)
+                    .metadata(json!({
+                        "via": VIA,
+                        "scim_id": link.id,
+                        "role": "member",
+                        "status": if want_active { "active" } else { "suspended" },
+                    })),
+            );
+        }
+        Some(m) if m.role == "owner" => {
+            if !want_active {
+                return Err(ScimError::forbidden(
+                    "Organization owners are managed in Aurora.",
+                ));
+            }
+        }
+        Some(m) => {
+            if !want_active && m.status == "active" {
+                deprovision::suspend_membership(&mut *tx, org, to, actor)
+                    .await
+                    .map_err(scim_of_api)?;
+                flush = deprovision::abort_turns(&mut *tx, org, to)
+                    .await
+                    .map_err(scim_of_api)?;
+                deprovision::revoke_org_keys(&mut *tx, org, to)
+                    .await
+                    .map_err(scim_of_api)?;
+                deprovision::revoke_sessions_if_last(&mut *tx, to)
+                    .await
+                    .map_err(scim_of_api)?;
+                deprovision::cancel_invitations(&mut *tx, org, &link.user_name, to)
+                    .await
+                    .map_err(scim_of_api)?;
+            }
+        }
+    }
+    repo::move_user(&mut *tx, org, link.id, to)
+        .await
+        .map_err(db)?
+        .ok_or_else(ScimError::not_found)?;
+    let by_scim = !want_active && existing.as_ref().is_none_or(|m| m.status != "suspended");
+    repo::set_user_state(
+        &mut *tx,
+        org,
+        link.id,
+        if want_active { "active" } else { "suspended" },
+        by_scim,
+    )
+    .await
+    .map_err(db)?;
+    // The link's SCIM groups follow it.
+    for g in &moved_groups {
+        let in_groups = groups::groups_of_user_count(&mut *tx, org, to)
+            .await
+            .map_err(db)?;
+        if in_groups >= groups::GROUPS_PER_USER {
+            return Err(ScimError::invalid_value(format!(
+                "A user can be in at most {} groups of this organization.",
+                groups::GROUPS_PER_USER
+            )));
+        }
+        if groups::add_member(&mut *tx, *g, org, to, "scim", None)
+            .await
+            .map_err(db)?
+        {
+            evs.push(
+                AuditEvent::new(actor.clone(), "group_member.add", Outcome::Success)
+                    .org(org)
+                    .target("group", *g)
+                    .metadata(json!({"via": VIA, "user": to, "reason": "scim_link_moved"})),
+            );
+        }
+    }
+    groups::notify_member_changed(&mut *tx, org, to)
+        .await
+        .map_err(db)?;
+    Ok(flush)
 }
 
 fn scim_of_api(e: aurora_core::ApiError) -> ScimError {
@@ -1122,7 +1279,7 @@ pub async fn delete_user(
         deprovision::revoke_sessions_if_last(&mut tx, row.user_id)
             .await
             .map_err(scim_of_api)?;
-        deprovision::cancel_invitations(&mut tx, &row.user_name)
+        deprovision::cancel_invitations(&mut tx, org.org_id, &row.user_name, row.user_id)
             .await
             .map_err(scim_of_api)?;
     }
