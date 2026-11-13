@@ -1,0 +1,39 @@
+# Lane rules (coordinator house rules for every worker lane)
+
+Every lane spec names its lane name, its task ids and their briefs (`docs/tasks/<ID>.md`), and points here. Read this file fully before starting.
+
+**Your briefs are normative.** Read each `docs/tasks/<ID>.md` named in your lane spec in full before touching code, then the spec rows it cites (`docs/API_CONTRACTS.md` C-xxx, `docs/17-security.md` SEC-xx, `docs/90-decisions.md` D-xxx). If you find a brief is wrong (the defect isn't real, or the fix would contradict the governing spec), do not "fix" it: write an `## Analysis` section in the brief explaining why with file:line evidence, commit that, and report it.
+
+## Setup (first thing)
+1. Your workspace is a fresh worktree of the aurora repo from `master`. Create your branch: `git checkout -b alexiri/<lane-name>`. Confirm `git log --oneline -1` is at or after the commit your lane spec names.
+2. `cp /home/alex/agent-platform/aurora/.env .` (scripts and tests need it; it's gitignored).
+3. `export DATABASE_URL=postgres://aurora:aurora@127.0.0.1:55432/aurora` for every cargo test (sqlx::test and aurora-testkit create and drop their own scratch databases; **never** write to the `aurora` database itself).
+4. `export CARGO_INCREMENTAL=1` in every shell that runs cargo — your `target/` is private and deleted after the lane, and incremental makes your edit→test loop several times faster (VEL-004).
+5. If you run `connect::*` api tests: `bash scripts/fixtures/build.sh` once.
+
+## Working rules
+- **One commit per task id** (several are fine if the work is large — "evidence then fix" is OK), message prefix `<ID>: `, ending with the line `Co-Authored-By: Claude <noreply@anthropic.com>`. Commit as you go; don't leave the tree dirty between tasks.
+- **Scope**: only the files your brief's "Owns" lists. If the fix genuinely needs more, stop that task and report rather than widening.
+- **Change files only with the Edit/Write tools.** Never python, sed, awk, perl, `cat >>`, `tee` or heredocs to create or modify files (owner rule). Repo generators are fine (`UPDATE_OPENAPI=1 cargo test -p aurora-api --test it openapi_matches_checked_in`, `pnpm -C web gen:api`, `UPDATE_SCHEMAS=1 cargo test -p aurora-protocol`, `cargo fmt`).
+- **Do not edit `docs/PROGRESS.md` or `docs/FEATURES.md`** — the coordinator does. Fill the brief's "Completion report" section if it has one.
+- New tables/columns → real `### \`table\`` sections in `docs/03-data-model.md` (`created_at`/`updated_at` implicit) and `python3 scripts/extract-schema.py --check`. Migrations: `git fetch origin` and take the next free timestamp after `origin/master`'s newest; say so in the commit.
+- Tests must prove the behaviour: no sleeps for synchronisation (use barriers/notify/polling with a deadline), no assertions on mocks where a real path exists, no `#[ignore]`. A new test must fail without your fix — check that for at least the main test of each task and say so in the report. WebSocket test consumers answer Pings and bound every wait (FIX-051/FIX-055 playbooks).
+
+## Gates before each task's final commit
+- `cargo fmt --all --check`; `cargo clippy -p <touched crates> --all-targets --all-features -- -D warnings` (workspace-wide once before your final report).
+- The test suites the brief names; for `aurora-api` changes the full it-suite: `cargo test -p aurora-api --test it -- --test-threads=8` (or `cargo nextest run -p aurora-api` if installed — same coverage).
+- `bash scripts/guards/run-all.sh`.
+- Web touched: `pnpm -C web typecheck`, `lint`, `test`, `build`.
+
+## Host discipline (shared 16-core box, up to 3 lanes)
+- Heavy commands under `nice -n 10`. Check `uptime` before long runs: wait while the 1-minute load is > 25.
+- A compile stalled > 5 min at 0 % CPU with no output: report it, don't kill sccache or other processes.
+- `df -h /home` before image-heavy steps; stop and report below 50 GB free.
+- e2e scripts take `/tmp/aurora-e2e-gateway.lock`; never run two e2e suites at once; never touch the aurora-dev kind cluster, port 4000, or `/home/alex/agent-platform/aurora` (the owner's checkout — read-only, for `.env`).
+- Run commands in the foreground with `timeout`; for long runs log to a file and poll it in the foreground. Never end your turn with a command still running.
+- Performance measurements (VEL tasks) are only meaningful on a quiet machine: record `uptime` with every timing; if other lanes keep the load above ~8, measure A/B back-to-back and interleaved, and say the numbers were taken under load.
+
+## Finishing
+- Do **not** push or merge; the coordinator reviews your branch and merges it.
+- Report (your final message, and `worker_done` per the Orca preamble): per task id — what was wrong (one line), what you changed, files, commit sha(s), each gate's command + result counts, which new tests you saw fail before the fix, anything you invalidated or left open. Never claim a check passed that you didn't run.
+- On a provider/streaming error mid-task, end your turn with a one-line status; the coordinator will nudge you.
