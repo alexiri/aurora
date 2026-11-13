@@ -90,6 +90,9 @@ export function useApprovalsStream(wsId: string): { live: boolean } {
       // A refused connection (e.g. 429 too_many_streams) is CLOSED, not retried by the browser.
       if (es.readyState === EventSource.CLOSED) setRateNotice({ kind: "streams" });
     };
+    // (FIX-099, C-10) The server's `resync` frame: notifications may have been missed (a lagged receiver, a bus
+    // reconnect) — refetch rather than keep decided or expired approvals as pending.
+    es.addEventListener("resync", () => void qc.invalidateQueries({ queryKey: approvalKeys.all(wsId) }));
     es.addEventListener("approval", (e) => {
       const evt = parseApprovalEvent((e as MessageEvent<string>).data);
       if (!evt || evt.approval.workspace_id !== wsId) return;

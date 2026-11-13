@@ -114,7 +114,12 @@ async fn stream(
                         .unwrap_or_else(|_| Event::default().comment("encode error"));
                     return Some((Ok(ev), (rx, s, watch)));
                 }
-                Ok(BusMsg::Resync) | Err(RecvError::Lagged(_)) => {}
+                // (FIX-099, C-10) Notifications may have been missed (the bus replays nothing): tell the
+                // client to refetch instead of leaving decided or expired approvals shown as pending.
+                Ok(BusMsg::Resync) | Err(RecvError::Lagged(_)) => {
+                    let ev = Event::default().event("resync").data("{}");
+                    return Some((Ok(ev), (rx, s, watch)));
+                }
                 Err(RecvError::Closed) => return None,
             }
         }

@@ -149,6 +149,8 @@ function OverviewBody({
         <Section id="first-run" title="Getting started">
           {workspace.data ? (
             <GettingStarted org={org} ws={ws} wsId={wsId} orgId={orgId} isOwner={workspace.data.my_role === "owner"} variant="overview" />
+          ) : workspace.isError ? (
+            <ErrorState error={workspace.error} onRetry={() => void workspace.refetch()} />
           ) : (
             <Loading />
           )}

@@ -502,6 +502,48 @@ async fn sse_emits_created_decided_and_keepalive() {
     assert!(!txt.contains("event: approval"), "{txt}");
 }
 
+/// FIX-099 / C-10: a stream whose receiver lagged (the bus replays nothing) says so with a `resync`
+/// frame, so the dashboard refetches instead of showing decided approvals as pending.
+#[tokio::test]
+async fn sse_lagged_receiver_gets_a_resync_frame() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let member = h.user("m@x.io", false).await;
+    h.member(f.org, member, "member", "active").await;
+    h.bind_ws(f.ws, member, "approver").await;
+    let (_, mt) = h.good_session(member).await;
+    let app = test_router(h.state.clone());
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/approvals/stream")
+                .header("cookie", cookie(&mt))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let mut body = res.into_body();
+    // The body is not read while the bus broadcasts more than its 256-message capacity: the
+    // stream's receiver lags.
+    let id = approval(&h, &f, f.ws, f.agent, None).await;
+    for _ in 0..300 {
+        notify(&h, id, f.ws, "created").await;
+    }
+    let mut seen = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while !seen.contains("event: resync") {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no resync frame in: {seen}"
+        );
+        seen.push_str(&next_text(&mut body, 5).await);
+    }
+    assert!(!seen.contains("\nid:"), "no SSE ids (C-10)");
+}
+
 /// SEC-32: an approval decision is audited.
 #[tokio::test]
 async fn sec32_approval_decision_is_audited() {

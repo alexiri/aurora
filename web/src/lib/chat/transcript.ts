@@ -241,6 +241,17 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
     link: { label: "Open Computer tab", path: "computer" },
     showServerMessage: true,
   },
+  // (FIX-099, C-581) The runner's capacity answer and the catch-all the API records for any other start failure.
+  at_capacity: {
+    message: "The cluster has no room to start the agent's computer right now. Try again in a few minutes.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  agent_start_failed: {
+    message: "The agent's computer failed to start.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
   harness_unsupported: {
     message: "The agent's computer image does not support this agent's harness.",
     link: { label: "Open Computer tab", path: "computer" },
@@ -251,5 +262,6 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
 /** Known code → copy (+ deep link); unknown → generic. */
 export function errorCopy(code: string | null | undefined, fallback?: string): ErrorCopy {
   if (code && ERROR_COPY[code]) return ERROR_COPY[code];
-  return { message: fallback ? `Something went wrong: ${fallback}` : "Something went wrong. Please try again." };
+  // Unknown code (WEBX-9): generic main copy; the server's sentence, if any, goes in the secondary line.
+  return { message: "Something went wrong. Please try again.", showServerMessage: !!fallback };
 }

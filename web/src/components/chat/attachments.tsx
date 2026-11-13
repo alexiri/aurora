@@ -1,8 +1,10 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+
 import { Badge } from "@/components/ui/badge";
 import { DownloadIcon, FileIcon, XIcon } from "@/components/ui/icons";
-import { attachmentUrl, canThumbnail, formatBytes, type Attachment } from "@/lib/api/attachments";
+import { attachmentUrl, canThumbnail, fetchAttachmentFacts, formatBytes, type Attachment } from "@/lib/api/attachments";
 import type { PurgeReason } from "@/lib/chat/transcript";
 
 const typeLabel = (contentType?: string): string => {
@@ -32,6 +34,16 @@ export function AttachmentCard({
   purged?: PurgeReason;
 }) {
   const url = attachmentUrl(id);
+  // A person's message names its attachments by id only: ask the content route for the stored name (WEBX-7).
+  const facts = useQuery({
+    queryKey: ["attachment-facts", id],
+    queryFn: () => fetchAttachmentFacts(id),
+    enabled: !filename && !purged,
+    staleTime: Infinity,
+    retry: false,
+  });
+  filename = filename || facts.data?.filename || undefined;
+  size = size ?? facts.data?.size ?? undefined;
   const name = filename || "Attachment";
   if (purged) {
     return (

@@ -59,6 +59,9 @@ export interface GuideState {
   loading: boolean;
   keys: GuideKey[];
   readinessError: unknown;
+  /** An owner's readiness or workspace-secrets query failed (FIX-099): show it, with `retry`. */
+  error: unknown;
+  retry: () => void;
 }
 
 /**
@@ -86,5 +89,12 @@ export function useGuide({ wsId, orgId, agentId, isOwner }: { wsId: string; orgI
         : computeGuide({ isOwner, readiness: readiness.data, keys, replied: replied.data === true }),
     [loading, isOwner, readiness.data, keys, replied.data],
   );
-  return { guide, loading, keys, readinessError: readiness.error };
+  // A failed query is an error with a retry, never a guide stuck on "Checking…" (readiness) or one that claims no key
+  // exists (workspace secrets). The organization's secrets stay best-effort (above).
+  const error = isOwner && agentId ? (readiness.error ?? wsSecrets.error ?? null) : null;
+  const retry = () => {
+    if (readiness.error) void readiness.refetch();
+    if (wsSecrets.error) void wsSecrets.refetch();
+  };
+  return { guide, loading, keys, readinessError: readiness.error, error, retry };
 }

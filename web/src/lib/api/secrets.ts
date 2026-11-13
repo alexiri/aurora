@@ -54,6 +54,8 @@ export function useLlmProviders(orgId: string | undefined) {
 export function useCreateSecret(scope: SecretScope) {
   const qc = useQueryClient();
   return useMutation({
+    // The plaintext is in `variables`: drop the mutation as soon as it settles (WEBC-4).
+    gcTime: 0,
     mutationFn: (body: CreateSecretRequest) =>
       scope.kind === "workspace"
         ? unwrap(api.POST("/v1/workspaces/{ws}/secrets", { params: { path: { ws: scope.id } }, body }))
@@ -74,6 +76,7 @@ export function usePatchSecret(scope: SecretScope, id: string) {
 export function useSetSecretValue(scope: SecretScope, id: string) {
   const qc = useQueryClient();
   return useMutation({
+    gcTime: 0,
     mutationFn: (body: SetValueRequest) =>
       unwrap(api.PUT("/v1/secrets/{id}/value", { params: { path: { id } }, body })),
     onSuccess: () => qc.invalidateQueries({ queryKey: secretKeys.list(scope) }),
@@ -102,6 +105,7 @@ export function useDeleteSecret(scope: SecretScope, id: string) {
 export function useAcceptSecret(scope: SecretScope, id: string) {
   const qc = useQueryClient();
   return useMutation({
+    gcTime: 0,
     mutationFn: (value: string) =>
       unwrap(api.POST("/v1/secrets/{id}/accept", { params: { path: { id } }, body: { value } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: secretKeys.list(scope) }),

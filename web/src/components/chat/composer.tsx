@@ -8,17 +8,11 @@ import { PaperclipIcon, SendIcon, StopIcon } from "@/components/ui/icons";
 import { ApiError } from "@/lib/api/client";
 import { uploadAttachment, uploadErrorMessage, type Attachment } from "@/lib/api/attachments";
 import { chatApi, type Followup } from "@/lib/api/conversations";
+import { newIdempotencyKey } from "@/lib/chat/idempotency";
 import { classifySend, pendingFollowups, type TranscriptState } from "@/lib/chat/transcript";
 
 import { ComposerChip, UploadChip } from "./attachments";
 import { ErrorBlock, QueuedRow } from "./status-rows";
-
-/** A fresh `Idempotency-Key` (a UUID; falls back where `randomUUID` needs a secure context). */
-function newIdempotencyKey(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  const b = crypto.getRandomValues(new Uint8Array(16));
-  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-}
 
 /**
  * The pinned composer: queued follow-ups above the box, then a bordered box with attachment chips, an
@@ -64,6 +58,15 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) area.current?.focus();
   }, [autoFocus]);
+
+  // The draft is a one-shot suggestion (WEBA-20): once it has filled the box, drop `?draft=` from the URL so a
+  // remount (switching conversations and back, a re-render of the page) does not put it back.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("draft")) return;
+    url.searchParams.delete("draft");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
 
   async function submit(e?: FormEvent) {
     e?.preventDefault();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Avatar } from "@/components/agent-avatar";
 import { Markdown } from "@/components/apps/markdown";
@@ -8,9 +8,11 @@ import { RedactDialog } from "@/components/agents/conversation-actions";
 import { Badge } from "@/components/ui/badge";
 import { CheckIcon, CopyIcon, MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { ApiError } from "@/lib/api/client";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { chatApi } from "@/lib/api/conversations";
 import { useWorkspace } from "@/lib/api/queries";
+import { newIdempotencyKey } from "@/lib/chat/idempotency";
 import { clockTime, type Block, type Row } from "@/lib/chat/layout";
 import type { TranscriptState } from "@/lib/chat/transcript";
 import { cn } from "@/lib/utils";
@@ -139,6 +141,7 @@ function BlockView({
   convId,
   side,
   agentId,
+  frozen,
 }: {
   block: Block;
   state: TranscriptState;
@@ -148,6 +151,8 @@ function BlockView({
   side: "person" | "agent";
   /** The agent of the chat, when known (the Chat tab passes it): enables **Retry now** (C-615). */
   agentId?: string;
+  /** A frozen agent has no **Retry now** (C-615). */
+  frozen?: boolean;
 }) {
   switch (block.kind) {
     case "bubble":
@@ -177,7 +182,7 @@ function BlockView({
       const p = block.ev.payload;
       const turnId = s(p.turn_id);
       const retryProps =
-        agentId && turnId
+        agentId && turnId && !frozen
           ? { agentId, turnId, convId, state }
           : null;
       if (block.ev.type === "error") {
@@ -226,6 +231,9 @@ function TurnErrorWithRetry({
   state: TranscriptState;
 }) {
   const ws = useWorkspace(wsId);
+  // One key per failed turn (RFE-018): a second click, or a retry after a lost response, never opens a second turn.
+  const keyRef = useRef<string | null>(null);
+  const [repostErr, setRepostErr] = useState<string | null>(null);
   // (C-615) Only the start-failure codes the retry endpoint accepts get the button (C-585, C-610).
   if (!isRetryableCode(code)) {
     return <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"} />;
@@ -238,9 +246,25 @@ function TurnErrorWithRetry({
         onRetried={() => {
           const queued = state.events.find((e) => e.type === "turn.queued" && e.payload.turn_id === turnId);
           const text = typeof queued?.payload.text === "string" ? queued.payload.text : "";
-          if (text.trim()) void chatApi.send(convId, text);
+          if (!text.trim()) return;
+          keyRef.current ??= newIdempotencyKey();
+          setRepostErr(null);
+          chatApi.send(convId, text, [], keyRef.current).then(
+            () => {
+              keyRef.current = null;
+            },
+            (e: unknown) => {
+              if (e instanceof ApiError && e.code === "idempotency_key_reused") keyRef.current = null;
+              setRepostErr(e instanceof ApiError ? e.message : "The agent's computer restarted, but your message was not re-sent. Send it again.");
+            },
+          );
         }}
       />
+      {repostErr ? (
+        <span role="alert" className="mt-1 block text-xs">
+          {repostErr}
+        </span>
+      ) : null}
     </ErrorBlock>
   );
 }
@@ -280,6 +304,7 @@ export function MessageGroup({
       convId={convId}
       side={row.side}
       agentId={agent?.id}
+      frozen={agent?.frozen}
     />
   ));
   if (person) {

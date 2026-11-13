@@ -420,6 +420,9 @@ function SidebarContent({
   pathname: string;
 }) {
   const base = orgSlug && wsSlug ? `/o/${orgSlug}/w/${wsSlug}` : null;
+  // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
+  // advertise it to a signed-in member who typed an /admin path, WEBA-11).
+  const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
@@ -435,7 +438,7 @@ function SidebarContent({
           <WorkspaceNav base={base} wsId={wsId} pathname={pathname} />
         ) : orgSlug ? (
           <OrgNav orgSlug={orgSlug} pathname={pathname} />
-        ) : pathname.startsWith("/admin") ? (
+        ) : pathname.startsWith("/admin") && isInstanceAdmin ? (
           <AdminNavList pathname={pathname} />
         ) : pathname.startsWith("/account") ? (
           <AccountNavList pathname={pathname} />

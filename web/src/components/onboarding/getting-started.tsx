@@ -93,6 +93,7 @@ export function GettingStarted(props: GuideProps) {
       </Card>
     );
   }
+  if (state.error) return <ErrorState error={state.error} onRetry={state.retry} />;
   if (state.loading || !state.guide) return <Loading />;
   const guide = state.guide;
 

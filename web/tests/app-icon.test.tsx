@@ -1,10 +1,20 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AttachmentCard } from "@/components/chat/attachments";
 import { TranscriptView } from "@/components/chat/transcript-view";
 import { AppIcon, appIconUrl } from "@/components/ui/app-icon";
 import { emptyTranscript, loadHistory, type TranscriptState } from "@/lib/chat/transcript";
+
+// A person's attachment has no filename in the transcript; the card asks the server (FIX-099), so cards render
+// inside a query client. Nothing here is served: a name lookup just fails and the card keeps "Attachment".
+const render = (ui: ReactElement) =>
+  rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
+});
 
 afterEach(cleanup);
 
