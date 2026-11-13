@@ -211,7 +211,9 @@ matrix:
       Health, metrics, the machine planes and the exempt routes are never
       affected. The 503 carries `code = counter_unavailable`, `retry-after: 5`,
       `details.limiter`. The refusal is never returned as 429 (a client must not
-      mistake an outage for its own rate).
+      mistake an outage for its own rate). Each class has its own breaker and its
+      own connection budget; a failure in one class never changes another class's
+      verdict (FIX-087).
     - *Metrics:* `aurora_api_rate_limited_total{class,scope}` unchanged; plus the
       `aurora_counters_*` series of `15 §Shared rate-limit counters`.
     - *Cost.* Every authenticated request costs one store round-trip (three

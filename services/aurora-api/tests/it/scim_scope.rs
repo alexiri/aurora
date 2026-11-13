@@ -361,6 +361,66 @@ async fn per_token_rate_limit_429_with_retry_after() {
         }
     }
     assert_eq!(last.0, 429, "the bucket must refuse within 6 requests");
+    // FIX-087: a refusal charges nothing back — the flood stays refused for the window.
+    for i in 0..20 {
+        let (s, _, v) = h
+            .send(
+                Method::GET,
+                USERS,
+                &[("authorization", &bearer(&tok))],
+                None,
+            )
+            .await;
+        assert_eq!(
+            s.as_u16(),
+            429,
+            "flood request {i} after the first 429: {v}"
+        );
+    }
+}
+
+/// FIX-087 (carried from FIX-081): requests without any bearer are charged to the per-address
+/// bucket, and a rejected-bearer flood stays refused once the bucket is empty.
+async fn address_bucket_flood(hdrs: &[(&str, &str)], label: &str) {
+    let h = Harness::with_config(|c| {
+        c.scim.enabled = true;
+    })
+    .await;
+    let mut first_429 = None;
+    for i in 0..40 {
+        let (s, _, _) = h.send(Method::GET, USERS, hdrs, None).await;
+        if s.as_u16() == 429 {
+            first_429 = Some(i);
+            break;
+        }
+        assert_eq!(s.as_u16(), 401, "{label} request {i}");
+    }
+    assert!(
+        first_429.is_some(),
+        "{label}: the 30/min address bucket must refuse within 40 requests"
+    );
+    for i in 0..20 {
+        let (s, _, _) = h.send(Method::GET, USERS, hdrs, None).await;
+        assert_eq!(
+            s.as_u16(),
+            429,
+            "{label}: flood request {i} after the first 429"
+        );
+    }
+}
+
+#[tokio::test]
+async fn bearerless_scim_flood_gets_429() {
+    address_bucket_flood(&[], "no bearer").await;
+}
+
+#[tokio::test]
+async fn rejected_bearer_scim_flood_stays_429() {
+    address_bucket_flood(
+        &[("authorization", "Bearer aud_nope_nope")],
+        "rejected bearer",
+    )
+    .await;
 }
 
 /// FIX-070: the seat cap holds under concurrent `POST /Users` — with one seat left, parallel

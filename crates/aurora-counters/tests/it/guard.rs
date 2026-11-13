@@ -33,6 +33,11 @@ impl Fault {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 Ok(())
             }
+            4 => {
+                // Healthy, but slower than the cancelled caller below.
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                Ok(())
+            }
             _ => Err(CounterError::Invalid("injected bug".into())),
         }
     }
@@ -150,6 +155,70 @@ async fn a_cancelled_probe_never_wedges_the_breaker_open() {
             .is_allowed()
     );
     assert!(!g.is_open());
+}
+
+/// FIX-087: the probe belongs to the breaker. A caller cancelled while a (slow, healthy) probe
+/// runs must not record a failure; the probe's own answer closes the breaker.
+#[tokio::test]
+async fn a_cancelled_caller_does_not_decide_the_probe() {
+    let f = Fault::new();
+    let g = Guarded::new(f.clone(), cfg());
+    f.mode.store(1, Ordering::Relaxed);
+    for _ in 0..3 {
+        assert!(g.fixed_window_consume(&[unit()]).await.is_err());
+    }
+    assert!(g.is_open());
+    f.mode.store(4, Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let cancelled =
+        tokio::time::timeout(Duration::from_millis(5), g.fixed_window_consume(&[unit()])).await;
+    assert!(cancelled.is_err(), "the caller was dropped mid-probe");
+    // The probe finishes on its own and closes the breaker (no cooldown wait).
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while g.is_open() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the probe's own answer must close the breaker"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(
+        g.fixed_window_consume(&[unit()])
+            .await
+            .expect("closed by the probe")
+            .is_allowed()
+    );
+}
+
+/// FIX-087: one breaker per class — a failing `security` store never changes `management`.
+#[tokio::test]
+async fn failing_one_class_leaves_the_other_shared() {
+    let sec_store = Fault::new();
+    let man_store = Fault::new();
+    let sec = ClassCounters::new(
+        Arc::new(Guarded::new(sec_store.clone(), cfg())),
+        "security",
+        ClassPolicy::Closed,
+    );
+    let man = ClassCounters::new(
+        Arc::new(Guarded::new(man_store.clone(), cfg())),
+        "management",
+        ClassPolicy::Closed,
+    );
+    let take = |k: &str| BucketTake {
+        key: k.into(),
+        emission_interval: Duration::from_secs(1),
+        burst: 100,
+    };
+    assert!(sec.take(&[take("a")]).await.is_ok());
+    assert!(man.take(&[take("a")]).await.is_ok());
+    sec_store.mode.store(1, Ordering::Relaxed);
+    for _ in 0..5 {
+        assert_eq!(sec.take(&[take("a")]).await.err(), Some(Fallback::Closed));
+    }
+    assert_eq!(sec.state(), State::Fallback);
+    assert!(man.take(&[take("a")]).await.is_ok());
+    assert_eq!(man.state(), State::Shared);
 }
 
 #[tokio::test]

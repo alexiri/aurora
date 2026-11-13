@@ -40,37 +40,47 @@ impl ApiCounters {
     }
 
     /// Build from the validated configuration.
+    ///
+    /// Each class gets its own store: its own breaker and its own connection budget, so an
+    /// unauthenticated flood that saturates the `security` pool never turns authenticated
+    /// `management` calls into outages (FIX-087, docs/05 §Shared counters). Nothing is built
+    /// (no pool, no client) unless the API limiter is shared.
     pub fn build(cfg: &CountersConfig, pool: &PgPool) -> Result<Self, String> {
-        let Some(store) = aurora_db::counters::build_store(cfg, pool)? else {
+        if !cfg.api_shared {
             return Ok(Self::local());
-        };
-        Ok(Self::over(store, cfg.backend.as_str(), cfg))
-    }
-
-    fn over(store: Arc<dyn CounterStore>, backend: &'static str, cfg: &CountersConfig) -> Self {
-        let class = |name: &'static str, p: ClassPolicy| {
-            cfg.api_shared
-                .then(|| ClassCounters::new(store.clone(), name, p))
-        };
-        Self {
-            backend,
-            security: class("security", cfg.security),
-            management: class("management", cfg.management),
         }
+        let class = |name: &'static str, p: ClassPolicy| {
+            Ok::<_, String>(
+                aurora_db::counters::build_store(cfg, pool)?
+                    .map(|store| ClassCounters::new(store, name, p)),
+            )
+        };
+        let security = class("security", cfg.security)?;
+        let management = class("management", cfg.management)?;
+        if security.is_none() {
+            return Ok(Self::local());
+        }
+        Ok(Self {
+            backend: cfg.backend.as_str(),
+            security,
+            management,
+        })
     }
 
-    /// Tests: share `store` (wrapped with the breaker) with the given policies.
+    /// Tests: share `store` with the given policies; each class wraps it in its own breaker.
     pub fn for_store(
         store: Arc<dyn CounterStore>,
         security: ClassPolicy,
         management: ClassPolicy,
         breaker: BreakerConfig,
     ) -> Self {
-        let g: Arc<dyn CounterStore> = Arc::new(Guarded::new(store, breaker));
+        let guard = |s: &Arc<dyn CounterStore>| -> Arc<dyn CounterStore> {
+            Arc::new(Guarded::new(s.clone(), breaker))
+        };
         Self {
             backend: "test",
-            security: Some(ClassCounters::new(g.clone(), "security", security)),
-            management: Some(ClassCounters::new(g, "management", management)),
+            security: Some(ClassCounters::new(guard(&store), "security", security)),
+            management: Some(ClassCounters::new(guard(&store), "management", management)),
         }
     }
 
@@ -229,7 +239,7 @@ pub async fn check_webhook(
     match class.consume(&[unit]).await {
         Ok(Verdict::Allowed) | Err(Fallback::Local) => Ok(()),
         Ok(Verdict::Refused { retry_after, .. }) => Err(ApiError::rate_limited(
-            secs_ceil(retry_after).clamp(1, 10),
+            secs_ceil(retry_after).max(1),
             "Too many deliveries for this webhook.",
         )),
         Err(Fallback::Closed) => Err(ApiError::counter_unavailable("api_webhook")),

@@ -242,9 +242,14 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .with_health(health.clone()),
     );
     // (P4-CNT, D-119) Shared rule quotas: `memory` (the default) keeps them per replica.
+    // Built only when the gateway shares: no counters pool otherwise (FIX-087).
     let rate =
-        match aurora_db::counters::build_store(&cfg.counters, &pool)? {
-            Some(store) if cfg.counters.gateway_shared => {
+        match aurora_db::counters::build_store_if(
+            cfg.counters.gateway_shared,
+            &cfg.counters,
+            &pool,
+        )? {
+            Some(store) => {
                 tracing::info!(
                     backend = cfg.counters.backend.as_str(),
                     "shared rate-limit counters"
