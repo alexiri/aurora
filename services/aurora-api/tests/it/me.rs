@@ -249,3 +249,25 @@ async fn reauth_is_per_session() {
     let (s, _) = call(&h, &t1, Method::DELETE, "/v1/me", None).await;
     assert_eq!(s, 204);
 }
+
+/// FIX-063 (C-465): a suspended membership has no effective role, even for an owner.
+#[tokio::test]
+async fn effective_role_is_null_for_a_suspended_membership() {
+    let h = Harness::new().await;
+    let u = h.user("s@x.io", false).await;
+    let (_, tok) = h.good_session(u).await;
+    let o1 = h.org().await;
+    let o2 = h.org().await;
+    h.member(o1, u, "owner", "active").await;
+    h.member(o2, u, "owner", "suspended").await;
+    let (s, v) = call(&h, &tok, Method::GET, "/v1/me", None).await;
+    assert_eq!(s, 200, "{v}");
+    for m in v["memberships"].as_array().unwrap() {
+        if m["org"]["id"] == json!(o2) {
+            assert_eq!(m["role"], "owner");
+            assert!(m["effective_role"].is_null(), "{m}");
+        } else {
+            assert_eq!(m["effective_role"], "owner");
+        }
+    }
+}

@@ -450,3 +450,67 @@ async fn sec71_scim_groups_are_read_only_but_deletable_while_scim_is_off() {
     let (s, _) = call(Method::DELETE, format!("/v1/groups/{g}"), None).await;
     assert_eq!(s, 204);
 }
+
+#[tokio::test]
+async fn fix063_the_sync_stops_at_the_per_user_cap_and_a_second_sync_is_a_no_op() {
+    let idp = MockIdp::start().await;
+    let h = harness(&idp, SignupMode::InviteOnly, admit, &[]).await;
+    claims(&idp, json!([]));
+    sign_in(&h).await;
+    let org = org_id(&h).await;
+    let u = user_id(&h).await;
+    for i in 0..101 {
+        idp_group(&h, org, &format!("g{i}"), "mock", &format!("eg-{i}")).await;
+    }
+    let all: Vec<String> = (0..101).map(|i| format!("eg-{i}")).collect();
+    claims(&idp, json!(all));
+    sign_in(&h).await;
+    let q = format!("SELECT count(*) FROM group_members WHERE user_id = '{u}'");
+    assert_eq!(count(&h, &q).await, 100);
+    let adds = "SELECT count(*) FROM audit_log WHERE action = 'group_member.add'";
+    assert_eq!(count(&h, adds).await, 100);
+    sign_in(&h).await;
+    assert_eq!(count(&h, &q).await, 100);
+    assert_eq!(count(&h, adds).await, 100, "the second sync wrote nothing");
+}
+
+#[tokio::test]
+async fn fix063_a_suspended_members_idp_rows_survive_a_sign_in_and_reactivation_restores_them() {
+    let idp = MockIdp::start().await;
+    let h = harness(&idp, SignupMode::InviteOnly, admit, &[]).await;
+    claims(&idp, json!([]));
+    sign_in(&h).await;
+    let org = org_id(&h).await;
+    let u = user_id(&h).await;
+    let g = idp_group(&h, org, "a", "mock", "eg-a").await;
+    claims(&idp, json!(["eg-a"]));
+    sign_in(&h).await;
+    assert_eq!(members(&h, g).await, 1);
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE user_id = $1 AND org_id = $2")
+        .bind(u)
+        .bind(org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    // the IdP no longer sends the group; the sign-in may or may not be admitted, but the
+    // suspended org's row must stay and no removal is audited
+    claims(&idp, json!([]));
+    let (path, cookie) = authorize(&h, None).await;
+    let _ = callback(&h, &path, &cookie).await;
+    assert_eq!(members(&h, g).await, 1);
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM audit_log WHERE action = 'group_member.remove'"
+        )
+        .await,
+        0
+    );
+    sqlx::query("UPDATE org_members SET status = 'active' WHERE user_id = $1 AND org_id = $2")
+        .bind(u)
+        .bind(org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(members(&h, g).await, 1, "access is back without a sign-in");
+}

@@ -387,6 +387,9 @@ pub async fn change_members(
     let g = load_admin(s, c, id).await?;
     member_edit_allowed(&g)?;
     let mut tx = audit::begin(s).await?;
+    // The per-user cap spans groups: serialize on the org (the lock SCIM and the IdP sync use),
+    // always before the group row lock.
+    repo::lock_org(&mut tx, g.org_id).await?;
     let g = repo::lock(&mut tx, id).await?.ok_or_else(group_not_found)?;
     let mut evs = Vec::new();
     let mut result = MembersBatchResult {

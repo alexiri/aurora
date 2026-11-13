@@ -6396,9 +6396,10 @@ export interface components {
         MeMembership: {
             /**
              * @description (phase 4, P4-GRP-1) The effective org role: the strongest of `role` and the `org_role` of
-             *     the caller's groups, only while the membership is active (`role` stays the direct role).
+             *     the caller's groups, only while the membership is active (`role` stays the direct role);
+             *     `null` for a suspended membership (C-465).
              */
-            effective_role: components["schemas"]["OrgRole"];
+            effective_role?: components["schemas"]["OrgRole"] | null;
             org: components["schemas"]["OrgSummary"];
             role: components["schemas"]["OrgRole"];
             /** @description Where the effective role comes from: `direct`, or `group` with the group. */

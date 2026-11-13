@@ -29,7 +29,7 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
             let effective_role = eff
                 .iter()
                 .find(|(o, _)| *o == m.org_id)
-                .map_or_else(|| parse_org_role(&m.role), |(_, r)| parse_org_role(r));
+                .map(|(_, r)| parse_org_role(r));
             let mut sources = vec![MeRoleSource {
                 kind: "direct".into(),
                 group: None,

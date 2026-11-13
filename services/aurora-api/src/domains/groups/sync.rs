@@ -28,8 +28,17 @@ pub async fn sync_signin(
     user: Uuid,
     values: &[String],
 ) -> Result<(), DbError> {
-    let changes = repo::sync_idp_memberships(&mut *tx, user, &p.id, values).await?;
-    for ch in changes {
+    let outcome = repo::sync_idp_memberships_report(&mut *tx, user, &p.id, values).await?;
+    // `GROUPS_PER_USER` (docs/04 §Groups limits): the excess is skipped, never half-applied.
+    // No new audit kind: a warn log naming the org and counts, not the group names.
+    for (org_id, skipped) in &outcome.cap_skipped {
+        tracing::warn!(
+            user_id = %user, org_id = %org_id, provider = %p.id, skipped,
+            limit = repo::GROUPS_PER_USER,
+            "IdP group sync skipped memberships: user is at the per-user group limit"
+        );
+    }
+    for ch in outcome.changes {
         repo::notify_member_changed(&mut *tx, ch.org_id, user).await?;
         let action = if ch.added {
             "group_member.add"

@@ -179,25 +179,40 @@ pub async fn can_use<'e, E: PgExecutor<'e>>(
 }
 
 /// (P4-GRP-1, D-131, SEC-71) The ids of the groups **of `org`** that contain `user` (an active
-/// member only), at most `GROUPS_PER_USER` (100): the speaker's principals beyond the agent id
-/// (`06 §Credential authentication`). One indexed query per credential resolution. Callers
-/// pass it only for a speaker that holds `can_use`; a request without a speaker has none.
+/// member only): the speaker's principals beyond the agent id (`06 §Credential
+/// authentication`). One indexed query per credential resolution. Callers pass it only for a
+/// speaker that holds `can_use`; a request without a speaker has none.
+///
+/// Never truncates: a truncated set would make a **block** rule on a group past the cut not
+/// match (fail open). More than `GROUPS_PER_USER` (100) rows (only possible if the cap was
+/// bypassed) is an `Err`, and the caller must refuse the request.
 pub async fn speaker_group_ids<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
     user: Uuid,
 ) -> Result<Vec<Uuid>, DbError> {
-    Ok(sqlx::query_scalar(
+    let ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT gm.group_id FROM group_members gm \
          JOIN org_members m ON m.org_id = gm.org_id AND m.user_id = gm.user_id \
               AND m.status = 'active' \
          WHERE gm.org_id = $1 AND gm.user_id = $2 \
-         ORDER BY gm.group_id LIMIT 100",
+         ORDER BY gm.group_id LIMIT 101",
     )
     .bind(org)
     .bind(user)
     .fetch_all(exec)
-    .await?)
+    .await?;
+    if ids.len() > super::groups::GROUPS_PER_USER as usize {
+        // The ids and names stay out of the log; the caller refuses the request.
+        tracing::error!(
+            user_id = %user, org_id = %org,
+            "speaker is in more groups than the per-user limit: refusing to resolve a truncated principal set"
+        );
+        return Err(DbError::Other(sqlx::Error::Protocol(
+            "speaker is in more than the per-user group limit".into(),
+        )));
+    }
+    Ok(ids)
 }
 
 pub async fn register_instance<'e, E: PgExecutor<'e>>(
