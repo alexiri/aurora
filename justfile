@@ -96,10 +96,16 @@ clean-testkit:
 clean-stale days="14":
     #!/usr/bin/env bash
     set -euo pipefail
+    # Incremental session dirs (profile.dev incremental, I-45): prune those untouched for DAYS days.
+    # Safe while no build runs; a pruned crate just recompiles in full once.
+    if [ -d target ]; then
+      find target -maxdepth 3 -type d -name incremental -path 'target/*/incremental' 2>/dev/null | while read -r d; do
+        find "$d" -mindepth 1 -maxdepth 1 -type d -mtime +{{days}} -print -exec rm -rf {} + || true
+      done
+    fi
     if cargo sweep --version >/dev/null 2>&1; then
       cargo sweep --time {{days}}
     else
-      echo "cargo-sweep not installed (cargo install cargo-sweep --locked)." >&2
+      echo "cargo-sweep not installed (cargo install cargo-sweep --locked); only incremental dirs were pruned." >&2
       echo "Without it: 'cargo clean' (all of target/) when no build is running, or 'bash scripts/dev/clean-lane.sh <worktree>' for a finished lane." >&2
-      exit 1
     fi

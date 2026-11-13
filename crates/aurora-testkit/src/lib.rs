@@ -29,6 +29,27 @@ pub use wiremock;
 /// Name of the env var that overrides the test server.
 pub const TEST_DB_ENV: &str = "AURORA_TEST_DATABASE_URL";
 
+/// Env var overriding the per-`TestDb` pool size (VEL-005).
+pub const TEST_POOL_SIZE_ENV: &str = "AURORA_TEST_POOL_SIZE";
+
+/// Default connections per `TestDb` pool. Every test (and every nextest process) opens its own
+/// pool against the shared dev Postgres (`max_connections` 100), so a smaller pool would allow
+/// more parallel tests — but the `aurora-api` harness hands this same pool to the app under test
+/// (workers, SSE, LISTEN, long polls), and at 2 connections 20 of its 899 tests starve and fail
+/// (VEL-005 measurement, `docs/ops/build-performance.md` §7). So the default stays 5; set
+/// `AURORA_TEST_POOL_SIZE` to experiment (e.g. a thread-count sweep on an idle machine).
+const DEFAULT_TEST_POOL_SIZE: u32 = 5;
+
+fn parse_pool_size(raw: Option<&str>) -> u32 {
+    raw.and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or(DEFAULT_TEST_POOL_SIZE)
+}
+
+fn test_pool_size() -> u32 {
+    parse_pool_size(std::env::var(TEST_POOL_SIZE_ENV).ok().as_deref())
+}
+
 /// A uniquely named, migrated Postgres database. Dropped on `cleanup()` or `Drop`.
 pub struct TestDb {
     server_url: String,
@@ -76,7 +97,7 @@ impl TestDb {
 
         let url = replace_db_name(&server_url, &name)?;
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(test_pool_size())
             .connect(&url)
             .await
             .context("connecting to test database")?;
@@ -434,5 +455,20 @@ impl MockUpstream {
     /// Requests received so far, in arrival order.
     pub async fn received(&self) -> Vec<wiremock::Request> {
         self.server.received_requests().await.unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod pool_size_tests {
+    use super::parse_pool_size;
+
+    #[test]
+    fn pool_size_defaults_to_five_and_honours_a_valid_override() {
+        assert_eq!(parse_pool_size(None), 5);
+        assert_eq!(parse_pool_size(Some("2")), 2);
+        assert_eq!(parse_pool_size(Some(" 3 ")), 3);
+        // Unusable values fall back to the default instead of a zero/garbage pool.
+        assert_eq!(parse_pool_size(Some("0")), 5);
+        assert_eq!(parse_pool_size(Some("many")), 5);
     }
 }

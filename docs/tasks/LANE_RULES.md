@@ -8,7 +8,7 @@ Every lane spec names its lane name, its task ids and their briefs (`docs/tasks/
 1. Your workspace is a fresh worktree of the aurora repo from `master`. Create your branch: `git checkout -b alexiri/<lane-name>`. Confirm `git log --oneline -1` is at or after the commit your lane spec names.
 2. `cp /home/alex/agent-platform/aurora/.env .` (scripts and tests need it; it's gitignored).
 3. `export DATABASE_URL=postgres://aurora:aurora@127.0.0.1:55432/aurora` for every cargo test (sqlx::test and aurora-testkit create and drop their own scratch databases; **never** write to the `aurora` database itself).
-4. `export CARGO_INCREMENTAL=1` in every shell that runs cargo — your `target/` is private and deleted after the lane, and incremental makes your edit→test loop several times faster (VEL-004).
+4. Incremental compilation is on by default for workspace crates (`profile.dev`, VEL-004/I-45) — nothing to export. Do **not** `export CARGO_INCREMENTAL=1`: it also makes registry deps incremental (uncacheable by sccache). If `target/` grows, `just clean-stale`.
 5. If you run `connect::*` api tests: `bash scripts/fixtures/build.sh` once.
 
 ## Working rules

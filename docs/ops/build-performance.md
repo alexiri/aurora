@@ -106,10 +106,73 @@ Use it in lanes by exporting the variables in the Orca worker environment, not i
 ### 5. Developer profile: `dev-fast` (I-36)
 
 `[profile.dev-fast]` (inherits `dev`, `incremental = true`) is used by `just dev`, `just migrate`,
-`just build-fast` (`AURORA_DEV_PROFILE=dev` switches back). One-line change in `aurora-api`: 7–14 s instead of
-127–243 s. Incremental data only exists for workspace members, and it lives in `target/dev-fast`
-(3.0 GB after building `aurora-api` plus its dependencies). `dev`, `test`, CI and worker lanes keep
-`incremental = false` (I-24 stands for them). Run `just clean-stale` or delete `target/dev-fast` if it grows.
+`just build-fast` (`AURORA_DEV_PROFILE=dev` switches back). **Since VEL-004 (I-45) `dev` itself is incremental
+and `dev-fast` is only an alias** (`inherits = "dev"`); see §6. CI keeps `CARGO_INCREMENTAL=0`.
+
+### 6. Incremental `dev`/`test` (VEL-004, I-45)
+
+`[profile.dev] incremental = true` (test inherits). Workspace members only; registry deps stay non-incremental and
+sccache-cached. `scripts/dev/rustc-wrapper.sh` passes `-C incremental=…` rustc calls straight through and unsets
+`CARGO_INCREMENTAL` before invoking sccache (sccache aborts every call, even `rustc -vV`, with
+"incremental compilation is prohibited" when that variable is set — reproduced). Do not export
+`CARGO_INCREMENTAL=1`: it makes registry crates incremental too.
+
+CI: `ci.yml` workflow env `CARGO_INCREMENTAL: "0"` (line 26, applies to every job); `nightly.yml` had none and now sets
+the same at workflow level. `just clean-stale` also prunes `target/*/incremental/<crate>-<hash>` untouched for N days
+(demo: 5 dirs aged 20 days → 11 GB → 7.4 GB).
+
+Measurement: one-line comment added at the top of one source file, then `cargo test <pkgs> --no-run`; A = non-incremental
+(`CARGO_PROFILE_DEV_INCREMENTAL` unset = old profile), B = incremental, separate target dirs, interleaved A,B,
+sccache on. **The machine was never idle** (other lanes compiling; load 5–50, listed per row), so read ratios, not seconds.
+
+| edit in | round | A non-incr. | B incr. | ratio | load at start of A→B |
+|---|---|---|---|---|---|
+| aurora-api (`domains/me/mod.rs`) | 1 | 250.6 s | 700.8 s | 0.36× (outlier) | 5.5 → 9.6, up to 28 during B |
+| | 2 | 252.6 s | 35.8 s | 7.1× | 28.5 → 15.0 |
+| | 3 | 325.8 s | 105.6 s | 3.1× | 17.3 → 30.8 (B ran right after a cache re-prime) |
+| aurora-gateway (`src/lib.rs`) | 1 | 149.5 s | 105.5 s | 1.4× | 22.4 → 16.3 |
+| | 2 | 38.5 s | 6.2 s | 6.2× | 9.0 → 8.8 |
+| aurora-db (`src/lib.rs`; builds db+api+gateway tests) | 1 | 438.6 s | 178.1 s | 2.5× | 8.3 → 21.5 |
+| | 2 | 436.8 s | 50.3 s | 8.7× | 23.2 → 13.3 |
+
+Round 1 of each pair was the first edit after the warm build and ran under heavy load (the api B run hit load 28; its
+cause was not isolated — contention, not a measured property of incremental). Steady-state edits are 6–9×;
+the worst loaded pair is 3.1×. Pending: re-run api on an idle machine.
+`du -sh target/debug`: non-incremental 5.0 GB (api) / 5.8 GB (gateway, db); incremental 12 GB / 14 GB / 16 GB (11 GB of it
+`incremental/`, i.e. the trade is ~2.5–3× disk for ~6× speed; bounded by I-34/I-35/clean-stale).
+
+sccache with incremental on (aurora-crypto, fresh target dir, warm cache): requests 14034 → 14086 (+52: 32 hits, 18 misses,
+workspace crates bypass sccache); with `CARGO_INCREMENTAL=1` env (wrapper unsets it): +52 requests, 43 hits, 7 misses, 0 errors.
+Registry crates still hit the cache.
+
+### 7. Quick gate, test pool, thread count (VEL-005)
+
+Measured on the shared host (other lanes compiling; load recorded per row — read as indicative only).
+
+**Test pool size.** `TestDb` keeps a pool of 5 (now `AURORA_TEST_POOL_SIZE`-overridable, default 5). The brief's
+hoped-for 2 does **not** work: the `aurora-api` harness hands `db.pool()` to the app under test (workers, SSE, LISTEN,
+long polls), and with 2 connections `cargo nextest run -p aurora-api -j 8` failed 20 of 899 tests (500s / timeouts at 40–127 s:
+`channels_inbox::file_fetch_*`, `channels_mgmt::*`, `grants_*`, `runner_plane::*`, `schedules::*`, …; 2390 s run, load 15–20).
+The same 20 tests pass with `AURORA_TEST_POOL_SIZE=5` (20/20, 195 s). Full suite at pool 5, 8 threads: 899/899 passed,
+1272 s wall (load 7–14, ~16 CPU-minutes of user time, i.e. dominated by waiting on a loaded host).
+
+**Thread-count sweep (8 / 12 / 16): pending an idle machine — the coordinator runs it.** Load stayed 7–30 the whole lane, so no
+meaningful sweep was possible; `test-threads = 8` is unchanged and `max_connections` of aurora-dev-pg was not touched
+(unmeasured estimate: pool 5 × threads connections plus app-side pools, so 16 threads may need a raised
+`max_connections` first — watch for "too many clients"). Command: `for j in 8 12 16; do /usr/bin/time cargo nextest run -p aurora-api -j $j; done`
+(optionally with `AURORA_TEST_POOL_SIZE=3|4`), then pick the fastest run without "too many clients" and set
+`[profile.default] test-threads` in `.config/nextest.toml`.
+
+**Quick gate on a one-file `aurora-gateway` change** (incremental profile, interleaved, load 3–15): the old command set
+(`clippy -p aurora-gateway --all-targets --all-features` + `cargo test -p aurora-gateway`) took 87 s and 193 s (after a
+416 s warm-up); the new one (clippy without `--all-features` — gateway defines no feature flags, so the artefacts are identical —
++ `cargo nextest run -p aurora-gateway`) took 197 s and 225 s (warm-up 271 s). **No speed-up measured**: the gateway suite
+is database-bound, libtest ran its binaries with 16 threads where nextest is capped at 8, and host load swung the numbers more
+than the tools did. The gate's gain here is correctness (dependents) not speed.
+
+**Template provenance.** The stamp is `COMMENT ON DATABASE` on the template (`hash=… migrations=53`); the
+`aurora_template_meta` table is gone and the hash is a stable SHA-256 prefix. A testkit test asserts a clone's relation list
+equals the `AURORA_TEST_TEMPLATE_DB=0` path's and that the stamp table is absent.
 
 ## Disk hygiene
 

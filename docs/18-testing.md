@@ -802,6 +802,12 @@ lanes, so absolute times vary):
    `it` links in ~4.4 s under either, smaller binaries faster — and links are
    a small share of a build, so lld stays the default. The linker is plumbing,
    not the bottleneck.
+   **Incremental compilation is on for `dev`/`test` (VEL-004, I-45).** A
+   one-line change in `aurora-api` recompiles in ~35 s instead of ~250 s
+   (shared host, see build-performance.md §6). It applies to workspace crates
+   only; CI keeps `CARGO_INCREMENTAL=0`. Do not export `CARGO_INCREMENTAL=1`
+   locally (it would make registry deps uncacheable); run `just clean-stale`
+   when `target/` grows.
 4. **Playwright mock suites run 4 workers** (`web/playwright.config.ts`,
    `fullyParallel`); the dev server under test is a single `next dev` process,
    so more workers only queue there. Real-stack journeys
@@ -851,6 +857,28 @@ the 16-core dev host (VEL-002, 2026-11-12): a single-crate change ≈ 80 s warm
 / 4 s when already compiled, a web change ≈ 75 s, `--all` ≈ 102 min on a cold
 tree (the target is ≤ 3 min for a single-crate change; `--all` is the escape
 hatch, not the loop).
+
+**Scope rules, nextest, flags (VEL-005).** Clippy covers the touched crates
+*and their workspace dependents* (taken from `cargo metadata --no-deps`; the
+plan lists each added crate and the dependency that pulled it in), so a change
+in `aurora-core`, `aurora-db` or `aurora-protocol` can no longer pass while
+`aurora-api` or `aurora-gateway` stop compiling; the e2e crates are never
+pulled in. Tests stay on the directly touched crates, plus `aurora-db` and
+`aurora-api` when `crates/aurora-db/migrations/**` changed (migrations change
+behaviour everywhere). Tests run under `cargo nextest` when it is installed
+(same tests as `cargo test`, one process each; **doctests are skipped** —
+run `cargo test --doc -p <crate>` or `just test` for them), else `cargo test`.
+Inner-loop clippy drops `--all-features` unless a touched crate defines
+feature flags; `--all` and workspace-wide changes keep it. Not CI-parity:
+code behind features of an *untouched* dependent crate is not linted, and
+doctests do not run — CI runs both. `--dry-run` prints the plan and exits.
+The gate prints one line when `target/` exceeds 60 GB (`just clean-stale`);
+it never deletes anything. Test databases are cloned from a migration
+template (VEL-003) whose provenance stamp is a `COMMENT ON DATABASE`, so a
+clone has exactly the schema of the `AURORA_TEST_TEMPLATE_DB=0` path (a
+testkit test asserts it); `AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
+pool (default 5 — 2 starves 20 `aurora-api` tests, see
+`docs/ops/build-performance.md` §7).
 
 **What the quick gate is NOT.** The quick gate is a development loop tool;
 it is not a merge gate — CI runs the full suite on every push; never cite a

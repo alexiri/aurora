@@ -94,6 +94,73 @@ async fn clone_carries_the_migrated_schema_and_migration_table() {
     db.cleanup().await.expect("cleanup");
 }
 
+/// Every relation (tables, views, sequences, indexes) outside the system schemas, sorted.
+async fn relation_list(pool: &sqlx::PgPool) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT n.nspname || '.' || c.relname || ':' || c.relkind::text \
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+         ORDER BY 1",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(r,)| r).collect())
+}
+
+#[tokio::test]
+async fn clone_has_no_provenance_table_and_matches_the_legacy_schema() {
+    // VEL-005: the template's provenance stamp lives in COMMENT ON DATABASE, so a clone's
+    // schema is exactly what the legacy create + migrate path produces.
+    let db = TestDb::new().await;
+    let (stamp,): (bool,) =
+        sqlx::query_as("SELECT to_regclass('public.aurora_template_meta') IS NOT NULL")
+            .fetch_one(db.pool())
+            .await
+            .expect("query");
+    assert!(!stamp, "clone must not carry aurora_template_meta");
+
+    // Legacy path, built by hand so the test needs no env mutation.
+    let legacy_name = format!("aurora_test_legacy_{}", uuid::Uuid::now_v7().simple());
+    let mut admin = sqlx::PgConnection::connect(db.server_url())
+        .await
+        .expect("connect");
+    sqlx::query(&format!("CREATE DATABASE \"{legacy_name}\""))
+        .execute(&mut admin)
+        .await
+        .expect("create legacy db");
+    let legacy_url = db.url().replacen(db.name(), &legacy_name, 1);
+    let legacy_pool = sqlx::PgPool::connect(&legacy_url)
+        .await
+        .expect("connect legacy");
+    aurora_testkit::template::migrate_pool(&legacy_pool)
+        .await
+        .expect("migrate legacy");
+
+    let mine = relation_list(db.pool()).await.expect("list relations");
+    let theirs = relation_list(&legacy_pool)
+        .await
+        .expect("list legacy relations");
+    legacy_pool.close().await;
+    sqlx::query(&format!("DROP DATABASE \"{legacy_name}\" WITH (FORCE)"))
+        .execute(&mut admin)
+        .await
+        .expect("drop legacy db");
+    assert!(!mine.is_empty());
+    assert_eq!(
+        mine, theirs,
+        "template clone and legacy path must have the same relations"
+    );
+    db.cleanup().await.expect("cleanup");
+}
+
+#[test]
+fn migration_set_hash_is_stable_sha256_prefix() {
+    let h = aurora_testkit::template::migration_set_hash();
+    assert_eq!(h.len(), 16);
+    assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(h, aurora_testkit::template::migration_set_hash());
+}
+
 #[tokio::test]
 async fn kill_switch_forces_the_legacy_path() {
     // With `AURORA_TEST_TEMPLATE_DB=0` the template mechanism must be off:

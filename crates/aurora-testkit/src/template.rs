@@ -19,8 +19,8 @@
 //! - **Concurrent lanes with different trees don't interfere.** Two
 //!   worktrees sharing one dev Postgres but sitting on different migration
 //!   sets each get their own template; neither ever clones the other's
-//!   schema. (This is also why the hash lives in the *name* and not only in
-//!   a metadata table inside one fixed-name template.)
+//!   schema. (This is also why the hash lives in the *name*, with the
+//!   database comment as a human-readable cross-check.)
 //! - **Isolation unchanged.** Each test still gets its own uniquely named
 //!   database, dropped at test end exactly as before. Tests never connect to
 //!   a template: they receive a clone, and the template itself is sealed
@@ -37,7 +37,8 @@
 //! Build protocol (under the advisory lock): create
 //! `aurora_test_template_wip_<unixtime>_<uuid>` from `template0` (same
 //! encoding/locale defaults as the legacy plain `CREATE DATABASE`), run the
-//! migrations, stamp a provenance table, seal the database, then rename it to
+//! migrations, stamp provenance in `COMMENT ON DATABASE` (not a table: clones
+//! must have exactly the legacy path's schema), seal the database, then rename it to
 //! the final content-addressed name. A builder that dies mid-way leaves at
 //! most a `wip` database that no test will ever clone; reaping removes it once
 //! old.
@@ -45,11 +46,10 @@
 //! and are reaped after [`TEMPLATE_REAP_AFTER`] (24 h) — a test run is
 //! minutes, never days.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 use anyhow::Context;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::PgConnection;
 use sqlx::{Connection, PgPool};
 
@@ -63,9 +63,6 @@ const TEMPLATE_PREFIX: &str = "aurora_test_template";
 
 /// In-flight (unsealed, partially built) template marker.
 const WIP_MARKER: &str = "wip";
-
-/// Metadata table inside the template that records provenance.
-const META_TABLE: &str = "aurora_template_meta";
 
 /// How long to wait for the template advisory lock (creation serializes
 /// across processes; only one of N workers actually builds, the rest wait).
@@ -88,29 +85,37 @@ pub fn template_enabled() -> bool {
     }
 }
 
-/// The migration-set fingerprint: a 64-bit hash over every migration's
-/// version, description, SQL and checksum, in migration order. Two different
-/// migration sets colliding is ~2^-64 per reuse — and the failure mode of a
-/// collision would be a stale schema, which the schema assertions in the
-/// suites catch immediately — so a cryptographic hash is not needed.
-pub fn migration_set_hash() -> u64 {
-    let mut hasher = DefaultHasher::new();
+/// The migration-set fingerprint: the first 16 hex digits (64 bits) of a
+/// SHA-256 over every migration's version, description, SQL and checksum, in
+/// migration order, each field length-prefixed. Unlike `DefaultHasher` the
+/// value is stable across Rust releases and processes, so templates built by
+/// one toolchain are found by another.
+pub fn migration_set_hash() -> String {
+    let mut sha = Sha256::new();
+    let mut field = |bytes: &[u8]| {
+        sha.update((bytes.len() as u64).to_le_bytes());
+        sha.update(bytes);
+    };
     for m in aurora_db::MIGRATOR.migrations.iter() {
-        m.version.hash(&mut hasher);
-        m.description.hash(&mut hasher);
-        m.sql.hash(&mut hasher);
-        m.checksum.hash(&mut hasher);
+        field(&m.version.to_le_bytes());
+        field(m.description.as_bytes());
+        field(m.sql.as_bytes());
+        field(&m.checksum);
     }
-    hasher.finish()
+    sha.finalize()
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// The content-addressed template name for `hash`.
-fn template_name(hash: u64) -> String {
+fn template_name(hash: &str) -> String {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    format!("{TEMPLATE_PREFIX}_{hash:016x}_{ts}")
+    format!("{TEMPLATE_PREFIX}_{hash}_{ts}")
 }
 
 /// Ensure a template for the current migration set exists; returns its name.
@@ -123,9 +128,9 @@ pub async fn ensure_template(server_url: &str) -> anyhow::Result<&'static str> {
     // &'static leaked names are unique per hash; the set is tiny (one string
     // per distinct migration set the process ever saw — one in practice).
     let hash = migration_set_hash();
-    let name: &'static str = match find_template_on_server(server_url, hash).await? {
+    let name: &'static str = match find_template_on_server(server_url, &hash).await? {
         Some(name) => leak_name(name),
-        None => build_template(server_url, hash).await?,
+        None => build_template(server_url, &hash).await?,
     };
     Ok(name)
 }
@@ -135,8 +140,8 @@ fn leak_name(name: String) -> &'static str {
 }
 
 /// Find the template database for `hash`, if one exists.
-async fn find_template(lock_conn: &mut PgConnection, hash: u64) -> anyhow::Result<Option<String>> {
-    let prefix = format!("{TEMPLATE_PREFIX}_{hash:016x}_%");
+async fn find_template(lock_conn: &mut PgConnection, hash: &str) -> anyhow::Result<Option<String>> {
+    let prefix = format!("{TEMPLATE_PREFIX}_{hash}_%");
     let row: Option<(String,)> =
         sqlx::query_as("SELECT datname FROM pg_database WHERE datname LIKE $1 ORDER BY 1 LIMIT 1")
             .bind(prefix)
@@ -147,7 +152,7 @@ async fn find_template(lock_conn: &mut PgConnection, hash: u64) -> anyhow::Resul
 }
 
 /// Fast path: look up the template on a short-lived connection.
-async fn find_template_on_server(server_url: &str, hash: u64) -> anyhow::Result<Option<String>> {
+async fn find_template_on_server(server_url: &str, hash: &str) -> anyhow::Result<Option<String>> {
     let mut conn = PgConnection::connect(server_url)
         .await
         .context("connecting to test server")?;
@@ -158,7 +163,7 @@ async fn find_template_on_server(server_url: &str, hash: u64) -> anyhow::Result<
 
 /// Build the template for `hash` under the advisory lock (double-checked), or
 /// return the name an earlier builder already left.
-async fn build_template(server_url: &str, hash: u64) -> anyhow::Result<&'static str> {
+async fn build_template(server_url: &str, hash: &str) -> anyhow::Result<&'static str> {
     let mut lock_conn = PgConnection::connect(server_url)
         .await
         .context("connecting to test server for template lock")?;
@@ -203,7 +208,7 @@ async fn build_template(server_url: &str, hash: u64) -> anyhow::Result<&'static 
 async fn build_locked(
     server_url: &str,
     lock_conn: &mut PgConnection,
-    hash: u64,
+    hash: &str,
 ) -> anyhow::Result<&'static str> {
     if let Some(name) = find_template(lock_conn, hash).await? {
         return Ok(leak_name(name));
@@ -218,7 +223,7 @@ async fn build_locked(
 async fn rebuild_template(
     server_url: &str,
     lock_conn: &mut PgConnection,
-    hash: u64,
+    hash: &str,
 ) -> anyhow::Result<String> {
     // In-flight name: no test ever looks this up (find_template matches only
     // the content-addressed shape), so a crash here leaves nothing harmful.
@@ -242,7 +247,21 @@ async fn rebuild_template(
         .await
         .context("creating template database")?;
 
-    let built = migrate_and_stamp(server_url, &wip, hash).await;
+    // Provenance goes into the database comment (a shared-catalog entry that
+    // `CREATE DATABASE … TEMPLATE` does not copy), so cloned test databases
+    // carry exactly the schema of the legacy create + migrate path.
+    let built = migrate(server_url, &wip).await;
+    let built = match built {
+        Ok(()) => sqlx::query(&format!(
+            "COMMENT ON DATABASE \"{wip}\" IS 'aurora-testkit migration template: hash={hash} migrations={}'",
+            aurora_db::MIGRATOR.migrations.len()
+        ))
+        .execute(&mut *lock_conn)
+        .await
+        .map(|_| ())
+        .context("stamping template provenance"),
+        Err(e) => Err(e),
+    };
     if let Err(e) = built {
         // Leave nothing half-built behind.
         let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{wip}\" WITH (FORCE)"))
@@ -269,8 +288,8 @@ async fn rebuild_template(
     Ok(name)
 }
 
-/// Run the full migration set on the fresh template and stamp provenance.
-async fn migrate_and_stamp(server_url: &str, wip: &str, hash: u64) -> anyhow::Result<()> {
+/// Run the full migration set on the fresh template.
+async fn migrate(server_url: &str, wip: &str) -> anyhow::Result<()> {
     let url = replace_db_name(server_url, wip)?;
     let mut conn = PgConnection::connect(&url)
         .await
@@ -279,25 +298,6 @@ async fn migrate_and_stamp(server_url: &str, wip: &str, hash: u64) -> anyhow::Re
         .run(&mut conn)
         .await
         .map_err(|e| anyhow::anyhow!("running migrations on template: {e}"))?;
-    sqlx::query(&format!(
-        "CREATE TABLE public.{META_TABLE} ( \
-             id int PRIMARY KEY, \
-             hash text NOT NULL, \
-             migrations int NOT NULL, \
-             created_at timestamptz NOT NULL DEFAULT now() \
-         )"
-    ))
-    .execute(&mut conn)
-    .await
-    .context("stamping template provenance")?;
-    sqlx::query(&format!(
-        "INSERT INTO public.{META_TABLE} (id, hash, migrations) VALUES (1, $1, $2)"
-    ))
-    .bind(format!("{hash:016x}"))
-    .bind(aurora_db::MIGRATOR.migrations.len() as i32)
-    .execute(&mut conn)
-    .await
-    .context("stamping template provenance")?;
     conn.close().await.ok();
     Ok(())
 }
@@ -320,7 +320,7 @@ async fn reap_stale_templates(lock_conn: &mut PgConnection) {
     else {
         return;
     };
-    let current_hash = format!("{:016x}", migration_set_hash());
+    let current_hash = migration_set_hash();
     for (name,) in rows {
         let Some(reason) = reap_decision(&name, &current_hash, now) else {
             continue;

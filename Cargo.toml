@@ -172,15 +172,17 @@ wiremock = "0.6"
 [profile.dev]
 # Disk is constrained on the dev host (docs/90-decisions.md I-03).
 debug = "line-tables-only"
-# Incremental caches grew to 44 GB; off to bound disk use (I-24).
-incremental = false
+# Incremental for every local dev/test loop (I-45, refines I-24/I-36). Applies to workspace members
+# only; registry deps stay non-incremental and sccache-cached. CI forces CARGO_INCREMENTAL=0 in the
+# workflow env (throw-away targets; sccache cannot cache incremental crates). Disk is bounded by one
+# test binary per crate (I-34), per-lane target dirs (I-35) and `just clean-stale`.
+incremental = true
 
 [profile.dev.package."*"]
 debug = false
 
-# Developer loop only (`just dev`, `just build-fast`); never used by tests, CI or worker lanes (I-36).
-# Incremental compilation applies to workspace members only; with one test binary per crate (I-34)
-# and per-lane target dirs that are deleted after the lane (I-35) the cache stays bounded.
+# Alias kept so `just dev`, `just build-fast` and AURORA_DEV_PROFILE keep working (I-36); since I-45
+# it is identical to `dev` apart from its target subdirectory.
 [profile.dev-fast]
 inherits = "dev"
 incremental = true
