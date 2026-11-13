@@ -259,6 +259,10 @@ Sandbox states: `unprovisioned → starting → running → stopping → stopped
 
 ### Start readiness deadline (FIX-025, D-158, C-580)
 
+A failed or timed-out Kubernetes API call during a start is retried at the next poll; only the start
+deadline or a terminal pod/claim state ends the attempt (FIX-094). A home claim in phase `Lost` is a
+terminal claim state and maps to `home_volume_unbound`.
+
 The whole path from step 1 to the `ready` of step 4 is bounded by
 `hosted.sandbox_ready_timeout_secs` (60–1800, default 300, `15`): the runner's
 capacity wait counts inside it. The API's readiness sweep (10 s interval,
@@ -537,8 +541,9 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   open (423); restart/park → sessions closed (4503/`channel_lost`), the tab shows "Waking…"
   and reopens on ready; harness change or runner move → sessions closed; agent deleted →
   destroyed with the sandbox. Bytes are never logged, stored or request-log-rowed (byte
-  totals in metrics only); the best-effort audit row `agent.terminal.open` records the open
-  (agent, workspace), never content (`04 §Audit`).
+  totals in metrics only); the best-effort audit rows `agent.terminal.open` and
+  `agent.terminal.close` record the open (agent, workspace) and the end (close code, duration),
+  never content (`04 §Audit`).
 - **Listener and capabilities**: the runner opens :4108 when previews **or** the terminal is
   enabled and registers the matching capabilities (`previews`, `terminal`, plus `stream_tls`
   when `runner.stream_tls` is on — the API derives the endpoint scheme it hands the relay

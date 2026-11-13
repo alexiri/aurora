@@ -32,8 +32,10 @@ fn make_session() -> std::io::Result<()> {
     rustix::process::setsid()?;
     // fd 0/1/2 are the pty slave (the supervisor spawned this bootstrap with the slave as
     // its stdio). As a session leader without a controlling terminal, `TIOCSCTTY` on the
-    // slave makes it ours; the slave is not yet any other session's ctty, so no privilege
-    // is needed (the uid drop, when any, already happened pre-exec).
+    // slave makes it ours; the slave is not yet any other session's ctty — the supervisor
+    // opens it with `O_NOCTTY` (`pty::PtySession::spawn`; as PID 1 it is a session leader
+    // without a ctty and would otherwise adopt the slave itself, FIX-091 item 7) — so no
+    // privilege is needed (the uid drop, when any, already happened pre-exec).
     rustix::process::ioctl_tiocsctty(std::io::stdin())?;
     Ok(())
 }

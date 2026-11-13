@@ -83,7 +83,7 @@ one new entry without activating it.
 | `server.external_url` | — (required) | api, web, gateway | public origin, e.g. `https://aurora.example.org` |
 | `server.bind` | `0.0.0.0` | all | listen address |
 | `gateway.internal_bind` | `server.bind` | gateway | address for the internal listener :4103; must not be sandbox-reachable (SEC-09); startup warns if it overlaps `server.bind` |
-| `runner.ops_bind` | `server.bind` | runner | address for the ops listener :4106; same rule |
+| `runner.ops_bind` | `127.0.0.1` on podman, else `server.bind` | runner | address for the ops listener :4106; same rule; on podman an overlap with the sandbox-facing bind is a startup error (FIX-094) |
 | `server.trusted_proxies` | `[]` | api | CIDRs whose `X-Forwarded-For` is trusted |
 | `connector_host.api_url` | `http://127.0.0.1:4101` | connector-host | (phase 4, P4-MCON) the API the host registers with; the token comes from `AURORA_CONNECTOR_HOST_TOKEN` (`auh_`) |
 | `connector_host.listen` / `connector_host.ops_port` | `0.0.0.0:4110` / `4192` | connector-host | (phase 4, P4-MCON) platform callbacks (`/connectors/<id>/…`) / health and metrics |

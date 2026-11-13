@@ -392,7 +392,7 @@ pub async fn begin_boot(
 ) -> Result<Vec<Uuid>, DbError> {
     sqlx::query(
         "UPDATE sandboxes SET boot_id = $2, bootstrap_token_hash = $3, bootstrap_used_at = NULL,
-             channel_replica_id = NULL, listening_ports = '{}', home_applied_generation = 0,
+             channel_held_at = NULL, channel_replica_id = NULL, listening_ports = '{}', home_applied_generation = 0,
              stop_reason = NULL, stop_requested_at = NULL, restart_requested_at = NULL,
              failure_code = NULL, failure_message = NULL, container_ref = NULL, home_ref = $4,
              resource_profile = $5::jsonb,
@@ -1097,15 +1097,19 @@ pub async fn apply_ports(
     })
 }
 
-/// Channel claim: consume the single-use bootstrap token. `Ok(None)` => unknown token.
+/// Channel claim: consume the bootstrap token. `Ok(None)` => unknown token. The claim is
+/// idempotent while the boot has never held a channel (`channel_held_at IS NULL`, FIX-094,
+/// SEC-25): a claim whose response was lost, or whose `channel/hold` then failed, is answered
+/// again with the same `(sandbox, boot)`; once a channel was held the token is spent.
 pub async fn claim_bootstrap(
     conn: &mut PgConnection,
     runner: Uuid,
     hash: &[u8],
 ) -> Result<Option<Result<(Uuid, Uuid), ()>>, DbError> {
     let won: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "UPDATE sandboxes SET bootstrap_used_at = now(), updated_at = now()
-         WHERE bootstrap_token_hash = $1 AND runner_id = $2 AND bootstrap_used_at IS NULL
+        "UPDATE sandboxes SET bootstrap_used_at = coalesce(bootstrap_used_at, now()), updated_at = now()
+         WHERE bootstrap_token_hash = $1 AND runner_id = $2
+           AND (bootstrap_used_at IS NULL OR channel_held_at IS NULL)
            AND state IN ('starting','running') AND boot_id IS NOT NULL
          RETURNING id, boot_id",
     )
@@ -1137,6 +1141,7 @@ pub async fn hold_channel(
     Ok(sqlx::query(
         // (FIX-025) The supervisor connected: the attempt moves on to `booting` until `ready`.
         "UPDATE sandboxes SET channel_replica_id = $4,
+             channel_held_at = coalesce(channel_held_at, now()),
              start_phase = CASE WHEN start_phase = 'ready' THEN start_phase ELSE 'booting' END,
              updated_at = now()
          WHERE id=$1 AND boot_id=$2 AND runner_id=$3 AND state IN ('starting','running')",
@@ -1198,10 +1203,17 @@ pub async fn assignments(
     .await?)
 }
 
-pub async fn known_ids(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Uuid>, DbError> {
+/// Which of `ids` are sandboxes of `runner` (FIX-094: another runner's ids are not "known" —
+/// `sandboxes/check` decides what a runner may reap).
+pub async fn known_ids(
+    conn: &mut PgConnection,
+    runner: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<Uuid>, DbError> {
     Ok(
-        sqlx::query_scalar("SELECT id FROM sandboxes WHERE id = ANY($1)")
+        sqlx::query_scalar("SELECT id FROM sandboxes WHERE id = ANY($1) AND runner_id = $2")
             .bind(ids)
+            .bind(runner)
             .fetch_all(conn)
             .await?,
     )

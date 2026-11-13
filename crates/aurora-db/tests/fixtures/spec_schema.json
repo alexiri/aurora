@@ -778,6 +778,7 @@
       "boot_id",
       "bootstrap_token_hash",
       "bootstrap_used_at",
+      "channel_held_at",
       "channel_replica_id",
       "container_ref",
       "failure_code",

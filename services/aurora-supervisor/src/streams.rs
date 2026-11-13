@@ -9,7 +9,7 @@
 //! ends every stream; streams are never resumed. Round-robin interleaving falls out of one chunk
 //! at a time per task through the shared channel queue.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,9 +34,114 @@ use crate::supervisor::PreviewShareEntry;
 /// for one is refused.
 const RESERVED_PORTS: [u16; 3] = [3128, 3129, 3130];
 
-/// Queue depth of one stream's runner→loopback data queue; the credit window bounds the
-/// runner to `window / PREVIEW_CHUNK` in-flight chunks, so this never fills in practice.
-const DATA_QUEUE: usize = 16;
+/// Queue depth of one stream's runner→loopback data queue. The task drains it into its write
+/// buffer at once (it never waits on the app, FIX-091), so it only fills when the whole task is
+/// wedged; the pump then closes the stream with `error` instead of waiting (`try_send`). The
+/// byte bound is the credit window (`outstanding`), this is the frame-count bound for tiny frames.
+pub(crate) const DATA_QUEUE: usize = 4096;
+
+/// Violations within [`VIOLATION_WINDOW`] that close the channel with 4400 (`16 §W18`/§W19).
+const VIOLATION_LIMIT: usize = 4;
+/// The window violations are counted in (`16 §W18`).
+const VIOLATION_WINDOW: Duration = Duration::from_secs(60);
+/// Ids remembered as closed per connection before the set is reset (bounds memory).
+const CLOSED_IDS_CAP: usize = 4096;
+
+/// Windowed protocol-violation counter (`16 §W18`: four within 60 s close the channel with
+/// 4400); reset when the connection changes. Uses tokio's clock (testable with a paused clock).
+#[derive(Default)]
+pub(crate) struct Violations(VecDeque<tokio::time::Instant>);
+
+impl Violations {
+    /// Records one violation; `true` when the limit is reached inside the window.
+    pub(crate) fn record(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        while self
+            .0
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= VIOLATION_WINDOW)
+        {
+            self.0.pop_front();
+        }
+        self.0.push_back(now);
+        self.0.len() >= VIOLATION_LIMIT
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+/// Ids this side closed, or was told closed, on the current connection: data for them is a
+/// legal close race and is dropped silently (`16 §W18`).
+#[derive(Default)]
+pub(crate) struct ClosedIds(HashSet<u32>);
+
+impl ClosedIds {
+    pub(crate) fn insert(&mut self, id: u32) {
+        if self.0.len() >= CLOSED_IDS_CAP {
+            self.0.clear();
+        }
+        self.0.insert(id);
+    }
+
+    pub(crate) fn remove(&mut self, id: u32) {
+        self.0.remove(&id);
+    }
+
+    pub(crate) fn contains(&self, id: u32) -> bool {
+        self.0.contains(&id)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+/// Credit the runner granted a task: a counter plus a wakeup, so the pump adds credit without
+/// ever waiting on the task (a bounded queue of credit frames could fill).
+#[derive(Default)]
+pub(crate) struct Credit {
+    bytes: std::sync::Mutex<usize>,
+    notify: tokio::sync::Notify,
+    /// Bytes received from the runner and not yet written onward (violation detection). The
+    /// pump adds, the task subtracts *before* it returns the credit frame — so a runner that
+    /// sends the instant credit arrives never finds the count stale.
+    outstanding: std::sync::atomic::AtomicUsize,
+}
+
+impl Credit {
+    pub(crate) fn outstanding(&self) -> usize {
+        self.outstanding.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn reserve(&self, n: usize) {
+        self.outstanding
+            .fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn release(&self, n: usize) {
+        self.outstanding
+            .fetch_sub(n, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn add(&self, n: usize) {
+        {
+            let mut b = self.bytes.lock().unwrap_or_else(|e| e.into_inner());
+            *b = b.saturating_add(n).min(1 << 32);
+        }
+        self.notify.notify_one();
+    }
+
+    /// Takes everything granted since the last call.
+    pub(crate) fn take(&self) -> usize {
+        std::mem::take(&mut *self.bytes.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub(crate) async fn granted(&self) {
+        self.notify.notified().await;
+    }
+}
 
 /// The binary data wire frame `[0x01][stream_id BE][payload]` (`16 §W18`): the tag and id
 /// are how the runner's channel routes the payload to the right stream.
@@ -104,6 +209,16 @@ impl StreamsHandle {
         rx.await.unwrap_or(false)
     }
 
+    /// Ends every stream (the `shutdown` frame: `12 §Previews`, "everything closes on
+    /// shutdown"); the runner is told with `stream.close { channel_lost }`. Returns once the
+    /// engine has done it; the caller bounds it with the shutdown grace.
+    pub async fn close_all(&self) {
+        let (tx, rx) = oneshot::channel();
+        if self.cmd_tx.send(Cmd::CloseAll { tx }).is_ok() {
+            let _ = rx.await;
+        }
+    }
+
     /// Test hook: waits for the pump to process pending commands.
     #[cfg(test)]
     pub async fn settle(&self) {
@@ -114,6 +229,9 @@ impl StreamsHandle {
 }
 
 enum Cmd {
+    CloseAll {
+        tx: oneshot::Sender<()>,
+    },
     Shares(SharedPorts),
     Credit {
         id: u32,
@@ -136,8 +254,6 @@ enum Cmd {
 
 /// Report from a stream task to the pump.
 enum TaskMsg {
-    /// Bytes were written onward to the loopback socket (credit accounting).
-    Written { id: u32, bytes: u32 },
     /// The task ended: forward `stream.close` and free the id.
     Finished {
         id: u32,
@@ -150,10 +266,8 @@ enum TaskMsg {
 struct Live {
     port: u16,
     data_tx: mpsc::Sender<Vec<u8>>,
-    credit_tx: mpsc::Sender<u32>,
+    credit: Arc<Credit>,
     abort: AbortHandle,
-    /// Bytes received from the runner not yet written onward (violation detection).
-    outstanding: usize,
 }
 
 /// The pump: owns the stream table, services the channel's stream side-channel.
@@ -166,8 +280,11 @@ pub struct Streams {
     task_tx: mpsc::UnboundedSender<TaskMsg>,
     shares: SharedPorts,
     live: HashMap<u32, Live>,
-    /// Recent unsequenced-frame violations (`16 §W18`): at 4 the channel closes with 4400.
-    violations: u32,
+    /// Recent unsequenced-frame violations (`16 §W18`): four within 60 s close the channel
+    /// with 4400; reset with the connection.
+    violations: Violations,
+    /// Ids closed on this connection (data for them is dropped, not a violation).
+    closed: ClosedIds,
 }
 
 /// Why a stream ended (`16 §W18`).
@@ -213,7 +330,8 @@ impl Streams {
             task_tx: task_tx.clone(),
             shares: Arc::new(HashMap::new()),
             live: HashMap::new(),
-            violations: 0,
+            violations: Violations::default(),
+            closed: ClosedIds::default(),
         };
         tokio::spawn(pump.run());
         Arc::new(StreamsHandle { cmd_tx })
@@ -236,9 +354,14 @@ impl Streams {
                 }
                 cmd = self.cmd_rx.recv() => match cmd {
                     Some(Cmd::Shares(ports)) => self.apply_shares(ports).await,
+                    Some(Cmd::CloseAll { tx }) => {
+                        self.close_live(CloseReason::ChannelLost).await;
+                        let _ = tx.send(());
+                    }
                     Some(Cmd::Credit { id, bytes, tx }) => {
                         let ok = if let Some(l) = self.live.get(&id) {
-                            l.credit_tx.send(bytes).await.is_ok()
+                            l.credit.add(bytes as usize);
+                            true
                         } else {
                             false
                         };
@@ -246,6 +369,9 @@ impl Streams {
                     }
                     Some(Cmd::Closed { id, tx }) => {
                         let ok = self.live.remove(&id).is_some();
+                        if ok {
+                            self.closed.insert(id);
+                        }
                         let _ = tx.send(ok);
                     }
                     Some(Cmd::Open { open, tx }) => {
@@ -259,14 +385,10 @@ impl Streams {
                     None => return,
                 },
                 msg = self.task_rx.recv() => match msg {
-                    Some(TaskMsg::Written { id, bytes }) => {
-                        if let Some(l) = self.live.get_mut(&id) {
-                            l.outstanding = l.outstanding.saturating_sub(bytes as usize);
-                        }
-                    }
                     Some(TaskMsg::Finished { id, reason, bytes_in, bytes_out }) => {
                         // Only the first end of a stream answers (kill may have raced us).
                         if self.live.remove(&id).is_some() {
+                            self.closed.insert(id);
                             self.send_close(id, reason, bytes_in, bytes_out).await;
                         }
                     }
@@ -286,7 +408,7 @@ impl Streams {
             M::StreamOpen(o) => self.on_open(o).await,
             M::StreamCredit(c) => {
                 if let Some(l) = self.live.get(&c.stream_id) {
-                    let _ = l.credit_tx.send(c.bytes).await;
+                    l.credit.add(c.bytes as usize);
                 }
             }
             M::StreamClose(c) => {
@@ -294,6 +416,7 @@ impl Streams {
                 if let Some(l) = self.live.remove(&c.stream_id) {
                     l.abort.abort();
                 }
+                self.closed.insert(c.stream_id);
             }
             M::Other(u) => {
                 tracing::debug!(kind = u.kind.as_str(), "unknown stream frame ignored");
@@ -340,25 +463,26 @@ impl Streams {
         }
         // The runner's announced window is our send allowance (direction loopback → runner).
         let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE);
-        let (credit_tx, credit_rx) = mpsc::channel(8);
+        let credit = Arc::new(Credit::default());
         let task = tokio::spawn(stream_task(
             o.stream_id,
             o.port,
             sock,
             o.window as usize,
             data_rx,
-            credit_rx,
+            credit.clone(),
             self.out.clone(),
             self.task_tx.clone(),
         ));
+        // A reused id is live again: its old "closed" mark no longer applies.
+        self.closed.remove(o.stream_id);
         self.live.insert(
             o.stream_id,
             Live {
                 port: o.port,
                 data_tx,
-                credit_tx,
+                credit,
                 abort: task.abort_handle(),
-                outstanding: 0,
             },
         );
     }
@@ -367,26 +491,39 @@ impl Streams {
     /// repeated violations close the channel with 4400.
     async fn on_data(&mut self, stream_id: u32, payload: Vec<u8>) {
         let Some(l) = self.live.get_mut(&stream_id) else {
-            tracing::warn!(stream_id, "stream data for unknown id");
-            self.violate().await;
+            if self.closed.contains(stream_id) {
+                // A close race: this side (or the runner) closed the stream on this
+                // connection. Dropped silently, not a violation.
+                tracing::debug!(stream_id, "stream data after close dropped");
+            } else {
+                tracing::warn!(stream_id, "stream data for unknown id");
+                self.violate().await;
+            }
             return;
         };
-        if l.outstanding + payload.len() > PREVIEW_STREAM_WINDOW {
+        if l.credit.outstanding() + payload.len() > PREVIEW_STREAM_WINDOW {
             tracing::warn!(stream_id, "stream data beyond the credit window");
             self.kill(stream_id, CloseReason::Error).await;
             self.violate().await;
             return;
         }
-        l.outstanding += payload.len();
-        if l.data_tx.send(payload).await.is_err() {
-            tracing::debug!(stream_id, "stream queue closed; task is ending");
+        l.credit.reserve(payload.len());
+        // Never wait on the stream's task (FIX-091): a full queue means it is wedged.
+        match l.data_tx.try_send(payload) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(stream_id, "stream queue full; closing the stream");
+                self.kill(stream_id, CloseReason::Error).await;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!(stream_id, "stream queue closed; task is ending");
+            }
         }
     }
 
-    /// One stream protocol violation; repeated ones close the channel (`16 §W18`).
+    /// One stream protocol violation; four within 60 s close the channel (`16 §W18`).
     async fn violate(&mut self) {
-        self.violations += 1;
-        if self.violations >= 4 {
+        if self.violations.record() {
             let _ = self.out.send(StreamOut::Abort).await;
         }
     }
@@ -406,7 +543,15 @@ impl Streams {
     }
 
     /// A connection change (or channel end): every stream ends, none are resumed.
+    /// The violation count and the closed-id memory are per connection: both reset.
     async fn reset(&mut self, reason: CloseReason) {
+        self.close_live(reason).await;
+        self.violations.clear();
+        self.closed.clear();
+    }
+
+    /// Ends every live stream (connection change or shutdown).
+    async fn close_live(&mut self, reason: CloseReason) {
         let ids: Vec<u32> = self.live.keys().copied().collect();
         for id in ids {
             self.kill(id, reason.clone()).await;
@@ -417,6 +562,7 @@ impl Streams {
     async fn kill(&mut self, id: u32, reason: CloseReason) {
         if let Some(l) = self.live.remove(&id) {
             l.abort.abort();
+            self.closed.insert(id);
             self.send_close(id, reason, 0, 0).await;
         }
     }
@@ -457,14 +603,19 @@ impl Streams {
 async fn stream_task(
     id: u32,
     port: u16,
-    mut sock: TcpStream,
+    sock: TcpStream,
     send_credit: usize,
     mut data_rx: mpsc::Receiver<Vec<u8>>,
-    mut credit_rx: mpsc::Receiver<u32>,
+    credit_cell: Arc<Credit>,
     out: StreamSender,
     report: mpsc::UnboundedSender<TaskMsg>,
 ) {
     tracing::debug!(stream_id = id, port, "preview stream open");
+    // Runner → app bytes wait here until the app reads them (window-bounded by the pump). The
+    // write is one select arm among the others, so a stalled app never stops this task from
+    // draining credit and the queue, or from being aborted (FIX-091).
+    let mut wbuf: VecDeque<u8> = VecDeque::new();
+    let (mut rd, mut wr) = sock.into_split();
     let mut buf = vec![0u8; PREVIEW_CHUNK];
     let mut pending: VecDeque<u8> = VecDeque::new();
     let mut credit = send_credit;
@@ -491,7 +642,7 @@ async fn stream_task(
             // Loopback → runner. Only with credit (we stop reading the socket at zero credit:
             // TCP backpressure toward the app, `16 §W18`). The wire frame is
             // `[0x01][stream_id BE][payload]` — the runner's channel decodes it.
-            n = sock.read(&mut buf), if credit > 0 => {
+            n = rd.read(&mut buf), if credit > 0 => {
                 match n {
                     Ok(0) => break CloseReason::Eof,
                     Ok(n) => {
@@ -511,36 +662,34 @@ async fn stream_task(
             // Runner → loopback; credit returns only after the bytes were written onward.
             chunk = data_rx.recv() => {
                 match chunk {
-                    Some(chunk) => match sock.write_all(&chunk).await {
-                        Ok(()) => {
-                            bytes_in += chunk.len() as u64;
-                            let _ = report.send(TaskMsg::Written {
-                                id,
-                                bytes: chunk.len() as u32,
-                            });
-                            let f = SupervisorToRunner::StreamCredit(
-                                aurora_protocol::runner::StreamCredit {
-                                    stream_id: id,
-                                    bytes: chunk.len() as u32,
-                                },
-                            );
-                            if let Some(t) = channel::encode_stream_frame(f)
-                                && out.send(StreamOut::Text(t)).await.is_err()
-                            {
-                                break CloseReason::ChannelLost;
-                            }
-                        }
-                        Err(_) => break CloseReason::Reset,
-                    },
+                    Some(chunk) => wbuf.extend(chunk),
                     // The pump dropped the queue (reset path aborts us anyway).
                     None => break CloseReason::ChannelLost,
                 }
             }
-            c = credit_rx.recv() => {
-                match c {
-                    Some(c) => credit = (credit + c as usize).min(PREVIEW_STREAM_WINDOW),
-                    None => break CloseReason::ChannelLost,
+            n = wr.write(wbuf.as_slices().0), if !wbuf.is_empty() => {
+                match n {
+                    Ok(0) | Err(_) => break CloseReason::Reset,
+                    Ok(n) => {
+                        wbuf.drain(..n);
+                        bytes_in += n as u64;
+                        credit_cell.release(n);
+                        let f = SupervisorToRunner::StreamCredit(
+                            aurora_protocol::runner::StreamCredit {
+                                stream_id: id,
+                                bytes: n as u32,
+                            },
+                        );
+                        if let Some(t) = channel::encode_stream_frame(f)
+                            && out.send(StreamOut::Text(t)).await.is_err()
+                        {
+                            break CloseReason::ChannelLost;
+                        }
+                    }
                 }
+            }
+            () = credit_cell.granted() => {
+                credit = (credit + credit_cell.take()).min(PREVIEW_STREAM_WINDOW);
             }
         }
     };

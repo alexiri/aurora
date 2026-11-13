@@ -134,11 +134,11 @@ async fn sandboxes(
 }
 
 async fn check(
-    _c: RunnerCtx,
+    c: RunnerCtx,
     State(s): State<AppState>,
     Json(req): Json<SandboxesCheckRequest>,
 ) -> Result<Json<SandboxesCheckResponse>, ApiError> {
-    Ok(Json(service::sandboxes_check(&s, req).await?))
+    Ok(Json(service::sandboxes_check(&s, &c.runner, req).await?))
 }
 
 async fn strays(

@@ -175,7 +175,8 @@ impl Runner {
         self.hub.set_previews_enabled(cfg.previews || cfg.terminal);
         let fingerprint = installation_fingerprint(&s.token);
 
-        let (sink, reporter_task) = reporter::spawn(api.clone(), shutdown.clone());
+        let (sink, reporter_task) =
+            reporter::spawn_with_drain(api.clone(), shutdown.clone(), s.drain_timeout);
         let exec = Executor::new(
             self.backend.clone(),
             self.hub.clone(),

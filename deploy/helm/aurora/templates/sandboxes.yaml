@@ -43,6 +43,8 @@ spec:
 {{- if .Values.runner.enabled }}
 ---
 # Runner RBAC (docs/11 Backend kubernetes): Pods/PVCs/Secrets in the sandbox namespace.
+# Secrets: the runner creates a boot Secret per start and lists/deletes them for cleanup; it never
+# reads one by name or watches them (FIX-094: no get/watch; `list` stays because cleanup selects by label).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -50,8 +52,11 @@ metadata:
   namespace: {{ $ns }}
 rules:
   - apiGroups: [""]
-    resources: [pods, persistentvolumeclaims, secrets]
+    resources: [pods, persistentvolumeclaims]
     verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, list, delete]
   # FIX-025 (D-158): read-only, the pods' and home claims' Warning events attached to a start failure.
   - apiGroups: [""]
     resources: [events]

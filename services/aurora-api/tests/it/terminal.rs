@@ -1009,6 +1009,113 @@ async fn served_upgrade_refuses_anonymous_and_cross_origin() {
     assert_eq!(s, 403, "cross-origin, no upgrade");
 }
 
+/// FIX-092 (STRM-8): a browser text frame above 256 bytes is a violation — the leg closes
+/// `4502` and nothing is forwarded (the echo runner would answer binary only, so the proof is
+/// the close code; a resize-sized text message still passes).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_oversized_text_frame_closes_4502() {
+    use tokio_tungstenite::tungstenite::Message;
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    served::fake_runner_multi(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "text-cap", "running").await;
+    let (mut ws, leg) = open_term(&url, &r.cookie, agent).await;
+    assert_eq!(leg, Leg::Open);
+    // A normal resize control is fine.
+    ws.send(Message::text(
+        json!({"kind": "pty.resize", "pty_id": 0, "cols": 80, "rows": 24}).to_string(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(probe(&mut ws).await, Leg::Open);
+    // 1 KiB of text is not.
+    ws.send(Message::text("x".repeat(1024))).await.unwrap();
+    assert_eq!(probe(&mut ws).await, Leg::Closed(4502));
+}
+
+/// FIX-092 (STRM-8): `?wait=true` on a parked sandbox long-polls for the wake and upgrades
+/// when it comes up (here after ~2 s); without `wait` the answer stays 202.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wait_true_upgrades_when_the_sandbox_becomes_running() {
+    let r = term_rig().await;
+    let (url, api) = served::serve(&r).await;
+    served::fake_runner(&r, &api, true).await;
+    let (agent, sb, _boot) = sandbox_on(&r, "wait-sb", "stopped").await;
+    let pool = r.h.pool().clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        sqlx::query("UPDATE sandboxes SET state = 'running' WHERE id = $1")
+            .bind(sb)
+            .execute(&pool)
+            .await
+            .unwrap();
+    });
+    let t = std::time::Instant::now();
+    let (mut ws, resp) = served::dial(
+        &url,
+        &r.cookie,
+        &format!("/v1/agents/{agent}/terminal?wait=true"),
+    )
+    .await
+    .expect("the long-poll ends in the upgrade");
+    assert_eq!(resp.status(), 101);
+    assert!(
+        t.elapsed() >= std::time::Duration::from_secs(1),
+        "it waited for the wake: {:?}",
+        t.elapsed()
+    );
+    assert_eq!(probe(&mut ws).await, Leg::Open);
+}
+
+/// D-178 (Q-R5-22, C-618): a closed terminal session leaves an `agent.terminal.close` audit
+/// row carrying the close code and the duration — and nothing byte-shaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_closed_terminal_is_audited_with_code_and_duration_only() {
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    served::fake_runner_multi(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "close-audit", "running").await;
+    let (mut ws, leg) = open_term(&url, &r.cookie, agent).await;
+    assert_eq!(leg, Leg::Open);
+    ws.send(tokio_tungstenite::tungstenite::Message::binary(
+        b"secret-keystrokes".to_vec(),
+    ))
+    .await
+    .unwrap();
+    hang_up(ws).await;
+    let mut row = None;
+    for _ in 0..100 {
+        if let Ok(m) = sqlx::query_as::<_, (Value, String)>(
+            "SELECT metadata, source FROM audit_log \
+             WHERE action = 'agent.terminal.close' AND target_id = $1",
+        )
+        .bind(agent.to_string())
+        .fetch_one(r.h.pool())
+        .await
+        {
+            row = Some(m);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let (meta, src) = row.expect("the agent.terminal.close audit row");
+    assert_eq!(src, "dashboard");
+    assert_eq!(meta["close_code"], json!(1000));
+    assert!(meta["duration_secs"].is_u64(), "{meta}");
+    let keys: std::collections::BTreeSet<_> = meta
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["agent", "close_code", "duration_secs", "workspace"].into(),
+        "metadata is the code and the duration only: {meta}"
+    );
+    assert!(!meta.to_string().contains("secret-keystrokes"));
+}
+
 fn hex(h: &[u8]) -> String {
     h.iter().map(|b| format!("{b:02x}")).collect()
 }

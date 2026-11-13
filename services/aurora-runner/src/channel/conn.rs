@@ -28,6 +28,12 @@ const CLOSE_TRY_LATER: u16 = 1013;
 
 type Ws = WebSocketStream<TcpStream>;
 
+/// One bounded write: a supervisor that stops reading must not park the connection task (and
+/// with it the queue's drain) forever.
+async fn send(ws: &mut Ws, m: Message, wt: std::time::Duration) -> bool {
+    matches!(timeout(wt, ws.send(m)).await, Ok(Ok(())))
+}
+
 async fn close(ws: &mut Ws, code: u16) {
     let frame = CloseFrame {
         code: CloseCode::from(code),
@@ -44,11 +50,21 @@ struct Admitted {
     guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
-pub(super) async fn handle(shared: Arc<Shared>, tcp: TcpStream) {
+pub(super) async fn handle(
+    shared: Arc<Shared>,
+    tcp: TcpStream,
+    preauth: tokio::sync::OwnedSemaphorePermit,
+) {
     let cfg = WebSocketConfig::default()
         .max_message_size(Some(MAX_FRAME))
         .max_frame_size(Some(MAX_FRAME));
-    let Ok(mut ws) = accept_async_with_config(tcp, Some(cfg)).await else {
+    // FIX-094: the upgrade is time-boxed like the hello; a socket that never speaks is closed.
+    let Ok(Ok(mut ws)) = timeout(
+        shared.settings.hello_timeout,
+        accept_async_with_config(tcp, Some(cfg)),
+    )
+    .await
+    else {
         return;
     };
     let admitted = match admit(&shared, &mut ws).await {
@@ -58,6 +74,8 @@ pub(super) async fn handle(shared: Arc<Shared>, tcp: TcpStream) {
             return;
         }
     };
+    // Admitted: this connection no longer counts against the pre-auth cap.
+    drop(preauth);
     let Admitted {
         session,
         hold_pending,
@@ -87,7 +105,7 @@ pub(super) async fn handle(shared: Arc<Shared>, tcp: TcpStream) {
         if hold_pending {
             tokio::spawn(retry_hold(shared.clone(), session.clone(), conn_id));
         }
-        run(&shared, &session, &mut ws, attached.rx).await;
+        run(&shared, &session, &mut ws, attached.rx, attached.kill).await;
     }
     if session.detach(conn_id) {
         tracing::info!(sandbox = %session.sandbox_id, "supervisor channel closed");
@@ -168,12 +186,16 @@ async fn admit(shared: &Shared, ws: &mut Ws) -> Result<Admitted, u16> {
         Ok(()) => false,
         // Boot no longer current / not ours.
         Err(e) if !e.retryable() => return Err(CLOSE_UNAUTHORIZED),
-        // API outage: a locally valid session stays connected.
-        Err(_) if from_session => true,
-        Err(_) => return Err(CLOSE_TRY_LATER),
+        // API outage: the connection stays up and the hold is retried in the background. This
+        // holds for a bootstrap admission too (FIX-094): the claim already succeeded, and a
+        // supervisor sent away with 1013 would present a token the API may by then regard as
+        // spent. (A session is locally valid by its MAC; a claimed bootstrap by the API's
+        // answer a moment ago.)
+        Err(_) => true,
     };
-    // Without the API we cannot tell which of two boots is current: keep the known one.
-    let replace = !hold_pending;
+    // Without the API we cannot tell which of two boots is current for a *session*: keep the
+    // known one. A fresh claim just proved its boot current.
+    let replace = !hold_pending || !from_session;
     let session = shared
         .session_for(sandbox, boot, replace)
         .ok_or(CLOSE_UNAUTHORIZED)?;
@@ -207,9 +229,11 @@ async fn run(
     shared: &Arc<Shared>,
     session: &Arc<Session>,
     ws: &mut Ws,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<ConnMsg>,
+    mut rx: tokio::sync::mpsc::Receiver<ConnMsg>,
+    kill: Arc<tokio::sync::Notify>,
 ) {
     let s = &shared.settings;
+    let wt = s.write_timeout;
     let mut ping = interval(s.ping_interval);
     let mut ack = interval(s.ack_interval);
     let mut last_rx = Instant::now();
@@ -249,19 +273,18 @@ async fn run(
                     Some(Ok(_)) => {}
                 }
             }
+            () = kill.notified() => {
+                tracing::warn!(sandbox = %session.sandbox_id, "supervisor not draining; dropping channel");
+                return;
+            }
             out = rx.recv() => match out {
-                Some(ConnMsg::Text(text)) => {
-                    if ws.send(Message::text(text)).await.is_err() {
-                        return;
-                    }
-                }
-                Some(ConnMsg::StreamFrame(text)) => {
-                    if ws.send(Message::text(text)).await.is_err() {
+                Some(ConnMsg::Text(text) | ConnMsg::StreamFrame(text)) => {
+                    if !send(ws, Message::text(text), wt).await {
                         return;
                     }
                 }
                 Some(ConnMsg::StreamData(data)) => {
-                    if ws.send(Message::binary(data)).await.is_err() {
+                    if !send(ws, Message::binary(data), wt).await {
                         return;
                     }
                 }
@@ -272,13 +295,13 @@ async fn run(
                 }
             },
             _ = ping.tick() => {
-                if ws.send(Message::Ping(Vec::new().into())).await.is_err() {
+                if !send(ws, Message::Ping(Vec::new().into()), wt).await {
                     return;
                 }
             }
             _ = ack.tick() => {
                 if let Some(text) = session.take_ack()
-                    && ws.send(Message::text(text)).await.is_err()
+                    && !send(ws, Message::text(text), wt).await
                 {
                     return;
                 }

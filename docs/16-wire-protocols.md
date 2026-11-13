@@ -53,7 +53,7 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 | `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners; optional `stream_tls`: the stream listener speaks TLS, default false — the API derives the endpoint scheme it hands the relay from it, `§W18`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
 | `POST /work` | `{ wait_secs ≤ 25, capacity: { running, max } }` → `{ items: [WorkItem], reconciler: bool }` (also the heartbeat; `reconciler` is true only for the oldest live replica of this runner, computed at poll time — spec fix S-08) |
 | `POST /reports` | `{ reports: [Report] }` (≤ 200, ≤ 1 MiB) → `{ results: [{ report_id, status: "applied"|"duplicate"|"fenced"|"invalid", detail? }] }` |
-| `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404 |
+| `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404; idempotent for the same `(sandbox, boot)` while the boot has never held a channel (`channel_held_at` is NULL), spent afterwards (SEC-25) |
 | `POST /channel/hold` | `{ sandbox_id, boot_id }` → `{ ok }` (records `channel_replica_id`; also used after HMAC-session reconnects) |
 | `POST /channel/release` | `{ sandbox_id, boot_id }` |
 | `POST /tool-calls` | `ToolCall` → `ToolResult` (synchronous, ≤ `TOOL_CALL_TIMEOUT`) |
@@ -138,6 +138,13 @@ are dropped.
   `{ "hello": { "protocol": 1, "session": { "sandbox_id", "boot_id", "issued_at", "mac" } } }`.
   Answer: `{ "welcome": { "session": {…new…}, "resume_from": <last acked seq> } }`
   or close with code 4401 (unauthorized) / 4409 (spent).
+- A bootstrap token admits one supervisor connection. Re-presenting it is accepted only while the boot
+  has never held a channel (the first admission did not complete: the claim's answer was lost, or the
+  runner closed 1013 before the welcome); once a channel was held it is spent (4409). The runner makes
+  one `channel/claim` attempt per connection, and when the claim succeeded but `channel/hold` fails with
+  a retryable error it admits the connection with the welcome and retries the hold in the background
+  (FIX-094). The supervisor port admits at most 256 unadmitted connections per runner replica (further
+  ones are closed at once) and gives each `hello_timeout` (10 s) for the upgrade and the hello.
 - Frames: JSON text messages `{ "seq": u64, "ack": u64, "kind": string, "body": {} }`,
   each ≤ `WS_FRAME_MAX`. `seq` is per direction and per connection lineage
   (survives reconnects within a boot); receivers apply each seq at most once
@@ -426,9 +433,14 @@ bytes were *written onward* (to the loopback socket or the leg-1 WebSocket), at 
 one chunk at a time, so one stream cannot starve the channel. With at most
 `PREVIEW_STREAMS_PER_SANDBOX` (64) streams the bytes in flight per sandbox are bounded by
 `64 × 128 KiB = 8 MiB` per direction; a credit that would exceed a window, a data frame beyond the window, an unknown
-`stream_id`, a second `stream.open` for a live id or a data frame on a closed stream is a protocol
-violation: the receiver sends `stream.close { reason: "error" }` for that stream (and a supervisor
-that sees repeated violations closes the channel with 4400).
+`stream_id` or a second `stream.open` for a live id is a protocol
+violation: the receiver sends `stream.close { reason: "error" }` for that stream. Data for a stream
+id this side closed, or was told closed, in the current channel connection is dropped silently and is
+not a violation (a legal close race). A violation is data beyond the window or for an id never
+opened. **Four violations within 60 s** on one channel connection close it with 4400; the count
+resets when the connection changes. A supervisor's stream and PTY pumps never wait on a peer
+(an app that stopped reading, a program that stopped reading its stdin): they hand data to
+per-stream queues with `try_send` and a stream whose queue is full is closed with `error`.
 
 **Allow-list, enforced at both ends (SEC-82).**
 1. **Runner**: the port and sandbox of every stream come from the API's answer to the stream grant
@@ -447,6 +459,15 @@ agent cannot add to the list.
 replica 64; idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
 lifetime 4 h; connect 10 s; response header timeout 60 s; request body 100 MiB; bytes per share per day
 (`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day).
+**Runner-side bounds** (FIX-092): the stream listener closes a connection that has not delivered its
+whole request head within 10 s (a total deadline, not a per-read one) and holds at most 256
+unauthenticated connections per runner replica (further ones are closed at once; a connection leaves the
+count when its grant is redeemed). The runner caps live legs per sandbox at the supervisor's own limits
+(64 streams, 2 PTYs; 429 beyond). A leg's idle clock resets on any byte **or ping/pong** from the peer, but
+only bytes stamp keep-awake, so an idle open tab does not hold a sandbox awake. The runner's outbound queue
+per supervisor connection is bounded: when the supervisor stops reading, the offending leg (for a sequenced
+frame, the connection — the replay buffer redelivers on reconnect) is closed instead of queued without
+limit. `pty.resize` from the browser is coalesced to the latest size.
 **Enforcement** (FIX-072, C-636/C-637): the relay reserves a per-share and a per-user slot (per replica;
 `relay.max_streams_per_user` may lower the per-user value) before it asks the API for a stream grant and
 releases it on every exit; over a cap a plain request answers 429 `preview_streams_limit` and a WebSocket
@@ -495,12 +516,17 @@ runner increasing per channel connection, interleaved round-robin):
 Credit-based flow control exactly as W18 (`TERMINAL_STREAM_WINDOW` 128 KiB per
 direction per PTY, credit returned after the bytes were written onward, at
 least every `window/4`, control frames never blocked, round-robin one chunk at
-a time; a violation closes that PTY with `pty.close { reason: "error" }`).
+a time; a violation closes that PTY with `pty.close { reason: "error" }`; data for a PTY id closed on
+this connection is dropped silently, and four violations within 60 s on one connection close the
+channel with 4400, exactly as W18).
 A W6 reconnect ends every PTY (leg 1 closes 4503, nothing is resumed); a
 supervisor that does not know the kinds ignores them (the runner's `pty.open`
 times out 5 s → 4502): harmless. Limits: `TERMINALS_PER_SANDBOX` 2,
 `TERMINALS_PER_AGENT` 4, `TERMINALS_PER_USER` 2 (per API replica), idle 600 s
-(pings count), lifetime 4 h per session. Terminal bytes are never logged or
+(pings count: the API pings the browser every 20 s and any frame from it, a pong included, resets the
+idle clock, which the API enforces with 4504), lifetime 4 h per session. A browser text message above
+256 bytes (a `pty.resize` is a few dozen) closes the leg 4502 without being forwarded, and a write toward
+the browser or the runner that stalls for 30 s ends the leg and frees its slot. Terminal bytes are never logged or
 stored; the supervisor's PTY posture (environment minus every `AURORA_*`
 variable and the boot document, agent uid, `/workspace`, `TIOCSWINSZ` resize)
 is `12 §Terminal`, the wake/keep-awake semantics `11 §Web terminal`.

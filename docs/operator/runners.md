@@ -47,7 +47,7 @@ installs. It does not replace the admin route for a second runner.
 | `AURORA_RUNNER_SESSION_KEY` | — (required) | 32 random bytes, base64. Must match the API. |
 | `runner.api_url` | — | Where the runner reaches the API, for example `http://aurora-api:4101`. |
 | `runner.backend` | — (required) | `podman`, `kubernetes` or `fake`. Set in config, never detected. |
-| `runner.ops_bind` | `server.bind` | Address of the ops listener (4106, health and metrics). Must not be sandbox-reachable (SEC-09). |
+| `runner.ops_bind` | `127.0.0.1` on podman, `server.bind` otherwise | Address of the ops listener (4106, health and metrics). Must not be sandbox-reachable (SEC-09). On podman an address that is, or covers, the sandbox-facing `server.bind` is refused at startup; on Kubernetes the chart sets it and a NetworkPolicy isolates the port. |
 | `runner.advertised_host` | — | Host sandboxes use to reach the runner's WebSocket. |
 | `runner.image` | `aurora-sandbox:<version>` | Sandbox image. The single source of truth: the runner starts it, advertises it at registration and the API reports it as the sandbox `image`. |
 | `runner.max_sandboxes` | `4` | Concurrent sandboxes on this runner. |
@@ -78,7 +78,7 @@ For development and single-host installs (docs/11 §Backend podman).
 | Key | Default | Notes |
 |-----|---------|-------|
 | `runner.podman_socket` | unset | Podman API socket. When unset, the runner uses `$XDG_RUNTIME_DIR/podman/podman.sock`, or `/run/podman/podman.sock` when `XDG_RUNTIME_DIR` is not set (`services/aurora-runner/src/backends/podman.rs`). |
-| `runner.sandbox_network` | `aurora-sandbox` | Must be created `--internal --disable-dns`. The runner verifies the flag at startup and refuses to run otherwise. |
+| `runner.sandbox_network` | `aurora-sandbox` | Must be created `--internal --disable-dns`. The runner verifies both settings at startup (`internal` from the network inspect, `dns_enabled` from podman's own network JSON) and refuses to run otherwise. |
 | `runner.sandbox_hosts` | `{}` | Map of host names to IPs injected into sandboxes as `/etc/hosts` entries, for example `{ "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }`. |
 | `runner.dev_allow_external_network` | `false` | Escape hatch for development. It logs a warning on every start. Never set it in a deployment. |
 | `runner.dev_supervisor_binary` | unset | Development only (OPS-018, `docs/ops/live-reload.md`): absolute path of a host-built `aurora-supervisor`, bind-mounted read-only over the image's copy in new podman sandboxes. Config validation refuses it unless the backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url` are loopback. It logs a warning on every start. Never set it in a deployment. |
