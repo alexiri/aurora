@@ -138,7 +138,7 @@ function OverviewBody({
                 </Link>
               </li>
             ))}
-            <li className="flex min-h-[5.5rem] items-center justify-center rounded-card border border-dashed border-line-strong bg-surface p-4">
+            <li className="flex min-h-22 items-center justify-center rounded-card border border-dashed border-line-strong bg-surface p-4">
               <CreateAgentDialog wsId={wsId} />
             </li>
           </ul>
@@ -149,6 +149,8 @@ function OverviewBody({
         <Section id="first-run" title="Getting started">
           {workspace.data ? (
             <GettingStarted org={org} ws={ws} wsId={wsId} orgId={orgId} isOwner={workspace.data.my_role === "owner"} variant="overview" />
+          ) : workspace.isError ? (
+            <ErrorState error={workspace.error} onRetry={() => void workspace.refetch()} />
           ) : (
             <Loading />
           )}

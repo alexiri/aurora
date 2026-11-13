@@ -7,7 +7,7 @@ import { ChatThread } from "@/components/chat/chat-thread";
 import { ConversationList } from "@/components/chat/conversation-list";
 import type { AgentIdent } from "@/components/chat/types";
 import { ErrorState, Loading } from "@/components/states";
-import { useConversations, useDirectConversation } from "@/lib/api/conversations";
+import { useConversationById, useConversations, useDirectConversation } from "@/lib/api/conversations";
 import { useRetention } from "@/lib/api/org";
 import { filterConversations, groupConversations, sortByActivity, type ListGroups } from "@/lib/chat/layout";
 
@@ -67,12 +67,18 @@ export function ChatTab({ agentId, wsId, base, orgId, agent }: { agentId: string
     return groupConversations(filterConversations(all, query), directConv?.id ?? null);
   }, [archived, convs, directConv, query]);
 
+  const ownId = directConv?.id ?? null;
+  const convId = picked ?? (archived ? null : ownId);
+  const inList = convId ? convs.some((c) => c.id === convId) : false;
+  // A deep link to a conversation past the loaded pages: fetched by id so its title and kind still show (FIX-117).
+  const fetched = useConversationById(convId, !!convId && convId !== ownId && list.isSuccess && !inList);
+
   if (direct.isPending) return <Loading />;
   if (direct.isError) return <ErrorState error={direct.error} onRetry={() => void direct.refetch()} />;
 
-  const ownId = directConv?.id ?? null;
-  const convId = picked ?? (archived ? null : ownId);
-  const conv = convId ? (convs.find((c) => c.id === convId) ?? (convId === ownId ? directConv : null)) : null;
+  const conv = convId
+    ? (convs.find((c) => c.id === convId) ?? (convId === ownId ? directConv : null) ?? fetched.data ?? null)
+    : null;
   // RFE-009: another member's direct conversation (owners only; the API returns it with `direct_user`) is read-only.
   const memberDirect = conv && conv.id !== ownId && conv.kind === "direct" && conv.direct_user ? conv : null;
   const done = () => {

@@ -58,19 +58,27 @@ export function MemberRow({
       </Td>
       <Td>
         {options.length > 0 ? (
-          <select
-            aria-label={`Role for ${m.email}`}
-            className={cn(inputClass, "min-w-28")}
-            value={m.role}
-            disabled={busy}
-            onChange={(e) => onRole(e.target.value as OrgRole)}
-          >
-            {options.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
+          <>
+            <select
+              aria-label={`Role for ${m.email}`}
+              aria-describedby={m.directory ? `directory-role-${m.user_id}` : undefined}
+              className={cn(inputClass, "min-w-28")}
+              value={m.role}
+              disabled={busy || !!m.directory}
+              onChange={(e) => onRole(e.target.value as OrgRole)}
+            >
+              {options.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            {m.directory ? (
+              <p id={`directory-role-${m.user_id}`} className="mt-1 text-xs text-muted">
+                Managed by your identity provider: the role comes from directory sync.
+              </p>
+            ) : null}
+          </>
         ) : (
           <span className="flex flex-wrap items-center gap-1.5">
             {m.role}
@@ -324,7 +332,7 @@ function Invitations({ orgId }: { orgId: string }) {
 export function MembersView({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const instance = useInstance();
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader
         title="Members"
         description="People in this organization and the invitations still waiting."

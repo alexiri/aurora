@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
@@ -135,6 +135,20 @@ describe("terminal tab input framing (FIX-054)", () => {
       at += f.byteLength;
     }
     expect(Array.from(joined)).toEqual(Array.from(encoder.encode(paste)));
+  });
+
+  it("does not send keystrokes while disconnected and says so (FIX-098)", async () => {
+    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
+    const ws = openSocket();
+    await waitFor(() => expect(screen.queryByTestId("terminal-not-connected")).toBeNull());
+
+    // A final close (revoked): the pane is no longer connected.
+    act(() => ws.onclose?.({ code: 4403, wasClean: true }));
+    ws.readyState = 3;
+    act(() => paneProps!.onData("secret\n"));
+    expect(ws.sent).toHaveLength(0);
+    expect(screen.getByTestId("terminal-not-connected")).toHaveTextContent("what you typed was not sent");
   });
 
   it("keeps pty.resize on Text as the JSON control with pty_id: 0", async () => {

@@ -9936,7 +9936,7 @@
         "tags": [
           "groups"
         ],
-        "summary": "What deleting the group (or, with `remove_member`, removing that member) would take away.",
+        "summary": "What deleting the group (or, with `remove_member`, removing that member; with\n`unbind_workspace`, removing its binding to that workspace) would take away.",
         "operationId": "groupImpact",
         "parameters": [
           {
@@ -9953,6 +9953,19 @@
             "name": "remove_member",
             "in": "query",
             "description": "Show what removing only this member would take away.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "unbind_workspace",
+            "in": "query",
+            "description": "Show what removing the group's binding to only this workspace would take away\n(nothing when the group maps to `admin`, which keeps reaching every workspace).",
             "required": false,
             "schema": {
               "type": [

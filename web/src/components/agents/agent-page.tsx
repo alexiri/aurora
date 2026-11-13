@@ -123,7 +123,8 @@ export function AgentPage() {
   const menuFreeze = compact && freezeProps && freezeProps.canOwn && !agent.frozen;
 
   return (
-    <div className={cn("space-y-4", compact ? "space-y-2" : "max-w-4xl")}>
+    // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
+    <div className={cn("min-w-0 space-y-4", compact && "space-y-2")}>
       <PageHeader
         compact={compact}
         breadcrumb={[{ label: "Agents", href: `/o/${org}/w/${ws}/agents` }, { label: agent.name }]}
@@ -150,11 +151,12 @@ export function AgentPage() {
         value={tab}
         onValueChange={(v) => setTab(v as AgentTab)}
         variant="underline"
+        overflow="menu"
         label="Agent"
         idBase="agent"
       />
       <div role="tabpanel" id={tabPanelId("agent", tab)} aria-labelledby={tabId("agent", tab)} className="pt-2">
-        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url, brief: agent.brief }} /> : null}
+        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url, brief: agent.brief, frozen: agent.frozen !== null }} /> : null}
         {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
         {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
         {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={workspace.data?.my_role === "owner"} /> : null}

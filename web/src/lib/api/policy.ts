@@ -68,7 +68,14 @@ export function usePolicyGenerations(scope: PolicyScope, enabled: boolean) {
 
 function useInvalidatePolicy(scope: PolicyScope) {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ["policy", scope.kind, scope.id] });
+  // A draft save, publish or rollback changes what every agent in the scope is allowed (WEBC-6): the agents'
+  // effective-credentials and grants views refetch too (the key prefix reaches every agent).
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["policy", scope.kind, scope.id] }),
+      qc.invalidateQueries({ queryKey: ["effective"] }),
+      qc.invalidateQueries({ queryKey: ["grants"] }),
+    ]);
 }
 
 export function usePutDraft(scope: PolicyScope) {

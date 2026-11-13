@@ -2159,7 +2159,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What deleting the group (or, with `remove_member`, removing that member) would take away. */
+        /**
+         * What deleting the group (or, with `remove_member`, removing that member; with
+         *     `unbind_workspace`, removing its binding to that workspace) would take away.
+         */
         get: operations["groupImpact"];
         put?: never;
         post?: never;
@@ -16361,6 +16364,11 @@ export interface operations {
             query?: {
                 /** @description Show what removing only this member would take away. */
                 remove_member?: string | null;
+                /**
+                 * @description Show what removing the group's binding to only this workspace would take away
+                 *     (nothing when the group maps to `admin`, which keeps reaching every workspace).
+                 */
+                unbind_workspace?: string | null;
             };
             header?: never;
             path: {

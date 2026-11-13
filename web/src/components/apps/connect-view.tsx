@@ -100,6 +100,8 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
       if (res.kind === "redirect") {
         const url = safeHref(res.url);
         if (!url) throw new Error("The server returned an invalid redirect.");
+        // The provider's page must not get a handle on the dashboard window (reverse tabnabbing, WEBC-3).
+        Reflect.set(window, "opener", null);
         window.location.assign(url);
         return;
       }

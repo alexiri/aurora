@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 
 import { api, ApiError } from "./client";
 import type { components } from "./schema";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import { unwrap } from "./unwrap";
 
 export type Group = components["schemas"]["Group"];
@@ -27,7 +28,8 @@ export const groupKeys = {
   one: (id: string) => ["groups", id] as const,
   members: (id: string) => ["groups", id, "members"] as const,
   workspaces: (id: string) => ["groups", id, "workspaces"] as const,
-  impact: (id: string, member: string | null) => ["groups", id, "impact", member] as const,
+  impact: (id: string, member: string | null, unbind: string | null = null) =>
+    ["groups", id, "impact", member, unbind] as const,
 };
 
 /** The source label of a group (`docs/14`): Manual, SCIM or Sign-in (D-156). */
@@ -38,25 +40,6 @@ export function sourceLabel(s: GroupSource): string {
 /** Members of the group are edited by the IdP, not by hand. */
 export const isManaged = (g: Pick<Group, "source">) => g.source !== "manual";
 
-const PAGE_LIMIT = 200;
-/** C-460 allows 500 groups per org (and a group binds to a bounded set of workspaces); a few pages of
- *  200 cover it, the bound only guards against a server that never ends the cursor chain. */
-const MAX_PAGES = 10;
-
-/** Follows `next_cursor` until the list ends, so nothing past the first page vanishes (FIX-067). */
-async function fetchAllPages<T>(
-  page: (cursor: string | undefined) => Promise<{ items: T[]; next_cursor?: string | null }>,
-): Promise<{ items: T[]; next_cursor: null }> {
-  const items: T[] = [];
-  let cursor: string | undefined;
-  for (let i = 0; i < MAX_PAGES; i += 1) {
-    const p = await page(cursor);
-    items.push(...p.items);
-    if (!p.next_cursor) break;
-    cursor = p.next_cursor;
-  }
-  return { items, next_cursor: null };
-}
 
 /** Groups of an org (names and counts; org owners/admins, or workspace owners for the picker). Every page. */
 export function useGroups(orgId: string | undefined, q = "") {
@@ -114,13 +97,25 @@ export function useGroupWorkspaces(id: string) {
 }
 
 /** What deleting the group (or removing one member) would take away (`05 §Groups`). */
-export function useGroupImpact(id: string, removeMember: string | null, enabled: boolean) {
+export function useGroupImpact(
+  id: string,
+  removeMember: string | null,
+  enabled: boolean,
+  /** Only the binding to this workspace goes away (C-464 `unbind_workspace`), not the whole group. */
+  unbindWorkspace: string | null = null,
+) {
   return useQuery({
-    queryKey: groupKeys.impact(id, removeMember),
+    queryKey: groupKeys.impact(id, removeMember, unbindWorkspace),
     queryFn: () =>
       unwrap(
         api.GET("/v1/groups/{id}/impact", {
-          params: { path: { id }, query: removeMember ? { remove_member: removeMember } : {} },
+          params: {
+            path: { id },
+            query: {
+              ...(removeMember ? { remove_member: removeMember } : {}),
+              ...(unbindWorkspace ? { unbind_workspace: unbindWorkspace } : {}),
+            },
+          },
         }),
       ),
     enabled,
@@ -147,7 +142,14 @@ export function usePatchGroup(id: string, orgId: string) {
       qc.setQueryData(groupKeys.one(id), g);
       void qc.invalidateQueries({ queryKey: groupKeys.list(orgId) });
     },
+    // A 409 stale_revision needs the fresh revision for the next save, so refetch the group.
+    onError: () => void qc.invalidateQueries({ queryKey: groupKeys.one(id) }),
   });
+}
+
+/** `409 stale_revision` of a group (the code is shared with policies, whose copy is wrong here). */
+export function isStaleGroup(err: unknown): boolean {
+  return err instanceof ApiError && err.code === "stale_revision";
 }
 
 export function useDeleteGroup(id: string, orgId: string) {

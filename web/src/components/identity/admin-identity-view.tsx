@@ -16,7 +16,7 @@ export function AdminIdentityView() {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const providers = q.data.providers;
   return (
-    <div className="max-w-[1160px] space-y-6">
+    <div className="max-w-page space-y-6">
       <PageHeader
         title="Identity"
         description="Which sign-in role values give which roles. Set in the Helm values (config.auth.oidc_providers), never here."
@@ -32,13 +32,13 @@ export function AdminIdentityView() {
           {p.role_claim ? (
             <dl className="mb-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
               <div>
-                <dt className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">Role claim</dt>
+                <dt className="text-xs font-semibold uppercase tracking-label text-muted">Role claim</dt>
                 <dd>
                   <code className="font-mono">{p.role_claim}</code> <span className="text-muted">({p.role_claim_source})</span>
                 </dd>
               </div>
               <div>
-                <dt className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">Sign-in</dt>
+                <dt className="text-xs font-semibold uppercase tracking-label text-muted">Sign-in</dt>
                 <dd>{p.require_role ? "Only people with a mapped role may sign in" : "Everyone the provider admits may sign in"}</dd>
               </div>
             </dl>

@@ -47,7 +47,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         brief,
         proactive_messaging: proactive,
         ...(harnessChanged ? { harness: chosenHarness } : {}),
-        ...(effort ? { effort } : {}),
+        // "Default" is `null` (the API clears the override); omitting it would keep the old value (WEBA-1).
+        effort: effort || null,
         ...(model ? { model_endpoint_id: model.split("\u0000")[0], model_id: model.split("\u0000")[1] } : {}),
       });
       setSaved(true);

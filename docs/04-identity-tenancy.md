@@ -692,7 +692,7 @@ fire, so a creator whose only access came through a group stops firing when remo
 survive as before. The offboarding views (RFE-021) are computed from effective access
 and add `via_groups` to each row (the groups that currently give the person access), so
 "what would break" is accurate for people who have no direct binding. A **group impact
-view** (`GET /v1/groups/{id}/impact`, optional `?remove_member=<user>`) answers the same
+view** (`GET /v1/groups/{id}/impact`, optional `?remove_member=<user>` and `&unbind_workspace=<workspace>`) answers the same
 question for deleting a group, unbinding it, or removing one member: per workspace the
 users who would lose all access (at most 200 listed, with the total), the automations
 that would be disabled, and the API-key count; the dashboard shows it before it confirms.

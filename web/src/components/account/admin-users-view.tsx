@@ -19,7 +19,7 @@ import { fmtDate } from "./key-table";
 
 export function NotFoundPage() {
   return (
-    <div className="max-w-[880px]">
+    <div className="max-w-page-narrow">
       <PageHeader title="404" description="This page could not be found." />
     </div>
   );
@@ -130,7 +130,7 @@ export function AdminUsersView() {
   if (!isAdmin) return <NotFoundPage />;
 
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader title="Users" description="Everyone on this instance. Admins can promote or disable accounts." className="mb-2" />
       <form
         role="search"

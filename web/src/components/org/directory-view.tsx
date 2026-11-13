@@ -4,11 +4,13 @@
 // switch, the e-mail domain allow-list, the `aud_` tokens (shown once) and the sync status.
 // Owners only: every management route answers 403 for admins.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -33,34 +35,77 @@ import { fmtDate } from "@/components/account/key-table";
 
 const reauthErr = (err: unknown) => err instanceof ApiError && err.code === "reauth_required";
 
-function needsReauth(err: unknown): string | undefined {
-  if (reauthErr(err)) {
-    return "Confirm it is you: sign in again with your provider, then apply the change once more.";
-  }
-  return undefined;
+/** The re-authentication notice: the provider sign-in link comes back to this page (docs/14 §Directory sync). */
+function ReauthNotice({ err, reauthUrl }: { err: unknown; reauthUrl: string | null }) {
+  if (!reauthErr(err)) return null;
+  return (
+    <Notice tone="pending" role="alert">
+      Confirm it is you:{" "}
+      {reauthUrl ? (
+        <a className="font-medium underline" href={reauthUrl} data-testid="scim-reauth-link">
+          sign in again with your provider
+        </a>
+      ) : (
+        "sign in again with your provider"
+      )}
+      , then apply the change once more.
+    </Notice>
+  );
 }
 
-/** The enable switch + domains + exclusive mode. */
-function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings }) {
+const parseDomains = (text: string) =>
+  text
+    .split(/[,\s]+/)
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+
+function CopyUrlButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      aria-label="Copy base URL"
+      onClick={() => {
+        void navigator.clipboard?.writeText(url);
+        setCopied(true);
+      }}
+    >
+      {copied ? "Copied" : "Copy"}
+    </Button>
+  );
+}
+
+/** The enable switch + domains + exclusive mode. Only the fields that changed are sent. */
+function SettingsForm({
+  orgId,
+  initial,
+  reauthUrl,
+}: {
+  orgId: string;
+  initial: ScimSettings;
+  reauthUrl: string | null;
+}) {
   const put = usePutScimSettings(orgId);
   const [enabled, setEnabled] = useState(initial.enabled);
   const [exclusive, setExclusive] = useState(initial.exclusive);
   const [domains, setDomains] = useState(initial.email_domains.join(", "));
   const [saved, setSaved] = useState(false);
   const fe = put.error && !reauthErr(put.error) ? errorMessage(put.error) : undefined;
-  const reauth = needsReauth(put.error);
 
   function submit(e: FormEvent) {
     e.preventDefault();
     setSaved(false);
-    const list = domains
-      .split(/[,\s]+/)
-      .map((d) => d.trim().toLowerCase())
-      .filter(Boolean);
-    put.mutate(
-      { enabled, exclusive, email_domains: list },
-      { onSuccess: () => setSaved(true) },
-    );
+    const list = parseDomains(domains);
+    const body: { enabled?: boolean; email_domains?: string[]; exclusive?: boolean } = {};
+    if (enabled !== initial.enabled) body.enabled = enabled;
+    if (exclusive !== initial.exclusive) body.exclusive = exclusive;
+    if (list.join(",") !== initial.email_domains.join(",")) body.email_domains = list;
+    if (Object.keys(body).length === 0) {
+      setSaved(true);
+      return;
+    }
+    put.mutate(body, { onSuccess: () => setSaved(true) });
   }
 
   return (
@@ -97,11 +142,7 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
         checked={exclusive}
         onChange={setExclusive}
       />
-      {reauth ? (
-        <Notice tone="pending" role="alert">
-          {reauth}
-        </Notice>
-      ) : null}
+      <ReauthNotice err={put.error} reauthUrl={reauthUrl} />
       {saved ? (
         <Notice tone="accent" role="status">
           Directory sync settings saved.
@@ -117,34 +158,38 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
 }
 
 /** The `aud_` tokens: create (shown once), list, revoke. */
-function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
+function TokenSection({
+  orgId,
+  enabled,
+  reauthUrl,
+}: {
+  orgId: string;
+  enabled: boolean;
+  reauthUrl: string | null;
+}) {
   const tokens = useScimTokens(orgId, enabled);
   const create = useCreateScimToken(orgId);
   const revoke = useRevokeScimToken(orgId);
   const [name, setName] = useState("");
-  const [created, setCreated] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [toRevoke, setToRevoke] = useState<ScimTokenEntry | null>(null);
   const err = create.error ?? revoke.error;
   const fe = err && !reauthErr(err) ? errorMessage(err) : undefined;
-  const reauth = needsReauth(err);
+  // The secret lives only in the mutation result; leaving the page drops it (docs/17: shown once).
+  const { reset: resetCreate } = create;
+  useEffect(() => () => resetCreate(), [resetCreate]);
+  const created = create.data?.token ?? null;
+  const expiring = (tokens.data?.tokens ?? []).filter((t) => t.expiring && !t.revoked);
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    setCreated(null);
     setCopied(false);
-    create.mutate(
-      { name: name.trim() },
-      {
-        onSuccess: (t) => {
-          setCreated(t.token);
-          setName("");
-        },
-      },
-    );
+    create.mutate({ name: name.trim() }, { onSuccess: () => setName("") });
   }
 
   return (
     <div className="max-w-xl space-y-4">
+      {enabled ? (
       <Form onSubmit={submit} noValidate aria-label="Create a SCIM token">
         <Field
           id="scim-token-name"
@@ -167,34 +212,57 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
             </Button>
           </div>
         </Field>
-        {reauth ? (
-          <Notice tone="pending" role="alert">
-            {reauth}
-          </Notice>
-        ) : null}
+        <ReauthNotice err={err} reauthUrl={reauthUrl} />
       </Form>
-      {created ? (
-        <Notice tone="accent" role="status">
-          <div className="space-y-1">
-            <p>Copy the token now — it is shown only once.</p>
-            <div className="flex items-center gap-2">
-              <code className="block max-w-full truncate rounded bg-surface-2 px-2 py-1 font-mono text-xs">
-                {created}
-              </code>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(created);
-                  setCopied(true);
-                }}
-              >
-                {copied ? "Copied" : "Copy"}
-              </Button>
-            </div>
+      ) : null}
+      <Dialog open={!!created} onOpenChange={(o) => !o && create.reset()}>
+        <DialogContent
+          title="Your new token"
+          description="Store it in your identity provider now; it cannot be shown again."
+        >
+          <div className="flex items-center gap-2">
+            <code className="block min-w-0 max-w-full flex-1 break-all rounded bg-surface-2 px-2 py-1 font-mono text-xs">
+              {created}
+            </code>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (created) void navigator.clipboard?.writeText(created);
+                setCopied(true);
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </Button>
           </div>
+          <div className="mt-4 flex justify-end">
+            <DialogClose asChild>
+              <Button>Done</Button>
+            </DialogClose>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {expiring.length > 0 ? (
+        <Notice tone="pending" role="status">
+          {expiring.length === 1
+            ? `The token “${expiring[0]!.name}” expires within 14 days.`
+            : `${expiring.length} tokens expire within 14 days.`}{" "}
+          Create a new one, paste it into your identity provider, then revoke the old one.
         </Notice>
       ) : null}
+      <ConfirmDialog
+        open={!!toRevoke}
+        onOpenChange={(o) => !o && setToRevoke(null)}
+        title="Revoke this token?"
+        description={`Your identity provider stops syncing as soon as “${toRevoke?.name ?? ""}” is revoked. This cannot be undone.`}
+        confirmLabel="Revoke token"
+        danger
+        busy={revoke.isPending}
+        onConfirm={() => {
+          if (toRevoke) revoke.mutate(toRevoke.id);
+          setToRevoke(null);
+        }}
+      />
       {tokens.data && tokens.data.tokens.length > 0 ? (
         <DataTable caption="SCIM tokens of this organization" className="max-w-xl">
           <thead>
@@ -214,7 +282,7 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
                 key={t.id}
                 t={t}
                 busy={revoke.isPending}
-                onRevoke={() => revoke.mutate(t.id)}
+                onRevoke={() => setToRevoke(t)}
               />
             ))}
           </tbody>
@@ -279,7 +347,7 @@ function StatusCard({ orgId, enabled }: { orgId: string; enabled: boolean }) {
         <div>
           <p className="mt-2 font-medium">Recent rejected requests</p>
           <ul className="list-disc space-y-0.5 pl-5 text-muted">
-            {s.errors.slice(0, 5).map((e, i) => (
+            {s.errors.slice(0, 20).map((e, i) => (
               <li key={i}>
                 <span className="font-mono text-xs">{e.method}</span> {e.resource} — {e.status}
                 {e.scim_type ? ` (${e.scim_type})` : ""}
@@ -319,7 +387,7 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
     ? oidcStartUrl(providers[0]!.id, { reauth: true, returnTo: `/o/${org.slug}/settings/directory` })
     : null;
   return (
-    <div className="max-w-[880px] space-y-8">
+    <div className="max-w-page-narrow space-y-8">
       <PageHeader
         title="Directory sync"
         description="Provision members from your identity provider over SCIM 2.0."
@@ -336,17 +404,24 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
             card
           >
             <div className="mb-4 max-w-xl">
-              <Field id="scim-base-url" label="Base URL">
-                <input
-                  id="scim-base-url"
-                  className={inputClass}
-                  readOnly
-                  value={s.base_url}
-                  onFocus={(e) => e.currentTarget.select()}
-                />
+              <Field
+                id="scim-base-url"
+                label="Base URL"
+                hint="Setup guide for Entra ID, Okta and Keycloak (base URL, token, attribute mapping userName / emails / active; do not send roles): docs/operator/scim-provisioning.md."
+              >
+                <div className="flex gap-2">
+                  <input
+                    id="scim-base-url"
+                    className={inputClass}
+                    readOnly
+                    value={s.base_url}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <CopyUrlButton url={s.base_url} />
+                </div>
               </Field>
             </div>
-            <SettingsForm orgId={org.id} initial={s} />
+            <SettingsForm orgId={org.id} initial={s} reauthUrl={reauthUrl} />
           </Section>
           <Section
             id="scim-tokens"
@@ -354,7 +429,7 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
             description="A token authenticates your identity provider against /scim/v2. It is shown once; create a new one and revoke the old one to rotate."
             card
           >
-            <TokenSection orgId={org.id} enabled={s.enabled} />
+            <TokenSection orgId={org.id} enabled={s.enabled} reauthUrl={reauthUrl} />
           </Section>
           <Section
             id="scim-status"
@@ -364,9 +439,6 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
           >
             <StatusCard orgId={org.id} enabled={s.enabled} />
           </Section>
-          {reauthUrl ? (
-            <span className="hidden" data-testid="scim-reauth-url" data-url={reauthUrl} />
-          ) : null}
         </>
       )}
     </div>

@@ -54,7 +54,7 @@ export function AnchorSwitch({
         Anchor to workspace
       </label>
       {anchor !== "workspace" ? (
-        <p className="ml-[1.625rem] text-xs text-muted">
+        <p className="ml-label-offset text-xs text-muted">
           The item will outlive any single member: it keeps running as long as the workspace has an active owner.
         </p>
       ) : null}

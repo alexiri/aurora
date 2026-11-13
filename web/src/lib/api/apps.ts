@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect } from "react";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -178,9 +179,19 @@ export function useConnections(scope: CredScope & { kind: "workspace" | "organiz
   return useQuery({
     queryKey: appKeys.connections(scope),
     queryFn: () =>
-      scope.kind === "workspace"
-        ? unwrap(api.GET("/v1/workspaces/{ws}/connections", { params: { path: { ws: scope.id } } }))
-        : unwrap(api.GET("/v1/orgs/{org}/connections", { params: { path: { org: scope.id } } })),
+      fetchAllPages((cursor) =>
+        scope.kind === "workspace"
+          ? unwrap(
+              api.GET("/v1/workspaces/{ws}/connections", {
+                params: { path: { ws: scope.id }, query: { limit: PAGE_LIMIT, cursor } },
+              }),
+            )
+          : unwrap(
+              api.GET("/v1/orgs/{org}/connections", {
+                params: { path: { org: scope.id }, query: { limit: PAGE_LIMIT, cursor } },
+              }),
+            ),
+      ),
     retry: false,
   });
 }

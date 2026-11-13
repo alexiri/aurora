@@ -61,7 +61,7 @@ export function MemoryTab({ agentId, memoryLanguage }: { agentId: string; memory
       </div>
       {list.isPending ? <Loading /> : null}
       {list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : null}
-      <div className="grid gap-6 md:grid-cols-[18rem_1fr]">
+      <div className="grid gap-6 md:layout-aside-lg">
         <div>
           {q.trim() ? (
             <>

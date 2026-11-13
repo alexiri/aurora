@@ -61,7 +61,7 @@ export function ConnectorsAdminView() {
   }
 
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       {view.kind === "detail" && detail ? null : (
         <PageHeader
           title="Connectors"

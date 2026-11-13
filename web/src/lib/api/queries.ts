@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -48,8 +49,15 @@ export function useOrg(orgId: string | undefined) {
 export function useWorkspaces(orgId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.workspaces(orgId ?? ""),
+    // Every page: a workspace past the 50th must still be bindable to a group (FIX-117).
     queryFn: () =>
-      unwrap(api.GET("/v1/orgs/{org}/workspaces", { params: { path: { org: orgId! } } })),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/orgs/{org}/workspaces", {
+            params: { path: { org: orgId! }, query: { limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
+      ),
     enabled: !!orgId,
     retry,
   });

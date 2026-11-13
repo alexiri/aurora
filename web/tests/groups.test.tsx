@@ -176,6 +176,54 @@ describe("Group detail", () => {
     expect(screen.queryByRole("form", { name: "Add member" })).toBeNull();
   });
 
+  it("unbinding one workspace asks for the impact of that workspace only (FIX-100)", async () => {
+    const calls = stub(detail(group(G1, "manual")));
+    wrap(<GroupDetail orgId={ORG} orgSlug="acme" id={G1} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove access to Main" }));
+    expect(await screen.findByText(/1 person would lose all access to Main/)).toBeInTheDocument();
+    const impact = calls.filter((c) => c.includes("/impact"));
+    expect(impact).toHaveLength(1);
+    expect(impact[0]).toContain(`/impact?unbind_workspace=${WS}`);
+    expect(impact[0]).not.toContain("remove_member");
+  });
+
+  it("a stale group revision shows group copy, refetches, and the next save uses the fresh revision (FIX-100)", async () => {
+    let revision = 1;
+    let gets = 0;
+    const patches: unknown[] = [];
+    stub({
+      ...detail(group(G1, "manual")),
+      [`GET /v1/groups/${G1}`]: () => {
+        gets += 1;
+        return json(200, group(G1, "manual", { revision }));
+      },
+      [`PATCH /v1/groups/${G1}`]: (body) => {
+        patches.push(body);
+        if ((body as { revision: number }).revision !== 2) {
+          revision = 2;
+          return json(409, { error: { code: "stale_revision", message: "The group changed since you loaded it." } });
+        }
+        return json(200, group(G1, "manual", { revision: 3 }));
+      },
+    });
+    wrap(<GroupDetail orgId={ORG} orgSlug="acme" id={G1} />);
+    fireEvent.change(await screen.findByLabelText("Description"), { target: { value: "new" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const alert = await screen.findByText(/This group was changed by someone else/);
+    expect(alert.textContent).not.toMatch(/policy/i);
+    // the refetch brought revision 2; the retry carries it
+    await waitFor(() => expect(gets).toBeGreaterThanOrEqual(2));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patches).toHaveLength(2));
+    expect((patches[1] as { revision: number }).revision).toBe(2);
+  });
+
+  it("a SCIM group has no enabled Delete (FIX-100)", async () => {
+    stub(detail(group(G1, "scim")));
+    wrap(<GroupDetail orgId={ORG} orgSlug="acme" id={G1} />);
+    expect(await screen.findByRole("button", { name: "Delete group" })).toBeDisabled();
+  });
+
   it("Admin needs a confirmation (never Owner is offered)", async () => {
     const calls = stub({
       ...detail(group(G1, "manual")),

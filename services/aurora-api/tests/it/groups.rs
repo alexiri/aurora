@@ -877,6 +877,72 @@ async fn impact_view_counts_users_that_would_lose_access() {
 }
 
 #[tokio::test]
+async fn impact_view_unbind_workspace_counts_only_that_workspace() {
+    let f = fx().await;
+    let g = f.create("infra", json!({})).await;
+    f.bind(g, "member").await;
+    f.add(g, f.plain.id).await;
+    // a second workspace of the same org the group is bound to as well
+    let ws2 = f.h.workspace(f.org).await;
+    let (s, v) = f
+        .call(
+            &f.owner,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws2}/access/groups/{g}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert!(s == 200 || s == 201 || s == 204, "{s} {v}");
+    // the whole group: both workspaces
+    let (_, v) = f
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/impact"),
+            None,
+        )
+        .await;
+    assert_eq!(v["workspaces"].as_array().unwrap().len(), 2, "{v}");
+    // unbinding one workspace names that workspace only
+    let (s, v) = f
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/impact?unbind_workspace={ws2}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let rows = v["workspaces"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["workspace"]["id"], ws2.to_string());
+    assert_eq!(rows[0]["total"], 1);
+    // a workspace the group is not bound to loses nothing
+    let ws3 = f.h.workspace(f.org).await;
+    let (_, v) = f
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/impact?unbind_workspace={ws3}"),
+            None,
+        )
+        .await;
+    assert_eq!(v["workspaces"].as_array().unwrap().len(), 0, "{v}");
+    // a group that maps to admin keeps reaching the workspace through the mapping
+    let adm = f.create("admins", json!({"org_role": "admin"})).await;
+    f.add(adm, f.plain.id).await;
+    let (_, v) = f
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{adm}/impact?unbind_workspace={ws2}"),
+            None,
+        )
+        .await;
+    assert_eq!(v["workspaces"].as_array().unwrap().len(), 0, "{v}");
+}
+
+#[tokio::test]
 async fn offboarding_views_carry_via_groups() {
     let f = fx().await;
     let g = f.create("infra", json!({})).await;

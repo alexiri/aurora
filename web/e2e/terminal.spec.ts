@@ -1,7 +1,8 @@
-import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-import { agent, mockApi, org } from "./support/mock-api";
-import { CANVAS, overflow, type Scheme } from "./support/open";
+import { agent, mockApi } from "./support/mock-api";
+import { CANVAS, overflow } from "./support/open";
+import { enc, mockWithTerminal, openTab, type MockPty } from "./support/terminal";
 
 // P4-TERM (docs/14 §Terminal tab, docs/18 §Web terminal): the agent Terminal tab against the
 // shared mock. Tab presence follows the instance switch (`features.terminal`, C-622) and the
@@ -9,54 +10,9 @@ import { CANVAS, overflow, type Scheme } from "./support/open";
 // WASM nor layout), fed by a mocked WebSocket that speaks the leg-1 protocol (C-619): binary
 // frames are PTY bytes, `pty.resize` is the one text control, `pty_id: 0` names the leg's PTY.
 // (SEC-87) The CSP carries `'wasm-unsafe-eval'` in script-src — asserted against the document
-// the dev server actually serves; the pane cannot compile its WASM without it.
-
-interface MockPty {
-  /** Bytes the PTY "printed" — sent to the pane on open. */
-  output: Uint8Array;
-  /** The `pty.resize` controls the pane sent, in order. */
-  resizes: { pty_id: number; cols: number; rows: number }[];
-}
-
-/** The leg-1 server half: replays the greeting, records the pane's resize controls. */
-function servePty(ws: WebSocketRoute, pty: MockPty) {
-  ws.onMessage((message) => {
-    if (typeof message === "string") {
-      const control = JSON.parse(message) as { kind?: string; pty_id?: number; cols?: number; rows?: number };
-      if (control.kind === "pty.resize") {
-        pty.resizes.push({ pty_id: control.pty_id ?? -1, cols: control.cols ?? 0, rows: control.rows ?? 0 });
-      }
-      return;
-    }
-    // Binary keystrokes are accepted and dropped (the mock shell does not echo).
-  });
-  if (pty.output.length > 0) ws.send(Buffer.from(pty.output));
-}
-
-/** The shared mock plus a leg-1 terminal WebSocket at `/v1/agents/{id}/terminal`. */
-async function mockWithTerminal(page: Page, pty: MockPty, over: { frozen?: boolean } = {}) {
-  await mockApi(page);
-  await page.route("**/v1/**", async (route) => {
-    const p = new URL(route.request().url()).pathname;
-    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
-    if (over.frozen && p.endsWith("/agents")) {
-      return json({
-        items: [{ ...agent, frozen: { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "ada@example.test", level: "agent", reason: "Runaway loop" } }],
-        next_cursor: null,
-      });
-    }
-    if (p === `/v1/orgs/${org.id}`) return json(org);
-    return route.fallback();
-  });
-  await page.routeWebSocket(/\/v1\/agents\/[^/]+\/terminal$/, (ws) => servePty(ws, pty));
-}
-
-async function openTab(page: Page, scheme: Scheme = "light", query = "?tab=terminal") {
-  await page.emulateMedia({ colorScheme: scheme });
-  await page.goto(`/o/acme/w/main/agents/daneel${query}`);
-  await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
-  await page.waitForLoadState("networkidle");
-}
+// the dev server actually serves; the pane cannot compile its WASM without it. The production
+// policy (colours, cell spans, the exact header) is asserted by terminal.prod.spec.ts, which runs
+// against `next build` + `next start` (FIX-098): `next dev` relaxes the CSP.
 
 test.describe("agent Terminal tab", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
@@ -95,7 +51,7 @@ test.describe("agent Terminal tab", () => {
   });
 
   test("renders the pane, sends the layout resize and shows PTY output", async ({ page }) => {
-    const pty: MockPty = { output: new TextEncoder().encode("daneel:/workspace$ "), resizes: [] };
+    const pty: MockPty = { output: enc("daneel:/workspace$ "), resizes: [] };
     await mockWithTerminal(page, pty);
     await openTab(page);
     await expect(page.getByRole("tablist", { name: "Agent" }).getByRole("tab", { name: "Terminal" })).toBeVisible();
@@ -110,11 +66,11 @@ test.describe("agent Terminal tab", () => {
     expect(pty.resizes[0]!.cols).toBeGreaterThan(80);
   });
 
-  test("a frozen agent shows the pause notice, never a pane", async ({ page }) => {
+  test("a frozen agent shows the freeze notice, never a pane", async ({ page }) => {
     const pty: MockPty = { output: new Uint8Array(), resizes: [] };
     await mockWithTerminal(page, pty, { frozen: true });
     await openTab(page);
-    await expect(page.getByText(/paused/i)).toBeVisible();
+    await expect(page.getByText(/This agent is frozen/i)).toBeVisible();
     await expect(page.getByRole("group", { name: "Agent terminal" })).toHaveCount(0);
   });
 
@@ -123,7 +79,7 @@ test.describe("agent Terminal tab", () => {
       test.describe(`themed ${width} px (${scheme})`, () => {
         test.use({ viewport: { width, height: 800 } });
         test("themed canvas, no horizontal scroll, pane present", async ({ page }) => {
-          const pty: MockPty = { output: new TextEncoder().encode("ready\r\n"), resizes: [] };
+          const pty: MockPty = { output: enc("ready\r\n"), resizes: [] };
           await mockWithTerminal(page, pty);
           await openTab(page, scheme);
           expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);

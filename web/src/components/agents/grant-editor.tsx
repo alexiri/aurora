@@ -65,7 +65,7 @@ export function GrantEditor({
       <DialogContent
         title={`Access to ${connection.label}`}
         description="What this agent may do through the connection."
-        className="w-[min(40rem,calc(100vw-2rem))]"
+        size="lg"
       >
         {open ? (
           <EditorLoader agentId={agentId} wsId={wsId} connection={connection} grant={grant} restrictions={restrictions} onClose={() => onOpenChange(false)} />

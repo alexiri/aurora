@@ -27,7 +27,7 @@ export function Th({ className, ...props }: ThHTMLAttributes<HTMLTableCellElemen
   return (
     <th
       scope="col"
-      className={cn("whitespace-nowrap bg-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.06em] text-muted", className)}
+      className={cn("whitespace-nowrap bg-canvas px-4 py-2.5 text-xs font-semibold uppercase tracking-label text-muted", className)}
       {...props}
     />
   );

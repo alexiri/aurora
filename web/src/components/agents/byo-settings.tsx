@@ -55,7 +55,7 @@ export function ByoSettings({ agent, wsId, canOwn }: { agent: Agent; wsId: strin
           <span className="text-muted">set by {byo.posture_level}</span>
         </p>
       )}
-      <dl className="grid gap-1 text-sm sm:grid-cols-[12rem_1fr]">
+      <dl className="grid gap-1 text-sm sm:layout-aside-sm">
         <dt className="text-muted">Effective source list</dt>
         <dd data-testid="effective-cidrs">
           {byo.effective_source_cidrs ? (

@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import type { BudgetTier } from "@/lib/api/skill-libraries";
@@ -74,7 +75,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillS
       {list.isPending ? <Loading /> : null}
       {list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : null}
       {list.data && items.length === 0 && !creating ? <EmptyState title="No skills yet" /> : null}
-      <div className="grid gap-6 md:grid-cols-[16rem_1fr]">
+      <div className="grid gap-6 md:layout-aside-md">
         <ul aria-label="Skills" className="min-w-0 space-y-1">
           {items.map((s) => (
             <li key={s.id} className="min-w-0">
@@ -225,9 +226,7 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
           <textarea id="sk-body" className={`${inputClass} font-mono`} rows={10} value={body} readOnly={contentReadOnly} onChange={(e) => setBody(e.target.value)} />
         </Field>
         <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
-        <label className="flex items-center gap-2 text-sm font-medium text-ink">
-          <input type="checkbox" className="size-4 accent-accent" checked={enabled} disabled={readOnly} onChange={(e) => setEnabled(e.target.checked)} /> Enabled
-        </label>
+        <CheckboxField id="skill-enabled" label="Enabled" checked={enabled} disabled={readOnly} onChange={setEnabled} />
         {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
         {readOnly ? null : (
           <div className="flex flex-wrap gap-2">
@@ -297,9 +296,7 @@ function SkillFiles({ scope, skill, readOnly = false }: { scope: SkillScope; ski
             <textarea id="sf-text" className={`${inputClass} font-mono`} rows={4} value={text} onChange={(e) => setText(e.target.value)} />
           </Field>
         ) : null}
-        <label className="flex items-center gap-2 text-sm text-ink">
-          <input type="checkbox" className="size-4 accent-accent" checked={exec} onChange={(e) => setExec(e.target.checked)} /> Executable
-        </label>
+        <CheckboxField id="skill-file-executable" label="Executable" checked={exec} onChange={setExec} />
         <Button type="submit" size="sm" disabled={put.isPending}>Save file</Button>
       </form>}
     </section>

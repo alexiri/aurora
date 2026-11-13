@@ -18,7 +18,7 @@ export function TypingRow({ agent, line }: { agent?: AgentIdent; line?: string }
   return (
     <div role="status" className="flex items-end gap-2">
       <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={32} className="shrink-0" />
-      <div className="flex max-w-[88%] items-center gap-2 rounded-card rounded-tl-sm bg-subtle px-3.5 py-2.5 text-sm text-ink-2">
+      <div className="flex max-w-chat-card items-center gap-2 rounded-card rounded-tl-sm bg-subtle px-3.5 py-2.5 text-sm text-ink-2">
         <span aria-hidden="true" className="flex gap-1">
           <span className="size-1.5 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
           <span className="size-1.5 animate-pulse rounded-full bg-muted [animation-delay:150ms] motion-reduce:animate-none" />
@@ -68,7 +68,7 @@ export function ErrorBlock({
         : undefined;
   const links = [copy.link, copy.extra].filter((l): l is ErrorLink => !!l && (!l.ownerOnly || canOwn));
   return (
-    <div role="alert" className="max-w-[min(88%,720px)] rounded-card rounded-tl-sm border border-danger-ink/30 bg-danger-soft px-3.5 py-2.5 text-sm text-danger-ink">
+    <div role="alert" className="max-w-chat-card rounded-card rounded-tl-sm border border-danger-ink/30 bg-danger-soft px-3.5 py-2.5 text-sm text-danger-ink">
       <p className="break-words">
         {copy.message}
         {links.map((l) => {
@@ -191,7 +191,7 @@ export function ContinueNotice({ text, convId }: { text: string; convId: string 
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   return (
-    <Notice className="mx-auto flex max-w-[min(100%,620px)] flex-wrap items-center gap-2">
+    <Notice className="mx-auto flex max-w-chat-notice flex-wrap items-center gap-2">
       <p className="min-w-0 flex-1">{text || "The agent paused after reaching the automated turn limit."}</p>
       <Button
         size="sm"
@@ -220,5 +220,5 @@ export function ContinueNotice({ text, convId }: { text: string; convId: string 
 
 /** A platform notice or a small system line (follow-up joined, correction). */
 export function SystemRow({ children }: { children: React.ReactNode }) {
-  return <p className="mx-auto max-w-[min(100%,620px)] rounded-control bg-subtle px-3 py-1.5 text-center text-xs text-ink-2">{children}</p>;
+  return <p className="mx-auto max-w-chat-notice rounded-control bg-subtle px-3 py-1.5 text-center text-xs text-ink-2">{children}</p>;
 }

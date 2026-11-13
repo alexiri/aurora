@@ -49,7 +49,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
   if (settled) {
     const label = st.status === "expired" ? "Expired" : st.status === "approve" ? "Approved" : "Denied";
     return (
-      <div role="status" className="flex max-w-[min(88%,720px)] flex-wrap items-center gap-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel px-3 py-2 text-sm text-ink">
+      <div role="status" className="flex max-w-chat-card flex-wrap items-center gap-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel px-3 py-2 text-sm text-ink">
         <Badge tone={st.status === "approve" ? "accent" : st.status === "deny" ? "danger" : "neutral"}>
           {label}
           {st.by ? ` by ${st.by}` : ""}
@@ -59,7 +59,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
     );
   }
   return (
-    <div className="max-w-[min(88%,720px)] space-y-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel p-3 text-sm text-ink">
+    <div className="max-w-chat-card space-y-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel p-3 text-sm text-ink">
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone="pending">Held</Badge>
         <p className="font-semibold text-pending-ink">Approval requested</p>
@@ -103,7 +103,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
 export function ActionApprovalNote({ summary, wsId }: { summary: string; wsId: string }) {
   const canApprove = useCanApprove(wsId);
   return (
-    <div className="flex max-w-[min(88%,720px)] flex-wrap items-center gap-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel px-3 py-2 text-sm text-pending-ink">
+    <div className="flex max-w-chat-card flex-wrap items-center gap-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel px-3 py-2 text-sm text-pending-ink">
       <Badge tone="pending">Held</Badge>
       <span className="min-w-0 break-words">
         Action approval: {summary} {canApprove ? "(decide in Approvals)" : "(waiting for an approver)"}

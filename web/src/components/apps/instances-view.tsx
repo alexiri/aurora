@@ -339,7 +339,7 @@ function OrgFilter({ value, onChange }: { value: string; onChange: (v: string) =
   return (
     <select
       aria-label="Organization"
-      className={`${inputClass} w-auto max-w-[14rem]`}
+      className={`${inputClass} w-auto max-w-56`}
       value={value}
       onChange={(e) => onChange(e.target.value)}
     >

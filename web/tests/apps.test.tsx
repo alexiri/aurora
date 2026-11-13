@@ -97,18 +97,36 @@ describe("availability editor", () => {
     expect(toggleAllow([], "a", null)).toEqual([{ app_id: "a" }]);
     expect(toggleAllow([{ app_id: "a" }], "a", null)).toEqual([]);
   });
-  it("PUTs the whole list", async () => {
-    let body: unknown;
+  const availabilityFetch = (state: { posture: string; allow: unknown[] }, puts: unknown[]) =>
     vi.stubGlobal("fetch", vi.fn(async (input: Request) => {
-      body = await input.json();
-      return json(200, body);
+      if (input.method === "PUT") {
+        const b = (await input.json()) as { posture: string; allow: unknown[] };
+        puts.push(b);
+        return json(200, b);
+      }
+      return json(200, state);
     }));
-    wrap(<AvailabilityEditor orgId="o1" initial={{ posture: "open", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
-    fireEvent.click(screen.getByLabelText(/Restricted/));
+
+  it("PUTs the whole list with the posture as it is (restricted: the toggles show)", async () => {
+    const puts: unknown[] = [];
+    availabilityFetch({ posture: "restricted", allow: [] }, puts);
+    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "restricted", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
+    // the posture is not set here any more (FIX-130): no radio, a link to Governance
+    expect(screen.queryByLabelText(/Restricted/)).toBeNull();
+    expect(screen.getByRole("link", { name: "Governance" })).toHaveAttribute("href", "/o/acme/governance");
     fireEvent.click(screen.getByLabelText("GitHub"));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(body).toEqual({ posture: "restricted", allow: [{ app_id: "gh" }] }));
+    await waitFor(() => expect(puts).toEqual([{ posture: "restricted", allow: [{ app_id: "gh" }] }]));
     await screen.findByText("Saved.");
+  });
+
+  it("while the posture is open it says so and links to Governance, with no toggles", () => {
+    availabilityFetch({ posture: "open", allow: [] }, []);
+    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "open", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
+    expect(screen.getByText(/Every app is available/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Governance" })).toHaveAttribute("href", "/o/acme/governance");
+    expect(screen.queryByLabelText("GitHub")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });
 

@@ -893,21 +893,28 @@ pub struct ImpactWorkspace {
 /// `admin`): the users who would lose **all** access (after counting direct bindings, their org
 /// role and every *other* group), the enabled creator-anchored schedules and webhooks that
 /// would stop firing, and the live personal API keys confined to the workspace.
+///
+/// With `unbind_workspace`, only that workspace is considered and only its binding is taken
+/// away: a group that maps to `admin` keeps reaching it (nothing is lost), and a workspace the
+/// group is not bound to is omitted.
 pub async fn impact(
     conn: &mut PgConnection,
     group: &GroupRow,
     remove_member: Option<Uuid>,
+    unbind_workspace: Option<Uuid>,
 ) -> Result<Vec<ImpactWorkspace>, DbError> {
     let workspaces: Vec<(Uuid, String, String)> = sqlx::query_as(
         "SELECT w.id, w.name, w.slug FROM workspaces w \
           WHERE w.org_id = $1 AND ($2::text = 'admin' OR EXISTS (\
                 SELECT 1 FROM group_workspace_access b \
                  WHERE b.group_id = $3 AND b.workspace_id = w.id)) \
+            AND ($4::uuid IS NULL OR (w.id = $4 AND $2::text <> 'admin')) \
           ORDER BY w.name, w.id",
     )
     .bind(group.org_id)
     .bind(group.org_role.as_deref().unwrap_or(""))
     .bind(group.id)
+    .bind(unbind_workspace)
     .fetch_all(&mut *conn)
     .await?;
     let mut out = Vec::new();

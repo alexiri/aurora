@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { api, ApiError } from "./client";
 import { useWorkspace } from "./queries";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import { setRateNotice } from "./rate-limit";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -29,6 +30,8 @@ export const approvalKeys = {
 
 export interface PendingData {
   items: Approval[];
+  /** More pending approvals exist than the pages read (the ceiling of `fetchAllPages`). */
+  truncated?: boolean;
 }
 
 /** Pure reducer: apply an SSE event to the pending list. */
@@ -37,9 +40,9 @@ export function applyApprovalEvent(data: PendingData | undefined, evt: ApprovalE
   const { approval } = evt;
   const rest = data.items.filter((a) => a.id !== approval.id);
   if (evt.event === "created" && approval.status === "pending") {
-    return { items: [...rest, approval].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
+    return { ...data, items: [...rest, approval].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
   }
-  return { items: rest };
+  return { ...data, items: rest };
 }
 
 export function parseApprovalEvent(raw: string): ApprovalEvent | null {
@@ -53,12 +56,15 @@ export function parseApprovalEvent(raw: string): ApprovalEvent | null {
 }
 
 async function fetchPending(wsId: string): Promise<PendingData> {
-  const page = await unwrap(
-    api.GET("/v1/workspaces/{ws}/approvals", {
-      params: { path: { ws: wsId }, query: { status: "pending", limit: 200 } },
-    }),
+  // Every pending approval is decidable from the dashboard, so every page is read (FIX-117).
+  const all = await fetchAllPages((cursor) =>
+    unwrap(
+      api.GET("/v1/workspaces/{ws}/approvals", {
+        params: { path: { ws: wsId }, query: { status: "pending", limit: PAGE_LIMIT, cursor } },
+      }),
+    ),
   );
-  return { items: [...page.items].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
+  return { items: [...all.items].sort((a, b) => a.created_at.localeCompare(b.created_at)), truncated: all.truncated };
 }
 
 /** Phase 2, RFE-012 (D-55): `can_approve` = effective workspace role owner or approver. */
@@ -90,6 +96,9 @@ export function useApprovalsStream(wsId: string): { live: boolean } {
       // A refused connection (e.g. 429 too_many_streams) is CLOSED, not retried by the browser.
       if (es.readyState === EventSource.CLOSED) setRateNotice({ kind: "streams" });
     };
+    // (FIX-099, C-10) The server's `resync` frame: notifications may have been missed (a lagged receiver, a bus
+    // reconnect) — refetch rather than keep decided or expired approvals as pending.
+    es.addEventListener("resync", () => void qc.invalidateQueries({ queryKey: approvalKeys.all(wsId) }));
     es.addEventListener("approval", (e) => {
       const evt = parseApprovalEvent((e as MessageEvent<string>).data);
       if (!evt || evt.approval.workspace_id !== wsId) return;
@@ -103,7 +112,7 @@ export function useApprovalsStream(wsId: string): { live: boolean } {
 
 function removeFromPending(qc: QueryClient, wsId: string, ids: (string | undefined)[]) {
   qc.setQueryData<PendingData>(approvalKeys.pending(wsId), (d) =>
-    d ? { items: d.items.filter((a) => !ids.includes(a.id)) } : d,
+    d ? { ...d, items: d.items.filter((a) => !ids.includes(a.id)) } : d,
   );
 }
 

@@ -78,7 +78,7 @@ export function CredentialsView({
   };
 
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader
         title={title}
         description="Secrets, LLM keys and app connections that agents use through the gateway."

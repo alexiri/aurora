@@ -203,7 +203,7 @@ export function ChannelsView({ orgId }: { orgId: string }) {
   const updatingConnector = updating ? (byId.get(updating.connector_id) ?? null) : null;
 
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader
         title="Channels"
         description="Connect chat platforms so people can talk to agents where they already work."

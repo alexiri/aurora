@@ -27,6 +27,9 @@ if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; 
 echo "== no-dev-idp-in-release (SEC-42)"
 bash scripts/guards/no-dev-idp-in-release.sh
 
+echo "== ghostty-wasm (FIX-098: the vendored terminal WASM matches its recorded sha256 and the pinned package)"
+bash scripts/guards/ghostty-wasm.sh
+
 echo "== no-live-tokens (built-in plugin fixtures)"
 bash scripts/guards/no-live-tokens.sh
 

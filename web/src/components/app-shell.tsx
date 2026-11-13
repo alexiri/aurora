@@ -6,6 +6,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useId, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
+import { useScimSettings } from "@/lib/api/scim";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
@@ -103,7 +104,7 @@ function SidebarSelect({
   const id = useId();
   return (
     <div data-testid={testId} className="space-y-1.5">
-      <p id={`${id}-caption`} className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+      <p id={`${id}-caption`} className="px-1 text-label font-semibold uppercase tracking-label text-muted">
         {caption}
       </p>
       <Menu>
@@ -297,6 +298,10 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
   const org = useOrg(resolved.data?.org.id);
   const role = org.data?.my_role;
   const admin = role === "owner" || role === "admin";
+  const isOwner = role === "owner";
+  // Directory sync (docs/14): owners only, and only where the instance has `scim.enabled`.
+  const scim = useScimSettings(isOwner ? resolved.data?.org.id : undefined);
+  const directory = isOwner && scim.data?.available === true;
   const base = `/o/${orgSlug}`;
   const item = (href: string, label: string, icon: IconType, active: boolean) => (
     <NavItem key={href} href={href} label={label} icon={icon} active={active} />
@@ -308,7 +313,7 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
         {item(`${base}/credentials`, "Credentials", KeyIcon, pathname.startsWith(`${base}/credentials`))}
         {item(`${base}/apps`, "Apps", PlugIcon, pathname.startsWith(`${base}/apps`))}
         {item(`${base}/governance`, "Governance", ScaleIcon, pathname.startsWith(`${base}/governance`))}
-        {admin ? ORG_LINKS.map((l) => item(`${base}/${l.path}`, l.label, l.icon, pathname.startsWith(`${base}/${l.path}`))) : null}
+        {admin ? ORG_LINKS.filter((l) => l.path !== "settings/directory" || directory).map((l) => item(`${base}/${l.path}`, l.label, l.icon, pathname.startsWith(`${base}/${l.path}`))) : null}
       </ul>
     </nav>
   );
@@ -320,7 +325,7 @@ function PendingPill({ wsId }: { wsId: string }) {
   const n = pending.data?.items.length ?? 0;
   if (n === 0) return null;
   return (
-    <span className="rounded-full bg-pending-soft px-1.5 text-[11px] font-semibold leading-5 tabular-nums text-pending-ink">
+    <span className="rounded-full bg-pending-soft px-1.5 text-label font-semibold leading-5 tabular-nums text-pending-ink">
       {n}
     </span>
   );
@@ -420,10 +425,13 @@ function SidebarContent({
   pathname: string;
 }) {
   const base = orgSlug && wsSlug ? `/o/${orgSlug}/w/${wsSlug}` : null;
+  // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
+  // advertise it to a signed-in member who typed an /admin path, WEBA-11).
+  const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
-        <AuroraLogo className="h-[38px] w-auto" />
+        <AuroraLogo className="h-9.5 w-auto" />
       </Link>
       {/* FIX-027: two stacked selects on every page — organization, then (only with an active
           organization) its workspaces. "All organizations" in the first one is the single path
@@ -435,7 +443,7 @@ function SidebarContent({
           <WorkspaceNav base={base} wsId={wsId} pathname={pathname} />
         ) : orgSlug ? (
           <OrgNav orgSlug={orgSlug} pathname={pathname} />
-        ) : pathname.startsWith("/admin") ? (
+        ) : pathname.startsWith("/admin") && isInstanceAdmin ? (
           <AdminNavList pathname={pathname} />
         ) : pathname.startsWith("/account") ? (
           <AccountNavList pathname={pathname} />
@@ -517,7 +525,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DialogPrimitive.Portal>
           </DialogPrimitive.Root>
         </div>
-        <main className="mx-auto w-full max-w-[1160px] space-y-4 px-4 py-6 md:px-8 md:py-8">
+        <main className="mx-auto w-full max-w-page space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
           {children}

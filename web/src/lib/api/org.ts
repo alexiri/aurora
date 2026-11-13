@@ -3,6 +3,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -104,10 +105,12 @@ export function useInvitations(orgId: string) {
   return useQuery({
     queryKey: orgKeys.invitations(orgId),
     queryFn: () =>
-      unwrap(
-        api.GET("/v1/orgs/{org}/invitations", {
-          params: { path: { org: orgId }, query: { status: "pending", limit: 200 } },
-        }),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/orgs/{org}/invitations", {
+            params: { path: { org: orgId }, query: { status: "pending", limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
       ),
     retry,
   });
@@ -135,10 +138,12 @@ export function useOrgKeys(orgId: string) {
   return useQuery({
     queryKey: orgKeys.keys(orgId),
     queryFn: () =>
-      unwrap(
-        api.GET("/v1/orgs/{org}/api-keys", {
-          params: { path: { org: orgId }, query: { limit: 200 } },
-        }),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/orgs/{org}/api-keys", {
+            params: { path: { org: orgId }, query: { limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
       ),
     retry,
   });

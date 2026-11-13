@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test",
+    "e2e:prod": "AURORA_E2E_PROD=1 playwright test --project production",
     "gen:api": "openapi-typescript openapi.json -o src/lib/api/schema.d.ts"
   },
   "dependencies": {

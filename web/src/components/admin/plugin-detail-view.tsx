@@ -116,7 +116,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
 
   if (uninstalled) {
     return (
-      <Notice tone="accent" role="status" className="max-w-[880px]">
+      <Notice tone="accent" role="status" className="max-w-page-narrow">
         Plugin uninstalled. <Link href="/admin/plugins" className="font-medium underline">Back to plugins</Link>
       </Notice>
     );
@@ -131,7 +131,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
     uninstall.isError && liveCount === null ? uninstall.error : null;
 
   return (
-    <div className="max-w-[880px] space-y-5">
+    <div className="max-w-page-narrow space-y-5">
       <PageHeader
         title={
           <>

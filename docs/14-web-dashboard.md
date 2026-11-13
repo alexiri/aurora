@@ -195,8 +195,25 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   content, inside the shell.
 - **Page header** on every shell page: breadcrumb (org/workspace/section
   links), title, one-line description where the page has one, primary actions
-  right-aligned (wrapping on narrow screens). Content max width is 1160 px, or
-  880 px for single-column pages such as Approvals.
+  right-aligned (wrapping on narrow screens). **Page widths are theme tokens**,
+  never arbitrary values: `max-w-page` (1160 px) for list and detail pages,
+  `max-w-page-narrow` (880 px) for single-column pages such as Approvals; the
+  agent page uses neither (FIX-129: the full content width). Other one-off sizes
+  that recur are tokens too: `tracking-label`/`text-label` (caps labels),
+  `max-w-bubble`/`max-w-chat-card`/`max-w-chat-notice` and `rounded-*-tail`
+  (chat), `layout-aside-sm|md|lg` (a fixed aside next to a fluid column from
+  `md`), `sm:mt-label-offset` (aligns a button with the input of the field
+  beside it). `web/tests/arbitrary-values.test.ts` fails on any other
+  arbitrary Tailwind value (`[12px]`, `[80%]`, `[min(…)]`) except the few on its
+  commented allow-list.
+- **Lists follow their cursors** (`docs/05` list convention, FIX-117): the API pages
+  at 50 by default and 200 at most, so a dashboard list that must be complete
+  (pickers, approvals, keys, members, organizations, connections, conversations)
+  reads every page through the shared `fetchAllPages` (`lib/api/paging.ts`, ceiling
+  10 pages) and shows `MoreNotShown` if the ceiling was hit; lists that can be
+  longer use an infinite query with "Load more". A picker with more than eight
+  options gets a text filter (`PickerFilter`: "add by name or e-mail"). A
+  conversation deep link outside the loaded pages is fetched by id.
 
 **Components** (`web/src/components/ui/`):
 - **Button**: `primary` (ink), `outline`, `approve` (accent), `ghost`,
@@ -210,7 +227,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Card**.
 - **Tabs**: segmented style for page-level views such as Approvals
   Pending/Actions/History, and underline style for the agent page's tab strip
-  (scrolls horizontally on narrow screens).
+  (FIX-129: it never scrolls sideways; `overflow="menu"` moves the tabs that do
+  not fit into a trailing **More ▾** menu, the selected tab is always shown).
 - **Field**: label, hint and error text linked by `aria-describedby`;
   `aria-invalid` sets the error border.
 - **Avatar**: initial on a tinted tile when there is no image.
@@ -250,7 +268,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   buttons.
 - **Agent page** (phases 2–4): header with a 44 px avatar, then name, `@handle`,
   kind/default badges and a sandbox-state pill on one wrapping line, with the
-  header actions (Freeze) on the right; an underline tab strip below it.
+  header actions (Freeze) on the right; an underline tab strip below it (FIX-129:
+  the page uses the full content width, not a 896 px column — long-form panels
+  such as Instructions keep a readable width inside themselves; the tab strip
+  collapses what does not fit into **More**, so neither the page nor the strip
+  scrolls sideways at 390, 768, 1280 or 1920 px).
   Replaced in phase 5 by **Agent page (phase 5)** below.
   (FIX-025, D-158) The pill never sits on "Sandbox starting" forever: while
   starting it says "Sandbox starting" (with the live phase on the Computer
@@ -504,9 +526,9 @@ here, add it here and document it.
 | Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
-| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. |
+| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
-| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The strip scrolls within itself at 390 px. |
+| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
 | Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. |
@@ -582,9 +604,10 @@ again" and "Show the getting-started guide again".
   (read-only), and a table of the org's shares (agent, workspace, port, state, last accessed)
   with a link to each agent. Turning it off asks for confirmation ("Existing links stop working
   until you turn it back on") and is audited.
-- **Apps**: app availability posture and allow-list.
+- **Apps**: the per-app availability list (FIX-130). The toggles are shown only while the org's app posture is `restricted`; while it is `open` the page says "Every app is available — change in Governance" with a link. The posture itself moved to Governance › Apps; both screens save through the same `PUT /v1/orgs/{org}/app-availability` (the posture with the allow-list as it currently is), each with its own Save. Owners and admins only.
 - **Self-hosted apps** (`/o/<org>/instances`, phase 2, D-74; renamed from "Instances", FIX-132: one term in the navigation, titles, empty states and help — "Register your own GitLab, GitHub Enterprise Server, Indico … so people can connect to it"; the route and the API names stay): the org's registered self-hosted app instances plus the read-only instance-wide ones; a refused host names its holder (static claim → app and package, LLM endpoint, Aurora's own address, registration → app and scope; never another organization's name to an organization admin); owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first), and OAuth clients can be bound to an instance.
 - **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
+  - *Apps* (FIX-130; owners and admins; its own tab and its own Save, not part of "Save governance"): the **app posture** — Open (every active app can be connected) or Restricted (only the apps listed as available) — with its explanation and a link "Choose available apps →" to Org › Apps.
   - *Model access*: per instance endpoint — permitted or not, key scopes
     (organization / workspace), origin narrowing (e.g. Anthropic organization
     and workspace ids, LiteLLM teams), model allow-list; LLM posture
@@ -758,13 +781,19 @@ again" and "Show the getting-started guide again".
     non-`can_use` caller never sees the tab, a frozen agent shows the freeze banner and no
     terminal. A parked sandbox shows "Waking…" (the open is the wake demand) and the terminal
     attaches on ready. The pane is **wterm** with the **Ghostty core** (`@wterm/ghostty`,
-    vendored, the ~400 KB WASM served same-origin as a hashed static asset with
-    `Content-Type: application/wasm`): DOM rendering (native text selection, browser find,
+    vendored, the 599,368-byte WASM served same-origin as a version-named static asset,
+    `ghostty-vt-<version>.wasm`, with `Content-Type: application/wasm`; its sha256 is
+    recorded in `scripts/guards/ghostty-wasm.sha256` and a guard fails when the file or the
+    pinned package drifts from it): DOM rendering (native text selection, browser find,
     screen-reader access — the reason for this core), IME composition, OSC 8 links, 24-bit
     color, alternate screen, dirty-row rendering; themes are CSS custom properties mapped to
     the dashboard tokens (both themes). Resize uses the pane's measured cell geometry and
     sends `pty.resize`; a dropped WebSocket reconnects with backoff and a visible state
-    ("Reconnecting…"); session end states (frozen, parked, stopped, runner without terminal
+    ("Reconnecting…", with its attempt count; four attempts, twelve while the sandbox wakes —
+    the C-621 wake budget). The close code decides first: 4403, 4404, 4409, 4504 and a
+    shell's 1000 end the pane with their reason even while waking; 1006, 4502 and 4503 retry
+    whether or not the close frame was clean. While not connected the pane says "Not
+    connected" and keystrokes are not sent (nor queued); session end states (frozen, parked, stopped, runner without terminal
     support) render as notices, never silent closes. wterm never touches the clipboard
     automatically: selection copy is the browser's own; an application's OSC 52 write shows a
     "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). Keystrokes leave the tab as

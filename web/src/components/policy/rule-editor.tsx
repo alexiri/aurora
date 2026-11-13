@@ -232,7 +232,7 @@ export function RuleEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title={initial.logical_id ? "Edit rule" : "Add rule"} className="max-h-[90vh] w-[min(40rem,calc(100vw-2rem))] overflow-y-auto">
+      <DialogContent title={initial.logical_id ? "Edit rule" : "Add rule"} size="lg">
         <form onSubmit={submit} className="space-y-4" aria-label="Rule editor">
           <Field id="rule-name" label="Name" error={error ?? undefined}>
             <input id="rule-name" className={inputClass} value={rule.name} onChange={(e) => patch({ name: e.target.value })} />

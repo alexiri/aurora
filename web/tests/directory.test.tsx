@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -134,7 +134,7 @@ describe("Directory sync page", () => {
         (body as { exclusive?: boolean }).exclusive
           ? json(412, { error: { code: "reauth_required", message: "reauth" } })
           : json(200, settings()),
-      "GET /v1/instance": () => json(200, { oidc_providers: [] }),
+      "GET /v1/instance": () => json(200, { oidc_providers: [{ id: "corp" }] }),
     });
     wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
     const exclusive = await screen.findByRole("checkbox", { name: /Directory-managed membership/ });
@@ -143,9 +143,62 @@ describe("Directory sync page", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(/Confirm it is you/),
     );
-    expect(
-      calls.some((c) => c.startsWith(`PUT /v1/orgs/${ORG}/scim`)),
-    ).toBe(true);
+    // FIX-100: the notice carries a usable link to the provider's re-authentication.
+    const link = await screen.findByRole("link", { name: /sign in again with your provider/ });
+    const href = new URL(link.getAttribute("href")!, "http://localhost");
+    expect(href.pathname).toBe("/v1/auth/oidc/corp/start");
+    expect(href.searchParams.get("reauth")).toBe("1");
+    expect(href.searchParams.get("return_to")).toBe("/o/acme/settings/directory");
+    const put = calls.find((c) => c.startsWith(`PUT /v1/orgs/${ORG}/scim`))!;
+    // only the changed field is sent (the unchanged domain list is not)
+    expect(put).toContain('{"exclusive":true}');
+    expect(put).not.toContain("email_domains");
+    expect(put).not.toContain('"enabled"');
+  });
+
+  it("sends the domain list only when it changed", async () => {
+    const calls = stub({
+      [`GET /v1/orgs/${ORG}/scim`]: () => json(200, settings()),
+      [`GET /v1/orgs/${ORG}/scim/tokens`]: () => json(200, { tokens }),
+      [`PUT /v1/orgs/${ORG}/scim`]: () => json(200, settings({ email_domains: ["example.com", "example.org"] })),
+      "GET /v1/instance": () => json(200, { oidc_providers: [] }),
+    });
+    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
+    fireEvent.change(await screen.findByLabelText(/Allowed e-mail domains/), {
+      target: { value: "Example.com, example.org" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(calls.some((c) => c.startsWith("PUT"))).toBe(true));
+    const put = calls.find((c) => c.startsWith("PUT"))!;
+    expect(put).toContain('{"email_domains":["example.com","example.org"]}');
+    expect(put).not.toContain('"enabled"');
+    expect(put).not.toContain('"exclusive"');
+  });
+
+  it("offers no token form while directory sync is off", async () => {
+    stub({
+      [`GET /v1/orgs/${ORG}/scim`]: () => json(200, settings({ enabled: false })),
+      "GET /v1/instance": () => json(200, { oidc_providers: [] }),
+    });
+    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
+    expect(await screen.findByText("Enable directory sync to create a token.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("New token name")).not.toBeInTheDocument();
+  });
+
+  it("shows the base URL with a copy button, the expiry banner and up to 20 errors", async () => {
+    const errors = Array.from({ length: 20 }, (_, i) => ({
+      at: now, method: "POST", resource: `/Users/${i}`, status: 400, scim_type: "invalidValue",
+    }));
+    stub({
+      [`GET /v1/orgs/${ORG}/scim`]: () => json(200, settings()),
+      [`GET /v1/orgs/${ORG}/scim/tokens`]: () => json(200, { tokens }),
+      [`GET /v1/orgs/${ORG}/scim/status`]: () => json(200, { ...status, errors }),
+      "GET /v1/instance": () => json(200, { oidc_providers: [] }),
+    });
+    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
+    expect(await screen.findByRole("button", { name: "Copy base URL" })).toBeInTheDocument();
+    expect(await screen.findByText(/The token “old” expires within 14 days/)).toBeInTheDocument();
+    expect(await screen.findByText(/\/Users\/19\b/)).toBeInTheDocument();
   });
 
   it("creates a token, shows it once, then only the prefix", async () => {
@@ -160,14 +213,41 @@ describe("Directory sync page", () => {
       target: { value: "Okta" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create token" }));
-    expect(await screen.findByText(/shown only once/)).toBeInTheDocument();
+    expect(await screen.findByText(/it cannot be shown again/)).toBeInTheDocument();
     expect(screen.getByText("aud_NEW1234567890abcdef")).toBeInTheDocument();
     // Never sent again: the list call still returns only the prefixes.
     expect(calls.some((c) => c.includes("aud_NEW1234567890abcdef") && c.startsWith("GET"))).toBe(
       false,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    expect(screen.getByText("Copied")).toBeInTheDocument();
+    const dlg = screen.getByRole("dialog");
+    fireEvent.click(within(dlg).getByRole("button", { name: "Copy" }));
+    expect(within(dlg).getByText("Copied")).toBeInTheDocument();
+    fireEvent.click(within(dlg).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByText("aud_NEW1234567890abcdef")).not.toBeInTheDocument());
+  });
+
+  it("drops the created token from the mutation cache when the page is left", async () => {
+    stub({
+      [`GET /v1/orgs/${ORG}/scim`]: () => json(200, settings()),
+      [`GET /v1/orgs/${ORG}/scim/tokens`]: () => json(200, { tokens }),
+      [`POST /v1/orgs/${ORG}/scim/tokens`]: () =>
+        json(201, { ...tokens[0], id: "t3", name: "Okta", token: "aud_NEW1234567890abcdef" }),
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(await screen.findByLabelText("New token name"), { target: { value: "Okta" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+    await screen.findByText("aud_NEW1234567890abcdef");
+    view.unmount();
+    // (gcTime 0: the cache drops the finished mutation on the next tick)
+    await waitFor(() => {
+      const held = qc.getMutationCache().getAll().some((m) => JSON.stringify(m.state.data ?? null).includes("aud_NEW"));
+      expect(held).toBe(false);
+    });
   });
 
   it("revokes a token", async () => {
@@ -179,6 +259,10 @@ describe("Directory sync page", () => {
     wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
     expect(await screen.findByText("Entra ID")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "Revoke" })[0]!);
+    // FIX-100: a confirm comes first; nothing is sent until it is accepted.
+    const dlg = await screen.findByRole("dialog");
+    expect(calls.some((c) => c.startsWith("DELETE"))).toBe(false);
+    fireEvent.click(within(dlg).getByRole("button", { name: "Revoke token" }));
     await waitFor(() =>
       expect(calls.some((c) => c.startsWith("DELETE /v1/scim/tokens/t1"))).toBe(true),
     );
@@ -221,6 +305,33 @@ describe("Members Directory badge", () => {
       /></tbody></table>,
     );
     expect(screen.getByText("Directory (suspended)")).toBeInTheDocument();
+  });
+
+  it("a directory-linked member has a disabled role select with the explanation (D-178)", () => {
+    render(
+      <table><tbody><MemberRow
+        m={m({ state: "active" })}
+        viewer="owner"
+        onRole={noop}
+        onStatus={noop}
+        onRemove={noop}
+      /></tbody></table>,
+    );
+    expect(screen.getByLabelText("Role for scim@example.com")).toBeDisabled();
+    expect(screen.getByText(/Managed by your identity provider/)).toBeInTheDocument();
+  });
+
+  it("a member without a directory link keeps an enabled role select", () => {
+    render(
+      <table><tbody><MemberRow
+        m={m(null)}
+        viewer="owner"
+        onRole={noop}
+        onStatus={noop}
+        onRemove={noop}
+      /></tbody></table>,
+    );
+    expect(screen.getByLabelText("Role for scim@example.com")).toBeEnabled();
   });
 
   it("no badge without a link", () => {
