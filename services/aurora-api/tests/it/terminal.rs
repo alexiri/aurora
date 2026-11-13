@@ -402,15 +402,102 @@ async fn open_mints_the_grant_and_audits_metadata_only() {
     assert_eq!(n, 0);
 }
 
-/// The per-user cap: `TERMINALS_PER_USER` + 1 unconsumed grants → 429.
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// What a freshly upgraded terminal socket does: `Open` = bytes echo through the live leg,
+/// `Closed(code)` = the API closed it with that code. Bounded wait, no sleeps.
+#[derive(Debug, PartialEq)]
+enum Leg {
+    Open,
+    Closed(u16),
+}
+
+async fn probe(ws: &mut Ws) -> Leg {
+    use tokio_tungstenite::tungstenite::Message;
+    // A send may fail when the API already closed the socket; the close frame is still read.
+    let _ = ws.send(Message::binary(b"probe".to_vec())).await;
+    loop {
+        let m = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+            .await
+            .expect("probe timed out");
+        match m {
+            Some(Ok(Message::Binary(_))) => return Leg::Open,
+            Some(Ok(Message::Close(f))) => return Leg::Closed(f.map_or(1005, |f| f.code.into())),
+            Some(Ok(_)) => {}
+            Some(Err(_)) | None => return Leg::Closed(0),
+        }
+    }
+}
+
+/// Dial the terminal of `agent` as `cookie` and probe it.
+async fn open_term(url: &str, cookie: &str, agent: Uuid) -> (Ws, Leg) {
+    let (mut ws, resp) = served::dial(url, cookie, &format!("/v1/agents/{agent}/terminal"))
+        .await
+        .expect("the upgrade completes (caps close the socket, they do not refuse the dial)");
+    assert_eq!(resp.status(), 101);
+    let leg = probe(&mut ws).await;
+    (ws, leg)
+}
+
+/// Close a leg and wait until the API has released its slot (the server closes the socket
+/// last; reading to the end is the barrier, then the slot drop is racing only the task end —
+/// callers retry the next open with a deadline).
+async fn hang_up(mut ws: Ws) {
+    let _ = ws.close(None).await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while ws.next().await.is_some() {}
+    })
+    .await;
+}
+
+/// Open until it works (the previous leg's slot is released asynchronously), bounded.
+async fn open_term_eventually(url: &str, cookie: &str, agent: Uuid) -> Ws {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let (ws, leg) = open_term(url, cookie, agent).await;
+        if leg == Leg::Open {
+            return ws;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "slot never released: {leg:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// FIX-061: the per-user cap counts LIVE sessions. Two open sockets held → the third
+/// upgrades and closes `4409`; after one closes, a new one opens.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn per_user_cap_answers_429() {
+async fn per_user_cap_counts_live_sessions_and_closes_4409() {
     let r = term_rig().await;
     let (url, _api) = served::serve(&r).await;
-    let (agent, _, _) = sandbox_on(&r, "cap-sb", "running").await;
-    // TERMINALS_PER_USER = 2: two opens mint (each dial fails fast at the unreachable
-    // runner, leaving an unconsumed grant behind — exactly the pending-upgrade accounting).
-    for i in 0..2 {
+    served::fake_runner_multi(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "cap-user", "running").await;
+
+    let (w1, l1) = open_term(&url, &r.cookie, agent).await;
+    let (w2, l2) = open_term(&url, &r.cookie, agent).await;
+    assert_eq!((l1, l2), (Leg::Open, Leg::Open));
+    let (_w3, l3) = open_term(&url, &r.cookie, agent).await;
+    assert_eq!(l3, Leg::Closed(4409), "beyond TERMINALS_PER_USER (2 live)");
+
+    hang_up(w1).await;
+    let w4 = open_term_eventually(&url, &r.cookie, agent).await;
+    drop((w2, w4));
+}
+
+/// FIX-061: the per-agent cap (4) spans users; a leg whose dial the runner refuses leaks no
+/// slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn per_agent_cap_spans_users_and_failed_dials_leak_nothing() {
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "cap-agent", "running").await;
+
+    // The runner refuses (unreachable): three failed opens exceed what a leak would allow
+    // (per user 2) — each answers 502 and releases its slot.
+    for i in 0..3 {
         let s = served::status(
             &url,
             &r.cookie,
@@ -418,16 +505,84 @@ async fn per_user_cap_answers_429() {
             ORIGIN,
         )
         .await;
-        assert_eq!(s, 502, "open {i} mints (the proxy dial fails in the rig)");
+        assert_eq!(s, 502, "refused dial {i}");
     }
-    let s = served::status(
-        &url,
-        &r.cookie,
-        &format!("/v1/agents/{agent}/terminal"),
-        ORIGIN,
-    )
-    .await;
-    assert_eq!(s, 429, "beyond TERMINALS_PER_USER");
+    served::fake_runner_multi(&r).await;
+
+    // Two more members of the workspace.
+    let mut cookies = vec![r.cookie.clone()];
+    for n in 0..2 {
+        let u = r.h.user(&format!("t{n}@x.io"), false).await;
+        r.h.member(r.org, u, "member", "active").await;
+        r.h.bind_ws(r.ws, u, "member").await;
+        let (_, tok) = r.h.good_session(u).await;
+        cookies.push(cookie(&tok));
+    }
+    // 2 + 2 live sessions on the agent from two users = TERMINALS_PER_AGENT.
+    let mut held = Vec::new();
+    for c in &cookies[..2] {
+        for _ in 0..2 {
+            let (w, l) = open_term(&url, c, agent).await;
+            assert_eq!(l, Leg::Open);
+            held.push(w);
+        }
+    }
+    // A third user (0 of their own) is refused: the agent is full.
+    let (_w, l) = open_term(&url, &cookies[2], agent).await;
+    assert_eq!(l, Leg::Closed(4409), "beyond TERMINALS_PER_AGENT");
+    // One of the first user's sessions ends → the third user fits.
+    hang_up(held.remove(0)).await;
+    let w = open_term_eventually(&url, &cookies[2], agent).await;
+    drop((w, held));
+}
+
+/// FIX-061: an open terminal re-checks access (C-617 `4403` "access lost"): a member removed
+/// from the workspace mid-session has their shell closed `4403`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn open_terminal_closes_4403_when_access_is_lost() {
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    served::fake_runner_multi(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "cap-recheck", "running").await;
+    let (mut ws, leg) = open_term(&url, &r.cookie, agent).await;
+    assert_eq!(leg, Leg::Open);
+    // The only member of the rig's org (the caller) is suspended: no active membership.
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE org_id = $1")
+        .bind(r.org)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    // The periodic re-check (10 s) closes the leg; bounded wait.
+    let end = tokio::time::timeout(std::time::Duration::from_secs(40), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(f))) => {
+                    return f.map(|f| u16::from(f.code));
+                }
+                Some(Ok(_)) => {}
+                _ => return None,
+            }
+        }
+    })
+    .await
+    .expect("the access re-check never closed the leg");
+    assert_eq!(end, Some(4403));
+}
+
+/// FIX-061 item 4: the runner's terminal keep-awake report needs the runner credential.
+#[tokio::test]
+async fn terminal_keep_awake_requires_the_runner_credential() {
+    let r = term_rig().await;
+    let (_, sb, _) = sandbox_on(&r, "ka-auth", "running").await;
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            "/v1/runner/terminal/keep-awake",
+            &[("x-aurora-replica", &r.rep.to_string())],
+            Some(json!({"sandbox_id": sb})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 401, "{v}");
 }
 
 // ---------------------------------------------------------------- redemption (C-617)
@@ -648,6 +803,37 @@ mod served {
         req.headers_mut().insert("cookie", cookie.parse().unwrap());
         req.headers_mut().insert("origin", ORIGIN.parse().unwrap());
         connect_async(req).await
+    }
+
+    /// A fake runner that accepts any number of legs and echoes binary frames (no grant
+    /// redemption: the caps tests only need live sockets).
+    pub(crate) async fn fake_runner_multi(r: &Rig) -> tokio::task::JoinHandle<()> {
+        let fkr = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fk = fkr.local_addr().unwrap().to_string();
+        sqlx::query("UPDATE runner_replicas SET advertised_host = $1")
+            .bind(fk)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        tokio::spawn(async move {
+            use tokio_tungstenite::tungstenite::Message;
+            while let Ok((tcp, _)) = fkr.accept().await {
+                tokio::spawn(async move {
+                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                        return;
+                    };
+                    while let Some(Ok(m)) = ws.next().await {
+                        match m {
+                            Message::Binary(b) => {
+                                let _ = ws.send(Message::Binary(b)).await;
+                            }
+                            Message::Close(_) => break,
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        })
     }
 
     /// Point the rig's replica at a local fake runner listener and return its task. The fake

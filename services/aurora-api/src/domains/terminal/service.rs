@@ -27,9 +27,11 @@ use aurora_db::repo::terminal_grants as grants_repo;
 use aurora_protocol::runner::PreviewStreamOpenRequest;
 use aurora_protocol::runner::PreviewStreamOpenResponse;
 
-/// Close codes of leg 1 (`16 §W18`/`§W19`, C-617). `4403 not allowed` never originates here
-/// (admission refused before the upgrade); the proxy passes the runner's codes through.
+/// Close codes of leg 1 (`16 §W18`/`§W19`, C-617). `4403 not allowed` originates here only from
+/// the periodic access re-check of an open leg (admission refuses before the upgrade); `4409`
+/// from the live-session caps; the proxy passes the runner's codes through.
 const CLOSE_NORMAL: u16 = 1000;
+const CLOSE_NOT_ALLOWED: u16 = 4403;
 const CLOSE_NOT_FOUND: u16 = 4404;
 const CLOSE_LIMIT: u16 = 4409;
 const CLOSE_REFUSED: u16 = 4502;
@@ -50,6 +52,64 @@ fn terminal_not_supported() -> ApiError {
         "terminal_not_supported",
         "Web terminals exist only on hosted agents.",
     )
+}
+
+/// How often an open terminal re-checks that its holder still has access (C-617 `4403`
+/// "access lost": a removed member, a frozen agent, a revoked dashboard session).
+const ACCESS_RECHECK: Duration = Duration::from_secs(10);
+
+/// Live terminal sessions terminated on **this** API replica, per user and per agent
+/// (C-617 `4409`; `TERMINALS_PER_USER` / `TERMINALS_PER_AGENT` are per replica — with N
+/// replicas the effective ceiling is N×, `15 §Web terminal operations`). A slot is a
+/// [`TerminalSlot`]: taken before the grant is minted, released by `Drop` on every exit path
+/// (normal close, dial failure, error, task panic or cancellation).
+#[derive(Default)]
+struct Live {
+    per_user: std::collections::HashMap<Uuid, u32>,
+    per_agent: std::collections::HashMap<Uuid, u32>,
+}
+
+fn live() -> &'static std::sync::Mutex<Live> {
+    static LIVE: std::sync::OnceLock<std::sync::Mutex<Live>> = std::sync::OnceLock::new();
+    LIVE.get_or_init(Default::default)
+}
+
+/// One live terminal's cap slots; releases both counters on drop.
+pub(crate) struct TerminalSlot {
+    user: Uuid,
+    agent: Uuid,
+}
+
+impl TerminalSlot {
+    /// `None` when the user or the agent is at its cap (the caller closes `4409`).
+    pub(crate) fn acquire(user: Uuid, agent: Uuid) -> Option<Self> {
+        let mut g = live().lock().unwrap_or_else(|e| e.into_inner());
+        let u = g.per_user.get(&user).copied().unwrap_or(0);
+        let a = g.per_agent.get(&agent).copied().unwrap_or(0);
+        if u >= aurora_core::limits::TERMINALS_PER_USER
+            || a >= aurora_core::limits::TERMINALS_PER_AGENT
+        {
+            return None;
+        }
+        g.per_user.insert(user, u + 1);
+        g.per_agent.insert(agent, a + 1);
+        Some(Self { user, agent })
+    }
+}
+
+impl Drop for TerminalSlot {
+    fn drop(&mut self) {
+        let mut guard = live().lock().unwrap_or_else(|e| e.into_inner());
+        let g = &mut *guard;
+        for (map, key) in [(&mut g.per_user, self.user), (&mut g.per_agent, self.agent)] {
+            if let Some(n) = map.get_mut(&key) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    map.remove(&key);
+                }
+            }
+        }
+    }
 }
 
 fn too_many_sessions() -> ApiError {
@@ -116,6 +176,20 @@ pub async fn upgrade(
         return Err(waking());
     }
     let boot = boot_id.ok_or_else(|| ApiError::not_found("Agent has no sandbox."))?;
+    // ---- caps over LIVE sessions (C-617 `4409`): the slot is held for the life of the leg
+    // (moved into `proxy_leg`) and released by `Drop` on every exit, including a failed dial.
+    // Over the cap the upgrade completes and the socket closes `4409` (no grant is minted).
+    let Some(slot) = TerminalSlot::acquire(c.user_id, a.id) else {
+        drop(conn);
+        return Ok(ws.on_upgrade(|mut socket| async move {
+            let _ = socket
+                .send(WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                    code: CLOSE_LIMIT,
+                    reason: "".into(),
+                })))
+                .await;
+        }));
+    };
     // ---- mint the single-use `auy_` grant (C-618) and answer the upgrade by proxying.
     let grant = token::generate(token::TokenPrefix::TerminalStream);
     let grant_hash = hex(&token::hash(grant.expose()));
@@ -133,21 +207,7 @@ pub async fn upgrade(
         expires_at,
     )
     .await?;
-    // Caps are counted over live sessions at the runner/supervisor (per sandbox) and here
-    // (per user per replica): count this replica's pending upgrades per user against
-    // TERMINALS_PER_USER (the runner enforces TERMINALS_PER_SANDBOX/AGENT on `pty.open`).
-    let open: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM terminal_stream_grants \
-         WHERE granted_by = $1 AND consumed_at IS NULL AND expires_at > now()",
-    )
-    .bind(c.user_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(DbError::from)?;
     drop(conn);
-    if open > i64::from(aurora_core::limits::TERMINALS_PER_USER) {
-        return Err(too_many_sessions());
-    }
     // Best-effort audit `agent.terminal.open` (C-618): metadata is the agent/workspace only —
     // never bytes, never the grant value.
     crate::audit::record(
@@ -171,7 +231,12 @@ pub async fn upgrade(
         // browser retries with a fresh mint.
         Err(code) => return Err(proxy_error(code)),
     };
-    Ok(ws.on_upgrade(move |socket| proxy_leg(socket, upstream, endpoint.redacted)))
+    let recheck = Recheck {
+        s: s.clone(),
+        c: c.clone(),
+        agent: a.id,
+    };
+    Ok(ws.on_upgrade(move |socket| proxy_leg(socket, upstream, endpoint.redacted, slot, recheck)))
 }
 
 fn waking() -> ApiError {
@@ -364,6 +429,43 @@ async fn dial_runner(
     }
 }
 
+/// What an open leg needs to re-check its holder's access.
+struct Recheck {
+    s: AppState,
+    c: Caller,
+    agent: Uuid,
+}
+
+impl Recheck {
+    /// `false` only on a definite refusal (not an infrastructure error: a flapping DB must
+    /// not kill a shell): the dashboard session is no longer live, or the admission law
+    /// (`admit`: feature on, hosted, `can_use`, not frozen) now refuses.
+    async fn still_allowed(&self) -> bool {
+        if let crate::http::auth::Principal::Session { id } = self.c.principal {
+            // Revoked / expired / disabled user. Not the idle clock: a shell in active use
+            // makes no other API calls, and its own idle timeout is the runner's.
+            let live: Result<Option<bool>, _> = sqlx::query_scalar(
+                "SELECT (s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled_at IS NULL) \
+                 FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = $1",
+            )
+            .bind(id)
+            .fetch_optional(&self.s.pool)
+            .await
+            .map(Option::flatten);
+            match live {
+                Ok(Some(true)) | Err(_) => {}
+                Ok(Some(false) | None) => return false,
+            }
+        }
+        match admit(&self.s, &self.c, self.agent).await {
+            Ok(_) => true,
+            // A 4xx is a definite refusal (404 lost access/gone, 423 frozen, 422 not hosted);
+            // anything else (5xx) is infrastructure: keep the shell.
+            Err(e) => !e.status().is_client_error(),
+        }
+    }
+}
+
 /// The leg-1 bridge (C-617): browser ⟷ runner, byte-transparent. Binary messages are PTY
 /// bytes (≤ `TERMINAL_CHUNK`) both ways; browser text messages are `pty.resize` controls
 /// passed through as text; runner text messages (`pty.*` answers) are not for the browser and
@@ -374,11 +476,23 @@ async fn proxy_leg(
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
     endpoint: String,
+    _slot: TerminalSlot,
+    recheck: Recheck,
 ) {
     let (mut b_sink, mut b_stream) = browser.split();
     let (mut u_sink, mut u_stream) = upstream.split();
+    let mut tick =
+        tokio::time::interval_at(tokio::time::Instant::now() + ACCESS_RECHECK, ACCESS_RECHECK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let reason = loop {
         tokio::select! {
+            // Access re-check (C-617 `4403`): the holder must still pass the admission law.
+            _ = tick.tick() => {
+                if !recheck.still_allowed().await {
+                    let _ = u_sink.send(Ws2Message::Close(None)).await;
+                    break CLOSE_NOT_ALLOWED;
+                }
+            }
             // Browser → runner.
             msg = b_stream.next() => {
                 match msg {

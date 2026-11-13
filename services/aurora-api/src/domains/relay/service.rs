@@ -96,10 +96,13 @@ async fn share_of(conn: &mut PgConnection, label: &str) -> Result<shares_repo::S
 }
 
 /// The live preview session of a token hash plus its share; `None` when the session row is
-/// dead (expired/idle), `not_found` when the share is gone (cascaded).
+/// dead (expired/idle) **or bound to a different share than `label`** (a preview session is
+/// only valid on its own share's hostname, D-145/SEC-80), `not_found` when the share is
+/// gone (cascaded).
 async fn session_of(
     conn: &mut PgConnection,
     hash: &[u8; 32],
+    label: &str,
 ) -> Result<Option<(relay_repo::PreviewSessionRow, shares_repo::ShareRow)>, ApiError> {
     let idle = i64::try_from(PREVIEW_SESSION_IDLE.as_secs()).unwrap_or(3600);
     let Some(s) = relay_repo::find_live_preview_session(&mut *conn, hash, idle).await? else {
@@ -108,6 +111,9 @@ async fn session_of(
     let share = shares_repo::get(&mut *conn, s.share_id)
         .await?
         .ok_or_else(not_found)?;
+    if share.label != label {
+        return Ok(None);
+    }
     Ok(Some((s, share)))
 }
 
@@ -293,13 +299,11 @@ async fn resolve_once(
             return Ok(login());
         }
     };
-    let Some((session, share)) = session_of(&mut conn, &hash).await? else {
+    // `session_of` only yields a session bound to this request's label (a session minted
+    // for another share is answered like a dead one: the flow restarts for this share).
+    let Some((session, share)) = session_of(&mut conn, &hash, &req.label).await? else {
         return Ok(login());
     };
-    // The session must belong to this share.
-    if session.share_id != share.id {
-        return Ok(login());
-    }
     if access_of(&mut conn, &share, session.user_id).await.is_err() {
         // A live preview session whose holder lost access (paused/deleted share, frozen
         // agent, lost `can_use`, org switch off): the uniform `not_found` deny (docs/18
@@ -572,12 +576,9 @@ pub async fn streams(
     validate_label(&req.label)?;
     let hash = parse_session_hash(&req.session_hash)?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
-    let Some((session, share)) = session_of(&mut conn, &hash).await? else {
+    let Some((session, share)) = session_of(&mut conn, &hash, &req.label).await? else {
         return Err(not_found());
     };
-    if session.share_id != share.id {
-        return Err(not_found());
-    }
     access_of(&mut conn, &share, session.user_id).await?;
     relay_repo::touch_preview_session(&mut *conn, session.id).await?;
     let route = route_of(&mut conn, &share).await?;
@@ -654,8 +655,8 @@ pub async fn validate(
             revoked.push(entry(&e));
             continue;
         };
-        match session_of(&mut conn, &hash).await {
-            Ok(Some((session, share))) if session.share_id == share.id => {
+        match session_of(&mut conn, &hash, &e.label).await {
+            Ok(Some((session, share))) => {
                 match access_of(&mut conn, &share, session.user_id).await {
                     Ok(()) => {
                         relay_repo::touch_preview_session(&mut *conn, session.id).await?;

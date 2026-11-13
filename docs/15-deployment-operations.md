@@ -940,6 +940,16 @@ share id, outcome and byte counts; never paths with query strings, headers, cook
 older runner reports no `previews` capability. Rolling back removes the relay Deployment; shares stay in
 the database inert. Preview traffic is not part of the request log.
 
+## Web terminal operations (phase 4, P4-TERM, D-161, SEC-87; FIX-061)
+
+The browser leg of every terminal is a WebSocket **terminated on one API replica**, so the live-session caps
+`TERMINALS_PER_USER` (2) and `TERMINALS_PER_AGENT` (4) are counted **per API replica** in memory (a guard
+released on every exit path: close, error, dial failure, panic; nothing is stored, a restart starts at zero).
+With N API replicas the effective ceilings are N× those numbers (a user can hold 2 terminals on each replica);
+`TERMINALS_PER_SANDBOX` is still enforced at the runner across replicas. Over the cap the upgrade completes and
+the socket closes `4409`. An open terminal re-checks its holder every 10 s (dashboard session live, org
+membership, `can_use`, agent not frozen) and closes `4403` when access is lost.
+
 ## Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
 
 Optional by use: nothing to deploy, no new Service, Secret or NetworkPolicy. Requirements: the gateway
