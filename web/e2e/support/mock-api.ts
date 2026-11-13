@@ -371,6 +371,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-instances", path: "/admin/instances" },
   { name: "admin-oauth-clients", path: "/admin/oauth-clients" },
   { name: "admin-trusted-keys", path: "/admin/trusted-keys" },
+  { name: "admin-audit", path: "/admin/audit" },
   { name: "org-workspaces", path: "/o/acme" },
   { name: "org-api-keys", path: "/o/acme/api-keys" },
   { name: "org-apps", path: "/o/acme/apps" },

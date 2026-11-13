@@ -21,12 +21,26 @@ pub struct InstanceRow {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub connections: i64,
+    pub org_name: Option<String>,
+    pub org_slug: Option<String>,
 }
 
 const SELECT: &str = "SELECT i.id, i.org_id, i.package_id, i.app_id, i.host, i.label, i.status, \
     i.created_by, u.display_name AS created_by_name, i.created_at, i.updated_at, \
-    (SELECT count(*) FROM app_connections c WHERE c.instance_id = i.id) AS connections \
-    FROM app_instances i LEFT JOIN users u ON u.id = i.created_by";
+    (SELECT count(*) FROM app_connections c WHERE c.instance_id = i.id) AS connections, \
+    o.name AS org_name, o.slug AS org_slug \
+    FROM app_instances i LEFT JOIN users u ON u.id = i.created_by \
+    LEFT JOIN organizations o ON o.id = i.org_id";
+
+/// The registration that holds a host (FIX-132): enough to name it to an instance admin.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct HostHolder {
+    pub id: Uuid,
+    pub app_id: String,
+    pub org_id: Option<Uuid>,
+    pub org_name: Option<String>,
+    pub org_slug: Option<String>,
+}
 
 pub struct NewInstance<'a> {
     pub id: Uuid,
@@ -48,16 +62,18 @@ pub async fn lock_host(conn: &mut PgConnection, host: &str) -> Result<(), DbErro
     Ok(())
 }
 
-/// `(app_id, org_id)` of an instance with this host in a scope that can see `org` (instance-wide
-/// rows, and the org's own); for an instance-wide registration (`org = None`) any scope.
+/// The instance with this host in a scope that can see `org` (instance-wide rows, and the org's
+/// own); for an instance-wide registration (`org = None`) any scope. Instance-wide first.
 pub async fn visible_with_host<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Option<Uuid>,
     host: &str,
-) -> Result<Option<(String, Option<Uuid>)>, DbError> {
+) -> Result<Option<HostHolder>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT app_id, org_id FROM app_instances WHERE host = $2 \
-         AND ($1::uuid IS NULL OR org_id IS NULL OR org_id = $1) LIMIT 1",
+        "SELECT i.id, i.app_id, i.org_id, o.name AS org_name, o.slug AS org_slug \
+         FROM app_instances i LEFT JOIN organizations o ON o.id = i.org_id \
+         WHERE i.host = $2 AND ($1::uuid IS NULL OR i.org_id IS NULL OR i.org_id = $1) \
+         ORDER BY (i.org_id IS NOT NULL), i.created_at, i.id LIMIT 1",
     )
     .bind(org)
     .bind(host)
@@ -131,6 +147,58 @@ pub async fn list_instance_wide<'e, E: PgExecutor<'e>>(
     .bind(fetch)
     .fetch_all(exec)
     .await?)
+}
+
+/// Every registration (admin list, FIX-132), optionally of one org and/or app, newest first.
+pub async fn list_all<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Option<Uuid>,
+    app_id: Option<&str>,
+    after: After,
+    fetch: i64,
+) -> Result<Vec<InstanceRow>, DbError> {
+    let (t, id) = split(after);
+    Ok(sqlx::query_as(&format!(
+        "{SELECT} WHERE ($1::uuid IS NULL OR i.org_id = $1) AND ($2::text IS NULL OR i.app_id = $2) \
+         AND ($3::timestamptz IS NULL OR (i.created_at, i.id) < ($3, $4)) \
+         ORDER BY i.created_at DESC, i.id DESC LIMIT $5"
+    ))
+    .bind(org)
+    .bind(app_id)
+    .bind(t)
+    .bind(id)
+    .bind(fetch)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// How many other registrations hold `host` (any scope), besides `except`.
+pub async fn other_holders(
+    conn: &mut PgConnection,
+    host: &str,
+    except: Uuid,
+) -> Result<i64, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT count(*) FROM app_instances WHERE host = $1 AND id <> $2")
+            .bind(host)
+            .bind(except)
+            .fetch_one(conn)
+            .await?,
+    )
+}
+
+/// Make an org registration instance-wide (`org_id = NULL`); `false` when it was not
+/// org-scoped. Connections keep their `instance_id`.
+pub async fn promote(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_instances SET org_id = NULL, updated_at = now() \
+         WHERE id = $1 AND org_id IS NOT NULL",
+    )
+    .bind(id)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 /// Update label and/or status.

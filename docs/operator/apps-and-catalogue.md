@@ -1,4 +1,4 @@
-# App instances and the built-in catalogue
+# Self-hosted apps (app instances) and the built-in catalogue
 
 (Phase 2, D-74, P2-CAT and P2-INST.) The general plugin and connector flow is in [plugins-and-connectors.md](plugins-and-connectors.md). This page covers the two pieces specific to phase 2:
 the packages that ship in the API image, and registering self-hosted servers for apps that support it. No new configuration key is involved besides `plugins.builtin_dir`;
@@ -40,7 +40,7 @@ Details and the first-run checks are in [docs/ops/builtin-plugin-signing.md](../
 
 Verify: `GET /v1/admin/plugins` (instance administrator) lists each package with `source: builtin`, `status: active` and `signer.kind: builtin`; the API log has no `plugin file refused` warnings.
 
-## App instances (self-hosted servers)
+## Self-hosted apps (app instances: your own servers)
 
 SaaS apps live on fixed hosts. A company's own GitLab, Jira Data Center or Sentry (the examples in docs/09) lives on a domain nobody can declare in advance. An app whose manifest declares `instances` therefore does not send credentials anywhere until an administrator
 **registers the host** as an *app instance*. Registration is the trust decision about where that app's credentials may be sent; members never type a host. The gateway injects a connection's credential only on the host of the instance it was connected to.
@@ -49,8 +49,12 @@ SaaS apps live on fixed hosts. A company's own GitLab, Jira Data Center or Sentr
 
 | Scope | Who | Where |
 |-------|-----|-------|
-| Instance-wide (usable by every organization) | instance administrator | the admin pages; `GET` and `POST /v1/admin/app-instances` |
-| One organization | organization owner or admin | Organization settings, Instances; `GET` and `POST /v1/orgs/{org}/app-instances` with `{ app_id, host, label }` |
+| Instance-wide (usable by every organization) | instance administrator | Admin › **Self-hosted apps**; `GET` and `POST /v1/admin/app-instances` |
+| One organization | organization owner or admin | the organization's **Self-hosted apps** page; `GET` and `POST /v1/orgs/{org}/app-instances` with `{ app_id, host, label }` |
+
+(The dashboard calls this feature **Self-hosted apps**; the API and the data keep the name *app instance*.)
+
+**Who holds a host (FIX-132).** A refusal with `instance_host_conflict` says what holds the host (`details.conflict`): a package's static claim (app and package — see Admin › Host claims and Plugins), an LLM endpoint, one of Aurora's own addresses (`external_url`, `hookhost_url`, `advertised_proxy_url`), or another registration. Instance administrators see which organization registered it; an organization administrator is only ever told "instance-wide", or that it is their own organization's. Admin › Self-hosted apps lists **every** registration with its organization and has a filter. An organization's registration of a host that the instance should serve to everyone is moved with **Make instance-wide** (`POST /v1/admin/app-instances/{id}/promote`, audited as `app_instance.promote`, security-critical): connections keep working, every organization then sees it. It is refused (409 `instance_host_shared`) while another organization also registered the same host — delete that one first.
 
 Members of the organization see the registered instances (instance-wide plus their own) in the connect form and pick one. `PATCH /v1/app-instances/{id}` changes the label or status; `DELETE` disables the instance's connections. An app with a `default_host` (for example `gitlab.com`) can also be
 connected without choosing an instance.

@@ -15,6 +15,7 @@ mod attachment_storage;
 mod attachments;
 mod audit;
 mod audit_atomic;
+mod audit_instance;
 mod auth;
 mod automation_continuity;
 mod avatars;

@@ -60,14 +60,18 @@ export const ERROR_MESSAGES: Record<string, string> = {
   app_not_instance_bound: "This app does not support self-hosted instances.",
   instance_host_invalid:
     "Enter the host name only, in lower case, for example gitlab.example.com: no https://, port, path, user name or IP address.",
+  // Generic fallback; the holder-specific text is `hostConflictMessage` (FIX-132, `details.conflict`).
   instance_host_conflict:
-    "That host is already claimed by another app, an LLM endpoint or another registered instance.",
+    "That host is already claimed by another app, an LLM endpoint or another registered self-hosted app.",
+  instance_already_wide: "This self-hosted app is already available to every organization.",
+  instance_host_shared:
+    "Another registration of this host exists. Delete it first, then make this one available to every organization.",
   instance_probe_failed:
-    "The instance did not answer as expected. Check the host, that it is reachable from the gateway (private addresses need the operator's gateway.allowed_private), and try again.",
+    "The server did not answer as expected. Check the host, that it is reachable from the gateway (private addresses need the operator's gateway.allowed_private), and try again.",
   instance_required: "Choose which instance to connect to.",
   instance_oauth_client_required:
     "Ask an administrator to register an OAuth application for this instance first (Credentials, OAuth clients).",
-  instance_deleted: "The instance of this connection was deleted. Connect again.",
+  instance_deleted: "The self-hosted app of this connection was deleted. Connect again.",
   not_proposed: "This secret is no longer awaiting a value.",
   stale_revision: "The policy was changed by someone else. Reload to see the latest version.",
   policy_invalid: "The policy has errors. Fix the highlighted rules and try again.",
@@ -94,7 +98,58 @@ export const ERROR_MESSAGES: Record<string, string> = {
   skill_libraries_disabled: "Skill libraries are turned off on this instance.",
 };
 
+/** `details.conflict` of a 422 `instance_host_conflict` (FIX-132): who holds the host. */
+export interface HostConflict {
+  kind: "static_claim" | "llm_host" | "aurora_address" | "instance";
+  app_id?: string | null;
+  app_name?: string | null;
+  package_id?: string | null;
+  endpoint_id?: string | null;
+  setting?: string | null;
+  scope?: "instance" | "org";
+  instance_id?: string;
+  promotable?: boolean;
+  org?: { id: string; name?: string | null; slug?: string | null };
+}
+
+export function hostConflict(err: unknown): HostConflict | null {
+  if (!(err instanceof ApiError) || err.code !== "instance_host_conflict") return null;
+  const d = err.details;
+  if (typeof d !== "object" || d === null || !("conflict" in d)) return null;
+  const c = (d as { conflict: unknown }).conflict;
+  if (typeof c !== "object" || c === null || !("kind" in c)) return null;
+  return c as HostConflict;
+}
+
+/**
+ * The sentence for a refused host: names the holder as far as the server says (an org administrator is
+ * never told another organization's name). `ownOrg`: the registration was attempted in an organization.
+ */
+export function hostConflictMessage(c: HostConflict, ownOrg = false): string {
+  const app = c.app_name ?? c.app_id ?? "another app";
+  switch (c.kind) {
+    case "static_claim":
+      return `That host is claimed by the app ${app}${c.package_id ? ` (package ${c.package_id})` : ""}.`;
+    case "llm_host":
+      return c.endpoint_id
+        ? `That host is the LLM endpoint ${c.endpoint_id}.`
+        : "That host is an LLM endpoint of this instance.";
+    case "aurora_address":
+      return c.setting
+        ? `That host is Aurora's own address (setting ${c.setting}).`
+        : "That host is one of Aurora's own addresses.";
+    case "instance":
+      if (c.scope !== "org") return `That host is already registered as a self-hosted ${app} and is available to every organization.`;
+      if (c.org?.name) return `That host is already registered as a self-hosted ${app} by the organization ${c.org.name}.`;
+      return ownOrg
+        ? `That host is already registered as a self-hosted ${app} in this organization.`
+        : `That host is already registered as a self-hosted ${app} by another organization — ask an instance administrator.`;
+  }
+}
+
 export function errorMessage(err: unknown): string {
+  const conflict = hostConflict(err);
+  if (conflict) return hostConflictMessage(conflict);
   if (err instanceof ApiError) {
     return ERROR_MESSAGES[err.code] ?? (err.message || "Something went wrong.");
   }

@@ -177,8 +177,8 @@ function CreateForm({
       {selected?.instance_bound ? (
         <Field
           id="oc-instance"
-          label="Instance"
-          hint="Each self-hosted instance has its own OAuth application. Leave on the default host for the SaaS application."
+          label="Self-hosted app"
+          hint="Each self-hosted server has its own OAuth application. Leave on the default host for the SaaS application."
         >
           <select id="oc-instance" className={inputClass} value={instanceId} onChange={(e) => setInstanceId(e.target.value)}>
             <option value="">{selected.default_host ? `${selected.default_host} (default host)` : "Select…"}</option>
@@ -246,7 +246,7 @@ function ClientRow({
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-medium text-ink">{c.package_id}</span>{" "}
           <span className="font-mono text-xs text-muted">{c.client_key} · {c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
-          {c.instance_id ? <Badge className="font-mono normal-case tracking-normal">{instanceHost ?? "self-hosted instance"}</Badge> : null}
+          {c.instance_id ? <Badge className="font-mono normal-case tracking-normal">{instanceHost ?? "self-hosted app"}</Badge> : null}
           {!c.enabled ? <Badge>Disabled</Badge> : null}
         </div>
         {canOwn && mine ? (

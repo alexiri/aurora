@@ -285,7 +285,7 @@ const ORG_LINKS: { path: string; label: string; icon: IconType }[] = [
   // (P4-GRP-2) Owners only: the SCIM directory sync page lives under /settings/directory.
   { path: "settings/directory", label: "Directory sync", icon: KeyIcon },
   { path: "channels", label: "Channels", icon: MessageIcon },
-  { path: "instances", label: "Instances", icon: ServerIcon },
+  { path: "instances", label: "Self-hosted apps", icon: ServerIcon },
   { path: "api-keys", label: "API keys", icon: KeyIcon },
   { path: "audit", label: "Audit log", icon: ScrollIcon },
   { path: "storage", label: "Storage", icon: ServerIcon },
@@ -390,9 +390,10 @@ const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/runners", label: "Runners", icon: ServerIcon },
   { href: "/admin/storage", label: "Storage", icon: ServerIcon },
   { href: "/admin/host-claims", label: "Host claims", icon: ServerIcon },
-  { href: "/admin/instances", label: "Instances", icon: ServerIcon },
+  { href: "/admin/instances", label: "Self-hosted apps", icon: ServerIcon },
   { href: "/admin/oauth-clients", label: "OAuth clients", icon: KeyIcon },
   { href: "/admin/trusted-keys", label: "Trusted keys", icon: ShieldIcon },
+  { href: "/admin/audit", label: "Audit", icon: ShieldIcon },
 ];
 
 function AdminNavList({ pathname }: { pathname: string }) {

@@ -45,11 +45,52 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List instance-wide app instances (instance admin). */
+        /**
+         * List app instances (instance admin): the instance-wide ones, or with `scope=all` every
+         *     organization's too.
+         */
         get: operations["listInstanceAppInstances"];
         put?: never;
         /** Register an instance-wide app instance (instance admin). */
         post: operations["createInstanceAppInstance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/app-instances/{id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make an organization's registration instance-wide (instance admin, FIX-132): one transaction
+         *     moves it to `org_id = NULL`; its connections keep resolving, other organizations then see it
+         *     too. Audited as `app_instance.promote` (security-critical).
+         */
+        post: operations["promoteAppInstance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Instance audit log (instance administrators): instance-level rows, or every row. */
+        get: operations["listInstanceAudit"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4682,6 +4723,9 @@ export interface components {
              * @description `null` = instance-wide.
              */
             org_id?: string | null;
+            /** @description Name and slug of `org_id` (`null` for an instance-wide registration). */
+            org_name?: string | null;
+            org_slug?: string | null;
             package_id: string;
             /** @description `active` | `disabled`. */
             status: string;
@@ -6209,6 +6253,11 @@ export interface components {
             /** Format: int32 */
             max_age_days?: number | null;
         };
+        /** @description An audit row with the organization it concerns (instance view). */
+        InstanceAuditEntry: components["schemas"]["AuditEntry"] & {
+            /** @description Slug of `org_id` (`null` for instance-level rows). */
+            org_slug?: string | null;
+        };
         /** @description (phase 2, RFE-025) The instance level of BYO governance (`[byo]`). */
         InstanceByo: {
             default_source_cidrs: string[];
@@ -7130,6 +7179,9 @@ export interface components {
                  * @description `null` = instance-wide.
                  */
                 org_id?: string | null;
+                /** @description Name and slug of `org_id` (`null` for an instance-wide registration). */
+                org_name?: string | null;
+                org_slug?: string | null;
                 package_id: string;
                 /** @description `active` | `disabled`. */
                 status: string;
@@ -7368,6 +7420,13 @@ export interface components {
                 synced_at?: string | null;
                 user: components["schemas"]["UserRef"];
             }[];
+            next_cursor?: string | null;
+        };
+        Page_InstanceAuditEntry: {
+            items: (components["schemas"]["AuditEntry"] & {
+                /** @description Slug of `org_id` (`null` for instance-level rows). */
+                org_slug?: string | null;
+            })[];
             next_cursor?: string | null;
         };
         Page_Invitation: {
@@ -10030,6 +10089,10 @@ export interface operations {
                 app_id?: string;
                 limit?: number;
                 cursor?: string;
+                /** @description `instance` (default): instance-wide only; `all`: every registration, organizations' too. */
+                scope?: string;
+                /** @description Only this organization's registrations (implies `all`). */
+                org?: string;
             };
             header?: never;
             path?: never;
@@ -10099,6 +10162,106 @@ export interface operations {
             };
             /** @description app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    promoteAppInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App instance id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Promoted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppInstance"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description instance_already_wide or instance_host_shared */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listInstanceAudit: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                /** @description `instance` (default): rows without an organization; `all`: every row, orgs included. */
+                scope?: string;
+                /** @description Only this organization's rows (implies `scope=all`). */
+                org?: string;
+                /** @description Action prefix, e.g. `plugin.` or `trusted_key.create`. */
+                action?: string;
+                actor_id?: string;
+                critical?: boolean;
+                /** @description Inclusive lower bound on `created_at` (RFC 3339). */
+                since?: string;
+                /** @description Exclusive upper bound on `created_at` (RFC 3339). */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_InstanceAuditEntry"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

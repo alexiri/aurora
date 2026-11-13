@@ -1,9 +1,9 @@
 use crate::app::AppState;
-use crate::http::auth::{Caller, require_own};
+use crate::http::auth::{Caller, InstanceAdmin, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
-use aurora_core::ApiError;
+use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::audit::{self, AuditRow, Scope};
 use axum::extract::State;
 use chrono::{DateTime, Utc};
@@ -16,6 +16,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(org_audit))
         .routes(routes!(workspace_audit))
+        .routes(routes!(instance_audit))
 }
 
 #[derive(Serialize, ToSchema)]
@@ -94,6 +95,102 @@ async fn list(
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Json(Page {
         items: page.items.into_iter().map(AuditEntry::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
+}
+
+/// An audit row with the organization it concerns (instance view).
+#[derive(Serialize, ToSchema)]
+pub struct InstanceAuditEntry {
+    #[serde(flatten)]
+    pub entry: AuditEntry,
+    /// Slug of `org_id` (`null` for instance-level rows).
+    pub org_slug: Option<String>,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct InstanceAuditQuery {
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+    /// `instance` (default): rows without an organization; `all`: every row, orgs included.
+    pub scope: Option<String>,
+    /// Only this organization's rows (implies `scope=all`).
+    pub org: Option<Uuid>,
+    /// Action prefix, e.g. `plugin.` or `trusted_key.create`.
+    pub action: Option<String>,
+    pub actor_id: Option<Uuid>,
+    pub critical: Option<bool>,
+    /// Inclusive lower bound on `created_at` (RFC 3339).
+    pub since: Option<DateTime<Utc>>,
+    /// Exclusive upper bound on `created_at` (RFC 3339).
+    pub until: Option<DateTime<Utc>>,
+}
+
+/// Instance audit log (instance administrators): instance-level rows, or every row.
+#[utoipa::path(get, path = "/admin/audit", operation_id = "listInstanceAudit", tag = "audit",
+    params(InstanceAuditQuery),
+    responses((status = 200, body = Page<InstanceAuditEntry>), (status = 403, body = ErrorEnvelope),
+        (status = 400, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn instance_audit(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Query(q): Query<InstanceAuditQuery>,
+) -> Result<Json<Page<InstanceAuditEntry>>, ApiError> {
+    let all_orgs = match q.scope.as_deref() {
+        None | Some("instance") => false,
+        Some("all") => true,
+        Some(_) => {
+            return Err(ApiError::invalid_request(
+                "Invalid audit query.",
+                vec![FieldError::new("/scope", "scope must be instance or all")],
+            ));
+        }
+    };
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    let action = q.action.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    let rows = audit::list_instance(
+        &s.pool,
+        &audit::InstanceFilter {
+            all_orgs,
+            org: q.org,
+            action_prefix: action,
+            actor_id: q.actor_id,
+            critical_only: q.critical.unwrap_or(false),
+            since: q.since,
+            until: q.until,
+        },
+        p.after.map(|c| (c.t, c.id)),
+        p.fetch(),
+    )
+    .await?;
+    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    Ok(Json(Page {
+        items: page
+            .items
+            .into_iter()
+            .map(|r| InstanceAuditEntry {
+                org_slug: r.org_slug.clone(),
+                entry: AuditEntry::from(AuditRow {
+                    id: r.id,
+                    org_id: r.org_id,
+                    workspace_id: r.workspace_id,
+                    actor_kind: r.actor_kind,
+                    actor_id: r.actor_id,
+                    actor_label: r.actor_label,
+                    action: r.action,
+                    target_kind: r.target_kind,
+                    target_id: r.target_id,
+                    outcome: r.outcome,
+                    source: r.source,
+                    ip: r.ip,
+                    metadata: r.metadata,
+                    critical: r.critical,
+                    created_at: r.created_at,
+                }),
+            })
+            .collect(),
         next_cursor: page.next_cursor,
     }))
 }

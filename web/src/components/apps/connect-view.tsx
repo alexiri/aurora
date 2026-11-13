@@ -179,7 +179,7 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
           error={errors.__instance}
           hint={
             choices.length === 0 && !defaultHost
-              ? "No instance is registered yet. Ask an organization admin to register one (Instances)."
+              ? "No self-hosted server is registered yet. Ask an organization admin to register one (Self-hosted apps)."
               : "Credentials are only sent to the host you choose here."
           }
         >
@@ -201,7 +201,7 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
       ) : null}
       {needsInstanceClient ? (
         <Notice tone="pending" role="status">
-          No OAuth application is registered for this instance yet. Ask an organization admin to add one under
+          No OAuth application is registered for this self-hosted server yet. Ask an organization admin to add one under
           Credentials, OAuth clients, or connect with an access token instead.
         </Notice>
       ) : null}

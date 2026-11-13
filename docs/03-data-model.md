@@ -300,7 +300,7 @@ Device-style CLI login.
 | ip | inet null | |
 | metadata | jsonb not null default `{}` | never contains secret values |
 | critical | boolean not null default false | (phase 2, RFE-008) true for `outcome = success` rows of the security-critical set (`04 §Audit`); derived from the action by the insert, never set by callers |
-| index | (org_id, created_at desc), (workspace_id, created_at desc), (org_id, critical, created_at desc) | |
+| index | (org_id, created_at desc), (workspace_id, created_at desc), (org_id, critical, created_at desc); (FIX-125) (created_at desc, id desc) and the same partial `WHERE org_id IS NULL` for the instance audit list | |
 
 Audit writes are best-effort and never fail the action (logged on failure). (phase 2, RFE-008) Except for the **security-critical set** of `04 §Audit`, whose rows are written in the same transaction as the change and make the action fail if they cannot be written.
 

@@ -107,7 +107,7 @@ describe("instances admin section", () => {
         json(200, { items: [inst({}), inst({ id: "i2", org_id: null, host: "desk.wide.example", label: "Wide", connections: 0 })], next_cursor: null }),
     });
     wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
-    const table = await screen.findByRole("table", { name: "Registered app instances" });
+    const table = await screen.findByRole("table", { name: "Registered self-hosted apps" });
     expect(within(table).getByText("desk.acme.example")).toBeInTheDocument();
     expect(within(table).getByText("Organization")).toBeInTheDocument();
     expect(within(table).getByText("Instance-wide")).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe("instances admin section", () => {
       },
     });
     wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Register instance" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Register a self-hosted app" }));
     fireEvent.change(await screen.findByLabelText("App"), { target: { value: "desk" } });
     fireEvent.change(screen.getByLabelText("Host"), { target: { value: " desk.acme.example " } });
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
@@ -150,7 +150,7 @@ describe("instances admin section", () => {
     const dlg = await screen.findByRole("dialog");
     expect(dlg.textContent).toMatch(/2 connections will be disabled/);
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
-    fireEvent.click(within(dlg).getByRole("button", { name: "Delete instance" }));
+    fireEvent.click(within(dlg).getByRole("button", { name: "Delete self-hosted app" }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.path === "/v1/app-instances/i1")).toBe(true));
   });
 
@@ -161,8 +161,8 @@ describe("instances admin section", () => {
       "GET /v1/admin/app-instances": () => json(200, { items: [], next_cursor: null }),
     });
     wrap(<InstancesView scope={{ kind: "instance" }} canManage />);
-    await screen.findByText("No app supports self-hosted instances");
-    expect(screen.queryByRole("button", { name: "Register instance" })).toBeNull();
+    await screen.findByText("No app supports self-hosting");
+    expect(screen.queryByRole("button", { name: "Register a self-hosted app" })).toBeNull();
   });
 });
 
@@ -246,7 +246,7 @@ describe("instance on connections and OAuth clients", () => {
     });
     wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
     expect(await screen.findByText("desk.acme.example")).toBeInTheDocument();
-    expect(screen.getByText(/instance of this connection was deleted/)).toBeInTheDocument();
+    expect(screen.getByText(/self-hosted app of this connection was deleted/)).toBeInTheDocument();
     // k1 can be disabled, k2 (instance deleted) cannot be re-enabled
     expect(screen.getAllByRole("button", { name: /^(Disable|Enable)$/ })).toHaveLength(1);
   });
@@ -265,7 +265,7 @@ describe("instance on connections and OAuth clients", () => {
     const app = await screen.findByLabelText("App");
     await within(app).findByRole("option", { name: "Desk (oa)" });
     fireEvent.change(app, { target: { value: "selfhost|oa" } });
-    const picker = await screen.findByLabelText("Instance");
+    const picker = await screen.findByLabelText("Self-hosted app");
     await within(picker).findByRole("option", { name: "Acme desk (desk.acme.example)" });
     fireEvent.change(picker, { target: { value: "i1" } });
     fireEvent.change(screen.getByLabelText("Application ID"), { target: { value: "cid" } });

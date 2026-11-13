@@ -462,7 +462,7 @@ async fn every_refusal_of_a_host_is_a_422_with_the_path_and_code() {
         ("plain.example.test", "static_claim", Some("plain")),
         ("anything.wild.example.test", "static_claim", Some("plain")),
         ("saas.desk.example", "static_claim", Some("desk")),
-        ("hooks.aurora.example.org", "llm_host", None),
+        ("hooks.aurora.example.org", "aurora_address", None),
     ] {
         let (s, v) = w.register(&w.owner, org, "desk", host).await;
         assert_eq!(s, 422, "{host}: {v}");
@@ -532,6 +532,212 @@ async fn every_refusal_of_a_host_is_a_422_with_the_path_and_code() {
         .await
         .unwrap();
     assert_eq!(n, 3);
+}
+
+impl W {
+    async fn admin_register(&self, app: &str, host: &str) -> (u16, Value) {
+        self.call(
+            &self.root,
+            Method::POST,
+            "/v1/admin/app-instances",
+            Some(json!({"app_id": app, "host": host, "label": "x"})),
+        )
+        .await
+    }
+}
+
+/// FIX-132: the refusal names the holder, permission-aware.
+#[tokio::test]
+async fn a_host_conflict_names_its_holder_without_leaking_other_organizations() {
+    let w = world().await;
+    // a package's static claim: app, package and the claim
+    let (s, v) = w.admin_register("desk", "plain.example.test").await;
+    assert_eq!(s, 422, "{v}");
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(c["kind"], "static_claim");
+    assert_eq!(c["app_id"], "plain");
+    assert_eq!(c["app_name"], "Plain");
+    assert_eq!(c["package_id"], "plainpkg");
+    // Aurora's own address: the setting is named to an instance admin, not to an org admin
+    let (_, v) = w.admin_register("desk", "hooks.aurora.example.org").await;
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(
+        (c["kind"].as_str(), c["setting"].as_str()),
+        (Some("aurora_address"), Some("hookhost_url")),
+        "{v}"
+    );
+    let (_, v) = w
+        .register(&w.owner, w.org, "desk", "hooks.aurora.example.org")
+        .await;
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(c["kind"], "aurora_address");
+    assert!(c["setting"].is_null(), "{v}");
+
+    // an organization's registration blocks the instance admin's, who is told which one
+    let org_inst = w.instance("desk", "desk.acme.example").await;
+    let (s, v) = w.admin_register("desk", "desk.acme.example").await;
+    assert_eq!(s, 422, "{v}");
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(c["kind"], "instance");
+    assert_eq!(c["scope"], "org");
+    assert_eq!(c["app_id"], "desk");
+    assert_eq!(c["app_name"], "Desk");
+    assert_eq!(c["instance_id"], json!(org_inst));
+    assert_eq!(c["promotable"], true);
+    assert_eq!(c["org"]["id"], json!(w.org));
+    assert!(c["org"]["name"].is_string() && c["org"]["slug"].is_string());
+
+    // an org admin never learns another org's name: the instance-wide holder carries none
+    let (s, _) = w.admin_register("desk", "wide.example").await;
+    assert_eq!(s, 201);
+    let (s, v) = w
+        .register(&w.owner_b, w.org_b, "desk", "wide.example")
+        .await;
+    assert_eq!(s, 422, "{v}");
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(
+        (c["kind"].as_str(), c["scope"].as_str()),
+        (Some("instance"), Some("instance"))
+    );
+    assert!(c.get("org").is_none(), "{v}");
+    assert_eq!(c["promotable"], false);
+    // another org's registration of the same host does not block org B at all
+    let (s, v) = w
+        .register(&w.owner_b, w.org_b, "desk", "desk.acme.example")
+        .await;
+    assert_eq!(s, 201, "{v}");
+}
+
+#[tokio::test]
+async fn the_admin_list_shows_every_registration_and_promote_makes_one_instance_wide() {
+    let w = world().await;
+    let id = w.instance("desk", "desk.acme.example").await;
+    let (s, v) = w.admin_register("desk", "wide.example").await;
+    assert_eq!(s, 201, "{v}");
+    // a connection bound to the org's instance
+    let (s, _, v) = w
+        .connect(&w.owner, "desk", w.body("api_key", Some(id)))
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // default: instance-wide only; scope=all: with the org's name; org filter
+    let (s, v) = w
+        .call(&w.root, Method::GET, "/v1/admin/app-instances", None)
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["items"].as_array().unwrap().len(), 1);
+    let (_, v) = w
+        .call(
+            &w.root,
+            Method::GET,
+            "/v1/admin/app-instances?scope=all",
+            None,
+        )
+        .await;
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let mine = items.iter().find(|i| i["id"] == json!(id)).unwrap();
+    assert!(mine["org_name"].is_string() && mine["org_slug"].is_string());
+    let (_, v) = w
+        .call(
+            &w.root,
+            Method::GET,
+            &format!("/v1/admin/app-instances?org={}", w.org),
+            None,
+        )
+        .await;
+    assert_eq!(v["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        w.call(
+            &w.root,
+            Method::GET,
+            "/v1/admin/app-instances?scope=x",
+            None
+        )
+        .await
+        .0,
+        400
+    );
+
+    // non-admins: 403; an unknown id: 404
+    let uri = format!("/v1/admin/app-instances/{id}/promote");
+    for who in [&w.owner, &w.member] {
+        assert_eq!(w.call(who, Method::POST, &uri, None).await.0, 403);
+    }
+    assert_eq!(
+        w.call(
+            &w.root,
+            Method::POST,
+            &format!("/v1/admin/app-instances/{}/promote", Uuid::nil()),
+            None
+        )
+        .await
+        .0,
+        404
+    );
+    // org B also holds the host → refused until that one is gone
+    let (s, v) = w
+        .register(&w.owner_b, w.org_b, "desk", "desk.acme.example")
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let b_id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("instance_host_shared")),
+        "{v}"
+    );
+    let (s, _) = w
+        .call(
+            &w.owner_b,
+            Method::DELETE,
+            &format!("/v1/app-instances/{b_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["org_id"].is_null() && v["org_name"].is_null());
+    assert_eq!(v["connections"], 1);
+    // connections keep their instance; org B now sees the instance-wide row; a second promote is 409
+    let bound: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app_connections WHERE instance_id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(bound, 1);
+    let (_, v) = w
+        .call(
+            &w.owner_b,
+            Method::GET,
+            &format!("/v1/orgs/{}/app-instances", w.org_b),
+            None,
+        )
+        .await;
+    assert!(
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["id"] == json!(id))
+    );
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("instance_already_wide")),
+        "{v}"
+    );
+    // audited, critical, in the former org's log
+    let (org_id, critical): (Option<Uuid>, bool) = sqlx::query_as(
+        "SELECT org_id, critical FROM audit_log WHERE action = 'app_instance.promote'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((org_id, critical), (Some(w.org), true));
 }
 
 #[tokio::test]

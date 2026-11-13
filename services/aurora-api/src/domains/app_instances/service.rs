@@ -58,12 +58,17 @@ pub fn check_host_shape(host: &str) -> Result<(), ApiError> {
 
 /// The conflict an instance host would create with the active static claims or a governed LLM host
 /// (a claim overlaps when some request host matches both, ignoring ports).
-fn static_conflict(state: &AppState, snap: &Snapshot, host: &str) -> Option<ApiError> {
-    let conflict = |kind: &str, app_id: Option<&str>| {
-        let c = match app_id {
-            Some(a) => json!({ "kind": kind, "app_id": a }),
-            None => json!({ "kind": kind }),
-        };
+///
+/// The error names the holder (FIX-132, `details.conflict`): `static_claim` (app, package),
+/// `llm_host` (the endpoint id) or `aurora_address` (the setting). Operator configuration (the
+/// endpoint id, the setting name) is only named to an instance administrator (`reveal`).
+fn static_conflict(
+    state: &AppState,
+    snap: &Snapshot,
+    host: &str,
+    reveal: bool,
+) -> Option<ApiError> {
+    let conflict = |c: Value| {
         field_error(
             "instance_host_conflict",
             "/host",
@@ -76,14 +81,65 @@ fn static_conflict(state: &AppState, snap: &Snapshot, host: &str) -> Option<ApiE
         .iter()
         .find(|e| hosts_overlap(&e.host, host) || HostPattern::lenient(&e.host).matches(host, 443))
     {
-        return Some(conflict("static_claim", Some(&e.app_id)));
+        let app = snap.app(&e.app_id);
+        return Some(conflict(json!({
+            "kind": "static_claim",
+            "app_id": e.app_id,
+            "app_name": app.map(|a| a.about.name.as_str()),
+            "package_id": app.map(|a| a.package_id.as_str()),
+            "claim_host": e.host,
+        })));
     }
-    let llm = state.llm.is_endpoint_host(host)
-        || snap.reserved_hosts.iter().any(|p| hosts_overlap(p, host))
+    if state.llm.is_endpoint_host(host) {
+        let lower = host.to_ascii_lowercase();
+        let bare = lower.split_once(':').map_or(lower.as_str(), |(h, _)| h);
+        let endpoint = state
+            .llm
+            .endpoints()
+            .iter()
+            .find(|ep| {
+                state.llm.provider_for(ep).is_some_and(|p| {
+                    p.hosts(ep)
+                        .iter()
+                        .any(|h| *h == lower || (!h.contains(':') && h == bare))
+                })
+            })
+            .map(|ep| ep.id.as_str());
+        return Some(conflict(json!({
+            "kind": "llm_host",
+            "endpoint_id": if reveal { endpoint } else { None },
+        })));
+    }
+    if let Some(setting) = own_address_setting(state, host) {
+        return Some(conflict(json!({
+            "kind": "aurora_address",
+            "setting": reveal.then_some(setting),
+        })));
+    }
+    let reserved = snap.reserved_hosts.iter().any(|p| hosts_overlap(p, host))
         || ingest::reserved_names(state)
             .iter()
             .any(|p| hosts_overlap(p, host));
-    llm.then(|| conflict("llm_host", None))
+    reserved.then(|| conflict(json!({ "kind": "aurora_address", "setting": null })))
+}
+
+/// Which of Aurora's own address settings names `host`.
+fn own_address_setting(state: &AppState, host: &str) -> Option<&'static str> {
+    let cfg = &state.config;
+    [
+        ("external_url", &cfg.external_url),
+        ("hookhost_url", &cfg.hookhost_url),
+        ("advertised_proxy_url", &cfg.advertised_proxy_url),
+    ]
+    .into_iter()
+    .find(|(_, url)| {
+        let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
+        let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let auth = auth.rsplit_once('@').map_or(auth, |(_, h)| h);
+        let name = auth.rsplit_once(':').map_or(auth, |(h, _)| h);
+        !name.is_empty() && hosts_overlap(name, host)
+    })
+    .map(|(setting, _)| setting)
 }
 
 /// Run the manifest's probe against the host through the destination guard.
@@ -191,11 +247,101 @@ fn map_page(page: Page<InstanceRow>) -> Page<AppInstance> {
     }
 }
 
-/// Register an instance (`org = None`: instance-wide). The caller has authorized the scope.
+/// Registrations for the instance admin: instance-wide only (`all = false`) or every
+/// organization's too, optionally of one org.
+pub async fn list_admin(
+    state: &AppState,
+    q: &AdminListQuery,
+) -> Result<Page<AppInstance>, ApiError> {
+    let all = match q.scope.as_deref() {
+        None | Some("instance") => false,
+        Some("all") => true,
+        Some(_) => return Err(bad("/scope", "scope must be instance or all")),
+    };
+    if !all && q.org.is_none() {
+        return list_instance_wide(
+            state,
+            &ListQuery {
+                app_id: q.app_id.clone(),
+                limit: q.limit,
+                cursor: q.cursor.clone(),
+            },
+        )
+        .await;
+    }
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    let rows = repo::list_all(
+        &state.pool,
+        q.org,
+        q.app_id.as_deref(),
+        p.after.map(|c| (c.t, c.id)),
+        p.fetch(),
+    )
+    .await?;
+    Ok(map_page(Page::from_rows(rows, p.limit, |r| {
+        (r.created_at, r.id)
+    })))
+}
+
+/// Make an organization's registration instance-wide (FIX-132, `app_instance.promote`): one
+/// transaction moves it to `org_id = NULL` (its connections keep their `instance_id`; every
+/// organization then sees it) and audits it. Refused while another registration holds the host
+/// (that one must be removed first, or two rows would claim it in one scope).
+pub async fn promote(
+    state: &AppState,
+    actor: &AuditActor,
+    id: Uuid,
+) -> Result<InstanceRow, ApiError> {
+    let row = repo::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("App instance not found."))?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    repo::lock_host(&mut tx, &row.host).await?;
+    // Re-read under the host lock: a concurrent promote or delete decides.
+    let row = repo::get(&mut *tx, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("App instance not found."))?;
+    let Some(from_org) = row.org_id else {
+        return Err(ApiError::conflict(
+            "instance_already_wide",
+            "This registration is already instance-wide.",
+        ));
+    };
+    let others = repo::other_holders(&mut tx, &row.host, id).await?;
+    if others > 0 {
+        return Err(ApiError::conflict(
+            "instance_host_shared",
+            "Another registration of this host exists. Delete it first, then make this one instance-wide.",
+        )
+        .with_details(json!({ "others": others })));
+    }
+    repo::promote(&mut tx, id).await?;
+    let promoted = repo::get(&mut *tx, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("App instance not found."))?;
+    // The event carries the former org (`org_id` of the row is now null): the org's audit log
+    // shows the widening too.
+    let ev = event(
+        actor,
+        "app_instance.promote",
+        &promoted,
+        json!({"app_id": promoted.app_id, "host": promoted.host, "from_org": from_org,
+               "connections": promoted.connections}),
+    )
+    .org(from_org);
+    audit::insert_tx(&mut tx, &ev).await?;
+    credentials::notify_gateway_invalidate(&mut *tx, "all", Uuid::nil()).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(promoted)
+}
+
+/// Register an instance (`org = None`: instance-wide). The caller has authorized the scope;
+/// `reveal` = the caller is an instance administrator (operator detail may be named in a refusal).
 pub async fn create(
     state: &AppState,
     actor: &AuditActor,
     org: Option<Uuid>,
+    reveal: bool,
     req: CreateAppInstanceRequest,
 ) -> Result<InstanceRow, ApiError> {
     let label = clean_label(&req.label)?;
@@ -214,19 +360,37 @@ pub async fn create(
             )
         })?;
     check_host_shape(&req.host)?;
-    if let Some(e) = static_conflict(state, &snap, &req.host) {
+    if let Some(e) = static_conflict(state, &snap, &req.host, reveal) {
         return Err(e);
     }
-    let instance_conflict = |app_id: String| {
+    // The holder of the host: another registration visible from this scope. Only an instance
+    // admin registering instance-wide sees other organizations' registrations (and then learns
+    // which one, and that it can be made instance-wide); an org admin only ever sees the
+    // instance-wide ones and their own organization's.
+    let instance_conflict = |h: repo::HostHolder| {
+        let scope = if h.org_id.is_some() {
+            "org"
+        } else {
+            "instance"
+        };
+        let name_of = |id: &str| snap.app(id).map(|a| a.about.name.clone());
+        let mut c = json!({
+            "kind": "instance", "scope": scope, "app_id": h.app_id,
+            "app_name": name_of(&h.app_id), "instance_id": h.id,
+            "promotable": reveal && org.is_none() && h.org_id.is_some(),
+        });
+        if let (true, Some(o)) = (reveal && org.is_none(), h.org_id) {
+            c["org"] = json!({ "id": o, "name": h.org_name, "slug": h.org_slug });
+        }
         field_error(
             "instance_host_conflict",
             "/host",
             "The host is already registered as an app instance.",
-            Some(json!({ "conflict": { "kind": "instance", "app_id": app_id } })),
+            Some(json!({ "conflict": c })),
         )
     };
-    if let Some((a, _)) = repo::visible_with_host(&state.pool, org, &req.host).await? {
-        return Err(instance_conflict(a));
+    if let Some(h) = repo::visible_with_host(&state.pool, org, &req.host).await? {
+        return Err(instance_conflict(h));
     }
     if let Some(p) = app.instances.as_ref().and_then(|i| i.probe.as_ref()) {
         run_probe(state, &req.host, p).await?;
@@ -234,8 +398,8 @@ pub async fn create(
     let id = ids::new_id();
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     repo::lock_host(&mut tx, &req.host).await?;
-    if let Some((a, _)) = repo::visible_with_host(&mut *tx, org, &req.host).await? {
-        return Err(instance_conflict(a));
+    if let Some(h) = repo::visible_with_host(&mut *tx, org, &req.host).await? {
+        return Err(instance_conflict(h));
     }
     let res = repo::insert(
         &mut *tx,
