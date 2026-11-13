@@ -30,7 +30,7 @@ const T: Duration = Duration::from_secs(10);
 /// The bootstrap executable for the rig: the built `aurora-supervisor` binary (the test
 /// process is a libtest binary, not the supervisor — the bootstrap re-exec must be the
 /// real one, which understands `pty_exec::SUBCOMMAND`).
-fn bootstrap_exe() -> std::path::PathBuf {
+pub(crate) fn bootstrap_exe() -> std::path::PathBuf {
     // The path comes from nextest's runtime variable when running from an archive built
     // elsewhere (CI's shard runners never compile), from the re-exec parent's explicit
     // handoff (`spawn::command` scrubs the environment, so the `sh` in
@@ -46,7 +46,7 @@ fn bootstrap_exe() -> std::path::PathBuf {
 
 /// The channel ends a PTY engine runs on, built like `channel::spawn` builds them, plus the
 /// receiving half the test reads the engine's frames/data from.
-struct Rig {
+pub(crate) struct Rig {
     handle: std::sync::Arc<aurora_supervisor::pty::PtyHandle>,
     pty_tx: mpsc::UnboundedSender<PtyIn>,
     out_rx: mpsc::Receiver<StreamOut>,
@@ -60,7 +60,7 @@ struct Rig {
 
 /// A PTY engine over hand-built ends, rooted at `home` (the cwd parameter replaces the
 /// image's `/workspace`).
-fn rig(home: &std::path::Path, enabled: bool) -> Rig {
+pub(crate) fn rig(home: &std::path::Path, enabled: bool) -> Rig {
     let (pty_out_tx, pty_out_rx) = mpsc::channel(1024);
     let (pty_in_tx, pty_in_rx) = mpsc::unbounded_channel();
     let (epoch_tx, epoch_rx) = tokio::sync::watch::channel(0u64);
@@ -81,12 +81,12 @@ fn rig(home: &std::path::Path, enabled: bool) -> Rig {
 
 impl Rig {
     /// Drives a `pty.*` control frame in (as the runner's channel pump would).
-    async fn frame(&self, msg: RunnerToSupervisor) {
+    pub(crate) async fn frame(&self, msg: RunnerToSupervisor) {
         let _ = self.pty_tx.send(PtyIn::Frame(msg));
     }
 
     /// Drives binary terminal data in (`[0x02][pty_id BE][payload]` decoded by the channel).
-    async fn data(&self, pty_id: u32, payload: &[u8]) {
+    pub(crate) async fn data(&self, pty_id: u32, payload: &[u8]) {
         let _ = self.pty_tx.send(PtyIn::Data {
             pty_id,
             payload: payload.to_vec(),
@@ -94,7 +94,7 @@ impl Rig {
     }
 
     /// The engine's next outgoing unit (a text `pty.*` frame, binary data or a flush).
-    async fn next_out(&mut self) -> StreamOut {
+    pub(crate) async fn next_out(&mut self) -> StreamOut {
         tokio::time::timeout(T, self.out_rx.recv())
             .await
             .expect("engine output timed out")
@@ -102,7 +102,7 @@ impl Rig {
     }
 
     /// The next `pty.*` text frame (skips binary data and flushes).
-    async fn next_frame(&mut self) -> Value {
+    pub(crate) async fn next_frame(&mut self) -> Value {
         loop {
             match self.next_out().await {
                 StreamOut::Text(t) => {
@@ -135,7 +135,7 @@ impl Rig {
 
     /// Shell output until `needle` appears (as text, CRLF-line-discipline included). Credit
     /// frames seen on the way are recorded (each written input chunk yields one).
-    async fn until(&mut self, needle: &str) -> String {
+    pub(crate) async fn until(&mut self, needle: &str) -> String {
         let mut out = String::new();
         let deadline = tokio::time::Instant::now() + T;
         loop {
@@ -170,12 +170,14 @@ impl Rig {
 /// A `pty.refused{reason: "error"}` is the OS refusing the spawn (fork/pty pressure —
 /// nextest runs every test in its own process and CI runners get resource-starved
 /// mid-shard); that is transient pressure, not a posture failure, so the open is retried
-/// with exponential backoff (~25 s total). Any other refusal is asserted through — only
+/// once after a short backoff (2 attempts). Any other refusal is asserted through — only
 /// `error` can be transient (`limit`/`disabled` are deterministic). If the window
 /// exhausts, two direct probes (a raw `openpt` and a bare fork of the bootstrap) name the
 /// real errno in the panic, so one failing CI run identifies the resource.
-async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
-    const BACKOFF_MS: [u64; 8] = [100, 200, 400, 800, 1600, 3200, 6400, 12800];
+pub(crate) async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
+    // FIX-059: the refusals the long backoff papered over came from PTY masters leaking
+    // (no CLOEXEC) and accumulating; with that fixed, one short retry is enough.
+    const BACKOFF_MS: [u64; 1] = [200];
     for wait in std::iter::once(0u64).chain(BACKOFF_MS) {
         if wait > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
@@ -211,17 +213,6 @@ async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
         Ok(_) => "openpt ok".to_owned(),
         Err(e) => format!("openpt FAILED: {e}"),
     };
-    let direct = match aurora_supervisor::pty::debug_spawn_session(
-        "/bin/sh",
-        None,
-        &std::env::temp_dir(),
-        &bootstrap_exe(),
-        80,
-        24,
-    ) {
-        Ok(_) => "direct spawn ok".to_owned(),
-        Err(e) => format!("direct spawn FAILED: {e}"),
-    };
     let fork = match aurora_supervisor::spawn::command(
         bootstrap_exe(),
         std::iter::empty::<(&str, &str)>(),
@@ -232,9 +223,7 @@ async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
         Ok(_) => "fork ok".to_owned(),
         Err(e) => format!("fork FAILED: {e}"),
     };
-    panic!(
-        "pty {pty_id}: spawn refused after 8 attempts (~25 s). Probes: {openpt}; {direct}; {fork}"
-    );
+    panic!("pty {pty_id}: spawn refused after 2 attempts. Probes: {openpt}; {fork}");
 }
 
 /// The echo round trip (W19 on W18's credit machinery): runner bytes reach the shell, the

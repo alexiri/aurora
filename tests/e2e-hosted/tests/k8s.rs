@@ -842,18 +842,25 @@ async fn ws_round_trip(
     frame.extend_from_slice(&mask);
     frame.extend_from_slice(&payload);
     tcp.write_all(&frame).await.unwrap();
-    let mut buf = vec![0u8; 1024];
-    let n = tokio::time::timeout(Duration::from_secs(15), tcp.read(&mut buf))
-        .await
-        .unwrap_or(Ok(0))
-        .unwrap_or(0);
-    let echoed = n > 2 && buf[0] == 0x81 && &buf[2..2 + (buf[1] & 0x7f) as usize] == b"ws-echo";
+    // A single `read()` may return only the 2-byte header (the app writes header and payload
+    // separately, and the relay forwards them as it gets them — AUDIT-004 saw `[129, 7]`):
+    // read the header, then exactly the payload length (FIX-060). The echo is a short
+    // unmasked server frame, so the 7-bit length form is all that is needed.
+    let mut head = [0u8; 2];
+    let mut body = Vec::new();
+    let got = tokio::time::timeout(Duration::from_secs(15), async {
+        tcp.read_exact(&mut head).await?;
+        body = vec![0u8; (head[1] & 0x7f) as usize];
+        tcp.read_exact(&mut body).await
+    })
+    .await;
+    let echoed =
+        matches!(got, Ok(Ok(_))) && head[0] == 0x81 && head[1] & 0x7f < 126 && body == b"ws-echo";
     let _ = tcp.write_all(&[0x88, 0x00]).await; // close
     assert!(
         echoed,
-        "no ws echo from the app ({} bytes: {:?})",
-        n,
-        &buf[..n.min(32)]
+        "no ws echo from the app (read {got:?}, header {head:?}, payload {:?})",
+        &body[..body.len().min(32)]
     );
     (status, headers, String::new())
 }

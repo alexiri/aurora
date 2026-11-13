@@ -489,8 +489,16 @@ impl PtySession {
         cols: u16,
         rows: u16,
     ) -> std::io::Result<Self> {
-        let master =
-            rustix::pty::openpt(rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY)?;
+        // `CLOEXEC` is a security property (FIX-059, SEC-87): without it every shell — and every
+        // later child the supervisor spawns, the agent's harness included — inherits the
+        // master, so the agent could read and type into the user's terminal and the session
+        // would never see SIGHUP/EOF. The slave (below) is opened by std (CLOEXEC) and
+        // reaches the child only as its dup'd stdio.
+        let master = rustix::pty::openpt(
+            rustix::pty::OpenptFlags::RDWR
+                | rustix::pty::OpenptFlags::NOCTTY
+                | rustix::pty::OpenptFlags::CLOEXEC,
+        )?;
         rustix::pty::grantpt(&master)?;
         rustix::pty::unlockpt(&master)?;
         let name = rustix::pty::ptsname(&master, Vec::new())?;
@@ -554,22 +562,6 @@ impl PtySession {
     }
 }
 
-/// Test diagnostic (`pty_env_probe`): runs the real `PtySession::spawn` steps outside the
-/// engine so a CI failure can name the exact failing operation (ptmx allocation, slave
-/// open, or the bootstrap fork) instead of the engine's errno-free `pty.refused{error}`.
-/// Not used by the supervisor itself; returns the raw `io::Result` (the session is
-/// dropped immediately, closing the master).
-pub fn debug_spawn_session(
-    shell: &str,
-    uid: Option<u32>,
-    cwd: &std::path::Path,
-    bootstrap: &std::path::Path,
-    cols: u16,
-    rows: u16,
-) -> std::io::Result<()> {
-    PtySession::spawn(shell, uid, cwd, bootstrap, cols, rows).map(|_| ())
-}
-
 /// `TIOCSWINSZ` (best effort; a failed resize keeps the old size).
 fn winsize<Fd: std::os::fd::AsFd>(fd: Fd, cols: u16, rows: u16) {
     let _ = rustix::termios::tcsetwinsize(
@@ -613,22 +605,30 @@ async fn pty_task(
                     Ok(g) => g,
                     Err(_) => { pty.reap().await; break PtyCloseReason::Hangup; }
                 };
-                match rustix::io::read(guard.get_ref(), &mut buf) {
+                // Read at most the remaining credit (FIX-059): nothing is read that cannot
+                // be sent, so no byte is ever dropped; the kernel's PTY buffer provides the
+                // backpressure and the shell blocks on write.
+                let want = credit.min(TERMINAL_CHUNK);
+                match rustix::io::read(guard.get_ref(), &mut buf[..want]) {
                     Ok(0) => { pty.reap().await; break PtyCloseReason::Eof; }
                     Ok(n) => {
-                        guard.clear_ready();
-                        let send = n.min(credit);
-                        if out.send(PtyOut::Binary(frame_data(id, &buf[..send]))).await.is_err() {
+                        // Epoll is edge-triggered: clear readiness only when the read
+                        // drained the kernel buffer (a short read). A read capped by the
+                        // credit may leave data behind, so readiness must stay set or the
+                        // rest would never be noticed once credit returns.
+                        if n < want {
+                            guard.clear_ready();
+                        }
+                        if out.send(PtyOut::Binary(frame_data(id, &buf[..n]))).await.is_err() {
                             break PtyCloseReason::ChannelLost;
                         }
-                        credit -= send;
-                        bytes_out += send as u64;
-                        // Over-credit output cannot occur while the window never shrinks;
-                        // anything beyond the credit is discarded rather than buffered.
-                        bytes_out += (n - send) as u64;
+                        credit -= n;
+                        bytes_out += n as u64;
                     }
-                    // `EAGAIN` (spurious readiness) waits for the next readiness event.
-                    Err(rustix::io::Errno::AGAIN) => continue,
+                    // `EAGAIN`: the kernel buffer is empty (stale readiness, e.g. a
+                    // credit-capped read drained it exactly). Clear readiness or
+                    // `readable()` returns at once and the loop busy-spins.
+                    Err(rustix::io::Errno::AGAIN) => { guard.clear_ready(); continue }
                     Err(_) => { pty.reap().await; break PtyCloseReason::Hangup; }
                 }
             }
@@ -650,7 +650,8 @@ async fn pty_task(
                                     guard.clear_ready();
                                     written += n;
                                 }
-                                Err(rustix::io::Errno::AGAIN) => continue,
+                                // Same as the read arm: clear stale readiness, no spin.
+                                Err(rustix::io::Errno::AGAIN) => { guard.clear_ready(); continue }
                                 Err(_) => { failed = true; break; }
                             }
                         }
