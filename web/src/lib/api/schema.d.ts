@@ -45,11 +45,35 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List instance-wide app instances (instance admin). */
+        /**
+         * List app instances (instance admin): the instance-wide ones, or with `scope=all` every
+         *     organization's too.
+         */
         get: operations["listInstanceAppInstances"];
         put?: never;
         /** Register an instance-wide app instance (instance admin). */
         post: operations["createInstanceAppInstance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/app-instances/{id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make an organization's registration instance-wide (instance admin, FIX-132): one transaction
+         *     moves it to `org_id = NULL`; its connections keep resolving, other organizations then see it
+         *     too. Audited as `app_instance.promote` (security-critical).
+         */
+        post: operations["promoteAppInstance"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4699,6 +4723,9 @@ export interface components {
              * @description `null` = instance-wide.
              */
             org_id?: string | null;
+            /** @description Name and slug of `org_id` (`null` for an instance-wide registration). */
+            org_name?: string | null;
+            org_slug?: string | null;
             package_id: string;
             /** @description `active` | `disabled`. */
             status: string;
@@ -7152,6 +7179,9 @@ export interface components {
                  * @description `null` = instance-wide.
                  */
                 org_id?: string | null;
+                /** @description Name and slug of `org_id` (`null` for an instance-wide registration). */
+                org_name?: string | null;
+                org_slug?: string | null;
                 package_id: string;
                 /** @description `active` | `disabled`. */
                 status: string;
@@ -10059,6 +10089,10 @@ export interface operations {
                 app_id?: string;
                 limit?: number;
                 cursor?: string;
+                /** @description `instance` (default): instance-wide only; `all`: every registration, organizations' too. */
+                scope?: string;
+                /** @description Only this organization's registrations (implies `all`). */
+                org?: string;
             };
             header?: never;
             path?: never;
@@ -10128,6 +10162,56 @@ export interface operations {
             };
             /** @description app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    promoteAppInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App instance id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Promoted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppInstance"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description instance_already_wide or instance_host_shared */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

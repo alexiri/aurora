@@ -113,7 +113,7 @@ function ConnectionRow({
       {c.status_reason ? (
         <p className="text-sm text-ink-2">
           {c.status_reason === "instance_deleted"
-            ? "The app instance of this connection was deleted. Connect again."
+            ? "The self-hosted app of this connection was deleted. Connect again."
             : c.status === "reauth_required" && c.status_reason.startsWith("plugin_major_upgrade:")
               ? `${c.app_id} was upgraded to a version with different credential fields. Reconnect to keep using it.`
               : c.status_reason}

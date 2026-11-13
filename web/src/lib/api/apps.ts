@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { api, ApiError } from "./client";
@@ -30,21 +30,32 @@ export const appKeys = {
   connections: (s: CredScope) => ["connections", s.kind, "id" in s ? s.id : ""] as const,
   clients: (s: CredScope) => ["oauth-clients", s.kind, "id" in s ? s.id : ""] as const,
   availability: (org: string) => ["app-availability", org] as const,
-  instances: (s: InstanceScope) => ["app-instances", s.kind, "id" in s ? s.id : ""] as const,
+  instances: (s: InstanceScope) =>
+    ["app-instances", s.kind, "id" in s ? s.id : "", s.kind === "instance" ? `${s.all ?? false}:${s.org ?? ""}` : ""] as const,
 };
 
-/** Where app instances are listed/registered: an organization (its own and the instance-wide ones) or instance-wide. */
-export type InstanceScope = { kind: "organization"; id: string } | { kind: "instance" };
+/**
+ * Where self-hosted apps (app instances, D-74) are listed/registered: an organization (its own and the
+ * instance-wide ones) or instance-wide. `all` (the admin list, FIX-132) also lists every organization's
+ * registrations, optionally of one `org`.
+ */
+export type InstanceScope = { kind: "organization"; id: string } | { kind: "instance"; all?: boolean; org?: string };
 
-/** Self-hosted app instances (D-74): instance-wide and the org's own for an org scope. */
+/** Self-hosted apps (D-74): instance-wide and the org's own for an org scope. */
 export function useAppInstances(scope: InstanceScope | undefined) {
   return useQuery({
     queryKey: scope ? appKeys.instances(scope) : ["app-instances", "none"],
     queryFn: () =>
       scope!.kind === "organization"
         ? unwrap(api.GET("/v1/orgs/{org}/app-instances", { params: { path: { org: scope!.id } } }))
-        : unwrap(api.GET("/v1/admin/app-instances")),
+        : unwrap(
+            api.GET("/v1/admin/app-instances", {
+              params: { query: { scope: scope!.all ? "all" : undefined, org: scope!.org || undefined } },
+            }),
+          ),
     enabled: !!scope,
+    // Changing the admin list's organization filter keeps the table (and the filter) on screen.
+    placeholderData: keepPreviousData,
     retry: false,
   });
 }
@@ -56,6 +67,16 @@ export function useCreateAppInstance(scope: InstanceScope) {
       scope.kind === "organization"
         ? unwrap(api.POST("/v1/orgs/{org}/app-instances", { params: { path: { org: scope.id } }, body }))
         : unwrap(api.POST("/v1/admin/app-instances", { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
+  });
+}
+
+/** Make an organization's registration instance-wide (instance admin, FIX-132). */
+export function usePromoteAppInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api.POST("/v1/admin/app-instances/{id}/promote", { params: { path: { id } } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
   });
 }

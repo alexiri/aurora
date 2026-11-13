@@ -509,7 +509,7 @@ again" and "Show the getting-started guide again".
   with a link to each agent. Turning it off asks for confirmation ("Existing links stop working
   until you turn it back on") and is audited.
 - **Apps**: app availability posture and allow-list.
-- **Instances** (`/o/<org>/instances`, phase 2, D-74): the org's registered self-hosted app instances plus the read-only instance-wide ones; owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first), and OAuth clients can be bound to an instance.
+- **Self-hosted apps** (`/o/<org>/instances`, phase 2, D-74; renamed from "Instances", FIX-132: one term in the navigation, titles, empty states and help — "Register your own GitLab, GitHub Enterprise Server, Indico … so people can connect to it"; the route and the API names stay): the org's registered self-hosted app instances plus the read-only instance-wide ones; a refused host names its holder (static claim → app and package, LLM endpoint, Aurora's own address, registration → app and scope; never another organization's name to an organization admin); owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first), and OAuth clients can be bound to an instance.
 - **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
   - *Model access*: per instance endpoint — permitted or not, key scopes
     (organization / workspace), origin narrowing (e.g. Anthropic organization
@@ -780,7 +780,7 @@ phase, the elapsed seconds and the pod's Warning events — so a production
 kubectl commands as the fallback in `15`/operator docs; FIX-029, D-160, C-614:
 each row names the agent and clicking it opens a **Start diagnostics** drawer
 with that agent's failure history (the C-614 route), so an admin can tell
-"this agent keeps failing" from "the runner is failing everyone"), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+"this agent keeps failing" from "the runner is failing everyone"), **Self-hosted apps** (`/admin/instances`, D-74, FIX-132: every registration, instance-wide and per-organization, with an Organization column and filter; **Make instance-wide** on an organization's registration, with a confirmation, audited `app_instance.promote`; the registration error offers the same action when an organization already registered the host, and links an instance admin to Host claims for a static claim), **OAuth clients** (instance-level).
 (phase 4, P4-PRV-2) a **Previews** line when `previews.enabled`: relay replicas
 (`GET /v1/admin/relays`), the domain, share count and a "no relay seen" warning.
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up

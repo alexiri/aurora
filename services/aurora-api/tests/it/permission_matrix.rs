@@ -359,6 +359,12 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/admin/host-claims/{group_key}", G::Inst, false),
     r("GET", "/v1/admin/app-instances", G::Inst, false),
     r("POST", "/v1/admin/app-instances", G::Inst, false),
+    r(
+        "POST",
+        "/v1/admin/app-instances/{id}/promote",
+        G::Inst,
+        false,
+    ),
     r("GET", "/v1/admin/oauth-clients", G::Inst, false),
     r("POST", "/v1/admin/oauth-clients", G::Inst, false),
     r("GET", "/v1/admin/plugins", G::Inst, false),

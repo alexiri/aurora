@@ -9,10 +9,10 @@ export default function Page() {
     <AdminGuard>
       <div className="max-w-5xl">
         <PageHeader
-          title="Instances"
-          description="Self-hosted deployments of apps that every organization can connect to."
+          title="Self-hosted apps"
+          description="Your own GitLab, GitHub Enterprise Server, Indico … so people can connect to it: every registration, with its organization."
         />
-        <InstancesView scope={{ kind: "instance" }} canManage />
+        <InstancesView scope={{ kind: "instance", all: true }} canManage />
       </div>
     </AdminGuard>
   );

@@ -586,7 +586,8 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 |---|---|---|
 | GET `/v1/orgs/{org}/app-instances` | S/K | instances usable in the org (instance-wide + the org's own); any member |
 | POST `/v1/orgs/{org}/app-instances` | S/K | `{ app_id, host, label }` → `AppInstance`; org owner/admin; validated per `09 §3.4 Instance-bound hosts` (probe included) |
-| GET/POST `/v1/admin/app-instances` | S | instance-wide instances; instance admins |
+| GET/POST `/v1/admin/app-instances` | S | instance admins; GET lists the instance-wide ones, or with `scope=all` (and `org=`) every organization's too, each row carrying `org_name`/`org_slug` (FIX-132, C-639); POST registers instance-wide; a refused host's `details.conflict` names the holder (`static_claim`, `llm_host`, `aurora_address`, `instance` — C-639) |
+| POST `/v1/admin/app-instances/{id}/promote` | S | (FIX-132, C-639) make an organization's registration instance-wide (`org_id = NULL`): one transaction, connections keep `instance_id`, audited `app_instance.promote` (critical); 409 `instance_already_wide` / `instance_host_shared` (another registration of the host exists) |
 | PATCH/DELETE `/v1/app-instances/{id}` | S/K | label, `status`; delete disables its connections; owner/admin of its scope (instance admin for instance-wide) |
 
 `POST /v1/apps/{app}/connect` takes `instance_id` for an instance-bound app (absent = `default_host`, refused when the app has none). The connect form and the dashboard list the instances visible to the org.

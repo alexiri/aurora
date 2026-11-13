@@ -29,6 +29,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "api_key.revoke",
     "app_instance.create",
     "app_instance.delete",
+    // (FIX-132) an org registration made instance-wide: widens who can connect to the host
+    "app_instance.promote",
     "app_instance.update",
     "cli_login.approve",
     "cli_login.consume",
