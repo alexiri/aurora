@@ -81,11 +81,16 @@ async fn fixture(management: ClassPolicy) -> ScimFx {
 #[tokio::test]
 async fn store_down_with_the_local_policy_keeps_this_replicas_limit() {
     let fx = fixture(ClassPolicy::Local).await;
-    // SCIM_RATE 600/min, burst 120: this replica's own bucket still refuses past the burst.
+    // SCIM_RATE 600/min, burst 120: this replica's own bucket still refuses past the burst. The
+    // bucket refills 10/s, so a slow (loaded) runner needs more than burst + 10 requests to drain
+    // it: keep going until the limiter answers, bounded.
     let mut statuses = Vec::new();
-    for _ in 0..130 {
+    for _ in 0..2000 {
         let (s, _, _) = fx.scim(Method::GET, "/scim/v2/Users?count=0", None).await;
         statuses.push(s);
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            break;
+        }
     }
     assert!(
         statuses

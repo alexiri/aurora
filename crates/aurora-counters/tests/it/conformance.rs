@@ -612,14 +612,19 @@ async fn postgres(pool: aurora_db::PgPool) {
     let n = aurora_db::counters::prune(&pool, 5000)
         .await
         .expect("prune");
-    assert_eq!(n, 2);
+    // At least the two inserted dead rows. Rows the suite wrote earlier may have expired for real
+    // meanwhile (a bucket lives 60 s past its TAT and `rollover_real_clock` sleeps up to a minute),
+    // and pruning them is correct; the live keys below must survive.
+    assert!(n >= 2, "{n}");
     let left: (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM rate_limit_windows), (SELECT count(*) FROM rate_limit_buckets)",
+        "SELECT (SELECT count(*) FROM rate_limit_windows WHERE key = $1), \
+                (SELECT count(*) FROM rate_limit_buckets WHERE key = $1)",
     )
+    .bind(&live)
     .fetch_one(&pool)
     .await
     .expect("count");
-    assert!(left.0 >= 1 && left.1 >= 1, "live rows are kept");
+    assert_eq!(left, (1, 1), "live rows are kept");
     let dead: i64 = sqlx::query_scalar(
         "SELECT (SELECT count(*) FROM rate_limit_windows WHERE key = 'dead') \
               + (SELECT count(*) FROM rate_limit_buckets WHERE key = 'dead')",

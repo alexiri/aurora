@@ -1089,7 +1089,23 @@ async fn fix080_sign_in_and_scim_delete_serialize_on_the_org_lock() {
         .fetch_one(&mut *held)
         .await
         .unwrap();
-    let sign_in = fx.h.try_sign_in("dev", "race@x.io");
+    // Only the callback: when the sign-in wins the lock, the DELETE that follows removes the
+    // membership it created and revokes its session (`revoke_sessions_if_last`), so a later
+    // `/v1/me` with that cookie is rightly 401.
+    let sign_in = async {
+        let (path, flow) = fx.h.oidc_authorize("dev", "", Some("race@x.io")).await;
+        let (st, hd, _) =
+            fx.h.send(Method::GET, &path, &[("cookie", &flow)], None)
+                .await;
+        assert_eq!(st, http::StatusCode::FOUND, "callback");
+        let loc = hd["location"].to_str().unwrap().to_owned();
+        hd.get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|c| c.starts_with("aurora_session=aus_"))
+            .then_some(())
+            .ok_or(loc)
+    };
     // The IdP provisions and immediately removes the same person, racing the sign-in.
     let scim_side = async {
         let (s, _, v) = fx
