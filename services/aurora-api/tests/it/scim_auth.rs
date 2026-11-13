@@ -107,6 +107,48 @@ async fn every_auth_failure_is_one_identical_401() {
     }
 }
 
+/// The SCIM runbook's "alert on a rising 401 rate" rests on these counters: every failed
+/// authentication adds to `aurora_scim_auth_failures_total` and to the `unauthorized`
+/// request outcome, a good request to `ok`. Other tests share the process-wide recorder
+/// and only ever add, so the assertions are lower bounds on the delta.
+#[tokio::test]
+async fn failed_auth_increments_the_scim_auth_failure_counter() {
+    const FAILS: &str = "aurora_scim_auth_failures_total";
+    const R401: &str = "aurora_scim_requests_total{outcome=\"unauthorized\"}";
+    const ROK: &str = "aurora_scim_requests_total{outcome=\"ok\"}";
+    // Installs the recorder before the first request, so nothing is lost.
+    let (f0, u0, ok0) = (
+        counter_value(FAILS),
+        counter_value(R401),
+        counter_value(ROK),
+    );
+    let fx = ScimFx::new().await;
+    for hdrs in [
+        vec![],
+        vec![("authorization", "Bearer not-a-token")],
+        vec![(
+            "authorization",
+            "Bearer aud_0000000000000000000000000000000000000000",
+        )],
+    ] {
+        let (s, _, _) = fx.h.send(Method::GET, USERS, &hdrs, None).await;
+        assert_eq!(s, http::StatusCode::UNAUTHORIZED);
+    }
+    assert!(counter_value(FAILS) >= f0 + 3.0, "auth failures counted");
+    assert!(counter_value(R401) >= u0 + 3.0, "401 outcomes counted");
+    let bearer = format!("Bearer {}", fx.token);
+    let (s, _, _) =
+        fx.h.send(
+            Method::GET,
+            USERS,
+            &[("authorization", bearer.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(s, http::StatusCode::OK);
+    assert!(counter_value(ROK) >= ok0 + 1.0, "ok outcome counted");
+}
+
 #[tokio::test]
 async fn revoked_and_expired_and_org_disabled_are_401() {
     let fx = ScimFx::new().await;

@@ -117,7 +117,7 @@ database, no keys, no ambient network. It is called only on slow paths.
    plaintext per call. Connectors see their own platform credentials.
 9. **Chat traffic** to platforms is platform traffic, not agent traffic: it
    does not pass through the gateway.
-10. **Optional external stores** (phase 4, P4-CNT, P4-S3). The **API** may talk to an
+10. **Optional external stores** (phase 4, P4-CNT; the S3 half, P4-S3, is phase 5, D-138). The **API** may talk to an
     S3-compatible bucket (attachment bytes, nothing else) and the API and gateway
     to a Redis (rate-limit counters, nothing else). Both are operator-run
     infrastructure reached outbound over TLS with credentials from the workload
@@ -132,7 +132,7 @@ database, no keys, no ambient network. It is called only on slow paths.
     create or touch an owner, link a person by `externalId`, reach another org, or read any
     Aurora data. Its writes pass the same authorization, limits and critical audit as the
     dashboard's (SEC-72, SEC-73).
-12. **Browser push services** (phase 4, RFE-011b). When `push.enabled`, the **API** (only)
+12. **Browser push services** (phase 5 (D-138, moved from phase 4), RFE-011b). When `push.enabled`, the **API** (only)
     makes outbound HTTPS requests to the push service named by a user's subscription (FCM,
     Mozilla, Apple, WNS), through the destination guard and only to allow-listed hosts. The push
     service is untrusted for confidentiality: the payload is encrypted to the browser and
@@ -210,7 +210,7 @@ Detail: `10`, `11`, `12`.
 4. The holding gateway replica wakes, releases or refuses the request; the card
    is updated to its settled state.
 
-(phase 4, RFE-011b, opt-in) **Long deadlines park instead of hold.** In step 1, for an approval
+(phase 5 (D-138, moved from phase 4), RFE-011b, opt-in) **Long deadlines park instead of hold.** In step 1, for an approval
 whose deadline is above `approvals.park.threshold_secs`, the gateway does not hold: it records the
 approval as *parked* with a salted fingerprint of the request and answers the agent at once
 `403 approval_parked` ("not sent; end your turn, you will be messaged"). Steps 2–3 are unchanged

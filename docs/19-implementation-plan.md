@@ -208,10 +208,10 @@ RFE-024 (self-contained deprovision ops).
 
 SSH front door, port previews, evals, git-backed skill library, groups and
 SCIM, shared rate-limit counters, S3 blob store, additional LLM providers.
-See `21`. (phase 4, SPEC-P4a) The groundwork batch P4-CNT (shared counters), P4-S3,
-P4-LLM, P4-HAR (after P4-LLM) and P4-GRANTS (custom grants only; Q8) is specified in
+See `21`. (phase 4, SPEC-P4a) The groundwork batch P4-CNT (shared counters), P4-S3 (phase 5, D-138),
+P4-LLM (phase 5, D-138), P4-HAR (after P4-LLM) and P4-GRANTS (custom grants only; Q8) is specified in
 `21 §Other later items` and the sections it names.
-Design-review item RFE-011b (approval park-and-resume, Web Push).
+Design-review item RFE-011b (approval park-and-resume, Web Push; phase 5, D-138).
 Phases 3 and 4 start once phases 1 and 2 are done.
 
 ## Phase 5 — Later still

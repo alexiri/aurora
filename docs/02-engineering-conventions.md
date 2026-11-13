@@ -18,7 +18,7 @@ aurora/
     aurora-policy/            # host/path matchers, GraphQL classifier, rule evaluator, injection selection
     aurora-registry/          # plugin manifest types, validator/linter, package format, snapshot compiler + types
     aurora-llm/               # LLM provider registry (litellm, anthropic, …)
-    aurora-blobstore/         # (phase 4, P4-S3) `BlobStore` trait with the `postgres` and `s3` backends, startup probe, orphan listing; `aurora-api blobs migrate` uses it
+    aurora-blobstore/         # (phase 5 (D-138, moved from phase 4), P4-S3) `BlobStore` trait with the `postgres` and `s3` backends, startup probe, orphan listing; `aurora-api blobs migrate` uses it
     aurora-counters/          # (phase 4, P4-CNT) `CounterStore` trait, `memory` and `redis` backends, breaker/fallback wrapper; the `postgres` backend is in aurora-db
     aurora-summary/           # approval summary templates, decoders, generic redacting summarizer
     aurora-protocol/          # every wire contract (runner, supervisor, connector, hookhost, gateway-internal) as serde types + JSON Schemas
@@ -91,8 +91,8 @@ loaders live in `aurora-db`.
 | MIME decoding (summaries) | `mail-parser` |
 | Postgres wire (phase 2 DB lane) | `pg_query` (statement classification), hand-written protocol framing |
 | Shared counters (phase 4, P4-CNT) | `redis` (async, `tokio-rustls`; cargo feature `redis` of `aurora-counters`, off unless the backend is built in); the Postgres backend uses `sqlx` |
-| LLM providers (phase 4, P4-LLM) | SigV4 through the existing `aws-sigv4`; GCP service-account JWT (RS256) signed with `aws-lc-rs`/`rsa`, token exchange with `reqwest`; no cloud SDK (`aws-sdk-*`, `google-cloud-*`) in `aurora-llm` or the gateway |
-| Blob store (phase 4, P4-S3) | `aws-sdk-s3` + `aws-config` (provider chain), `default-features = false` with rustls; crate `aurora-blobstore` |
+| LLM providers (phase 5 (D-138, moved from phase 4), P4-LLM) | SigV4 through the existing `aws-sigv4`; GCP service-account JWT (RS256) signed with `aws-lc-rs`/`rsa`, token exchange with `reqwest`; no cloud SDK (`aws-sdk-*`, `google-cloud-*`) in `aurora-llm` or the gateway |
+| Blob store (phase 5 (D-138, moved from phase 4), P4-S3) | `aws-sdk-s3` + `aws-config` (provider chain), `default-features = false` with rustls; crate `aurora-blobstore` |
 | Logging / tracing | `tracing`, `tracing-subscriber` (JSON), `opentelemetry-otlp` (optional) |
 | Metrics | `metrics` + `metrics-exporter-prometheus` |
 | Errors | `thiserror` in crates; `anyhow` only in `main` and tests |
@@ -239,12 +239,12 @@ overridden by the named configuration key (`15`).
 | `ATTACH_OUT_DAILY_PER_CONVERSATION` | 200 MiB | — | 10 |
 | `ATTACH_CAPTION_MAX` | 500 chars | — | 10 |
 | `ATTACH_PENDING_TTL` | 24 h | — | 10 |
-| `LLM_SIGN_BODY_MAX` | (phase 4, P4-LLM) 8 MiB request body buffered to SigV4-sign a Bedrock request (larger → 413 `llm_request_too_large`) | — | 06, 08 |
-| `LLM_TOKEN_MINT_TIMEOUT` / `LLM_TOKEN_SKEW` | (phase 4, P4-LLM) 10 s per OAuth2 token mint (Vertex) / tokens cached until 300 s before expiry, at most 55 min | — | 08 |
-| `S3_UPLOAD_CONCURRENCY` | (phase 4, P4-S3) 16 uploads in flight per API replica (1–64); wait ≤ 10 s then 503 `blob_store_busy` | `blobs.s3.upload_concurrency` | 10, 15 |
-| `S3_CONNECT_TIMEOUT` / `S3_REQUEST_TIMEOUT` / `S3_RETRIES` | (phase 4, P4-S3) 5 s / 60 s (idle body 30 s) / 2 retries | — | 15 |
-| `S3_ORPHAN_GRACE` / `S3_ORPHAN_SWEEP_MAX` | (phase 4, P4-S3) 2 h minimum object age before the sweep may delete an unreferenced object / 50 000 keys per org per run | — | 10 |
-| `S3_PROBE_INTERVAL` | (phase 4, P4-S3) 30 s | — | 05, 15 |
+| `LLM_SIGN_BODY_MAX` | (phase 5 (D-138, moved from phase 4), P4-LLM) 8 MiB request body buffered to SigV4-sign a Bedrock request (larger → 413 `llm_request_too_large`) | — | 06, 08 |
+| `LLM_TOKEN_MINT_TIMEOUT` / `LLM_TOKEN_SKEW` | (phase 5 (D-138, moved from phase 4), P4-LLM) 10 s per OAuth2 token mint (Vertex) / tokens cached until 300 s before expiry, at most 55 min | — | 08 |
+| `S3_UPLOAD_CONCURRENCY` | (phase 5 (D-138, moved from phase 4), P4-S3) 16 uploads in flight per API replica (1–64); wait ≤ 10 s then 503 `blob_store_busy` | `blobs.s3.upload_concurrency` | 10, 15 |
+| `S3_CONNECT_TIMEOUT` / `S3_REQUEST_TIMEOUT` / `S3_RETRIES` | (phase 5 (D-138, moved from phase 4), P4-S3) 5 s / 60 s (idle body 30 s) / 2 retries | — | 15 |
+| `S3_ORPHAN_GRACE` / `S3_ORPHAN_SWEEP_MAX` | (phase 5 (D-138, moved from phase 4), P4-S3) 2 h minimum object age before the sweep may delete an unreferenced object / 50 000 keys per org per run | — | 10 |
+| `S3_PROBE_INTERVAL` | (phase 5 (D-138, moved from phase 4), P4-S3) 30 s | — | 05, 15 |
 | `ATTACH_ORG_QUOTA_DEFAULT` / `ATTACH_ORG_QUOTA_MAX` | (phase 2, RFE-015) 10 GiB / 50 GiB per org (`0` = unlimited) | `attachments.default_org_quota_mib` / `attachments.org_quota_mib_max` | 10 |
 | `ATTACH_QUOTA_NOTICE` | (phase 2, RFE-015) notices at 80 % and 100 % of the org quota | — | 10 |
 | `RETENTION_MIN_DAYS` / `RETENTION_MAX_DAYS` | (phase 2, RFE-010) 7 / 3 650 days (org conversation and attachment windows) | `retention.conversation_days_max` caps the upper bound | 10 |
@@ -290,15 +290,15 @@ overridden by the named configuration key (`15`).
 | `GROUP_NAME_MAX` / `GROUP_DESCRIPTION_MAX` | (phase 4, P4-GRP-1) 80 / 280 chars | — | 03, 04 |
 | `RULE_GROUP_IDENTITIES_MAX` | (phase 4, P4-GRP-1) 20 `group` identities per policy rule | — | 07 |
 | `GROUP_IMPACT_LIST_MAX` | (phase 4, P4-GRP-1) 200 users listed in a group impact view (the total is always given) | — | 05 |
-| `ACCESS_NOTIFY_BULK` | (phase 4, P4-GRP-1) above 1 000 users changed in one transaction a single org-wide `access` notification replaces per-user ones | — | 04, 05 |
-| `PARK_THRESHOLD` / `PARK_MAX_TIMEOUT` | (phase 4, RFE-011b) 900 s: effective timeouts above it park, when parking is enabled / 86 400 s (at most 604 800) longest parked deadline | `approvals.park.threshold_secs` / `approvals.park.max_timeout_secs` | 06, 07, 15 |
-| `PARK_RESUME_WINDOW` / `PARK_DENY_COOLDOWN` | (phase 4, RFE-011b) 1 800 s a granted approval can be consumed (60–86 400) / 900 s a denied fingerprint is answered `manual_approval_denied` without a new approval | `approvals.park.resume_window_secs` / `approvals.park.deny_cooldown_secs` | 07 |
-| `PARK_BODY_MAX` / `PARK_BODY_READ_TIMEOUT` | (phase 4, RFE-011b) 256 KiB request body that may be parked (larger → held) / 10 s to read it | `approvals.park.max_body_bytes` | 06, 07 |
-| `PARK_PENDING_PER_AGENT` / `PARK_PER_AGENT_HOUR` | (phase 4, RFE-011b) 20 parked pending approvals per agent / 60 new parked approvals per agent per hour (403 `approval_limit_reached`) | `approvals.park.max_pending_per_agent` | 06, 07 |
-| `APPROVAL_PUSH_DELAY` / `PUSH_PER_USER_HOUR` | (phase 4, RFE-011b) 5 s grace before a push / 30 pushes per user per hour (rest digested) | — | 07 |
-| `PUSH_SUBSCRIPTIONS_PER_USER` / `PUSH_TEST_PER_HOUR` | (phase 4, RFE-011b) 10 devices per user / 3 test pushes per user per hour | — | 05, 07 |
-| `PUSH_TTL_MAX` / `PUSH_PAYLOAD_MAX` | (phase 4, RFE-011b) 24 h push-service TTL cap (≥ 60 s) / 1 KiB payload before encryption | — | 07, 16 |
-| `PUSH_VAPID_RETIRE` | (phase 4, RFE-011b) 30 days a retired VAPID key stays usable for the subscriptions that reference it | — | 07, 08 |
+| `ACCESS_NOTIFY_BULK` | (phase 4, P4-GRP-1) above 1 000 users changed in one transaction a single org-wide `access` notification replaces per-user ones (**not implemented** in phase 4, FIX-074: the constant is defined but no threshold is applied; `notify_access` takes either a user list or an org-wide `None`, and callers choose; no task is scheduled) | — | 04, 05 |
+| `PARK_THRESHOLD` / `PARK_MAX_TIMEOUT` | (phase 5 (D-138, moved from phase 4), RFE-011b) 900 s: effective timeouts above it park, when parking is enabled / 86 400 s (at most 604 800) longest parked deadline | `approvals.park.threshold_secs` / `approvals.park.max_timeout_secs` | 06, 07, 15 |
+| `PARK_RESUME_WINDOW` / `PARK_DENY_COOLDOWN` | (phase 5 (D-138, moved from phase 4), RFE-011b) 1 800 s a granted approval can be consumed (60–86 400) / 900 s a denied fingerprint is answered `manual_approval_denied` without a new approval | `approvals.park.resume_window_secs` / `approvals.park.deny_cooldown_secs` | 07 |
+| `PARK_BODY_MAX` / `PARK_BODY_READ_TIMEOUT` | (phase 5 (D-138, moved from phase 4), RFE-011b) 256 KiB request body that may be parked (larger → held) / 10 s to read it | `approvals.park.max_body_bytes` | 06, 07 |
+| `PARK_PENDING_PER_AGENT` / `PARK_PER_AGENT_HOUR` | (phase 5 (D-138, moved from phase 4), RFE-011b) 20 parked pending approvals per agent / 60 new parked approvals per agent per hour (403 `approval_limit_reached`) | `approvals.park.max_pending_per_agent` | 06, 07 |
+| `APPROVAL_PUSH_DELAY` / `PUSH_PER_USER_HOUR` | (phase 5 (D-138, moved from phase 4), RFE-011b) 5 s grace before a push / 30 pushes per user per hour (rest digested) | — | 07 |
+| `PUSH_SUBSCRIPTIONS_PER_USER` / `PUSH_TEST_PER_HOUR` | (phase 5 (D-138, moved from phase 4), RFE-011b) 10 devices per user / 3 test pushes per user per hour | — | 05, 07 |
+| `PUSH_TTL_MAX` / `PUSH_PAYLOAD_MAX` | (phase 5 (D-138, moved from phase 4), RFE-011b) 24 h push-service TTL cap (≥ 60 s) / 1 KiB payload before encryption | — | 07, 16 |
+| `PUSH_VAPID_RETIRE` | (phase 5 (D-138, moved from phase 4), RFE-011b) 30 days a retired VAPID key stays usable for the subscriptions that reference it | — | 07, 08 |
 | `SCIM_RATE` | (phase 4, P4-GRP-2) 600 requests / min per token, burst 120 (class `management`; `scim.rate_per_minute`) | `scim.rate_per_minute` | 04, 05, 16 |
 | `SCIM_BODY_MAX` / `SCIM_MAX_PATCH_OPS` / `SCIM_MAX_MEMBERS_PER_REQUEST` | (phase 4, P4-GRP-2) 1 MiB / 100 operations / 1 000 members | — | 04, 16 |
 | `SCIM_PAGE_MAX` / `SCIM_PAGE_DEFAULT` | (phase 4, P4-GRP-2) 100 / 50 resources per page | — | 16 |
@@ -306,7 +306,7 @@ overridden by the named configuration key (`15`).
 | `SCIM_ERROR_LOG` | (phase 4, P4-GRP-2) last 20 sanitized errors kept per org for the Directory sync page | — | 14 |
 | `PREVIEW_SHARES_PER_AGENT` / `PREVIEW_SHARES_PER_ORG` | (phase 4, P4-PRV-1) 10 / 200 shares | `previews.shares_per_agent`, `previews.shares_per_org` (lower only) | 11, 05 |
 | `PREVIEW_START_COMMAND_MAX` | (phase 4, P4-PRV-1) 1 024 chars, one line | — | 11 |
-| `PREVIEW_WAKE_WINDOW` / `PREVIEW_WAKE_WAIT` / `PREVIEW_LISTEN_WAIT` | (phase 4, P4-PRV-1) 60 s a wake demand stays due / 45 s a browser request waits for a woken port / 5 s for a port of a running sandbox | — | 11, 05 |
+| `PREVIEW_WAKE_WINDOW` / `PREVIEW_WAKE_WAIT` / `PREVIEW_LISTEN_WAIT` | (phase 4, P4-PRV-1) 60 s a wake demand stays due / 45 s a browser request waits for a woken port / 5 s for a port of a running sandbox (`PREVIEW_LISTEN_WAIT` is **defined but not applied** as a wait, FIX-074: the supervisor dials loopback with a 5 s connect timeout, so a closed port is refused at once and answers 502 `preview_unreachable`) | — | 11, 05 |
 | `PREVIEW_WAKES_PER_SHARE_HOUR` | (phase 4, P4-PRV-1) 12 wakes per share per hour (429 `preview_wake_limited`) | — | 11 |
 | `PREVIEW_START_ATTEMPTS` / `PREVIEW_START_WINDOW` | (phase 4, P4-PRV-1) 3 start-command launches per share per 10 min | — | 11 |
 | `PREVIEW_AWAKE_GRACE` / `PREVIEW_AWAKE_CAP` | (phase 4, P4-PRV-1) 120 s after the last stream activity / 4 h per boot of preview-held wakefulness | `previews.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
@@ -320,9 +320,9 @@ overridden by the named configuration key (`15`).
 | `TERMINALS_PER_SANDBOX` / `_PER_AGENT` / `_PER_USER` | (phase 4, P4-TERM) 2 / 4 / 2 concurrent terminal sessions (per user per API replica) | — | 16 |
 | `TERMINAL_IDLE_TIMEOUT` / `TERMINAL_MAX_LIFETIME` | (phase 4, P4-TERM) 600 s idle (WebSocket pings count) / 4 h per session | — | 16 |
 | `TERMINAL_AWAKE_GRACE` / `TERMINAL_AWAKE_CAP` | (phase 4, P4-TERM) 120 s after the last session byte / 4 h per boot of terminal-held wakefulness | `terminal.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
-| `TERMINAL_AUTH_CACHE` / `TERMINAL_WAKE_WINDOW` / `TERMINAL_WAKES_PER_AGENT_HOUR` | (phase 4, P4-TERM) 15 s revocation cache (freeze/disable closes sessions) / 60 s wake demand window / 12 wakes per agent per hour | — | 11 |
+| `TERMINAL_AUTH_CACHE` / `TERMINAL_WAKE_WINDOW` / `TERMINAL_WAKES_PER_AGENT_HOUR` | (phase 4, P4-TERM) 15 s revocation bound (freeze/disable closes sessions; implemented as the API's 10 s access re-check `ACCESS_RECHECK` in `terminal/service.rs`, so sessions close within 10 s and the 15 s constant is never reached, FIX-074) / 60 s wake demand window / 12 wakes per agent per hour | — | 11 |
 | `PREVIEW_CONNECT_TIMEOUT` / `PREVIEW_HEADER_TIMEOUT` | (phase 4, P4-PRV-2) 10 s to open a stream (supervisor connect 5 s) / 60 s for upstream response headers | — | 16 |
-| `PREVIEW_REQUEST_BODY_MAX` | (phase 4, P4-PRV-2) 100 MiB | `relay.request_body_max_bytes` (lower only) | 15, 16 |
+| `PREVIEW_REQUEST_BODY_MAX` | (phase 4, P4-PRV-2) 100 MiB (the ceiling and the binary's default; the Helm chart ships 32 MiB, FIX-074) | `relay.request_body_max_bytes` (lower only) | 15, 16 |
 | `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day, one shared counter across relay replicas (429 `preview_quota` with `Retry-After` to the next UTC midnight; FIX-072, C-637, `16 §W18`) | `previews.bytes_per_share_day` | 16 |
 | `PREVIEW_API_RATE` | (phase 4, P4-PRV-2) 100 relay-plane requests/s per relay replica, burst 200 | — | 16 |
 | `PREVIEW_GRANT_RATE` | (phase 4, P4-PRV-2) 30 grant redemptions per minute per client address (and 10 per minute per share) at the relay, per replica, fixed window (429 `grant_rate_limited`; FIX-072, C-636) | — | 04 |

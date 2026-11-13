@@ -31,6 +31,8 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [upgrades.md](upgrades.md) | Upgrade order, migrations, running sandboxes during an upgrade |
 | [sign-in.md](sign-in.md) | OIDC-only sign-in (`auth.oidc_providers`), first administrator, the development IdP (`auth.dev_idp`, loopback only) |
 | [scim-provisioning.md](scim-provisioning.md) | Directory sync (phase 4, P4-GRP-2): `scim.enabled`, org tokens, IdP setup for Entra ID, Okta and Keycloak, rotation and monitoring |
+| [previews.md](previews.md) | Port previews and the relay (phase 4): `relay.*`, wildcard DNS/TLS, the edge, NetworkPolicy flows, limits, troubleshooting, metrics |
+| [terminal.md](terminal.md) | The web terminal (phase 4): `terminal.enabled`, the runner's :4108 listener, flows, close codes, caps per API replica, the edge WebSocket recipe |
 | [gateway-posture.md](gateway-posture.md) | TLS proxy listener (`gateway.proxy_tls.*`), open-lane posture, BYO posture and source allow-lists (`byo.*`, `gateway.trusted_proxies`, PROXY protocol), the database lane |
 | [retention-and-quota.md](retention-and-quota.md) | `retention.conversation_days_max`, `attachments.*`, org settings and the daily sweeps |
 | [limits-and-approvals.md](limits-and-approvals.md) | API rate limits (`ratelimit.api.*`), approval timeouts (`approvals.*`), approval e-mail (`email.*`) and streaming fan-out (`events.*`) |

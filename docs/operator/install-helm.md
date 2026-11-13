@@ -35,7 +35,7 @@ hosted scenarios and the sandbox isolation probes against the `kubernetes` runne
 
 ## Images: publish, pull, or build and load
 
-The chart needs seven images: `aurora-api`, `aurora-gateway`, `aurora-hookhost`, `aurora-runner`, `aurora-connector-host` (unless `connectorHost.enabled: false`) and `aurora-web`, plus the sandbox image (named by `config.runner.image`, not by `image.registry`),
+The chart needs seven images: `aurora-api`, `aurora-gateway`, `aurora-hookhost`, `aurora-runner`, `aurora-connector-host` (unless `connectorHost.enabled: false`) and `aurora-web`, plus `aurora-relay` only when `relay.enabled` (port previews, [previews.md](previews.md)), plus the sandbox image (named by `config.runner.image`, not by `image.registry`),
 and `aurora-dev-idp` or `aurora-connector-*` only if you enable those. Pick **one** of three ways to get them.
 
 **1. Pull the project's published images (the chart default).** The default is `image.registry: ghcr.io/alexiri` with the chart's appVersion as the tag. Those images exist **only after a CI publish** (CI publishes `master`, `sha-<short>`
@@ -55,7 +55,7 @@ If the packages are private, either make them public or create a pull secret and
 
 ```bash
 REG=registry.example.org/aurora   # or localhost/aurora for kind; TAG=0.1.0
-for t in api gateway hookhost runner connector-host; do
+for t in api gateway hookhost runner connector-host relay; do   # drop relay unless relay.enabled
   podman build -f images/services/Containerfile --target "$t" -t "$REG/aurora-$t:$TAG" .
 done
 podman build -f images/services/web.Containerfile -t "$REG/aurora-web:$TAG" .
@@ -102,7 +102,7 @@ runner:
 
 ```bash
 export KIND_EXPERIMENTAL_PROVIDER=podman        # kind with the rootless podman provider
-for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-dev-idp; do   # drop aurora-dev-idp if devIdp.enabled is false; add aurora-connector-mattermost / aurora-connector-fake if you built them
+for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-relay aurora-dev-idp; do   # drop aurora-relay unless relay.enabled; drop aurora-dev-idp if devIdp.enabled is false; add aurora-connector-mattermost / aurora-connector-fake if you built them
   podman save -o "/tmp/$i.tar" "$REG/$i:$TAG" && kind load image-archive "/tmp/$i.tar" --name <cluster> && rm -f "/tmp/$i.tar"
 done
 ```
@@ -330,6 +330,9 @@ Packages still need approval in the admin API before they take effect.
 | web | `web.replicas` | 2 | Port 4100. |
 | runner | `runner.enabled`, `runner.replicas` (default 1), `runner.k8s.*` | enabled | Port 4105 is reachable only from the sandboxes namespace. See [runners.md](runners.md#kubernetes-backend). |
 | connector host | `connectorHost.enabled`, `connectorHost.replicas`, `connectorHost.resources`, `connectorHost.testTypes`, `connectorHost.nodeSelector`, `connectorHost.tolerations`, `connectorHost.extraEnv` | enabled, 1 | Ports 4110 (platform callbacks, Service `<fullname>-connector-host`, routed by the edge) and 4192 (health and metrics, no Service). See [Connector host](#connector-host). |
+| relay | `relay.enabled`, `relay.domain`, `relay.replicas`, `relay.resources`, `relay.request_body_max_bytes`, `relay.max_streams`, `relay.max_streams_per_user` | disabled | Rendered only with `relay.enabled` (port previews). Ports 4112 (edge-routed wildcard host `*.<relay.domain>`) and 4193 (health and metrics, headless Service). Needs wildcard DNS and TLS and the `aurora-relay` image: [previews.md](previews.md). |
+| web terminal | `terminal.enabled` | disabled | No workload: the API proxies to the runner's stream listener **:4108**, which `terminal.enabled` (or `relay.enabled`) opens. [terminal.md](terminal.md). |
+| SCIM | `scim.enabled`, `scim.ratePerMinute` | disabled | No workload: serves `/scim/v2` on the API and routes it at the edge. [scim-provisioning.md](scim-provisioning.md). |
 
 ### Connector host
 
@@ -498,8 +501,11 @@ external proxy at layer 4 (an nginx `stream` block with no TLS termination). See
 With `networkPolicy.enabled: true` (default) the chart renders:
 
 - release namespace: `<fullname>-default-deny`, `-allow-dns`, and per-component policies
-  `-api`, `-web`, `-gateway`, `-hookhost`, `-runner`, `-connector-host`, `-postgres` (when the
+  `-api`, `-web`, `-gateway`, `-hookhost`, `-runner`, `-connector-host`, `-relay` (only with
+  `relay.enabled`: edge → relay:4112, relay → api:4101 and runner:4108), `-postgres` (when the
   bundled database is on), `-connector-<id>` (self-hosted connectors);
+- the runner's stream listener **:4108** (only with `relay.enabled` or `terminal.enabled`): ingress from the relay pods
+  and the api pods only, never from the sandboxes namespace;
 - the `migrate` hook pod (`-migrate`): egress to the database only, so `helm upgrade` can
   run migrations while the other policies are in place;
 - the `secrets` hook pod (`-hooks`): egress to the Kubernetes API on `kubeApiPorts` only

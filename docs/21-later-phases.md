@@ -214,13 +214,13 @@ tokens), group → workspace access bindings, group identities in policy
   `15 §Shared rate-limit counters`, `06 §Rate limiting`, `05 §Conventions`
   (*Shared counters*), `04 §Rate limits (auth)`, `07 §Evaluation`, `03 §Planned
   changes`, `18 §Shared rate-limit counters`.
-- **S3-compatible blob store — specified (phase 4, P4-S3, D-120, SEC-63).**
+- **S3-compatible blob store — specified (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63).**
   `BlobStore` backend `s3` beside `postgres` for attachment bytes; per-row backend,
   SSE verified at startup, no pre-signed URLs, explicit `aurora-api blobs migrate`.
   Owning sections: `10 §Attachments`, `15 §S3-compatible blob store`, `03 §Planned
   changes`, `05` (storage and overview routes, jobs), `16 §W14`, `18 §S3-compatible
   blob store`.
-- **Additional LLM providers — specified (phase 4, P4-LLM, D-121, SEC-64, SEC-65):**
+- **Additional LLM providers — specified (phase 5 (D-138, moved from phase 4), P4-LLM, D-121, SEC-64, SEC-65):**
   OpenAI, Azure OpenAI (key auth, v1 API), AWS Bedrock (gateway-side SigV4 or
   Bedrock API key), Google Vertex (gateway-minted tokens from a service-account
   key), generic OpenAI-compatible endpoints; credentials never reach a sandbox;
@@ -243,7 +243,7 @@ tokens), group → workspace access bindings, group identities in policy
   routes), `14` (Access tab), `18 §Custom grants only and parameter-level matching`.
   Adoption (Indico `grants`, AWS `Describe*` tools) is a package change made at
   implementation, not part of this specification.
-- **Approval park-and-resume and Web Push — specified (phase 4, RFE-011b, D-133, D-134,
+- **Approval park-and-resume and Web Push — specified (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, D-134,
   SEC-74, SEC-75, SEC-76).** Opt-in parking: a request whose approval deadline is long is
   refused to the agent (`403 approval_parked`, not sent) and the approval becomes a
   single-use, same-conversation grant for the identical request, delivered by a system

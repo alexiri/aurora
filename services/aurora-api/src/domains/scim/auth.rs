@@ -136,6 +136,9 @@ pub async fn org_scim(state: &AppState, org: Uuid) -> ScimResult<OrgScim> {
 }
 
 fn unauthorized() -> ScimError {
+    // The one 401: every authentication failure is counted here (no labels: a label would
+    // have to name a token, an org or an address).
+    metrics::counter!("aurora_scim_auth_failures_total").increment(1);
     ScimError::unauthorized()
 }
 

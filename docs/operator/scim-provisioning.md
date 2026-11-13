@@ -14,8 +14,8 @@ false every `/scim/v2` path answers 404 and the dashboard shows no Directory syn
 1. **Instance switch.** Set the Helm value `scim.enabled: true`
    (`values.yaml`; the chart then renders the `/scim/v2` edge route before the `/v1` rules
    and puts `[scim] enabled = true` into the API config). Optionally cap which e-mail
-   domains any org may provision with `scim.allowedEmailDomains`
-   (`[scim] allowed_email_domains`; empty = every domain an org owner lists is fine). The
+   domains any org may provision with `config.scim.allowed_email_domains`
+   (a config key, not a chart value of its own; empty = every domain an org owner lists is fine). The
    other chart value, `scim.ratePerMinute`, is the per-token rate limit (600/min, burst
    120).
 2. **Per-org switch.** An org **owner** opens *Organization settings → Directory sync*,
@@ -134,10 +134,10 @@ the replay suite proves Aurora accepts them.
   admin maps it to an org role or binds it to a workspace in the dashboard; the IdP
   cannot grant access, only fill groups. Deleting a group in the IdP deletes it in
   Aurora with its bindings — an availability risk, audited, never a silent one.
-- **Monitoring.** `aurora_scim_requests_total{resource,method,status}`,
-  `aurora_scim_provisioned_total{op}`, `aurora_scim_auth_failures_total`: alert on a
-  rising 401 rate (an expired or rotated-away token still configured in the IdP) and on
-  5xx. The Directory sync page shows the last request, member counts and the last
+- **Monitoring.** `aurora_scim_requests_total{outcome}` (`ok`, `unauthorized`,
+  `rate_limited`, `client_error`, `server_error`) and `aurora_scim_auth_failures_total`:
+  alert on a rising `unauthorized`/auth-failure rate (an expired or rotated-away token
+  still configured in the IdP) and on `server_error`. The Directory sync page shows the last request, member counts and the last
   rejected requests per org.
 - **Offboarding.** SCIM cannot reassign the automations or BYO agent tokens of a
   deprovisioned person: after the IdP removes them, follow the member's offboarding view

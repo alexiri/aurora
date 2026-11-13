@@ -318,7 +318,7 @@ watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
   fewer than `TERMINAL_AWAKE_CAP` (4 h) since the first session byte of this boot
   (`§Web terminal`).
 
-(phase 4, RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
+(phase 5 (D-138, moved from phase 4), RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
 the agent was refused, its turn ends, and the pending decision lives in Postgres. The
 sandbox idles out and parks like any other; the resume follow-up (`10 §Turns`) is ordinary
 due work (start arm → new boot, harness session restored from `harness_session_ref`, home volume
@@ -456,8 +456,9 @@ for a sandbox that is not effectively frozen, subject to the ordinary start back
    code and the tail of the process output for people who can use the workspace.
 
 A share **without** a start command never starts anything: a request to a running sandbox
-whose port is not listening waits up to `PREVIEW_LISTEN_WAIT` (5 s) and then answers 502
-"nothing is listening on this port"; a request to a parked sandbox still wakes it (the agent
+whose port is not listening answers 502 "nothing is listening on this port" at once (the
+supervisor's loopback dial is refused; `PREVIEW_LISTEN_WAIT` (5 s) is specified but not yet
+applied as a wait, FIX-074); a request to a parked sandbox still wakes it (the agent
 may bring the app up by itself, e.g. from its shell history or a schedule) and waits the same
 `PREVIEW_WAKE_WAIT`. A preview **never** creates a turn, a conversation event or a
 `last_engaged_at` stamp.
@@ -532,7 +533,7 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   user, cwd `/workspace`, container environment minus every `AURORA_*` variable and the boot
   document — the shell has exactly the privilege a `process_start` command already has, in a
   terminal. `pty.resize` applies `TIOCSWINSZ`; a W6 reconnect or a stop closes every PTY.
-- **Lifecycle**: frozen agent → sessions closed within `TERMINAL_AUTH_CACHE` 15 s and no new
+- **Lifecycle**: frozen agent → sessions closed within `TERMINAL_AUTH_CACHE` 15 s (the API re-checks every 10 s) and no new
   open (423); restart/park → sessions closed (4503/`channel_lost`), the tab shows "Waking…"
   and reopens on ready; harness change or runner move → sessions closed; agent deleted →
   destroyed with the sandbox. Bytes are never logged, stored or request-log-rowed (byte

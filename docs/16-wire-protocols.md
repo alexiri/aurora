@@ -18,12 +18,12 @@ implementation repo and checked in (CI fails on drift).
 | W8 | Connector contract | connector → API `/v1/connector` | `aun_` + replica | `13` |
 | W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret (ring from phase 2, `08 §4`) | `09` |
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
-| W11 | Upstream | gateway → internet | guarded resolver; (phase 4, P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers` | `06` |
+| W11 | Upstream | gateway → internet | guarded resolver; (phase 5 (D-138, moved from phase 4), P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers` | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
 | W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
-| W14 | Blob store (phase 4, P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
+| W14 | Blob store (phase 5 (D-138, moved from phase 4), P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
 | W15 | SCIM 2.0 (phase 4, P4-GRP-2) | IdP → API `/scim/v2` | `aud_` bearer per org | this doc, `04 §SCIM` |
-| W16 | Web Push (phase 4, RFE-011b) | API → browser push service (FCM, Mozilla, Apple, WNS) | VAPID (RFC 8292) JWT signed by the instance key | this doc, `07 §Web Push` |
+| W16 | Web Push (phase 5 (D-138, moved from phase 4), RFE-011b) | API → browser push service (FCM, Mozilla, Apple, WNS) | VAPID (RFC 8292) JWT signed by the instance key | this doc, `07 §Web Push` |
 | W17 | Relay plane (phase 4, P4-PRV-2) | relay → API `/v1/relay`; runner → API `/v1/runner/preview-streams/*` | `aul_` + replica; `aur_` + replica | this doc, `04 §Preview access` |
 | W18 | Preview byte streams (phase 4, P4-PRV-2) | relay → runner :4108 (WebSocket per stream); runner ↔ supervisor (stream frames on W6) | stream grant `aux_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
 | W19 | Terminal streams (phase 4, P4-TERM) | browser → API `/v1/agents/{agent}/terminal` (WebSocket); API → runner :4108 (grant redemption); runner ↔ supervisor (`pty.*` frames on W6) | terminal grant `auy_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
@@ -91,7 +91,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `preview.start` | (phase 4, P4-PRV-1, D-145) `{ share_id }` — ask the supervisor to start the share's command on demand (`11 §Port previews`); the runner forwards `preview.start { port }` on the supervisor channel and the supervisor resolves the command from its own share list |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
-client_env: [[k,v]] }`. (phase 4, P4-LLM) `provider` and `dialect` are open
+client_env: [[k,v]] }`. (phase 5 (D-138, moved from phase 4), P4-LLM) `provider` and `dialect` are open
 vocabularies: `provider` gains `openai`, `azure_openai`, `bedrock`, `vertex`,
 `openai_compatible`; `dialect` gains `anthropic_bedrock` and `anthropic_vertex`
 (`openai_chat` and `openai_responses` already exist). A supervisor that does not know
@@ -224,7 +224,7 @@ every transport failure is `Unavailable` and is handled by the class policy
 
 ---
 
-## W14 — Blob store (phase 4, P4-S3)
+## W14 — Blob store (phase 5 (D-138, moved from phase 4), P4-S3)
 
 The API speaks the S3 REST API (`PutObject` with `x-amz-checksum-sha256`, the configured
 `x-amz-server-side-encryption` and `If-None-Match: *`, `GetObject`, `DeleteObject`,
@@ -331,7 +331,7 @@ an already-present/absent member are idempotent and succeed.
 
 ---
 
-## W16 — Web Push (phase 4, RFE-011b)
+## W16 — Web Push (phase 5 (D-138, moved from phase 4), RFE-011b)
 
 Semantics, payload and key handling: `07 §Web Push`. The wire is the standard Web Push protocol
 and Aurora owns only what it sends:

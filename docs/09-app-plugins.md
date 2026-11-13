@@ -587,7 +587,7 @@ if any of:
   `summarize: hook`); `egress` for `approval.summarize`; egress hosts that are
   reserved or private;
 - a claim on a **reserved host** (LLM provider hosts, the instance's own
-  external host, internal service hosts, `*.aurora.internal`); (phase 4, P4-LLM) this
+  external host, internal service hosts, `*.aurora.internal`); (phase 5 (D-138, moved from phase 4), P4-LLM) this
   includes any claim whose pattern **matches** an exact configured LLM endpoint host
   (Bedrock `bedrock-runtime.<region>.amazonaws.com`, Vertex `<location>-aiplatform.googleapis.com`,
   an Azure resource host), so a package can never obtain a second, ungoverned way to
