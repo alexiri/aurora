@@ -52,7 +52,8 @@ pub async fn dial(
     port: u16,
 ) -> Result<TcpStream, DialError> {
     if let Some(p) = egress {
-        guard.check_name(host, port)?;
+        // (FIX-106) Names are judged locally before the egress proxy is contacted.
+        guard.judge_name(host, port).await?;
         let mut s = connect_any(
             &tokio::net::lookup_host((p.host.as_str(), p.port))
                 .await

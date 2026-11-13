@@ -16,7 +16,8 @@ source scripts/guards/lib.sh
 require_helm edge-routes || exit 0
 check_render() {
   local label="$1"; shift
-  helm template guard deploy/helm/aurora "$@" | python3 -I -c '
+  # (FIX-106) allowSharedLogin: not about the gateway's database role.
+  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | python3 -I -c '
 import sys, yaml
 label = sys.argv[1]
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
@@ -78,7 +79,7 @@ check_render "helm HTTPRoute with scim" --set ingress.enabled=false --set gatewa
 # FIX-068: capture the render first. `helm … | grep -q` under pipefail passed exactly when the
 # forbidden resource DID render (grep -q exits on the first match, helm takes SIGPIPE, the
 # pipeline is non-zero, the `if` is false). A failed render must fail the guard too.
-default_render="$(helm template guard deploy/helm/aurora)" || fail "the default chart render failed"
+default_render="$(helm template guard deploy/helm/aurora --set database.allowSharedLogin=true)" || fail "the default chart render failed"
 [ -n "$default_render" ] || fail "the default chart render is empty"
 if grep -q "path: /scim" <<<"$default_render"; then
   fail "/scim route rendered while scim.enabled is false (SEC-72: the surface must 404)"
@@ -99,7 +100,7 @@ check_render "helm Ingress with previews" \
 check_render "helm HTTPRoute with previews" \
   --set ingress.enabled=false --set gatewayApi.enabled=true \
   --set relay.enabled=true --set relay.domain=previews.guard.invalid
-helm template guard deploy/helm/aurora \
+helm template guard deploy/helm/aurora --set database.allowSharedLogin=true \
   --set relay.enabled=true --set relay.domain=previews.guard.invalid \
   | python3 -I -c '
 import sys, yaml
@@ -134,6 +135,6 @@ if not dash_web:
 print("edge-routes: previews wildcard ok (relay only, dashboard untouched)")
 '
 # Enabled without a domain must fail to render (the chart guards partial setups).
-if helm template guard deploy/helm/aurora --set relay.enabled=true >/dev/null 2>&1; then
+if helm template guard deploy/helm/aurora --set database.allowSharedLogin=true --set relay.enabled=true >/dev/null 2>&1; then
   fail "relay.enabled without relay.domain rendered (a preview domain is required)"
 fi

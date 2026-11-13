@@ -1436,7 +1436,7 @@ impl RequestHandler for PolicyHandler {
                 )));
             }
         };
-        let endpoint = DbEndpoint::from_credentials(raw.expose()).map_err(|e| {
+        let endpoint = DbEndpoint::from_credentials(raw.expose(), &dbc.conn.metadata).map_err(|e| {
             tracing::warn!(connection = %connection_id, error = %e, "unusable database credentials");
             DbOpenError::Unavailable(credential_unavailable("connection"))
         })?;

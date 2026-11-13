@@ -164,6 +164,14 @@ describe("connection missing scopes", () => {
     expect(note).toHaveTextContent("psql service=orders-prod -c 'select 1'");
     expect(note).toHaveTextContent("0190a1b2");
   });
+  it("shows when a database connection does not verify the server certificate (D-178 Q-R5-7)", async () => {
+    await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: { tls_verification: "off" } }));
+    expect(screen.getByLabelText("TLS verification is off for me@acme.io")).toHaveTextContent("does not verify");
+  });
+  it("shows no TLS warning for a verified database connection", async () => {
+    await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: {} }));
+    expect(screen.queryByLabelText(/TLS verification is off/)).toBeNull();
+  });
   it("shows no connection help for other apps", async () => {
     await show(conn({ database: null }));
     expect(screen.queryByLabelText("How to connect to me@acme.io")).toBeNull();

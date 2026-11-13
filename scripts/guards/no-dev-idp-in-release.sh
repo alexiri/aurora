@@ -48,7 +48,8 @@ PY
 # shellcheck source=scripts/guards/lib.sh
 source scripts/guards/lib.sh
 if require_helm no-dev-idp-in-release; then
-  out="$(helm template guard deploy/helm/aurora)" || fail "the default chart render failed"
+  # (FIX-106) allowSharedLogin: an external database needs the role pair or this explicit value to render.
+  out="$(helm template guard deploy/helm/aurora --set database.allowSharedLogin=true)" || fail "the default chart render failed"
   [ -n "$out" ] || fail "the default chart render is empty"
   if grep -q -E 'dev-idp|dev_idp|aurora-dev-idp' <<<"$out"; then
     fail "the chart's default render contains the development IdP"

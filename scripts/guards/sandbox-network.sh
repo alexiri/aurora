@@ -16,7 +16,8 @@ require_helm sandbox-network || exit 0
 
 check() {
   local label="$1"; shift
-  helm template guard deploy/helm/aurora "$@" | python3 -I -c '
+  # (FIX-106) allowSharedLogin: not about the gateway's database role.
+  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | python3 -I -c '
 import sys, yaml
 label = sys.argv[1]
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]

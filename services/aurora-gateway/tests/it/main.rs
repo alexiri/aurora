@@ -6,6 +6,7 @@ mod check_snapshot;
 mod common;
 mod credentials;
 mod database;
+mod database_tls;
 mod governance;
 mod governance_db;
 mod groups;
@@ -25,3 +26,4 @@ mod proxy_wire;
 
 mod refresh;
 mod refresh_proxy;
+mod tunnel_limits;

@@ -123,7 +123,8 @@ OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolve
 
 - **3. Gateway database URL.** The Helm values comment no longer mentions
   `AURORA_GATEWAY_DATABASE_URL`. The gateway uses `AURORA_DATABASE_URL`, and
-  `database.gatewayRole` is the least-privilege switch.
+  `database.gatewayRole` (with `database.gatewayExistingSecret`) is the least-privilege login, required
+  with an external database (FIX-106); the bundled evaluation Postgres creates it automatically.
 - **4. Sandbox node selector and tolerations.** `runner.k8s.nodeSelector` and
   `runner.k8s.tolerations` render into `[runner.k8s] node_selector` and `tolerations`.
 - **5. Plugin packages in Helm.** `plugins.source` mounts packages from a ConfigMap (copied by

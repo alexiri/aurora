@@ -430,6 +430,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             external_url: cfg.external_url.clone(),
             tunnels: Some(tunnels),
             health: Some(health.clone()),
+            tunnel_limits: aurora_gateway::proxy::TunnelLimits::default(),
         },
     )?;
     let proxy_listener = service::bind(bind, PROXY_PORT).await?;

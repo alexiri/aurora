@@ -37,6 +37,18 @@ pub const CONDITION_BODY_BUFFER_MIN: usize = 4 * KIB;
 pub const CONDITION_BODY_BUFFER_MAX: usize = 8 * MIB;
 pub const UPSTREAM_HEADER_TIMEOUT: Duration = Duration::from_secs(300);
 pub const WEBSOCKET_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+/// (FIX-106) Inbound tunnel bounds (`06` §Tunnel limits): the TLS handshake inside a `CONNECT`
+/// tunnel (and the dial of an open-lane tunnel) must finish in this time.
+pub const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// (FIX-106) A request head inside a tunnel must arrive in this time.
+pub const TUNNEL_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
+/// (FIX-106) Every tunnel kind ends after this long without bytes in either direction (and, for
+/// a MITM tunnel, without a request in flight): the WebSocket idle value.
+pub const TUNNEL_IDLE_TIMEOUT: Duration = WEBSOCKET_IDLE_TIMEOUT;
+/// (FIX-106) Concurrent tunnels of one credential; the next `CONNECT` is answered 429.
+pub const TUNNEL_PER_CREDENTIAL_MAX: usize = 64;
+/// (FIX-106) Concurrent tunnels of the whole gateway.
+pub const TUNNEL_TOTAL_MAX: usize = 4096;
 /// flush interval; also flushes at `REQUEST_LOG_FLUSH_ROWS` rows.
 pub const REQUEST_LOG_FLUSH: Duration = Duration::from_secs(5);
 pub const REQUEST_LOG_FLUSH_ROWS: u32 = 500;

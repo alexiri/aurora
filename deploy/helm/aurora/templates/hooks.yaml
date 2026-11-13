@@ -147,6 +147,8 @@ spec:
             - {name: NAME, value: {{ $secret | quote }}}
             - {name: PG_ENABLED, value: {{ .Values.postgres.enabled | quote }}}
             - {name: PG_HOST, value: {{ printf "%s-postgres" $full | quote }}}
+            - {name: GW_ROLE_AUTO, value: {{ ternary "true" "false" (not (empty (include "aurora.gatewayRoleAuto" .))) | quote }}}
+            - {name: GW_ROLE, value: {{ include "aurora.gatewayAutoRole" . | quote }}}
           volumeMounts: [{name: tmp, mountPath: /tmp}]
           command: ["/bin/sh", "-ec"]
           args:
@@ -203,6 +205,13 @@ spec:
                 put POSTGRES_PASSWORD "$(hex)"
                 pw="$(kubectl get secret "$NAME" -o 'jsonpath={.data.POSTGRES_PASSWORD}' | base64 -d)"
                 put AURORA_DATABASE_URL "postgres://aurora:${pw}@${PG_HOST}:5432/aurora"
+                # FIX-106 (D-178 Q-R5-11): the gateway's own least-privilege login; the gateway-role
+                # Job below creates the role with this password.
+                if [ "$GW_ROLE_AUTO" = "true" ]; then
+                  put POSTGRES_GATEWAY_PASSWORD "$(hex)"
+                  gpw="$(kubectl get secret "$NAME" -o 'jsonpath={.data.POSTGRES_GATEWAY_PASSWORD}' | base64 -d)"
+                  put AURORA_GATEWAY_DATABASE_URL "postgres://${GW_ROLE}:${gpw}@${PG_HOST}:5432/aurora"
+                fi
               fi
       volumes: [{name: tmp, emptyDir: {}}]
 {{- end }}
@@ -246,6 +255,59 @@ spec:
               if kubectl get secret "$NAME" >/dev/null 2>&1; then echo "CA secret exists; not overwriting"; exit 0; fi
               kubectl create secret generic "$NAME" --from-file=ca.pem=/ca/ca.pem --from-file=ca.key=/ca/ca.key
       volumes: [{name: ca, emptyDir: {}}, {name: tmp, emptyDir: {}}]
+{{- end }}
+{{- if include "aurora.gatewayRoleAuto" . }}
+---
+# (FIX-106, D-178 Q-R5-11) The bundled evaluation Postgres gets the gateway's least-privilege login
+# role automatically, on install and on every upgrade (so a database that predates this still
+# gets it, and the password always matches the Secret). `aurora-api migrate` (next) grants it
+# exactly what 03 lists. The pod carries the `migrate` component label: the NetworkPolicies that let
+# migrate reach (and be reached by) the database apply to it as well.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $full }}-gateway-role
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10   # tolerates the evaluation Postgres still starting
+  template:
+    metadata:
+      labels: {{- include "aurora.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      {{- include "aurora.podSecurity" . | nindent 6 }}
+      containers:
+        - name: gateway-role
+          image: {{ .Values.postgres.image | quote }}
+          {{- include "aurora.containerSecurity" . | nindent 10 }}
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: PGHOST, value: {{ printf "%s-postgres" $full | quote }}}
+            - {name: PGUSER, value: aurora}
+            - {name: PGDATABASE, value: aurora}
+            - {name: GW_ROLE, value: {{ include "aurora.gatewayAutoRole" . | quote }}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $secret | quote }}, key: POSTGRES_PASSWORD}}
+            - name: GW_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $secret | quote }}, key: POSTGRES_GATEWAY_PASSWORD}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              until pg_isready -q; do sleep 2; done
+              # Create the role if it is missing, then (always) set its password and keep it a plain login.
+              psql -v ON_ERROR_STOP=1 -v role="$GW_ROLE" -v pw="$GW_PASSWORD" <<'SQL'
+              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', :'role', :'pw')
+                WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
+              SELECT format('ALTER ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', :'role', :'pw') \gexec
+              SQL
+      volumes: [{name: tmp, emptyDir: {}}]
 {{- end }}
 ---
 apiVersion: batch/v1

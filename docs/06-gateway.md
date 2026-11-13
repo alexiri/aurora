@@ -287,6 +287,22 @@ published policy generation (no DB on the hot path; invalidation scopes `org`
 and `workspace`), so changing it takes effect for the next `CONNECT`; open
 tunnels end at the idle limit or when the client closes them.
 
+### Tunnel limits (FIX-106, REVIEW-5 GWT-1/GWT-2)
+
+Everything inside a `CONNECT` is attacker-paced, so every phase has a bound (all in
+`aurora_core::limits`, `02 §Limits`):
+
+| Bound | Value | Applies to |
+|-------|-------|------------|
+| `TUNNEL_HANDSHAKE_TIMEOUT` | 10 s | the inner TLS handshake of a MITM tunnel (from the `200` to a completed handshake) and the dial of an open-lane tunnel (a slow dial answers 504 `upstream_timeout`) |
+| `TUNNEL_HEADER_TIMEOUT` | 30 s | the head of each request inside a MITM tunnel (hyper's header-read bound, which needs a timer: the inner HTTP builder has one). It also bounds the wait for the next request on a keep-alive HTTP/1 tunnel |
+| `TUNNEL_IDLE_TIMEOUT` | 600 s (the WebSocket idle value) | **every** tunnel kind: open-lane tunnels, MITM tunnels (no bytes in either direction and no request in flight; a request held for approval is in flight, not idle) and upgraded WebSockets |
+| `TUNNEL_PER_CREDENTIAL_MAX` | 64 | concurrent tunnels of one credential; the next `CONNECT` is answered 429 `rate_limited` (`details.limit = "concurrent_tunnels"`, `retry-after: 5`) |
+| `TUNNEL_TOTAL_MAX` | 4096 | concurrent tunnels of the gateway (same answer, `details.scope = "total"`) |
+
+A refusal by a cap increments `aurora_gateway_tunnel_refused_total{scope="credential"|"total"}`.
+The slot is held for the tunnel's whole life and released when it ends, for any reason.
+
 ## Database lane (phase 2, P2-DBL-1, D-80)
 
 Spec: `21 §Phase 2 — Database lane`; invariant SEC-60. Code: `services/aurora-gateway/src/db/`
@@ -313,9 +329,24 @@ Only then are the stored credentials opened (`host`, `port`, `dbname`, `user`, `
 optional `sslmode` (default `require`), `ca_pem`) and the gateway opens **its own** server
 session through the guarded dial (the platform database is refused by address and port, SEC-06):
 `sslmode` `disable`, `allow`/`prefer` (TLS first, plaintext only if the server answers `N`),
-`require` (TLS; verifies the chain when `ca_pem` is stored, as libpq), `verify-ca`, `verify-full`;
-authentication with cleartext, MD5 or SCRAM-SHA-256. The server's outcome is relayed as a FATAL
-error (28P01 / 08006 / 08001); the exchange itself never is. The client then gets
+`require` (TLS, **verified** (FIX-106, D-178 Q-R5-7): against the stored `ca_pem` when there is one
+(chain, as libpq's `verify-ca`), otherwise chain **and host name** against the system roots, so the
+stored password is never sent to a server that cannot prove who it is), `verify-ca`, `verify-full`
+(both against `ca_pem`, or the system roots without one). `allow`/`prefer` are opportunistic by
+definition and never verify. A private CA is handled by storing its certificate as `ca_pem`; where
+that is impossible the connection carries the **explicit opt-out** `tls_verification = off` (the
+`postgresql` package's "Server certificate check" field, only offered under `require`, stored in the
+connection's non-secret metadata): it is named, it is recorded in the `connection.create` /
+`connection.reconnect` audit row (`metadata.tls_verification = "off"`), the dashboard shows a warning on
+the connection, and every session that uses it is logged and counted
+(`aurora_gateway_db_tls_unverified_total`). A stored `ca_pem` always wins over the opt-out;
+`verify-ca` and `verify-full` ignore it;
+authentication with cleartext, MD5 or SCRAM-SHA-256. A login the server refuses is relayed to the
+agent as a FATAL error with a **fixed text per class** (28P01 "the database rejected the stored
+credentials; ask a workspace admin to check this connection", 08006 for a TLS/verification or protocol
+failure, 08001 for an unreachable or refused destination): the upstream server's own error text and
+the connection's details (host, role, TLS error) go to the gateway log only (FIX-106, DB-3); the
+exchange itself is never relayed. The client then gets
 `AuthenticationOk`, the server's `ParameterStatus` messages, a **gateway-generated**
 `BackendKeyData` and `ReadyForQuery`. Live sessions are registered with the tunnel registry, so a
 freeze, a revoked credential or a tightened BYO posture ends them (FATAL 57P01).
@@ -426,13 +457,31 @@ minted.
    Drop hop-by-hop headers and `Proxy-*`.
 2. **Destination guard.** IP-literal hosts are judged immediately; names are
    resolved through the guarded resolver at dial time. Refuse (403
-   `destination_refused`) private, loopback, link-local, CGNAT, multicast,
-   unspecified and IPv6 ULA ranges unless covered by `gateway.allowed_private`
-   (CIDRs, IPs, hostnames, `*.suffix`); cloud-metadata addresses
-   (169.254.169.254, fd00:ec2::254) only by exact-IP entry. The gateway's own
-   database and internal services are refused by address+port regardless of the
-   allow-list. When `gateway.egress_proxy` is set, the name check runs locally
-   and resolution happens at the egress proxy.
+   `destination_refused`) every address in this table unless covered by
+   `gateway.allowed_private` (CIDRs, IPs, hostnames, `*.suffix`); the table is one
+   function (`aurora_core::ranges`) shared by the gateway and the API's connect/probe
+   guard (FIX-106):
+
+   | Family | Refused |
+   |--------|---------|
+   | IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (CGNAT), `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.168.0.0/16`, `198.18.0.0/15` (benchmarking), `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4` (multicast), `240.0.0.0/4` (reserved, includes broadcast) |
+   | IPv6 | `::`, `::1`, `::/96` (IPv4-compatible), `fc00::/7` (ULA), `fe80::/10`, `fec0::/10` (site-local), `ff00::/8`, `2001::/32` (Teredo), `2001:db8::/32`, `64:ff9b:1::/48` |
+   | Translated | an address that **embeds** an IPv4 address is judged by the embedded address: IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` (so `64:ff9b::a00:1` is `10.0.0.1`; one embedding a public IPv4 address is public). An IPv4 CIDR in `allowed_private` does not open the translated forms of its range |
+
+   Cloud-metadata addresses (169.254.169.254, fd00:ec2::254, and their translated
+   forms) only by exact-IP entry. The gateway's own listeners and database are
+   refused by address+port regardless of the allow-list: a listener bound to the
+   wildcard address covers loopback, the unspecified address **and every address of
+   the host's own interfaces** (read at start-up, `/proc/net` on Linux), so the pod
+   address on 4103 (`/metrics`, `/healthz`) is refused even when
+   `allowed_private` covers the pod network. When `gateway.egress_proxy` is set,
+   the **local name check** is: resolve the name here with the system resolver
+   (decimal and hex IP spellings included) and refuse (403) if **any** resolved
+   address is refused, before the egress proxy is contacted; a name this host cannot
+   resolve at all (split-horizon DNS that only the proxy knows) is left to the
+   egress proxy, since nothing was resolved here to judge. The egress proxy then resolves the
+   name itself, so a DNS-rebinding window between the two lookups remains; it is
+   accepted, and the proxy's own policy is the second line.
 3. **Method-override and path hygiene.** Requests carrying
    `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override` or a
    `_method` query parameter are refused (400 `method_override_refused`):

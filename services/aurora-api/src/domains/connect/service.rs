@@ -552,6 +552,14 @@ impl Ctx<'_> {
             .org(n.org_id)
             .target("connection", n.id)
             .metadata(json!({"app_id": n.app_id, "package_id": n.package_id, "label": n.label}));
+        // (FIX-106, D-178 Q-R5-7) The database lane's opt-out of server certificate verification is
+        // a named, audited choice of the person who connected (shown on the connection too).
+        if n.metadata.get("tls_verification").and_then(|v| v.as_str()) == Some("off") {
+            ev = ev.metadata(json!({
+                "app_id": n.app_id, "package_id": n.package_id, "label": n.label,
+                "tls_verification": "off",
+            }));
+        }
         if let Some(ws) = n.workspace_id {
             ev = ev.workspace(ws);
         }

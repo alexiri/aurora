@@ -191,6 +191,25 @@ pub fn tls_config(ep: &DbEndpoint) -> Result<Option<Arc<ClientConfig>>, ConnectE
                 .with_custom_certificate_verifier(Arc::new(ChainOnly(v)))
                 .with_no_client_auth()
         }
+        // (FIX-106, D-178 Q-R5-7) `require` without a stored CA verifies the server certificate
+        // (chain and host name) against the system roots: the stored password is not sent to a
+        // server that cannot prove who it is. The only way around it is the connection's explicit,
+        // audited opt-out (`metadata.tls_verification = "off"`, for a private CA whose
+        // certificate is not stored), which is counted and logged on every session.
+        SslMode::Require if ep.verify_server => {
+            b.with_root_certificates(roots(None)?).with_no_client_auth()
+        }
+        SslMode::Require => {
+            metrics::counter!("aurora_gateway_db_tls_unverified_total").increment(1);
+            tracing::warn!(
+                host = %ep.host,
+                "database TLS server certificate is not verified (the connection's tls_verification opt-out)"
+            );
+            b.dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
+                .with_no_client_auth()
+        }
+        // `prefer` / `allow` are opportunistic by definition (libpq): TLS when offered, unverified.
         _ => b
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))

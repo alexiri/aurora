@@ -20,6 +20,10 @@ bash scripts/guards/edge-routes.sh
 echo "== hook-policies (OPS-024: pre-upgrade hooks admitted by hook-rendered policies)"
 bash scripts/guards/hook-policies.sh
 
+echo "== helm-gateway-role (FIX-106: the gateway's least-privilege role is automatic, required, or explicitly waived)"
+source scripts/guards/lib.sh
+if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; fi
+
 echo "== no-dev-idp-in-release (SEC-42)"
 bash scripts/guards/no-dev-idp-in-release.sh
 

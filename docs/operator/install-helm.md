@@ -172,15 +172,19 @@ External PostgreSQL is expected in production.
 - `database.maxConnections.api` (default 20) and `database.maxConnections.gateway` (default 10)
   become `database.max_connections` for each service.
 - `database.cidrs` and `database.port` (default 5432) set the egress rule to the database in the NetworkPolicies.
-- No code reads `AURORA_GATEWAY_DATABASE_URL`. The gateway reads `AURORA_DATABASE_URL`: from the main
-  Secret by default, or from `database.gatewayExistingSecret` when you set the least-privilege pair below.
+- No code reads `AURORA_GATEWAY_DATABASE_URL`. The gateway reads `AURORA_DATABASE_URL`: from
+  `database.gatewayExistingSecret` (the least-privilege pair below, **required with an external
+  database**), or, with the bundled evaluation Postgres, from the chart-generated Secret's
+  `AURORA_GATEWAY_DATABASE_URL` key, which the chart maps into the pod's `AURORA_DATABASE_URL`.
 
-### Least-privilege gateway role (recommended)
+### Least-privilege gateway role (required with an external database)
 
-The gateway is the most exposed service, so it should not log in as the API's full-privilege user.
+The gateway is the most exposed service, so it must not log in as the API's full-privilege user.
 `database.gatewayRole` and `database.gatewayExistingSecret` go together: set both or neither
-(`helm install` fails with a message if only one is set). **Without the pair, the gateway uses the
-main database user (not least privilege).** `aurora-api migrate` only *grants* the role; it never
+(`helm install` fails with a message if only one is set). **With an external database `helm` refuses to
+render without the pair**, naming the two ways out: the pair, or `database.allowSharedLogin: true`, the
+explicit and not recommended choice that the gateway shares the main database login. The two are mutually
+exclusive. `aurora-api migrate` only *grants* the role; it never
 creates it (creating a login role needs `CREATEROLE` and a password, which the API user should not
 hold). The DBA does this, in order, before `helm install`:
 
@@ -206,11 +210,15 @@ hold). The DBA does this, in order, before `helm install`:
    is missing it stops with `gateway role "aurora_gateway" does not exist: create it (CREATE ROLE
    aurora_gateway LOGIN PASSWORD '…') or unset database.gateway_role`.
 
-The evaluation Postgres (`postgres.enabled`) and the dev profile set neither value, so the gateway
-uses the main user there: it is the simplest correct option for a throwaway database, where nobody
-creates roles. To exercise the pair on the evaluation database anyway, mount an init script with
-`postgres.initScriptsConfigMap` (a ConfigMap with a `.sql` file containing the `CREATE ROLE`, run once on
-an empty data directory); `scripts/e2e/kind.sh` does this.
+The bundled evaluation Postgres (`postgres.enabled`) and the dev profile create the role **for you**: with
+neither the pair nor `allowSharedLogin` set, a `<release>-gateway-role` hook Job (before `migrate`, on
+install and on every upgrade) creates the login role `aurora_gateway` (no other attributes) with a
+password the chart generates into its own Secret (`POSTGRES_GATEWAY_PASSWORD`; the gateway's URL is
+`AURORA_GATEWAY_DATABASE_URL`), `migrate` grants it, and the gateway connects as it. If you supply your own
+`secrets.existingSecret`, add those two keys to it. To use your own role on the evaluation database instead,
+set the pair (an init script via `postgres.initScriptsConfigMap` can create the role on an empty data
+directory; `scripts/e2e/kind.sh` does this); to opt out of the least-privilege login there, set
+`database.allowSharedLogin: true`.
 
 `postgres.enabled: true` renders a single-instance Postgres for evaluation. Its StatefulSet,
 Service and PVC are pre-install hook resources, so `helm uninstall` leaves them and the data
@@ -581,7 +589,8 @@ helm install aurora deploy/helm/aurora -n aurora --create-namespace -f my-values
 
 `helm lint` and `helm template` are the checks to run before any values change.
 
-Hooks run in this order: `secrets` (-10), `gateway-ca` (-9), then `migrate` (0),
+Hooks run in this order: `secrets` (-10), `gateway-ca` (-9), `gateway-role` (-1, only with the bundled
+evaluation Postgres and the automatic role), then `migrate` (0),
 which runs `aurora-api migrate` before any new API replica serves.
 
 Minimal `my-values.yaml`:
@@ -596,7 +605,7 @@ ingress:
   tls: {secretName: aurora-tls}
 database:
   existingSecret: aurora-database       # must contain AURORA_DATABASE_URL
-  # The least-privilege gateway login: both or neither (see Database). The DBA creates the role and
+  # The least-privilege gateway login: both, required with an external database (see Database). The DBA creates the role and
   # the Secret (key AURORA_DATABASE_URL, logging in as that role) first.
   gatewayRole: aurora_gateway
   gatewayExistingSecret: aurora-gateway-database

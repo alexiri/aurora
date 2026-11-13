@@ -104,7 +104,7 @@ one new entry without activating it.
 | `previews.shares_per_agent`, `previews.shares_per_org` | 10, 200 | api | (phase 4, P4-PRV-1) lower only (`02 §Limits`) |
 | `previews.awake_cap_secs` | 14400 | api | (phase 4, P4-PRV-1) `PREVIEW_AWAKE_CAP`, at most `hosted.background_cap_secs` |
 | `database.max_connections` | 20 (api), 10 (gateway) | api, gateway | pool size |
-| `database.gateway_role` | — | api (migrations) | login role the **operator creates** (`CREATE ROLE <r> LOGIN PASSWORD '…'`); `migrate` only grants it the gateway privileges (`03`) and fails if it does not exist. The gateway must then connect as it (its own `AURORA_DATABASE_URL`; Helm `database.gatewayExistingSecret`) |
+| `database.gateway_role` | — | api (migrations) | login role the **operator creates** (`CREATE ROLE <r> LOGIN PASSWORD '…'`; the Helm chart's bundled evaluation Postgres creates `aurora_gateway` itself, FIX-106); `migrate` only grants it the gateway privileges (`03`) and fails if it does not exist. The gateway must then connect as it (its own `AURORA_DATABASE_URL`; Helm `database.gatewayExistingSecret`). Running the gateway as the main login is the exception, never the default (`01`, "Gateway ↔ database") |
 | `auth.signup_mode` | `invite_only` | api | `open`, `invite_only`, `sso_jit` |
 | `auth.org_creation` | `instance_admins` | api | or `anyone` |
 | `auth.instance_admins` | `[]` | api | emails |
@@ -442,9 +442,11 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   ServiceAccount + Role (`11 §kubernetes`).
 - **Postgres**: external database expected in production (values: URL secret,
   and the least-privilege gateway login: `database.gatewayRole` plus
-  `database.gatewayExistingSecret`, set together; the DBA creates the role first and
-  `aurora-api migrate` grants it, `03 §Gateway database role grants`); a bundled single-instance Postgres subchart is available for
-  evaluation only.
+  `database.gatewayExistingSecret`, set together and **required** with an external database — the
+  chart refuses to render without them unless `database.allowSharedLogin: true` says, explicitly, that
+  the gateway may share the main login (FIX-106, D-178 Q-R5-11); the DBA creates the role first and
+  `aurora-api migrate` grants it, `03 §Gateway database role grants`); a bundled single-instance
+  Postgres is available for evaluation only and creates the gateway's role automatically.
 - **Values highlights**: image registry/tag, replicas, resources, external
   URL, auth config, OIDC providers, LLM endpoints, secret stores, runner
   backend settings (storage class, runtime class, node selectors), connectors
