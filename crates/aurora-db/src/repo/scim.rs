@@ -6,7 +6,6 @@
 //! transaction with its critical audit rows. Token liveness is read on every SCIM request;
 //! there is no cache.
 
-use super::{After, split};
 use crate::DbError;
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, PgExecutor};
@@ -245,24 +244,44 @@ pub async fn user_by_external_id<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Links of the org, non-removed only (SCIM list), stable `created_at, id` order for paging.
-pub async fn users_page<'e, E: PgExecutor<'e>>(
+/// Number of non-removed links of the org (SCIM list `totalResults`), optionally only those
+/// whose `displayName` equals `display_name` case-insensitively. No upper bound: the list
+/// pages in SQL ([`users_window`]), never through an in-memory window (FIX-081).
+pub async fn users_count<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
-    after: After,
-    fetch: i64,
+    display_name: Option<&str>,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM scim_users
+         WHERE org_id = $1 AND state <> 'removed'
+           AND ($2::text IS NULL OR lower(display_name) = lower($2))",
+    )
+    .bind(org)
+    .bind(display_name)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// One page of the non-removed links of the org (SCIM list), stable `created_at, id` order,
+/// `OFFSET`/`LIMIT` in SQL; optionally filtered by `displayName` (case-insensitive).
+pub async fn users_window<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    display_name: Option<&str>,
+    offset: i64,
+    limit: i64,
 ) -> Result<Vec<UserRow>, DbError> {
-    let (t, id) = split(after);
     Ok(sqlx::query_as(&format!(
         "SELECT {USER_COLS} FROM scim_users
          WHERE org_id = $1 AND state <> 'removed'
-           AND ($2::timestamptz IS NULL OR (created_at, id) >= ($2, $3))
-         ORDER BY created_at, id LIMIT $4"
+           AND ($2::text IS NULL OR lower(display_name) = lower($2))
+         ORDER BY created_at, id OFFSET $3 LIMIT $4"
     ))
     .bind(org)
-    .bind(t)
-    .bind(id)
-    .bind(fetch)
+    .bind(display_name)
+    .bind(offset)
+    .bind(limit)
     .fetch_all(exec)
     .await?)
 }
@@ -638,14 +657,36 @@ pub async fn settings_of<'e, E: PgExecutor<'e>>(
     )
 }
 
-/// The org's SCIM groups (list); members are joined separately (16 §W15).
-pub async fn scim_groups<'e, E: PgExecutor<'e>>(
+/// Number of the org's SCIM groups (list `totalResults`), optionally only those whose name
+/// (case-insensitive) or `externalId` (exact) equals the filter value. No upper bound.
+pub async fn scim_groups_count<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
-    after: After,
-    fetch: i64,
+    display_name: Option<&str>,
+    external_id: Option<&str>,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM groups g WHERE g.org_id = $1 AND g.source = 'scim'
+           AND ($2::text IS NULL OR lower(g.name::text) = lower($2))
+           AND ($3::text IS NULL OR g.external_id = $3)",
+    )
+    .bind(org)
+    .bind(display_name)
+    .bind(external_id)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// One page of the org's SCIM groups (list), `created_at, id` order, `OFFSET`/`LIMIT` in SQL;
+/// members are joined separately (16 §W15).
+pub async fn scim_groups_window<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    display_name: Option<&str>,
+    external_id: Option<&str>,
+    offset: i64,
+    limit: i64,
 ) -> Result<Vec<super::groups::GroupRow>, DbError> {
-    let (t, id) = split(after);
     Ok(sqlx::query_as(
         "SELECT g.id, g.org_id, g.name::text AS name, g.description, g.source, g.idp_provider, \
                 g.idp_value, g.external_id, g.org_role, g.revision, g.created_by, g.created_at, \
@@ -655,13 +696,15 @@ pub async fn scim_groups<'e, E: PgExecutor<'e>>(
                 (SELECT count(*)::bigint FROM group_workspace_access b WHERE b.group_id = g.id \
                    AND b.org_id = g.org_id) AS workspace_count \
          FROM groups g WHERE g.org_id = $1 AND g.source = 'scim'
-           AND ($2::timestamptz IS NULL OR (g.created_at, g.id) >= ($2, $3))
-         ORDER BY g.created_at, g.id LIMIT $4",
+           AND ($2::text IS NULL OR lower(g.name::text) = lower($2))
+           AND ($3::text IS NULL OR g.external_id = $3)
+         ORDER BY g.created_at, g.id OFFSET $4 LIMIT $5",
     )
     .bind(org)
-    .bind(t)
-    .bind(id)
-    .bind(fetch)
+    .bind(display_name)
+    .bind(external_id)
+    .bind(offset)
+    .bind(limit)
     .fetch_all(exec)
     .await?)
 }

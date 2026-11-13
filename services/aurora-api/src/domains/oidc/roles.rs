@@ -8,6 +8,7 @@
 use super::service::Fail;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::scim::gates;
 use aurora_config::OidcProvider;
 use aurora_db::repo::idp_roles::{self as db, RoleRow, org_rank, ws_rank};
 use aurora_db::repo::users::UserRow;
@@ -347,7 +348,7 @@ pub async fn sync(
             created_orgs.insert(slug.clone());
         }
         first_org.get_or_insert(id);
-        apply_org(tx, p, user.id, id, role, value, created).await?;
+        apply_org(tx, state, p, user.id, id, role, value, created).await?;
     }
     for ((o, w), (role, value)) in &d.workspaces {
         let Some(&org) = org_ids.get(o) else { continue };
@@ -492,8 +493,10 @@ async fn blocked(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn apply_org(
     tx: &mut sqlx::PgConnection,
+    state: &AppState,
     p: &OidcProvider,
     user: Uuid,
     org: Uuid,
@@ -514,16 +517,34 @@ async fn apply_org(
         }
         m
     };
-    let Some(row) = db::org_row(&mut *tx, org, user).await? else {
-        db::org_insert(&mut *tx, org, user, role, &src).await?;
-        log(
-            tx,
-            AuditEvent::new(actor(p), "member.add", Outcome::Success)
-                .org(org)
-                .target("user", user)
-                .metadata(meta(json!({}))),
-        )
-        .await?;
+    let mut found = db::org_row(&mut *tx, org, user).await?;
+    if found.is_none() {
+        // (FIX-080, SEC-73) A claim creates a membership like JIT and invitations do, so it
+        // passes the same admission gate and seat cap. The org lock is taken first (the lock
+        // every SCIM writer takes) and the membership re-read under it: a directory removal
+        // committed before us is then visible to the gate, one after us waits.
+        aurora_db::repo::groups::lock_org(&mut *tx, org).await?;
+        found = db::org_row(&mut *tx, org, user).await?;
+        if found.is_none() {
+            if let Some(reason) = gates::admit_new_member(&mut *tx, org, user).await? {
+                // The sign-in goes on without this membership; the denied row is written on
+                // its own connection (it must not depend on the sign-in transaction's fate).
+                gates::audit_denied_detached(&state.pool, org, user, "idp_sync", reason).await?;
+                return Ok(());
+            }
+            db::org_insert(&mut *tx, org, user, role, &src).await?;
+            log(
+                tx,
+                AuditEvent::new(actor(p), "member.add", Outcome::Success)
+                    .org(org)
+                    .target("user", user)
+                    .metadata(meta(json!({}))),
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+    let Some(row) = found else {
         return Ok(());
     };
     if row.status != "active" {

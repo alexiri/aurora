@@ -2899,6 +2899,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/scim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /v1/orgs/{org}/scim` — `{ available, enabled, email_domains, exclusive, base_url }`. */
+        get: operations["getScimSettings"];
+        /**
+         * `PUT /v1/orgs/{org}/scim` — owner + recent re-auth; validates domains (422
+         *     `scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when
+         *     enabling); 409 `scim_unavailable` while the instance switch is off.
+         */
+        put: operations["putScimSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/scim/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/orgs/{org}/scim/status` — the Directory sync page payload: last request, counts
+         *     by state, group count, and the last `SCIM_ERROR_LOG` sanitized errors.
+         */
+        get: operations["getScimStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/scim/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /v1/orgs/{org}/scim/tokens` — the org's tokens without material. */
+        get: operations["listScimTokens"];
+        put?: never;
+        /**
+         * `POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`
+         *     (instance off) / 422 `scim_token_limit_reached` (org off, limit); 412 `reauth_required`.
+         */
+        post: operations["createScimToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/secrets": {
         parameters: {
             query?: never;
@@ -3224,6 +3287,23 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scim/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** `DELETE /v1/scim/tokens/{id}` — idempotent, effective at once; critical audit. */
+        delete: operations["revokeScimToken"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5489,6 +5569,11 @@ export interface components {
              */
             name?: string | null;
         };
+        CreateToken: {
+            /** Format: int32 */
+            expires_in_days?: number | null;
+            name: string;
+        };
         CreateTrustedKeyRequest: {
             name: string;
             /** @description Base64 ed25519 public key. */
@@ -5538,6 +5623,19 @@ export interface components {
             api_key: components["schemas"]["ApiKey"];
             /** @description The token; shown only in this response. */
             key: string;
+        };
+        /** @description A newly created token: the only time its material (`token`) is returned. */
+        CreatedScimToken: {
+            /** Format: date-time */
+            created_at: string;
+            display_prefix: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description The `aud_` token, shown once; never stored in cleartext. */
+            token: string;
         };
         CredentialInfo: {
             name: string;
@@ -6465,7 +6563,7 @@ export interface components {
             state: string;
         };
         /** @enum {string} */
-        MemberStatus: "active" | "suspended";
+        MemberStatus: "active" | "suspended" | "pending";
         MembersBatchRequest: {
             add?: string[];
             remove?: string[];
@@ -8470,6 +8568,11 @@ export interface components {
              */
             conversations_days?: number | null;
         };
+        PutSettings: {
+            email_domains?: string[] | null;
+            enabled?: boolean | null;
+            exclusive?: boolean | null;
+        };
         RateLimit: {
             /** Format: int32 */
             count: number;
@@ -8909,6 +9012,65 @@ export interface components {
             scheduled_for: string;
             /** Format: uuid */
             turn_id?: string | null;
+        };
+        /** @description One recent sanitized SCIM error (never a token or another user's e-mail). */
+        ScimErrorEntry: {
+            /** Format: date-time */
+            at: string;
+            method: string;
+            resource: string;
+            scim_type?: string | null;
+            /** Format: int64 */
+            status: number;
+        };
+        /** @description The org's directory-sync settings (C-472). */
+        ScimSettings: {
+            /** @description The instance switch (`scim.enabled`). */
+            available: boolean;
+            /** @description `<external url>/scim/v2`. */
+            base_url: string;
+            email_domains: string[];
+            enabled: boolean;
+            /** @description Directory-managed membership: only people the directory provisioned are admitted. */
+            exclusive: boolean;
+        };
+        /** @description The Directory sync status card. */
+        ScimStatus: {
+            enabled: boolean;
+            errors: components["schemas"]["ScimErrorEntry"][];
+            /** Format: int64 */
+            groups: number;
+            /** Format: date-time */
+            last_request_at?: string | null;
+            users: components["schemas"]["ScimUserCounts"];
+        };
+        /** @description One provisioning token without its material. */
+        ScimTokenInfo: {
+            /** Format: date-time */
+            created_at: string;
+            display_prefix: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description Live and expiring within 14 days. */
+            expiring: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            name: string;
+            revoked: boolean;
+        };
+        ScimTokenList: {
+            tokens: components["schemas"]["ScimTokenInfo"][];
+        };
+        /** @description Link counts by state. */
+        ScimUserCounts: {
+            /** Format: int64 */
+            active: number;
+            /** Format: int64 */
+            removed: number;
+            /** Format: int64 */
+            suspended: number;
         };
         ScopeInfo: {
             /** @description `read` | `write`. */
@@ -18853,6 +19015,260 @@ export interface operations {
             };
         };
     };
+    getScimSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimSettings"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putScimSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimSettings"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getScimStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimStatus"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listScimTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimTokenList"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createScimToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateToken"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedScimToken"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgSecrets: {
         parameters: {
             query?: {
@@ -19946,6 +20362,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_ScheduleRun"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revokeScimToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {

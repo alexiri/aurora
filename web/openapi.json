@@ -14264,6 +14264,382 @@
         ]
       }
     },
+    "/v1/orgs/{org}/scim": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "`GET /v1/orgs/{org}/scim` — `{ available, enabled, email_domains, exclusive, base_url }`.",
+        "operationId": "getScimSettings",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimSettings"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "`PUT /v1/orgs/{org}/scim` — owner + recent re-auth; validates domains (422\n`scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when\nenabling); 409 `scim_unavailable` while the instance switch is off.",
+        "operationId": "putScimSettings",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimSettings"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/scim/status": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "`GET /v1/orgs/{org}/scim/status` — the Directory sync page payload: last request, counts\nby state, group count, and the last `SCIM_ERROR_LOG` sanitized errors.",
+        "operationId": "getScimStatus",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/scim/tokens": {
+      "get": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "`GET /v1/orgs/{org}/scim/tokens` — the org's tokens without material.",
+        "operationId": "listScimTokens",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimTokenList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "`POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`\n(instance off) / 422 `scim_token_limit_reached` (org off, limit); 412 `reauth_required`.",
+        "operationId": "createScimToken",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedScimToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/secrets": {
       "get": {
         "tags": [
@@ -16057,6 +16433,57 @@
           },
           {
             "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/scim/tokens/{id}": {
+      "delete": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "`DELETE /v1/scim/tokens/{id}` — idempotent, effective at once; critical audit.",
+        "operationId": "revokeScimToken",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Token id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
           }
         ]
       }
@@ -25919,6 +26346,25 @@
           }
         }
       },
+      "CreateToken": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "expires_in_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "CreateTrustedKeyRequest": {
         "type": "object",
         "required": [
@@ -26098,6 +26544,42 @@
           "key": {
             "type": "string",
             "description": "The token; shown only in this response."
+          }
+        }
+      },
+      "CreatedScimToken": {
+        "type": "object",
+        "description": "A newly created token: the only time its material (`token`) is returned.",
+        "required": [
+          "id",
+          "name",
+          "display_prefix",
+          "created_at",
+          "expires_at",
+          "token"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_prefix": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "description": "The `aud_` token, shown once; never stored in cleartext."
           }
         }
       },
@@ -29187,7 +29669,8 @@
         "type": "string",
         "enum": [
           "active",
-          "suspended"
+          "suspended",
+          "pending"
         ]
       },
       "MembersBatchRequest": {
@@ -35976,6 +36459,32 @@
           }
         }
       },
+      "PutSettings": {
+        "type": "object",
+        "properties": {
+          "email_domains": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "exclusive": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
       "RateLimit": {
         "type": "object",
         "required": [
@@ -37240,6 +37749,191 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "ScimErrorEntry": {
+        "type": "object",
+        "description": "One recent sanitized SCIM error (never a token or another user's e-mail).",
+        "required": [
+          "at",
+          "method",
+          "resource",
+          "status"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "method": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "scim_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ScimSettings": {
+        "type": "object",
+        "description": "The org's directory-sync settings (C-472).",
+        "required": [
+          "available",
+          "enabled",
+          "email_domains",
+          "exclusive",
+          "base_url"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "The instance switch (`scim.enabled`)."
+          },
+          "base_url": {
+            "type": "string",
+            "description": "`<external url>/scim/v2`."
+          },
+          "email_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exclusive": {
+            "type": "boolean",
+            "description": "Directory-managed membership: only people the directory provisioned are admitted."
+          }
+        }
+      },
+      "ScimStatus": {
+        "type": "object",
+        "description": "The Directory sync status card.",
+        "required": [
+          "enabled",
+          "users",
+          "groups",
+          "errors"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScimErrorEntry"
+            }
+          },
+          "groups": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_request_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "users": {
+            "$ref": "#/components/schemas/ScimUserCounts"
+          }
+        }
+      },
+      "ScimTokenInfo": {
+        "type": "object",
+        "description": "One provisioning token without its material.",
+        "required": [
+          "id",
+          "name",
+          "display_prefix",
+          "created_at",
+          "expires_at",
+          "revoked",
+          "expiring"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_prefix": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiring": {
+            "type": "boolean",
+            "description": "Live and expiring within 14 days."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ScimTokenList": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScimTokenInfo"
+            }
+          }
+        }
+      },
+      "ScimUserCounts": {
+        "type": "object",
+        "description": "Link counts by state.",
+        "required": [
+          "active",
+          "suspended",
+          "removed"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "suspended": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

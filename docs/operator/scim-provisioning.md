@@ -21,7 +21,9 @@ false every `/scim/v2` path answers 404 and the dashboard shows no Directory syn
 2. **Per-org switch.** An org **owner** opens *Organization settings → Directory sync*,
    lists the org's e-mail domains (at least one; exact, case-insensitive, no subdomains),
    optionally turns on *Directory-managed membership (exclusive)* — which refuses
-   sign-ins and invitations of people the directory did not provision — and saves. Turning
+   invitations, JIT, role-claim and new-user placement memberships of people the directory
+   did not provision (a refused role claim or placement lets the person sign in without
+   that membership; a refused JIT fails the sign-in) — and saves. Turning
    SCIM on asks for a fresh sign-in (step-up re-authentication).
 3. **Token.** On the same page the owner creates a provisioning token, names it after the
    IdP ("Entra ID"), and copies the **base URL** (`<your-aurora>/scim/v2`) and the
@@ -42,7 +44,13 @@ The wire is the subset Entra ID, Okta and Keycloak actually send
 `ServiceProviderConfig`/`ResourceTypes`/`Schemas` discovery. Soft deletes: deactivating a
 user (`active: false`) suspends the membership (keys revoked, sessions ended when the
 person has no other org, running turns aborted); `DELETE /Users/{id}` removes it
-entirely; re-provisioning re-adds. Everything else (the enterprise extension, `roles`,
+entirely; re-provisioning re-adds. **A person who already has an Aurora account** (they
+have signed in before, to any organization of the instance) is *not* made a member by the
+directory's say-so: provisioning creates the link and a membership that waits —
+*Waiting for first sign-in*, it counts as a seat, may be placed in SCIM groups, and gives
+no access — until that person's own next sign-in, which activates it (audited). A person
+with no account yet is pre-provisioned as before. Deactivating or deleting someone who
+has not signed in yet simply removes the waiting membership. Everything else (the enterprise extension, `roles`,
 bulk, sort) is declared unsupported in `ServiceProviderConfig` and answered with a SCIM
 error, never silently ignored.
 

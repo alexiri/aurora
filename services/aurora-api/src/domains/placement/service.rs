@@ -6,6 +6,7 @@ use super::template::{self, Lookup, Sample, TokenClaims};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::grants::service as grants;
+use crate::domains::scim::gates;
 use crate::domains::tenancy::service as tenancy;
 use crate::http::auth::Caller;
 use aurora_core::{ApiError, FieldError};
@@ -119,7 +120,22 @@ pub async fn apply_signin(
     let Some(org_id) = row.default_org_id else {
         return Ok(());
     };
-    let member = members::get(&mut **tx, org_id, user.id).await?;
+    let mut member = members::get(&mut **tx, org_id, user.id).await?;
+    if member.is_none() && created {
+        // (FIX-080, SEC-73) Placement creates a membership like JIT and invitations do, so it
+        // passes the same admission gate and seat cap, under the org lock (taken first, the
+        // membership re-read under it).
+        aurora_db::repo::groups::lock_org(tx, org_id).await?;
+        member = members::get(&mut **tx, org_id, user.id).await?;
+        if member.is_none()
+            && let Some(reason) = gates::admit_new_member(tx, org_id, user.id).await?
+        {
+            // The person signs in without this membership (nothing else of the placement
+            // applies without it); the denied row goes on its own connection.
+            gates::audit_denied_detached(&state.pool, org_id, user.id, "placement", reason).await?;
+            return Ok(());
+        }
+    }
     match member {
         None if created => {
             members::insert(&mut **tx, org_id, user.id, &row.default_org_role).await?;

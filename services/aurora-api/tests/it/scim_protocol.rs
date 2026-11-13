@@ -541,3 +541,286 @@ async fn error_format_media_types_and_size() {
         .await;
     assert_eq!(s, StatusCode::OK);
 }
+
+// ---- FIX-081 ---------------------------------------------------------------------------
+
+/// Seed `n` unremoved links of the fixture org straight into the table (a directory bigger than
+/// any old in-memory cap), without memberships: only the list endpoints read them.
+async fn seed_links(fx: &ScimFx, n: i64) {
+    sqlx::query(
+        "WITH n AS (SELECT gen_random_uuid() AS id, gen_random_uuid() AS uid, i \
+                      FROM generate_series(1, $2::int) i), \
+              u AS (INSERT INTO users (id, email, display_name) \
+                    SELECT uid, 'bulk' || i || '@x.io', 'b' FROM n RETURNING id) \
+         INSERT INTO scim_users (id, org_id, user_id, user_name, display_name, state, created_at) \
+         SELECT n.id, $1, n.uid, 'bulk' || n.i || '@x.io', 'Bulk ' || (n.i % 7), 'active', \
+                now() + n.i * interval '1 millisecond' FROM n",
+    )
+    .bind(fx.org)
+    .bind(n as i32)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn fix081_lists_page_in_sql_and_report_the_true_total() {
+    let fx = ScimFx::new().await;
+    seed_links(&fx, 10_050).await;
+    // The total is the number of rows, not the size of an in-memory window.
+    let (s, _, v) = fx
+        .scim(Method::GET, &format!("{USERS}?count=0"), None)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["totalResults"], 10_050, "{v}");
+    // A page far beyond the old 10 000-row window still has rows.
+    let (s, _, v) = fx
+        .scim(
+            Method::GET,
+            &format!("{USERS}?startIndex=10046&count=10"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["totalResults"], 10_050, "{v}");
+    assert_eq!(v["Resources"].as_array().unwrap().len(), 5, "{v}");
+    assert_eq!(v["startIndex"], 10_046, "{v}");
+    // A displayName filter counts and pages in SQL as well (every 7th link is `Bulk 3`).
+    let want: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM scim_users WHERE org_id = $1 AND display_name = 'Bulk 3'",
+    )
+    .bind(fx.org)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    let (s, _, v) = fx
+        .scim(
+            Method::GET,
+            &format!("{USERS}?filter=displayName%20eq%20%22bulk%203%22&count=2&startIndex=3"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["totalResults"], want, "{v}");
+    assert_eq!(v["Resources"].as_array().unwrap().len(), 2, "{v}");
+}
+
+async fn lock_waiters(fx: &ScimFx) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity \
+         WHERE datname = current_database() AND wait_event_type = 'Lock'",
+    )
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn fix081_overlapping_patches_on_different_attributes_both_survive() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("lost-update@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let link: uuid::Uuid = sid.parse().unwrap();
+    // The link row is held, so both PATCHes are past whatever they read before the lock and
+    // queue on it; they then run one after the other.
+    let mut held = fx.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM scim_users WHERE id = $1 FOR UPDATE")
+        .bind(link)
+        .fetch_one(&mut *held)
+        .await
+        .unwrap();
+    let a = patch(
+        &fx,
+        &sid,
+        json!([{"op": "replace", "path": "displayName", "value": "Alpha"}]),
+    );
+    let b = patch(
+        &fx,
+        &sid,
+        json!([{"op": "replace", "path": "externalId", "value": "ext-beta"}]),
+    );
+    let release = async {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while lock_waiters(&fx).await < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "both PATCHes should wait for the link row"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        held.commit().await.unwrap();
+    };
+    let ((sa, va), (sb, vb), ()) = tokio::join!(a, b, release);
+    assert_eq!((sa, sb), (200, 200), "{va} {vb}");
+    let (s, _, v) = fx.scim(Method::GET, &format!("{USERS}/{sid}"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["displayName"], "Alpha", "no lost update: {v}");
+    assert_eq!(v["externalId"], "ext-beta", "no lost update: {v}");
+}
+
+#[tokio::test]
+async fn fix081_authentication_comes_before_the_body_and_the_id() {
+    let fx = ScimFx::new().await;
+    // A bearer-less request with a 2 MiB body is the same 401 as any other, answered without
+    // reading the body (not a 413).
+    let big = "x".repeat(2 * 1024 * 1024);
+    let (s, _, v) =
+        fx.h.send(
+            Method::POST,
+            USERS,
+            &[("content-type", "application/scim+json")],
+            Some(json!({"userName": "big@x.io", "displayName": big})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "{v}");
+    assert_scim_error(401, &v);
+    // A dead token with a malformed (here: empty) body gets the standard 401, never a 400.
+    let (s, _, v) = fx
+        .scim_with(Method::POST, USERS, "Bearer aud_deadtoken", None)
+        .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "{v}");
+    assert_scim_error(401, &v);
+    // A malformed `{id}` is a SCIM error body (404), after authentication; without a valid
+    // token it is the 401.
+    let (s, hd, v) = fx
+        .scim(Method::GET, &format!("{USERS}/not-a-uuid"), None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+    assert_scim_error(404, &v);
+    assert!(
+        hd["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("application/scim+json")
+    );
+    let (s, _, v) = fx
+        .scim_with(
+            Method::DELETE,
+            &format!("{GROUPS}/not-a-uuid"),
+            "Bearer aud_deadtoken",
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "{v}");
+    assert_scim_error(401, &v);
+    for (m, p) in [
+        (Method::PUT, format!("{USERS}/xx")),
+        (Method::PATCH, format!("{GROUPS}/xx")),
+    ] {
+        let (s, _, v) = fx
+            .scim(
+                m,
+                &p,
+                Some(json!({"schemas": [PATCH_OP], "Operations": []})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+        assert_scim_error(404, &v);
+    }
+}
+
+#[tokio::test]
+async fn fix081_a_filtered_email_path_changes_only_the_matching_entry() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("mail@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    // The stored e-mail is the one primary `work` entry: a `home` target matches nothing and
+    // never rewrites `userName`.
+    let (s, v) = patch(
+        &fx,
+        &sid,
+        json!([{"op": "replace", "path": "emails[type eq \"home\"].value", "value": "elsewhere@x.io"}]),
+    )
+    .await;
+    assert_eq!(s, 400, "{v}");
+    assert_eq!(scim_type(&v), Some("noTarget"), "{v}");
+    let (_, _, v) = fx.scim(Method::GET, &format!("{USERS}/{sid}"), None).await;
+    assert_eq!(v["userName"], "mail@x.io", "{v}");
+    // `primary eq false` matches nothing either; an unsupported filter is 400 `invalidPath`.
+    let (s, v) = patch(
+        &fx,
+        &sid,
+        json!([{"op": "replace", "path": "emails[primary eq false].value", "value": "p@x.io"}]),
+    )
+    .await;
+    assert_eq!((s, scim_type(&v)), (400, Some("noTarget")), "{v}");
+    let (s, v) = patch(
+        &fx,
+        &sid,
+        json!([{"op": "replace", "path": "emails[value co \"x\"].value", "value": "p@x.io"}]),
+    )
+    .await;
+    assert_eq!((s, scim_type(&v)), (400, Some("invalidPath")), "{v}");
+    // The matching entries still work.
+    for (i, path) in [
+        "emails[type eq \"work\"].value",
+        "emails[primary eq true].value",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let new = format!("moved{i}@x.io");
+        let (s, v) = patch(
+            &fx,
+            &sid,
+            json!([{"op": "replace", "path": path, "value": new}]),
+        )
+        .await;
+        assert_eq!(s, 200, "{path}: {v}");
+        assert_eq!(v["userName"], new, "{path}: {v}");
+    }
+}
+
+#[tokio::test]
+async fn fix081_an_owner_link_is_never_written_by_scim() {
+    let fx = ScimFx::new().await;
+    // The org owner is adopted into the directory (allowed), and then cannot be changed by it.
+    let owner = fx.owner.user_id;
+    let (s, _, v) = fx
+        .scim(Method::POST, USERS, Some(json!({"userName": "owner@x.io"})))
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let sid = v["id"].as_str().unwrap().to_owned();
+    let snapshot = |fx: &ScimFx| {
+        let pool = fx.h.pool().clone();
+        let sid: uuid::Uuid = sid.parse().unwrap();
+        async move {
+            sqlx::query_as::<_, (String, Option<String>, Option<String>, String, String)>(
+                "SELECT user_name::text, display_name, external_id, state, \
+                        updated_at::text FROM scim_users WHERE id = $1",
+            )
+            .bind(sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = snapshot(&fx).await;
+    for ops in [
+        json!([{"op": "replace", "path": "displayName", "value": "Hijacked"}]),
+        json!([{"op": "replace", "path": "userName", "value": "owner2@x.io"}]),
+        json!([{"op": "replace", "path": "externalId", "value": "e-1"}]),
+        json!([{"op": "replace", "path": "active", "value": false}]),
+    ] {
+        let (s, v) = patch(&fx, &sid, ops.clone()).await;
+        assert_eq!(s, 403, "{ops}: {v}");
+    }
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({"userName": "owner@x.io"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(snapshot(&fx).await, before, "nothing was written");
+    // A request that changes nothing is not a mutation.
+    let (s, v) = patch(
+        &fx,
+        &sid,
+        json!([{"op": "replace", "path": "userName", "value": "owner@x.io"}]),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let _ = owner;
+}

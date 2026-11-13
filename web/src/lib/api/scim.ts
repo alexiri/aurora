@@ -1,52 +1,24 @@
 "use client";
 
 // SCIM directory sync (P4-GRP-2, docs/04 §SCIM, docs/05 §SCIM management): the management
-// surface of `/v1/orgs/{org}/scim*` is deliberately **not** part of `openapi.json` (like the
-// `/scim/v2` plane itself), so this module talks to it with the same envelope conventions
-// (`{error:{code,message,details}}`, cookie session, CSRF on unsafe methods) by hand.
+// routes of `/v1/orgs/{org}/scim*` are ordinary owner `/v1` routes and part of `openapi.json`
+// (C-471/C-472, FIX-081), so the types below are the generated ones. The `/scim/v2` plane
+// itself stays outside the document. The calls keep the same envelope conventions
+// (`{error:{code,message,details}}`, cookie session).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError } from "./client";
+import type { components } from "./schema";
 
-export interface ScimSettings {
-  /** The instance switch (`[scim] enabled`): false = the whole plane is 404. */
-  available: boolean;
-  enabled: boolean;
-  email_domains: string[];
-  exclusive: boolean;
-  base_url: string;
-}
+type Schemas = components["schemas"];
 
-export interface ScimTokenEntry {
-  id: string;
-  name: string;
-  display_prefix: string;
-  created_at: string;
-  expires_at: string;
-  last_used_at: string | null;
-  revoked: boolean;
-  expiring: boolean;
-}
-
-export interface ScimStatus {
-  enabled: boolean;
-  last_request_at: string | null;
-  users: { active: number; suspended: number; removed: number };
-  groups: number;
-  errors: {
-    at: string;
-    method: string;
-    resource: string;
-    status: number;
-    scim_type: string | null;
-  }[];
-}
-
+/** `available` is the instance switch (`[scim] enabled`): false = the whole plane is 404. */
+export type ScimSettings = Schemas["ScimSettings"];
+export type ScimTokenEntry = Schemas["ScimTokenInfo"];
+export type ScimStatus = Schemas["ScimStatus"];
 /** The token is shown exactly once, at creation; only the prefix is stored. */
-export interface CreatedScimToken extends ScimTokenEntry {
-  token: string;
-}
+export type CreatedScimToken = Schemas["CreatedScimToken"];
 
 const jsonHeaders = { "content-type": "application/json" };
 

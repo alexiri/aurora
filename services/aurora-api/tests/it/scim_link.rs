@@ -760,6 +760,13 @@ async fn post_revives_renamed_tombstone_on_its_person() {
         account(&fx.h, person).await,
         Some(("pr@x.io".to_owned(), true))
     );
+    // (D-175, FIX-082) The person is an existing, signed-in account and no longer a member:
+    // the revival only prepares the membership; their own next sign-in activates it.
+    assert_eq!(
+        membership(&fx.h, fx.org, person).await,
+        Some(("member".to_owned(), "pending".to_owned()))
+    );
+    fx.h.try_sign_in("dev", "pr@x.io").await.unwrap();
     assert_eq!(
         membership(&fx.h, fx.org, person).await,
         Some(("member".to_owned(), "active".to_owned()))
@@ -842,4 +849,337 @@ async fn signin_racing_a_placeholder_rename_never_binds_the_renamed_account() {
         placeholder,
         "the link stays on its placeholder"
     );
+}
+
+// ---- FIX-082 (D-175): SCIM prepares a membership, only the person's sign-in activates it --------
+
+/// The statuses a signed-in `cookie` gets for the org-scoped reads a member could do.
+async fn org_surface(fx: &ScimFx, cookie: &str, org: Uuid, ws: Uuid) -> Vec<u16> {
+    let mut out = Vec::new();
+    for uri in [
+        format!("/v1/orgs/{org}"),
+        format!("/v1/orgs/{org}/workspaces"),
+        format!("/v1/workspaces/{ws}"),
+    ] {
+        let (s, _) = fx.h.get(&uri, &[("cookie", cookie)]).await;
+        out.push(s.as_u16());
+    }
+    out
+}
+
+async fn audit_count(fx: &ScimFx, user: Uuid, extra: &str) -> i64 {
+    sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = 'member.add' \
+         AND outcome = 'success' AND target_id = $2 {extra}"
+    ))
+    .bind(fx.org)
+    .bind(user.to_string())
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn fix082_existing_account_is_prepared_pending_and_activated_by_its_own_sign_in() {
+    let fx = ScimFx::new().await;
+    // A person who already has an account (they signed in; `open` gave them an org of their own).
+    let person = fx.h.sign_in("person@x.io").await;
+    let stranger = fx.h.sign_in("stranger@x.io").await;
+    let ws = fx.h.workspace(fx.org).await;
+    // Seat cap: the owner and the pending member fill it.
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || '{\"max_members\": 2}'::jsonb WHERE id = $1",
+    )
+    .bind(fx.org)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+
+    // The directory names that e-mail: the membership is `pending`, not `active`.
+    let u = fx.provision_ok("person@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        fx.aurora_user(&sid).await,
+        person.user_id,
+        "linked to the existing account"
+    );
+    assert_eq!(
+        membership(&fx.h, fx.org, person.user_id).await,
+        Some(("member".into(), "pending".into()))
+    );
+    // The IdP's own value is reported, so it never loops.
+    let (s, _, v) = fx.scim(Method::GET, &format!("{USERS}/{sid}"), None).await;
+    assert_eq!(s, 200);
+    assert_eq!(v["active"], true, "{v}");
+    // The seat is taken: another provisioning is refused.
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            USERS,
+            Some(json!({"userName": "second@x.io"})),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["detail"], "member_limit_reached", "{v}");
+
+    // A group the SCIM client fills with that person, bound to the workspace (a
+    // group-derived binding in the org), changes nothing while the membership is pending.
+    let (s, _, g) = fx
+        .scim(
+            Method::POST,
+            "/scim/v2/Groups",
+            Some(json!({"displayName": "eng", "members": [{"value": sid}]})),
+        )
+        .await;
+    assert_eq!(s, 201, "{g}");
+    let gid: Uuid = g["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query(
+        "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) VALUES ($1, $2, $3, 'owner')",
+    )
+    .bind(gid)
+    .bind(ws)
+    .bind(fx.org)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    // No access: every org-scoped read answers exactly what it answers a stranger, and an
+    // org API key of the pending member is dead.
+    let expected = org_surface(&fx, &stranger.cookie, fx.org, ws).await;
+    assert!(expected.iter().all(|s| *s != 200), "{expected:?}");
+    assert_eq!(
+        org_surface(&fx, &person.cookie, fx.org, ws).await,
+        expected,
+        "a pending membership behaves as a non-member"
+    );
+    let (_, key) = fx.h.api_key(person.user_id, fx.org, None, false).await;
+    let (s, _) =
+        fx.h.get(
+            &format!("/v1/orgs/{}", fx.org),
+            &[("authorization", &bearer(&key))],
+        )
+        .await;
+    assert_ne!(
+        s.as_u16(),
+        200,
+        "an API key of a pending member is not live"
+    );
+    assert_eq!(
+        audit_count(&fx, person.user_id, "AND metadata->>'was' = 'pending'").await,
+        0
+    );
+
+    // The person's own next verified sign-in activates it: one audited `member.add`.
+    let again = fx.h.try_sign_in("dev", "person@x.io").await.unwrap();
+    assert_eq!(again.user_id, person.user_id);
+    assert_eq!(
+        membership(&fx.h, fx.org, person.user_id).await,
+        Some(("member".into(), "active".into()))
+    );
+    assert_eq!(
+        audit_count(
+            &fx,
+            person.user_id,
+            "AND metadata->>'via' = 'scim' AND metadata->>'was' = 'pending'"
+        )
+        .await,
+        1,
+        "one member.add row, via scim"
+    );
+    // The group-derived binding is now effective.
+    let (s, _) =
+        fx.h.get(
+            &format!("/v1/workspaces/{ws}"),
+            &[("cookie", &again.cookie)],
+        )
+        .await;
+    assert_eq!(
+        s.as_u16(),
+        200,
+        "group-derived access applies after activation"
+    );
+    // Signing in again activates nothing more.
+    fx.h.try_sign_in("dev", "person@x.io").await.unwrap();
+    assert_eq!(
+        audit_count(&fx, person.user_id, "AND metadata->>'was' = 'pending'").await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn fix082_deactivate_or_delete_before_sign_in_removes_the_pending_membership() {
+    let fx = ScimFx::new().await;
+    for (email, how) in [("p-patch@x.io", "patch"), ("p-del@x.io", "delete")] {
+        let person = fx.h.sign_in(email).await;
+        let u = fx.provision_ok(email).await;
+        let sid = u["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            membership(&fx.h, fx.org, person.user_id).await.map(|m| m.1),
+            Some("pending".into())
+        );
+        let sessions_before: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(person.user_id)
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+        if how == "patch" {
+            let (s, _, v) = fx
+                .scim(
+                    Method::PATCH,
+                    &format!("{USERS}/{sid}"),
+                    Some(json!({
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "path": "active", "value": false}],
+                    })),
+                )
+                .await;
+            assert_eq!(s, 200, "{v}");
+        } else {
+            let (s, _, _) = fx
+                .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+                .await;
+            assert_eq!(s, 204);
+        }
+        assert_eq!(
+            membership(&fx.h, fx.org, person.user_id).await,
+            None,
+            "{how}"
+        );
+        // Nothing to deprovision: the person's sessions (their other orgs) are untouched.
+        let sessions_after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(person.user_id)
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(sessions_after, sessions_before, "{how}: sessions kept");
+        // A later sign-in activates nothing.
+        fx.h.try_sign_in("dev", email).await.unwrap();
+        assert_eq!(
+            membership(&fx.h, fx.org, person.user_id).await,
+            None,
+            "{how}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn fix082_reactivating_a_deactivated_prepared_person_prepares_again() {
+    let fx = ScimFx::new().await;
+    let person = fx.h.sign_in("again@x.io").await;
+    let u = fx.provision_ok("again@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let patch = |active: bool| {
+        json!({
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+            "Operations": [{"op": "replace", "path": "active", "value": active}],
+        })
+    };
+    let (s, _, v) = fx
+        .scim(Method::PATCH, &format!("{USERS}/{sid}"), Some(patch(false)))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(membership(&fx.h, fx.org, person.user_id).await, None);
+    // The link alone remains (suspended); attribute updates work on it.
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({"userName": "again@x.io", "displayName": "Again", "active": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, v) = fx
+        .scim(Method::PATCH, &format!("{USERS}/{sid}"), Some(patch(true)))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        membership(&fx.h, fx.org, person.user_id).await.map(|m| m.1),
+        Some("pending".into()),
+        "prepared again, never active without the person's sign-in"
+    );
+}
+
+#[tokio::test]
+async fn fix082_inactive_provisioning_of_an_existing_account_creates_the_link_alone() {
+    let fx = ScimFx::new().await;
+    let person = fx.h.sign_in("inactive@x.io").await;
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            USERS,
+            Some(json!({"userName": "inactive@x.io", "active": false})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["active"], false, "{v}");
+    assert_eq!(membership(&fx.h, fx.org, person.user_id).await, None);
+    fx.h.try_sign_in("dev", "inactive@x.io").await.unwrap();
+    assert_eq!(
+        membership(&fx.h, fx.org, person.user_id).await,
+        None,
+        "a suspended link activates nothing"
+    );
+}
+
+#[tokio::test]
+async fn fix082_existing_member_is_adopted_unchanged_and_new_address_stays_preprovisioned() {
+    let fx = ScimFx::new().await;
+    // An existing admin of the org is adopted as they are.
+    let admin = fx.h.user("adm@x.io", false).await;
+    fx.h.member(fx.org, admin, "admin", "active").await;
+    fx.provision_ok("adm@x.io").await;
+    assert_eq!(
+        membership(&fx.h, fx.org, admin).await,
+        Some(("admin".into(), "active".into()))
+    );
+    // A brand-new address: a pre-provisioned user with the existing rule (active, inert).
+    let u = fx.provision_ok("brandnew@x.io").await;
+    let new = fx.aurora_user(u["id"].as_str().unwrap()).await;
+    assert_eq!(
+        membership(&fx.h, fx.org, new).await,
+        Some(("member".into(), "active".into()))
+    );
+    assert_eq!(
+        account(&fx.h, new).await,
+        Some(("brandnew@x.io".into(), false))
+    );
+}
+
+#[tokio::test]
+async fn fix082_an_admin_cannot_activate_or_set_pending_and_may_remove() {
+    let fx = ScimFx::new().await;
+    let person = fx.h.sign_in("adm-act@x.io").await;
+    fx.provision_ok("adm-act@x.io").await;
+    let uri = format!("/v1/orgs/{}/members/{}", fx.org, person.user_id);
+    for st in ["active", "suspended"] {
+        let (s, v) = fx
+            .mgmt(Method::PATCH, &uri, Some(json!({"status": st})))
+            .await;
+        assert_eq!(s, 409, "{st}: {v}");
+        assert_eq!(v["error"]["code"], "member_pending", "{v}");
+    }
+    let (s, _) = fx
+        .mgmt(Method::PATCH, &uri, Some(json!({"status": "pending"})))
+        .await;
+    assert_eq!(s, 400);
+    // The member list shows the row as pending.
+    let (s, v) = fx
+        .mgmt(Method::GET, &format!("/v1/orgs/{}/members", fx.org), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["email"] == "adm-act@x.io" && m["status"] == "pending"),
+        "{v}"
+    );
+    // Removing a pending member is allowed.
+    let (s, _) = fx.mgmt(Method::DELETE, &uri, None).await;
+    assert_eq!(s, 204);
+    assert_eq!(membership(&fx.h, fx.org, person.user_id).await, None);
 }

@@ -98,7 +98,7 @@ External identities linked to a user (OIDC).
 | org_id | uuid FK→organizations (cascade) | pk part |
 | user_id | uuid FK→users (cascade) | pk part |
 | role | text CHECK in (`owner`,`admin`,`member`) | |
-| status | text CHECK in (`active`,`suspended`) default `active` | suspended = non-member for every check |
+| status | text CHECK in (`active`,`suspended`,`pending`) default `active` | suspended = non-member for every check. (phase 4, D-175, FIX-082) `pending` = prepared by SCIM for an existing account: counts against the seat cap, can be placed in SCIM groups, confers nothing (non-member for every check) and becomes `active` only in that person's next verified OIDC sign-in |
 | idp_role | text null CHECK in (`owner`,`admin`,`member`) | (phase 4, P4-IDP-1, D-139) the role the IdP claims give; `null` = no claim-sourced role. `role` stays the effective role (the stronger of this and `base_role`) |
 | idp_source | text null | `idp:<provider>:<value>` of the claim value behind `idp_role`; `null` exactly when `idp_role` is `null` |
 | base_role | text null CHECK in (`owner`,`admin`,`member`) | the role the other sources gave before a claim raised it; restored when the claim goes; `null` when the claim created the row (the row goes with the claim) |

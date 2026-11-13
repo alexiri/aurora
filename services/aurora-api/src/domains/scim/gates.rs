@@ -5,6 +5,7 @@
 
 use super::auth::OrgScim;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::tenancy::dto::OrgSettings;
 use aurora_db::repo::scim;
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -70,9 +71,52 @@ pub async fn allows(
     Ok(admission_gate(tx, org, user).await? == Admission::Allowed)
 }
 
-/// The denied `member.add` audit row of a refusal (best-effort write inside the refusing
-/// transaction: a failed row must not mask the gate, but the row is required by `04 §Audit`
-/// for denied membership actions, so a failure fails the sign-in path).
+/// The audit `reason` of a refusal by the seat cap (`organizations.settings.max_members`).
+pub const MEMBER_LIMIT_REASON: &str = "member_limit_reached";
+
+/// The org-level admission decision for a **new** membership (FIX-080): the SCIM gate, then
+/// the seat cap. `Some(reason)` is a refusal, `None` admits. Every path that creates an
+/// `org_members` row (invitation acceptance, JIT, new-user placement, IdP role-claim sync)
+/// calls this.
+///
+/// **The caller holds the org lock** ([`aurora_db::repo::groups::lock_org`], `organizations`
+/// row `FOR UPDATE`, the lock every SCIM writer takes first) and has re-read its own
+/// membership under it: a link written by a concurrent SCIM `DELETE` or `POST` is then either
+/// visible here or waits for the caller's transaction, and the seat count cannot move.
+pub async fn admit_new_member(
+    tx: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<Option<&'static str>, aurora_db::DbError> {
+    if let Some(reason) = admission_gate(&mut *tx, org, user).await?.reason() {
+        return Ok(Some(reason));
+    }
+    let settings = scim::settings_of(&mut *tx, org).await?;
+    if let Some(cap) = OrgSettings::from_json(&settings).max_members
+        && aurora_db::repo::invitations::count_seats(&mut *tx, org).await? + 1 > cap
+    {
+        return Ok(Some(MEMBER_LIMIT_REASON));
+    }
+    Ok(None)
+}
+
+/// The denied `member.add` audit row of a refusal, written **on its own pool connection**
+/// (FIX-080): the refusing transaction is rolled back (the route answers 403, the sign-in
+/// fails, or a savepoint is abandoned) or goes on without the membership, and `04 §Audit`
+/// requires the row of a denied membership action either way. A failed write is an error.
+pub async fn audit_denied_detached(
+    pool: &sqlx::PgPool,
+    org: Uuid,
+    user: Uuid,
+    path: &str,
+    reason: &str,
+) -> Result<(), aurora_db::DbError> {
+    let mut conn = pool.acquire().await?;
+    audit_denied(&mut conn, org, user, path, reason).await
+}
+
+/// The denied `member.add` audit row of a refusal on `tx`. Callers whose transaction does not
+/// survive the refusal use [`audit_denied_detached`].
 pub async fn audit_denied(
     tx: &mut PgConnection,
     org: Uuid,

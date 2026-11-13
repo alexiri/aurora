@@ -68,7 +68,7 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
       <CheckboxField
         id="scim-enabled"
         label="Enable directory sync (SCIM 2.0)"
-        hint="Your identity provider provisions and deprovisions members of this organization through /scim/v2."
+        hint="Your identity provider provisions and deprovisions members of this organization through /scim/v2. People who already have an account show as “Waiting for first sign-in” until they next sign in."
         checked={enabled}
         onChange={setEnabled}
       />

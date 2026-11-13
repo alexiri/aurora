@@ -73,6 +73,7 @@ mod sandbox_env;
 mod schedules;
 mod scim_auth;
 mod scim_common;
+mod scim_counters;
 mod scim_deprovision;
 mod scim_groups;
 mod scim_idp_replay;

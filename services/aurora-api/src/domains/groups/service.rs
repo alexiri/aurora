@@ -251,6 +251,10 @@ pub async fn patch(
     };
     let seen = req.revision.or(if_match);
     let mut tx = audit::begin(s).await?;
+    // (FIX-083) The org lock first, always before the group row lock — the order the sign-in
+    // sync and every SCIM writer use — so a sign-in inserting this group's membership cannot
+    // race a mapping change into a foreign-key failure.
+    repo::lock_org(&mut tx, g.org_id).await?;
     let cur = repo::lock(&mut tx, id).await?.ok_or_else(group_not_found)?;
     if seen.is_some_and(|r| r != cur.revision) {
         return Err(stale());
@@ -341,6 +345,8 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
         }
     }
     let mut tx = audit::begin(s).await?;
+    // (FIX-083) Org lock before the group lock, like every other group writer.
+    repo::lock_org(&mut tx, g.org_id).await?;
     repo::lock(&mut tx, id).await?.ok_or_else(group_not_found)?;
     let workspaces = repo::bound_workspaces(&mut *tx, id).await?;
     let members = repo::member_ids(&mut *tx, id).await?;

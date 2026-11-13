@@ -58,18 +58,24 @@ pub async fn set_default_org<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
-/// Case-insensitive lookup that row-locks the user (`FOR UPDATE`) for the rest of the
+/// Case-insensitive lookup that row-locks the user (`FOR NO KEY UPDATE`) for the rest of the
 /// caller's transaction — the OIDC sign-in's bind-by-verified-e-mail (FIX-070). A concurrent
-/// writer that changes the e-mail (SCIM's in-place placeholder rename, D-167(b)) either
-/// waits for the bind, or committed first — then Postgres re-checks the predicate on the
-/// new row version and the lookup returns `None` (the address is free again) instead of a
-/// row that no longer carries the verified e-mail.
+/// writer that changes the e-mail (SCIM's in-place placeholder rename, D-167(b), an `UPDATE`
+/// of the unique `email` column, which takes `FOR UPDATE`) either waits for the bind, or
+/// committed first — then Postgres re-checks the predicate on the new row version and the
+/// lookup returns `None` (the address is free again) instead of a row that no longer
+/// carries the verified e-mail.
+///
+/// `NO KEY UPDATE`, not `UPDATE` (FIX-080): the sign-in goes on to take the org lock
+/// (admission gate, D-179) while a SCIM `POST` holds the org lock and inserts the person's
+/// `org_members` row, whose foreign key takes `FOR KEY SHARE` on this row. `FOR UPDATE`
+/// conflicts with that and the two deadlock; `FOR NO KEY UPDATE` does not.
 pub async fn find_by_email_for_update<'e, E: PgExecutor<'e>>(
     exec: E,
     email: &str,
 ) -> Result<Option<UserRow>, DbError> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {COLS} FROM users WHERE email = $1::citext FOR UPDATE"
+        "SELECT {COLS} FROM users WHERE email = $1::citext FOR NO KEY UPDATE"
     ))
     .bind(email.trim())
     .fetch_optional(exec)

@@ -1,10 +1,10 @@
 //! The SCIM management routes of `/v1` (docs/05 §SCIM management): settings, tokens and the
 //! Directory sync status — org `owner` only, every write security-critical audited, PUT/POST
 //! need a recent re-authentication when they change something (412 `reauth_required`).
-//! Plain functions over [`super::protocol`]-style orchestration is not needed here: these
-//! are normal `/v1` routes in the v1 router (session auth via `SessionCaller`), but they are
-//! deliberately **not** utoipa paths (the SCIM management surface stays out of
-//! `openapi.json` like the plane itself — the dashboard calls them by path).
+//!
+//! These are ordinary owner `/v1` routes (session auth via `SessionCaller`) **and OpenAPI
+//! paths** (FIX-081, C-471/C-472): the dashboard calls them through the generated client. Only
+//! the `/scim/v2` plane itself stays outside the document.
 
 use super::auth::OrgScim;
 use super::settings;
@@ -12,15 +12,19 @@ use crate::app::AppState;
 use crate::audit::{AuditActor, AuditEvent, Outcome};
 use crate::domains::me::service::REAUTH_WINDOW_SECS;
 use crate::http::auth::{Caller, SessionCaller};
+use crate::http::error::ErrorEnvelope;
+use crate::http::json::{Json, Path};
 use aurora_core::limits;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_db::repo::{audit as audit_repo, scim as repo, sessions};
-use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 /// `DbError` → `ApiError` (the management routes return the `/v1` error envelope).
@@ -69,26 +73,47 @@ async fn recent_reauth(state: &AppState, session: Uuid) -> Result<(), aurora_cor
     Ok(())
 }
 
+/// The org's directory-sync settings (C-472).
+#[derive(Serialize, ToSchema)]
+pub struct ScimSettings {
+    /// The instance switch (`scim.enabled`).
+    pub available: bool,
+    pub enabled: bool,
+    pub email_domains: Vec<String>,
+    /// Directory-managed membership: only people the directory provisioned are admitted.
+    pub exclusive: bool,
+    /// `<external url>/scim/v2`.
+    pub base_url: String,
+}
+
 /// `GET /v1/orgs/{org}/scim` — `{ available, enabled, email_domains, exclusive, base_url }`.
+#[utoipa::path(get, path = "/orgs/{org}/scim", operation_id = "getScimSettings", tag = "scim",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    responses((status = 200, body = ScimSettings), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
 pub async fn get_settings(
     State(state): State<AppState>,
     c: SessionCaller,
     Path(org): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, aurora_core::ApiError> {
+) -> Result<Json<ScimSettings>, aurora_core::ApiError> {
     let a = c.org(&state, org).await?;
     owner_only(&a)?;
     let scim = settings::org_scim(&state.pool, org).await.map_err(dberr)?;
     Ok(Json(settings_payload(&state, &scim)))
 }
 
-fn settings_payload(state: &AppState, scim: &OrgScim) -> serde_json::Value {
-    json!({
-        "available": state.config.scim.enabled,
-        "enabled": scim.enabled,
-        "email_domains": scim.email_domains,
-        "exclusive": scim.exclusive,
-        "base_url": format!("{}/scim/v2", state.config.external_url.trim_end_matches('/')),
-    })
+fn settings_payload(state: &AppState, scim: &OrgScim) -> ScimSettings {
+    ScimSettings {
+        available: state.config.scim.enabled,
+        enabled: scim.enabled,
+        email_domains: scim.email_domains.clone(),
+        exclusive: scim.exclusive,
+        base_url: format!(
+            "{}/scim/v2",
+            state.config.external_url.trim_end_matches('/')
+        ),
+    }
 }
 
 /// The domains of a PUT body: sanitized, lower-cased, deduplicated, at most 20.
@@ -125,15 +150,17 @@ fn clean_domains(raw: &[String]) -> Result<Vec<String>, aurora_core::ApiError> {
         fields.push(FieldError::new("/email_domains", "at most 20 domains"));
     }
     if !fields.is_empty() {
-        return Err(aurora_core::ApiError::invalid_request(
-            "Invalid request.",
-            fields,
-        ));
+        // C-472: 422 `scim_domain_invalid` with `details.fields` (FIX-081; it was a plain 400).
+        return Err(aurora_core::ApiError::unprocessable(
+            "scim_domain_invalid",
+            "One or more e-mail domains are invalid.",
+        )
+        .with_details(json!({ "fields": fields })));
     }
     Ok(out)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct PutSettings {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -146,12 +173,19 @@ pub struct PutSettings {
 /// `PUT /v1/orgs/{org}/scim` — owner + recent re-auth; validates domains (422
 /// `scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when
 /// enabling); 409 `scim_unavailable` while the instance switch is off.
+#[utoipa::path(put, path = "/orgs/{org}/scim", operation_id = "putScimSettings", tag = "scim",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = PutSettings,
+    responses((status = 200, body = ScimSettings), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 412, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+    security(("session" = [])))]
 pub async fn put_settings(
     State(state): State<AppState>,
     c: SessionCaller,
     Path(org): Path<Uuid>,
     body: Json<PutSettings>,
-) -> Result<Json<serde_json::Value>, aurora_core::ApiError> {
+) -> Result<Json<ScimSettings>, aurora_core::ApiError> {
     let a = c.org(&state, org).await?;
     owner_only(&a)?;
     if !state.config.scim.enabled {
@@ -212,43 +246,85 @@ pub async fn put_settings(
     Ok(Json(settings_payload(&state, &scim)))
 }
 
+/// One provisioning token without its material.
+#[derive(Serialize, ToSchema)]
+pub struct ScimTokenInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub display_prefix: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked: bool,
+    /// Live and expiring within 14 days.
+    pub expiring: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ScimTokenList {
+    pub tokens: Vec<ScimTokenInfo>,
+}
+
 /// `GET /v1/orgs/{org}/scim/tokens` — the org's tokens without material.
+#[utoipa::path(get, path = "/orgs/{org}/scim/tokens", operation_id = "listScimTokens", tag = "scim",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    responses((status = 200, body = ScimTokenList), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
 pub async fn list_tokens(
     State(state): State<AppState>,
     c: SessionCaller,
     Path(org): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, aurora_core::ApiError> {
+) -> Result<Json<ScimTokenList>, aurora_core::ApiError> {
     let a = c.org(&state, org).await?;
     owner_only(&a)?;
     let now = chrono::Utc::now();
     let rows = repo::tokens_of(&state.pool, org).await.map_err(dberr)?;
-    let tokens: Vec<serde_json::Value> = rows
+    let tokens = rows
         .iter()
-        .map(|t| {
-            json!({
-                "id": t.id,
-                "name": t.name,
-                "display_prefix": t.display_prefix,
-                "created_at": t.created_at,
-                "expires_at": t.expires_at,
-                "last_used_at": t.last_used_at,
-                "revoked": t.revoked_at.is_some(),
-                "expiring": t.is_live(now) && t.expires_at <= now + chrono::Duration::days(14),
-            })
+        .map(|t| ScimTokenInfo {
+            id: t.id,
+            name: t.name.clone(),
+            display_prefix: t.display_prefix.clone(),
+            created_at: t.created_at,
+            expires_at: t.expires_at,
+            last_used_at: t.last_used_at,
+            revoked: t.revoked_at.is_some(),
+            expiring: t.is_live(now) && t.expires_at <= now + chrono::Duration::days(14),
         })
         .collect();
-    Ok(Json(json!({ "tokens": tokens })))
+    Ok(Json(ScimTokenList { tokens }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct CreateToken {
     pub name: String,
     #[serde(default)]
     pub expires_in_days: Option<u32>,
 }
 
+/// A newly created token: the only time its material (`token`) is returned.
+#[derive(Serialize, ToSchema)]
+pub struct CreatedScimToken {
+    pub id: Uuid,
+    pub name: String,
+    pub display_prefix: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    /// The `aud_` token, shown once; never stored in cleartext.
+    pub token: String,
+}
+
 /// `POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`
 /// (instance off) / 422 `scim_token_limit_reached` (org off, limit); 412 `reauth_required`.
+#[utoipa::path(post, path = "/orgs/{org}/scim/tokens", operation_id = "createScimToken", tag = "scim",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = CreateToken,
+    responses((status = 201, body = CreatedScimToken), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope), (status = 412, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope)),
+    security(("session" = [])))]
 pub async fn create_token(
     State(state): State<AppState>,
     c: SessionCaller,
@@ -326,20 +402,24 @@ pub async fn create_token(
     crate::audit::commit_critical(tx, &ev).await?;
     Ok((
         StatusCode::CREATED,
-        Json(json!({
-            "id": row.id,
-            "name": row.name,
-            "display_prefix": row.display_prefix,
-            "created_at": row.created_at,
-            "expires_at": row.expires_at,
+        Json(CreatedScimToken {
+            id: row.id,
+            name: row.name,
+            display_prefix: row.display_prefix,
+            created_at: row.created_at,
+            expires_at: row.expires_at,
             // Shown once; never stored in cleartext.
-            "token": tok,
-        })),
+            token: tok,
+        }),
     )
         .into_response())
 }
 
 /// `DELETE /v1/scim/tokens/{id}` — idempotent, effective at once; critical audit.
+#[utoipa::path(delete, path = "/scim/tokens/{id}", operation_id = "revokeScimToken", tag = "scim",
+    params(("id" = Uuid, Path, description = "Token id")),
+    responses((status = 204), (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
 pub async fn revoke_token(
     State(state): State<AppState>,
     c: SessionCaller,
@@ -375,13 +455,46 @@ pub async fn revoke_token(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Link counts by state.
+#[derive(Serialize, ToSchema)]
+pub struct ScimUserCounts {
+    pub active: i64,
+    pub suspended: i64,
+    pub removed: i64,
+}
+
+/// One recent sanitized SCIM error (never a token or another user's e-mail).
+#[derive(Serialize, ToSchema)]
+pub struct ScimErrorEntry {
+    pub at: DateTime<Utc>,
+    pub method: String,
+    pub resource: String,
+    pub status: i64,
+    pub scim_type: Option<String>,
+}
+
+/// The Directory sync status card.
+#[derive(Serialize, ToSchema)]
+pub struct ScimStatus {
+    pub enabled: bool,
+    pub last_request_at: Option<DateTime<Utc>>,
+    pub users: ScimUserCounts,
+    pub groups: i64,
+    pub errors: Vec<ScimErrorEntry>,
+}
+
 /// `GET /v1/orgs/{org}/scim/status` — the Directory sync page payload: last request, counts
 /// by state, group count, and the last `SCIM_ERROR_LOG` sanitized errors.
+#[utoipa::path(get, path = "/orgs/{org}/scim/status", operation_id = "getScimStatus", tag = "scim",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    responses((status = 200, body = ScimStatus), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
 pub async fn status(
     State(state): State<AppState>,
     c: SessionCaller,
     Path(org): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, aurora_core::ApiError> {
+) -> Result<Json<ScimStatus>, aurora_core::ApiError> {
     let a = c.org(&state, org).await?;
     owner_only(&a)?;
     let scim = settings::org_scim(&state.pool, org).await.map_err(dberr)?;
@@ -423,19 +536,27 @@ pub async fn status(
     .fetch_all(&state.pool)
     .await
     .map_err(sqlerr)?;
-    let errors: Vec<serde_json::Value> = errors
+    let errors: Vec<ScimErrorEntry> = errors
         .into_iter()
-        .map(|(at, method, resource, st, ty)| {
-            json!({"at": at, "method": method, "resource": resource, "status": st, "scim_type": ty})
+        .map(|(at, method, resource, status, scim_type)| ScimErrorEntry {
+            at,
+            method,
+            resource,
+            status,
+            scim_type,
         })
         .collect();
-    Ok(Json(json!({
-        "enabled": scim.enabled,
-        "last_request_at": last,
-        "users": {"active": active, "suspended": suspended, "removed": removed},
-        "groups": groups,
-        "errors": errors,
-    })))
+    Ok(Json(ScimStatus {
+        enabled: scim.enabled,
+        last_request_at: last,
+        users: ScimUserCounts {
+            active,
+            suspended,
+            removed,
+        },
+        groups,
+        errors,
+    }))
 }
 
 /// Best-effort `scim.error` audit rows: sanitized, never a token or another user's e-mail.
@@ -471,15 +592,11 @@ pub async fn record_scim_error(
     }
 }
 
-/// The v1 management router (merged into the v1 router in `app.rs`; **not** utoipa).
-pub fn router() -> axum::Router<AppState> {
-    use axum::routing::{delete, get};
-    axum::Router::new()
-        .route("/v1/orgs/{org}/scim", get(get_settings).put(put_settings))
-        .route("/v1/orgs/{org}/scim/status", get(status))
-        .route(
-            "/v1/orgs/{org}/scim/tokens",
-            get(list_tokens).post(create_token),
-        )
-        .route("/v1/scim/tokens/{id}", delete(revoke_token))
+/// The management routes (merged into the `/v1` OpenAPI router in `app.rs`).
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(get_settings, put_settings))
+        .routes(routes!(status))
+        .routes(routes!(list_tokens, create_token))
+        .routes(routes!(revoke_token))
 }

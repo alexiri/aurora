@@ -46,6 +46,19 @@ enum P {
     Unbound,
     /// Membership suspended (still has an owner binding).
     Suspended,
+    /// (D-175, FIX-082) Membership `pending`: SCIM prepared it for an existing account and the
+    /// person has not signed in since. Denied everywhere a non-member is, even with an owner
+    /// binding and group-derived access in place.
+    Pending,
+    /// (FIX-083, D-130) Plain org member whose **group** maps to the org role `admin`: an
+    /// effective admin everywhere, though `org_members.role` says `member`.
+    GroupAdmin,
+    /// (FIX-083) Org member with no direct binding whose group is bound to the workspace as
+    /// `owner`: a group-only workspace owner, an ordinary member of the org.
+    GroupWsOwner,
+    /// (FIX-083, SEC-71) Membership suspended, but still in the admin-mapped and the
+    /// workspace-owner groups: derives nothing from either.
+    SuspendedGroupAdmin,
     /// No membership in the org.
     NonMember,
     /// Instance admin, non-member of the org.
@@ -60,7 +73,7 @@ enum P {
     OrgKeyMember,
 }
 
-const ALL: [P; 14] = [
+const ALL: [P; 18] = [
     P::Anon,
     P::Owner,
     P::Admin,
@@ -69,6 +82,10 @@ const ALL: [P; 14] = [
     P::WsOwner,
     P::Unbound,
     P::Suspended,
+    P::Pending,
+    P::GroupAdmin,
+    P::GroupWsOwner,
+    P::SuspendedGroupAdmin,
     P::NonMember,
     P::InstAdmin,
     P::WsKeySame,
@@ -100,8 +117,8 @@ enum WsAccess {
 
 fn ws_access(p: P) -> WsAccess {
     match p {
-        P::Owner | P::Admin | P::OrgKeyAdmin => WsAccess::Owner,
-        P::WsOwner | P::WsKeySame => WsAccess::Owner,
+        P::Owner | P::Admin | P::OrgKeyAdmin | P::GroupAdmin => WsAccess::Owner,
+        P::WsOwner | P::WsKeySame | P::GroupWsOwner => WsAccess::Owner,
         P::WsApprover => WsAccess::Approver,
         P::WsMember | P::OrgKeyMember => WsAccess::Member,
         _ => WsAccess::None,
@@ -112,11 +129,14 @@ fn ws_access(p: P) -> WsAccess {
 fn org_role(p: P) -> Option<(&'static str, bool)> {
     match p {
         P::Owner => Some(("owner", true)),
-        P::Admin | P::OrgKeyAdmin => Some(("admin", true)),
-        P::WsMember | P::WsApprover | P::WsOwner | P::Unbound | P::OrgKeyMember => {
-            Some(("member", true))
-        }
-        P::Suspended => Some(("member", false)),
+        P::Admin | P::OrgKeyAdmin | P::GroupAdmin => Some(("admin", true)),
+        P::WsMember
+        | P::WsApprover
+        | P::WsOwner
+        | P::Unbound
+        | P::OrgKeyMember
+        | P::GroupWsOwner => Some(("member", true)),
+        P::Suspended | P::Pending | P::SuspendedGroupAdmin => Some(("member", false)),
         _ => None,
     }
 }
@@ -168,6 +188,12 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 
 /// Routes that are not checked against the principal matrix, with reasons.
 const EXEMPT: &[(&str, &str, &str)] = &[
+    (
+        "DELETE",
+        "/v1/scim/tokens/{id}",
+        "authorization resolves through the token's org (owner only); an unknown id is an \
+         idempotent 204 — covered by scim_auth.rs (FIX-081 lists the route)",
+    ),
     (
         "GET",
         "/v1/public/avatars/{key}",
@@ -435,6 +461,12 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}", G::Member, false),
     r("PATCH", "/v1/orgs/{org}", G::Owner, false),
     r("DELETE", "/v1/orgs/{org}", G::Owner, false),
+    // (FIX-081, C-471/C-472) Directory-sync management: org owner only, session only.
+    r("GET", "/v1/orgs/{org}/scim", G::Owner, true),
+    r("PUT", "/v1/orgs/{org}/scim", G::Owner, true),
+    r("GET", "/v1/orgs/{org}/scim/status", G::Owner, true),
+    r("GET", "/v1/orgs/{org}/scim/tokens", G::Owner, true),
+    r("POST", "/v1/orgs/{org}/scim/tokens", G::Owner, true),
     // (phase 2, RFE-006) freeze / unfreeze: org owner; workspace and agent: `can_own`.
     r("POST", "/v1/orgs/{org}/freeze", G::Owner, false),
     r("POST", "/v1/orgs/{org}/unfreeze", G::Owner, false),
@@ -1005,6 +1037,10 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     let wo = h.user(&format!("wo{n}@x.io"), false).await;
     let u = h.user(&format!("u{n}@x.io"), false).await;
     let s_user = h.user(&format!("s{n}@x.io"), false).await;
+    let pend = h.user(&format!("pend{n}@x.io"), false).await;
+    let g_adm = h.user(&format!("gadm{n}@x.io"), false).await;
+    let g_wso = h.user(&format!("gwso{n}@x.io"), false).await;
+    let g_susp = h.user(&format!("gsusp{n}@x.io"), false).await;
     let nm = h.user(&format!("nm{n}@x.io"), false).await;
     let ia = h.user(&format!("ia{n}@x.io"), true).await;
     let victim = h.user(&format!("victim{n}@x.io"), false).await;
@@ -1017,10 +1053,56 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     h.bind_ws(ws, ap, "approver").await;
     h.member(org, u, "member", "active").await;
     h.member(org, s_user, "member", "suspended").await;
+    h.member(org, pend, "member", "pending").await;
+    h.member(org, g_adm, "member", "active").await;
+    h.member(org, g_wso, "member", "active").await;
+    h.member(org, g_susp, "member", "suspended").await;
+    // Two groups (FIX-083, D-130): one maps to the org role `admin`, one is bound to the
+    // workspace as `owner`. The suspended member sits in both and must derive nothing.
+    let grp_admin = Uuid::now_v7();
+    let grp_ws = Uuid::now_v7();
+    for (id, name, role) in [
+        (grp_admin, "matrix-admins", Some("admin")),
+        (grp_ws, "matrix-ws", None),
+    ] {
+        sqlx::query("INSERT INTO groups (id, org_id, name, org_role) VALUES ($1, $2, $3, $4)")
+            .bind(id)
+            .bind(org)
+            .bind(format!("{name}-{n}"))
+            .bind(role)
+            .execute(h.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) VALUES ($1, $2, $3, 'owner')",
+    )
+    .bind(grp_ws)
+    .bind(ws)
+    .bind(org)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    for (grp, user) in [
+        (grp_admin, g_adm),
+        (grp_admin, g_susp),
+        (grp_ws, g_wso),
+        (grp_ws, g_susp),
+    ] {
+        sqlx::query("INSERT INTO group_members (group_id, org_id, user_id) VALUES ($1, $2, $3)")
+            .bind(grp)
+            .bind(org)
+            .bind(user)
+            .execute(h.pool())
+            .await
+            .unwrap();
+    }
     h.member(org, victim, "member", "active").await;
     h.bind_ws(ws, m, "member").await;
     h.bind_ws(ws, wo, "owner").await;
     h.bind_ws(ws, s_user, "owner").await;
+    // The pending member holds an owner binding too: it must not be honoured.
+    h.bind_ws(ws, pend, "owner").await;
     h.bind_ws(ws, victim, "member").await;
 
     let mut auth = HashMap::new();
@@ -1032,6 +1114,13 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     auth.insert(P::WsOwner, Auth::Cookie(h.good_session(wo).await.1));
     auth.insert(P::Unbound, Auth::Cookie(h.good_session(u).await.1));
     auth.insert(P::Suspended, Auth::Cookie(h.good_session(s_user).await.1));
+    auth.insert(P::Pending, Auth::Cookie(h.good_session(pend).await.1));
+    auth.insert(P::GroupAdmin, Auth::Cookie(h.good_session(g_adm).await.1));
+    auth.insert(P::GroupWsOwner, Auth::Cookie(h.good_session(g_wso).await.1));
+    auth.insert(
+        P::SuspendedGroupAdmin,
+        Auth::Cookie(h.good_session(g_susp).await.1),
+    );
     auth.insert(P::NonMember, Auth::Cookie(h.good_session(nm).await.1));
     auth.insert(P::InstAdmin, Auth::Cookie(h.good_session(ia).await.1));
     auth.insert(
@@ -1138,6 +1227,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             | "/v1/admin/orgs/{org}/freeze",
         ) => json!({"reason": "matrix"}),
         ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),
+        ("POST", "/v1/orgs/{org}/scim/tokens") => json!({"name": "matrix"}),
         ("POST", "/v1/orgs/{org}/groups") => json!({"name": "matrix group"}),
         ("PUT", "/v1/workspaces/{ws}/access/groups/{group}") => json!({"role": "member"}),
         ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),

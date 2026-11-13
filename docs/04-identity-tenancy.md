@@ -114,6 +114,11 @@ interface"); stored in the database, audited):
   the old `personal_org` behaviour stay; their owner can delete them (`§Deletion
   semantics`). The admin page lists them ("12 personal orgs from before") so the admin
   can tell people.
+- Placement creates an org membership, so it passes the default org's SCIM admission gate
+  and seat cap like every other membership-creating path (`§SCIM`, "Admission gate and
+  seat cap", D-179): in an `exclusive` org, or one at `max_members`, a new person is not
+  placed, the refusal is audited (denied `member.add`, `path = placement`) and the
+  sign-in goes on without a membership.
 - Under `open`, mode `none` admits only users with an invitation, a mapped role claim or a
   `jit` org; others get `signup_closed`. Starter grants whose credential has gone away are
   skipped and audited; they never fail a sign-in (D-151, `API_CONTRACTS` C-524..C-527).
@@ -440,7 +445,7 @@ values are stored only as keyed hashes.
 | Layer | Values | Notes |
 |-------|--------|-------|
 | Org role | `owner` > `admin` > `member` | Always enforced. |
-| Membership status | `active`, `suspended` | Suspended = non-member for **every** check including API keys, channel clicks, schedules. |
+| Membership status | `active`, `suspended`, `pending` (phase 4, D-175) | Suspended = non-member for **every** check including API keys, channel clicks, schedules. `pending` (SCIM prepared it for an existing account; becomes `active` only in that person's next verified sign-in) is the same: a non-member for every check, but it counts against the seat cap and may sit in SCIM groups. An admin can neither set nor leave `pending` (409 `member_pending`), only remove the member. |
 | Workspace access | `owner`, `member` — phase 0/1. **From phase 2 (RFE-012): `owner` > `approver` > `member`** | Org owners and admins are implicit workspace owners of every workspace in their org. `approver` is one deliberate notch between chatting and owning: it adds the authority to decide approvals. |
 | Group (phase 4, P4-GRP-1) | member of zero or more org groups | A group can hold workspace roles (`owner`, `approver`, `member`) and map to an org role (`admin`, `member`; never `owner`). The **effective** role is the strongest of the direct and group-derived ones, see *Groups* below. A group never creates membership. |
 | Freeze state (phase 2, RFE-006) | not frozen / `frozen` — per **agent**, **workspace** and **organization** | A reversible, audited emergency switch, see *Freeze* below. |
@@ -896,14 +901,28 @@ invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and 
 SCIM never deletes a `users` row or an account and never touches other orgs: a person in two
 orgs deprovisioned by one remains a user of the other.
 
-**`exclusive` mode** (org setting, default `false`). When on, JIT and invitation acceptance for
-this org are refused for people without an `active` SCIM link: the IdP is then the only way in.
-It never changes existing members.
+**`exclusive` mode** (org setting, default `false`). When on, JIT, invitation acceptance,
+new-user placement and IdP role-claim sync for this org are refused for people without an
+`active` SCIM link: the IdP is then the only way in. It never changes existing members.
+
+**Admission gate and seat cap (D-179, FIX-080).** *Every* path that creates an `org_members`
+row — invitation acceptance, JIT, new-user placement and IdP role-claim sync — passes the
+admission gate of that org (a `removed` or `suspended` link refuses, `exclusive` without an
+`active` link refuses, SEC-73) and then its seat cap (`max_members`), decided under the org
+lock the SCIM writers take, so a directory removal that has committed is always seen and one
+that has not waits. A refusal writes a denied `member.add` audit row (`metadata.path` =
+`invitation` | `jit` | `placement` | `idp_sync`, `metadata.reason` = `scim_removed` |
+`scim_suspended` | `scim_exclusive` | `member_limit_reached`) **on its own connection**, so it
+survives a rolled-back request or an abandoned savepoint. A refused role claim, placement or
+seat-capped JIT never fails the sign-in itself (the person signs in without that
+membership); a JIT refused by the directory gate (`removed`, `suspended`, `exclusive`) still
+fails it with `scim_refused`, and a refused invitation answers 403 `scim_refused` (seat cap:
+422 `member_limit_reached`) and stays pending.
 
 **Rate limits and size.** Per token `SCIM_RATE` (600 requests/min, burst 120) through the
 `CounterStore` (class `management`, `05 §Conventions`), request bodies ≤ `SCIM_BODY_MAX` (1 MiB),
 `SCIM_MAX_PATCH_OPS` (100) operations per PATCH, `SCIM_MAX_MEMBERS_PER_REQUEST` (1 000),
-list pages ≤ `SCIM_PAGE_MAX` (100, default 50). Requests with a rejected `aud_` bearer fall
+list pages ≤ `SCIM_PAGE_MAX` (100, default 50) — a list pages **in SQL** (count plus `OFFSET`/`LIMIT`), with no bound on the size of the directory (`totalResults` is the true count; FIX-081). Requests with a rejected `aud_` bearer fall
 under the existing 30/min/IP rejected-bearer limit (class `security`, never fails open). A refusal
 is `429` in SCIM error format with `retry-after`.
 

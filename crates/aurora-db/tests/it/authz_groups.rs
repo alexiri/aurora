@@ -247,6 +247,54 @@ async fn suspended_member_derives_nothing_from_any_group(pool: PgPool) {
     assert!(!workspace_has_active_owner(&pool, f.ws).await.unwrap());
 }
 
+/// D-175 (FIX-082): a `pending` membership (SCIM prepared it, the person has not signed in) is
+/// listed in groups but derives nothing from any of them, holds no direct binding's access, and
+/// is not an `active` member for any law; activation makes the group-derived access effective.
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn pending_member_derives_nothing_until_activated(pool: PgPool) {
+    let f = fx(&pool).await;
+    let u = member(&pool, f.org, "member").await;
+    sqlx::query("UPDATE org_members SET status = 'pending' WHERE user_id = $1")
+        .bind(u)
+        .execute(&pool)
+        .await
+        .unwrap();
+    bind(&pool, f.ws, u, "owner").await;
+    let g = group(&pool, f.org, "g", Some("admin")).await;
+    gbind(&pool, g, f.ws, f.org, "owner").await.unwrap();
+    add(&pool, g, f.org, u).await.unwrap();
+    assert_eq!(role(&pool, u, f.ws).await, None);
+    assert!(!can_use(&pool, u, f.ws).await.unwrap());
+    assert_eq!(
+        authz::effective_org_role(&pool, u, f.org).await.unwrap(),
+        None
+    );
+    assert!(
+        !authz::org_membership(&pool, u, f.org)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_active()
+    );
+    assert!(groups::is_member(&pool, g, u).await.unwrap());
+    assert!(groups::groups_of_user(&pool, u).await.unwrap().is_empty());
+    assert!(
+        aurora_db::repo::gateway::speaker_group_ids(&pool, f.org, u)
+            .await
+            .unwrap()
+            .is_empty(),
+        "no group-derived identity for the gateway"
+    );
+    assert!(!workspace_has_active_owner(&pool, f.ws).await.unwrap());
+    // The person's own sign-in activates it: everything the group gives applies.
+    assert!(
+        aurora_db::repo::members::activate_pending(&pool, f.org, u)
+            .await
+            .unwrap()
+    );
+    assert!(can_own(&pool, u, f.ws).await.unwrap());
+}
+
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
 async fn a_group_never_makes_a_non_member_a_member(pool: PgPool) {
     let f = fx(&pool).await;

@@ -41,6 +41,16 @@ pub async fn suspend_membership(
         return Ok(()); // idempotent
     }
     members::update(&mut *conn, org, user, None, Some("suspended")).await?;
+    // (FIX-083) Access the IdP's group claim granted ends with the suspension and is not
+    // restored by a reactivation; the next sign-in re-syncs.
+    crate::domains::groups::sync::drop_idp_memberships(
+        &mut *conn,
+        actor,
+        org,
+        user,
+        "membership_suspended",
+    )
+    .await?;
     notify(conn, org, user).await?;
     let ev = AuditEvent::new(actor.clone(), "member.update", Outcome::Success)
         .org(org)

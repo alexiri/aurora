@@ -624,6 +624,15 @@ async fn sign_in(
         }
         aurora_db::repo::idp_roles::clear_admin_source(&mut *tx, user.id).await?;
     }
+    // (D-175, FIX-082) The person's own verified sign-in activates every membership SCIM
+    // prepared for this account (`pending` → `active`, audited), before the role and group sync
+    // so both see the member they now are; the SCIM admission gate still applies.
+    crate::domains::scim::pending::activate_on_sign_in(&mut tx, &state.pool, &user)
+        .await
+        .map_err(|e| {
+            tracing::error!("oidc: activate pending memberships: {e:?}");
+            Fail("oidc_failed")
+        })?;
     // Precedence: invitation (in `create_user`) → role claims → provider `jit` → placement.
     roles::sync(&mut tx, state, p, &mut user, &v.role_values, &desired).await?;
     apply_jit(state, &mut tx, p, &mut user).await?;
@@ -647,14 +656,15 @@ async fn sign_in(
     // (P4-GRP-1, D-156) IdP-linked group memberships, in the same transaction after the role
     // sync, JIT and placement: those are what can create the org membership a group needs (a
     // first sign-in is then already in its groups). Never creates a membership itself.
-    if p.group_claim.is_some() {
-        crate::domains::groups::sync::sync_signin(&mut tx, p, user.id, &v.group_values)
-            .await
-            .map_err(|e| {
-                tracing::error!("oidc: group sync: {e:?}");
-                Fail("oidc_failed")
-            })?;
-    }
+    // (FIX-083) Always runs: a provider whose `group_claim` was removed from the configuration
+    // syncs an empty value set (`v.group_values` is empty without a claim), which removes the
+    // IdP rows it once created instead of leaving them for ever.
+    crate::domains::groups::sync::sync_signin(&mut tx, p, user.id, &v.group_values)
+        .await
+        .map_err(|e| {
+            tracing::error!("oidc: group sync: {e:?}");
+            Fail("oidc_failed")
+        })?;
 
     user = users::record_login(&mut *tx, user.id).await?;
     let token = auth::issue_session(&mut tx, state, user.id, client)
@@ -780,7 +790,7 @@ async fn create_user(
     } else {
         // Every case but "own organization": a pending invitation is accepted as part of the
         // sign-in.
-        invitations::service::accept_pending_for_email(tx, &user)
+        invitations::service::accept_pending_for_email(tx, &state.pool, &user)
             .await
             .map_err(|e| {
                 tracing::error!("oidc: accept invitations: {e:?}");
@@ -809,20 +819,29 @@ async fn apply_jit(
     // membership outright (deprovisioned by the IdP), an `exclusive` org admits only people
     // with an `active` link. The refusal fails the sign-in (the transaction rolls back), so
     // the denied `member.add` row is written on its own connection to survive.
-    match crate::domains::scim::gates::admission_gate(&mut *tx, org_id, user.id).await? {
-        crate::domains::scim::gates::Admission::Allowed => {}
-        g => {
-            let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
-            crate::domains::scim::gates::audit_denied(
-                &mut conn,
-                org_id,
-                user.id,
-                "jit",
-                g.reason().unwrap_or("scim_refused"),
-            )
-            .await?;
-            return Err(Fail("scim_refused"));
-        }
+    // (FIX-080) The decision is taken under the org lock (the lock every SCIM writer takes)
+    // with the membership re-read under it, and the seat cap applies like for invitations: a
+    // full org skips the JIT membership (the sign-in itself goes on, as for claims).
+    aurora_db::repo::groups::lock_org(&mut *tx, org_id).await?;
+    if members::get(&mut *tx, org_id, user.id).await?.is_some() {
+        return Ok(());
+    }
+    if let Some(reason) =
+        crate::domains::scim::gates::admit_new_member(&mut *tx, org_id, user.id).await?
+    {
+        crate::domains::scim::gates::audit_denied_detached(
+            &state.pool,
+            org_id,
+            user.id,
+            "jit",
+            reason,
+        )
+        .await?;
+        return if reason == crate::domains::scim::gates::MEMBER_LIMIT_REASON {
+            Ok(())
+        } else {
+            Err(Fail("scim_refused"))
+        };
     }
     let role = if j.role == "admin" { "admin" } else { "member" };
     members::insert(&mut *tx, org_id, user.id, role).await?;

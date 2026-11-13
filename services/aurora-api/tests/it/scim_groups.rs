@@ -586,3 +586,64 @@ async fn concurrent_patch_adds_keep_every_member() {
     want.sort();
     assert_eq!(members, want, "every concurrent add kept");
 }
+
+/// FIX-083: every SCIM group write takes the org lock before the group row lock, so a sign-in
+/// group sync (which inserts members under the org lock) cannot race a PATCH or DELETE into a
+/// foreign-key failure. Another connection holds the org lock; the write must queue behind it.
+#[tokio::test]
+async fn group_patch_and_delete_queue_behind_the_org_lock() {
+    let fx = ScimFx::new().await;
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            GROUPS,
+            Some(json!({"schemas": [GROUP_SCHEMA], "displayName": "locked"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let gid = v["id"].as_str().unwrap().to_owned();
+    for (label, method, body, want) in [
+        (
+            "patch",
+            Method::PATCH,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{"op": "replace", "path": "displayName", "value": "renamed"}],
+            })),
+            200u16,
+        ),
+        ("delete", Method::DELETE, None, 204u16),
+    ] {
+        let mut held = fx.h.pool().begin().await.unwrap();
+        sqlx::query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE")
+            .bind(fx.org)
+            .fetch_one(&mut *held)
+            .await
+            .unwrap();
+        let uri = format!("{GROUPS}/{gid}");
+        let write = fx.scim(method, &uri, body);
+        let release = async {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity \
+                     WHERE datname = current_database() AND wait_event_type = 'Lock'",
+                )
+                .fetch_one(fx.h.pool())
+                .await
+                .unwrap();
+                if waiting >= 1 {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{label}: the SCIM group write did not wait for the org lock"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            held.commit().await.unwrap();
+        };
+        let ((s, _, v), ()) = tokio::join!(write, release);
+        assert_eq!(s.as_u16(), want, "{label}: {v}");
+    }
+}

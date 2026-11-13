@@ -422,14 +422,38 @@ pub struct SyncOutcome {
     pub cap_skipped: Vec<(Uuid, i64)>,
 }
 
+/// Delete `user`'s `source = 'idp'` rows in `org` (FIX-083, SEC-71): called in the transaction
+/// that moves the person's org membership out of `active` (suspension), so access the IdP
+/// grants never survives a suspension and a reactivation cannot resurrect it; the next
+/// sign-in puts back whatever the claim then says. Returns `(group, provider, claim value)`
+/// of every row removed. The caller audits and notifies.
+pub async fn delete_idp_rows_of_member(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<Vec<(Uuid, String, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "DELETE FROM group_members gm USING groups g \
+          WHERE gm.group_id = g.id AND gm.org_id = $1 AND gm.user_id = $2 \
+            AND gm.source = 'idp' \
+         RETURNING gm.group_id, g.idp_provider, g.idp_value",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
 /// Sets `user`'s memberships in `provider`'s IdP-linked groups to exactly the groups whose
 /// `idp_value` is in `values` (the validated claim), only in orgs where the user is an
 /// **active member**: it never creates a membership and never touches the rows of an org where
-/// the user is suspended or removed (they survive until reactivation). Returns the
+/// the user is not active (their IdP rows are deleted when the membership leaves `active`,
+/// [`delete_idp_rows_of_member`], so none are left to survive a reactivation). Returns the
 /// added/removed rows (kept rows only get `synced_at` refreshed). Rows of other sources and
 /// other providers are untouched. `GROUPS_PER_USER` holds: existing memberships are kept, new
-/// ones are added in group-id order until the cap and the excess is skipped
-/// (see [`sync_idp_memberships_report`]).
+/// ones are added in group-id order until the cap and the excess is skipped; a group already
+/// at `GROUP_MEMBERS_MAX` takes nobody (FIX-083, skipped and reported the same way; see
+/// [`sync_idp_memberships_report`]).
 pub async fn sync_idp_memberships(
     conn: &mut PgConnection,
     user: Uuid,
@@ -499,7 +523,8 @@ pub async fn sync_idp_memberships_report(
                     AND om.status = 'active' \
               WHERE g.source = 'idp' AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
                 AND NOT EXISTS (SELECT 1 FROM group_members x \
-                                 WHERE x.group_id = g.id AND x.user_id = $1)) \
+                                 WHERE x.group_id = g.id AND x.user_id = $1) \
+                AND (SELECT count(*) FROM group_members z WHERE z.group_id = g.id) < $5) \
          INSERT INTO group_members (group_id, org_id, user_id, source, synced_at) \
          SELECT c.id, c.org_id, $1, 'idp', now() FROM cand c \
           WHERE c.rn <= $4 - (SELECT count(*) FROM group_members y \
@@ -511,6 +536,7 @@ pub async fn sync_idp_memberships_report(
     .bind(provider)
     .bind(values)
     .bind(GROUPS_PER_USER)
+    .bind(GROUP_MEMBERS_MAX)
     .fetch_all(&mut *conn)
     .await?;
     let cap_skipped: Vec<(Uuid, i64)> = sqlx::query_as(
