@@ -30,7 +30,8 @@ function BoundGroup({ wsId, b, canOwn, onError }: { wsId: string; b: GroupAccess
   const put = usePutGroupAccess(wsId);
   const del = useDeleteGroupAccess(wsId);
   const [confirm, setConfirm] = useState(false);
-  const impact = useGroupImpact(b.group.id, null, confirm);
+  // Unbinding takes away this workspace only, not the whole group (C-464 `unbind_workspace`).
+  const impact = useGroupImpact(b.group.id, null, confirm, wsId);
   return (
     <tr>
       <Td>

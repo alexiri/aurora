@@ -399,6 +399,29 @@ describe("Add from library", () => {
     await waitFor(() => expect(added).toEqual({ from_library: { library_id: "l1", path: "release-notes", commit_sha: SHA_B } }));
   });
 
+  it("lists every catalogue page: Load more follows next_cursor (FIX-100)", async () => {
+    const mk = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ path: `s-${from + i}`, name: `s-${from + i}`, description: "d", valid: true, reason: null, size: 10, files: 1, added: [] }));
+    const cursors: (string | null)[] = [];
+    mockFetch(routes({
+      "GET /v1/skill-libraries/l1/skills": (r) => {
+        const cursor = new URL(r.url, "http://localhost").searchParams.get("cursor");
+        cursors.push(cursor);
+        return cursor
+          ? json(200, { commit_sha: SHA_B, truncated: false, next_cursor: null, items: mk(50, 5) })
+          : json(200, { commit_sha: SHA_B, truncated: false, next_cursor: "c2", items: mk(0, 50) });
+      },
+    }));
+    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add from library…" }));
+    const list = await screen.findByRole("list", { name: "Library skills" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(50);
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(55));
+    expect(cursors).toEqual([null, "c2"]);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
   it("disables Add when the tier's library budget is full, with the numbers", async () => {
     const full = Array.from({ length: 25 }, (_, i) => skill({ id: `s${i}`, name: `lib-${i}`, tier: "agent", source: source({ path: `lib-${i}` }) as Skill["source"] }));
     mockFetch({

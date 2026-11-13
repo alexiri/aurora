@@ -18,6 +18,7 @@ import { useOrgMembers } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
 import {
   isManaged,
+  isStaleGroup,
   sourceLabel,
   useChangeMembers,
   useDeleteGroup,
@@ -77,7 +78,9 @@ function Details({ g, orgId }: { g: Group; orgId: string }) {
         </Button>
         {patch.error ? (
           <Notice tone="danger" role="alert" className="basis-full">
-            {errorMessage(patch.error)}
+            {isStaleGroup(patch.error)
+              ? "This group was changed by someone else. The latest version has been loaded; review your edit and save again."
+              : errorMessage(patch.error)}
           </Notice>
         ) : null}
       </form>
@@ -388,7 +391,8 @@ function BindingRow({
   const put = usePutGroupAccess(b.workspace.id);
   const del = useDeleteGroupAccess(b.workspace.id);
   const [confirm, setConfirm] = useState(false);
-  const impact = useGroupImpact(g.id, null, confirm);
+  // Unbinding takes away this workspace only, not the whole group (C-464 `unbind_workspace`).
+  const impact = useGroupImpact(g.id, null, confirm, b.workspace.id);
   return (
     <tr>
       <Td className="font-medium">{b.workspace.name}</Td>
@@ -430,6 +434,7 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
   const router = useRouter();
   const del = useDeleteGroup(g.id, orgId);
   const [open, setOpen] = useState(false);
+  const scim = g.source === "scim";
   const impact = useGroupImpact(g.id, null, open);
   return (
     <Section id="grp-danger" title="Delete group" card>
@@ -438,7 +443,12 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
           Deleting a group removes its members and bindings. Policy rules that name it stay as they are and match
           nobody.
         </p>
-        <Button variant="danger" onClick={() => setOpen(true)}>
+        {scim ? (
+          <p className="text-sm text-muted">
+            This group is managed by your directory (SCIM): delete it in your identity provider.
+          </p>
+        ) : null}
+        <Button variant="danger" disabled={scim} onClick={() => setOpen(true)}>
           Delete group
         </Button>
         <ConfirmDialog

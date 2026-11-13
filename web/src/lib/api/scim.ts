@@ -98,6 +98,8 @@ export function usePutScimSettings(orgId: string) {
 export function useCreateScimToken(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
+    // The token is the secret: never keep it in the mutation cache after its observer is gone.
+    gcTime: 0,
     mutationFn: (body: { name: string; expires_in_days?: number }) =>
       call<CreatedScimToken>(`/v1/orgs/${orgId}/scim/tokens`, "POST", body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: scimKeys.tokens(orgId) }),

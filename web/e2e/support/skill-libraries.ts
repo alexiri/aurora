@@ -66,7 +66,14 @@ export async function mockLibraries(page: Page) {
     if (p === `/v1/orgs/${org.id}/skill-library-updates`) {
       return json({ items: [{ id: id(720), kind: "changed", created_at: now, skill: { id: id(710), name: "code-review", tier: "org" }, library: { id: id(700), label: "Team skills" } }] });
     }
-    if (p === `/v1/skill-libraries/${library.id}/skills`) return json(catalogue);
+    if (p === `/v1/skill-libraries/${library.id}/skills`) {
+      // Two pages (C-571 pages by 50): "Load more" follows `next_cursor` to the second one.
+      if (new URL(route.request().url()).searchParams.get("cursor") === "c2") {
+        const more = ["deploy-checks", "triage-issues"].map((name) => ({ path: name, name, description: "More from the next page", valid: true, reason: null, size: 300, files: 1, added: [] }));
+        return json({ ...catalogue, next_cursor: null, items: more });
+      }
+      return json({ ...catalogue, next_cursor: "c2" });
+    }
     if (p === `/v1/skill-libraries/${library.id}/skills/release-notes`) return json(content);
     if (p === `/v1/skills/${orgSkill.id}/library`) return json(info);
     if (p === `/v1/orgs/${org.id}/connections`) {

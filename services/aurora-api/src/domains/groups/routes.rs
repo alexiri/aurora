@@ -282,7 +282,8 @@ async fn list_group_workspaces(
     }))
 }
 
-/// What deleting the group (or, with `remove_member`, removing that member) would take away.
+/// What deleting the group (or, with `remove_member`, removing that member; with
+/// `unbind_workspace`, removing its binding to that workspace) would take away.
 #[utoipa::path(get, path = "/groups/{id}/impact", operation_id = "groupImpact", tag = "groups",
     params(("id" = Uuid, Path, description = "Group id"), ImpactQuery),
     responses((status = 200, body = GroupImpact), (status = 403, body = ErrorEnvelope),
@@ -296,7 +297,7 @@ async fn group_impact(
 ) -> Result<Json<GroupImpact>, ApiError> {
     let g = service::load_admin(&s, &c, id).await?;
     let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
-    let rows = repo::impact(&mut conn, &g, q.remove_member).await?;
+    let rows = repo::impact(&mut conn, &g, q.remove_member, q.unbind_workspace).await?;
     Ok(Json(GroupImpact {
         workspaces: rows.into_iter().map(Into::into).collect(),
     }))

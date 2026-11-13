@@ -100,7 +100,7 @@ describe("admin runners view (FIX-025, C-586)", () => {
   // FIX-029 (C-614/C-615): a failure row names the agent; clicking it opens the **Start
   // diagnostics** drawer with that agent's history (runner named per row).
   it("opens the Start diagnostics drawer for an agent's failures from a row click", async () => {
-    mockFetch({
+    const fetchMock = mockFetch({
       "GET /v1/admin/runners": () => json(200, { items: [runner] }),
       "GET /v1/admin/runners/r1/start-failures": () =>
         json(200, {
@@ -140,6 +140,10 @@ describe("admin runners view (FIX-025, C-586)", () => {
     expect(dlg.textContent).toContain("no hello within 60 s");
     // The drawer's rows name the runner (C-614); a deleted runner's row shows an empty cell.
     expect(dlg.textContent).toContain("r1");
+    // FIX-100: the diagnostics query never fires with an empty agent segment (before a row is opened).
+    const urls = fetchMock.mock.calls.map((c) => new URL((c[0] as Request).url, "http://localhost").pathname);
+    expect(urls.some((u) => u.includes("/agents//"))).toBe(false);
+    expect(urls).toContain("/v1/admin/agents/ag1/start-failures");
   });
 
   it("marks an offline runner", async () => {

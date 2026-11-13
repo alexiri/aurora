@@ -27,7 +27,8 @@ export const groupKeys = {
   one: (id: string) => ["groups", id] as const,
   members: (id: string) => ["groups", id, "members"] as const,
   workspaces: (id: string) => ["groups", id, "workspaces"] as const,
-  impact: (id: string, member: string | null) => ["groups", id, "impact", member] as const,
+  impact: (id: string, member: string | null, unbind: string | null = null) =>
+    ["groups", id, "impact", member, unbind] as const,
 };
 
 /** The source label of a group (`docs/14`): Manual, SCIM or Sign-in (D-156). */
@@ -114,13 +115,25 @@ export function useGroupWorkspaces(id: string) {
 }
 
 /** What deleting the group (or removing one member) would take away (`05 §Groups`). */
-export function useGroupImpact(id: string, removeMember: string | null, enabled: boolean) {
+export function useGroupImpact(
+  id: string,
+  removeMember: string | null,
+  enabled: boolean,
+  /** Only the binding to this workspace goes away (C-464 `unbind_workspace`), not the whole group. */
+  unbindWorkspace: string | null = null,
+) {
   return useQuery({
-    queryKey: groupKeys.impact(id, removeMember),
+    queryKey: groupKeys.impact(id, removeMember, unbindWorkspace),
     queryFn: () =>
       unwrap(
         api.GET("/v1/groups/{id}/impact", {
-          params: { path: { id }, query: removeMember ? { remove_member: removeMember } : {} },
+          params: {
+            path: { id },
+            query: {
+              ...(removeMember ? { remove_member: removeMember } : {}),
+              ...(unbindWorkspace ? { unbind_workspace: unbindWorkspace } : {}),
+            },
+          },
         }),
       ),
     enabled,
@@ -147,7 +160,14 @@ export function usePatchGroup(id: string, orgId: string) {
       qc.setQueryData(groupKeys.one(id), g);
       void qc.invalidateQueries({ queryKey: groupKeys.list(orgId) });
     },
+    // A 409 stale_revision needs the fresh revision for the next save, so refetch the group.
+    onError: () => void qc.invalidateQueries({ queryKey: groupKeys.one(id) }),
   });
+}
+
+/** `409 stale_revision` of a group (the code is shared with policies, whose copy is wrong here). */
+export function isStaleGroup(err: unknown): boolean {
+  return err instanceof ApiError && err.code === "stale_revision";
 }
 
 export function useDeleteGroup(id: string, orgId: string) {

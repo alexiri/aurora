@@ -354,8 +354,12 @@ export function AddFromLibrary({
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<LibrarySkillItem | null>(null);
   const current = libId || active[0]?.id;
-  const catalogue = useLibraryCatalogue(open ? current : undefined, q, "");
-  const content = useLibrarySkill(open ? current : undefined, picked?.path, catalogue.data?.commit_sha);
+  const catalogue = useLibraryCatalogue(open ? current : undefined, q);
+  // Every page is read at one commit; the first page names it. `truncated` (past 200) is on the last page.
+  const head = catalogue.data?.pages[0];
+  const lastPage = catalogue.data?.pages[catalogue.data.pages.length - 1];
+  const catalogueItems = (catalogue.data?.pages ?? []).flatMap((p) => p.items);
+  const content = useLibrarySkill(open ? current : undefined, picked?.path, head?.commit_sha);
   const create = useCreateSkill(scope);
   if (!orgId || active.length === 0) return null;
   const budget = LIBRARY_BUDGET[tier];
@@ -363,9 +367,9 @@ export function AddFromLibrary({
   const over = !!content.data && (usage.bytes + size > budget.bytes || usage.count + 1 > budget.skills);
 
   async function add() {
-    if (!current || !picked || !catalogue.data) return;
+    if (!current || !picked || !head) return;
     try {
-      const s = await create.mutateAsync({ from_library: { library_id: current, path: picked.path, commit_sha: catalogue.data.commit_sha } });
+      const s = await create.mutateAsync({ from_library: { library_id: current, path: picked.path, commit_sha: head.commit_sha } });
       setOpen(false);
       setPicked(null);
       onAdded(s.id);
@@ -416,16 +420,16 @@ export function AddFromLibrary({
                   <input className={`${inputClass} mt-1`} value={q} onChange={(e) => setQ(e.target.value)} />
                 </label>
                 {catalogue.isPending ? <Loading label="Reading the repository…" /> : null}
-                {catalogue.isError ? <ErrorState error={catalogue.error} onRetry={() => catalogue.refetch()} /> : null}
-                {catalogue.data ? (
+                {catalogue.isError && !head ? <ErrorState error={catalogue.error} onRetry={() => catalogue.refetch()} /> : null}
+                {head ? (
                   <>
                     <p className="text-xs text-muted">
-                      At commit <span className="font-mono">{shortSha(catalogue.data.commit_sha)}</span>. Names and descriptions are repository text.
+                      At commit <span className="font-mono">{shortSha(head.commit_sha)}</span>. Names and descriptions are repository text.
                     </p>
-                    {catalogue.data.truncated ? <Notice role="status">This repository has more skills than can be listed. Connect a narrower folder.</Notice> : null}
-                    {catalogue.data.items.length === 0 ? <EmptyState title="No skills found" /> : null}
+                    {lastPage?.truncated ? <Notice role="status">This repository has more skills than can be listed. Connect a narrower folder.</Notice> : null}
+                    {catalogueItems.length === 0 ? <EmptyState title="No skills found" /> : null}
                     <ul aria-label="Library skills" className="min-w-0 divide-y divide-line">
-                      {catalogue.data.items.map((i) => (
+                      {catalogueItems.map((i) => (
                         <li key={i.path} className="py-2">
                           <button
                             type="button"
@@ -443,6 +447,12 @@ export function AddFromLibrary({
                         </li>
                       ))}
                     </ul>
+                    {catalogue.hasNextPage ? (
+                      <Button type="button" variant="outline" disabled={catalogue.isFetchingNextPage} onClick={() => void catalogue.fetchNextPage()}>
+                        {catalogue.isFetchingNextPage ? "Loading…" : "Load more"}
+                      </Button>
+                    ) : null}
+                    {catalogue.isFetchNextPageError ? <ErrorState error={catalogue.error} onRetry={() => void catalogue.fetchNextPage()} /> : null}
                   </>
                 ) : null}
               </>

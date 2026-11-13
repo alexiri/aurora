@@ -6,6 +6,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useId, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
+import { useScimSettings } from "@/lib/api/scim";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
@@ -297,6 +298,10 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
   const org = useOrg(resolved.data?.org.id);
   const role = org.data?.my_role;
   const admin = role === "owner" || role === "admin";
+  const isOwner = role === "owner";
+  // Directory sync (docs/14): owners only, and only where the instance has `scim.enabled`.
+  const scim = useScimSettings(isOwner ? resolved.data?.org.id : undefined);
+  const directory = isOwner && scim.data?.available === true;
   const base = `/o/${orgSlug}`;
   const item = (href: string, label: string, icon: IconType, active: boolean) => (
     <NavItem key={href} href={href} label={label} icon={icon} active={active} />
@@ -308,7 +313,7 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
         {item(`${base}/credentials`, "Credentials", KeyIcon, pathname.startsWith(`${base}/credentials`))}
         {item(`${base}/apps`, "Apps", PlugIcon, pathname.startsWith(`${base}/apps`))}
         {item(`${base}/governance`, "Governance", ScaleIcon, pathname.startsWith(`${base}/governance`))}
-        {admin ? ORG_LINKS.map((l) => item(`${base}/${l.path}`, l.label, l.icon, pathname.startsWith(`${base}/${l.path}`))) : null}
+        {admin ? ORG_LINKS.filter((l) => l.path !== "settings/directory" || directory).map((l) => item(`${base}/${l.path}`, l.label, l.icon, pathname.startsWith(`${base}/${l.path}`))) : null}
       </ul>
     </nav>
   );

@@ -96,6 +96,8 @@ function StartDiagnostics({ agentId, open, onOpenChange }: { agentId: string; op
   const q = useQuery({
     queryKey: ["admin", "agents", agentId, "start-failures"],
     queryFn: () => get<StartFailures>(`/v1/admin/agents/${agentId}/start-failures`),
+    // Only for the drawer that is open on a real agent: never `/agents//start-failures`.
+    enabled: open && agentId !== "",
     retry: false,
   });
   return (

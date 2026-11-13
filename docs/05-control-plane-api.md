@@ -533,7 +533,7 @@ workspace bindings stay editable), 409 `stale_revision`.
 | GET/PATCH/DELETE `/v1/groups/{id}` | S/K | PATCH `{ name?, description?, org_role?: "admin"\|"member"\|null }` with `If-Match`/`revision`; DELETE removes members and bindings and never rewrites policy rules (`07`) |
 | GET `/v1/groups/{id}/members`; PUT/DELETE `/v1/groups/{id}/members/{user}`; POST `/v1/groups/{id}/members:batch` | S/K | org `owner`/`admin`; PUT/DELETE are idempotent; the batch body is `{ add?: [user], remove?: [user] }` (≤ 100 each, one transaction, one audit row per change) |
 | GET `/v1/groups/{id}/workspaces` | S/K | the workspaces the group is bound to, with roles (org `owner`/`admin`) |
-| GET `/v1/groups/{id}/impact?remove_member=<user>` | S/K | org `owner`/`admin`: what deleting the group (or, with `remove_member`, removing that member) would take away, `{ workspaces: [{ workspace, users_losing_access: [...≤ GROUP_IMPACT_LIST_MAX], total, schedules_disabled, webhooks_disabled, api_keys }] }` |
+| GET `/v1/groups/{id}/impact?remove_member=<user>&unbind_workspace=<workspace>` | S/K | org `owner`/`admin`: what deleting the group (or, with `remove_member`, removing that member; with `unbind_workspace`, removing its binding to that one workspace) would take away, `{ workspaces: [{ workspace, users_losing_access: [...≤ GROUP_IMPACT_LIST_MAX], total, schedules_disabled, webhooks_disabled, api_keys }] }` |
 | GET `/v1/me` | S/K | (phase 4) also `groups: [{ id, name, org_id }]` and, per membership, `effective_role` with `sources` (`role` stays the direct role) |
 
 (phase 4, P4-GRP-1) The offboarding views of `§Organizations, members, keys` add
