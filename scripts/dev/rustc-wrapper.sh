@@ -25,6 +25,17 @@ fi
 
 export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
 unset CARGO_TARGET_DIR
+# sccache aborts every invocation (even `rustc -vV`) when CARGO_INCREMENTAL is set in its environment.
+# rustc itself never reads it (cargo turns it into `-C incremental=`), so dropping it here is safe.
+unset CARGO_INCREMENTAL
+
+# Incremental compilations (workspace crates under `profile.dev incremental = true`, VEL-004) cannot be
+# cached by sccache: run them straight through rustc. Registry deps are never incremental and stay cached.
+for a in "$@"; do
+  case "$a" in
+    incremental=* | -Cincremental=*) exec "$@" ;;
+  esac
+done
 
 args=("$@")
 links=0

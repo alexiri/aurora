@@ -802,6 +802,12 @@ lanes, so absolute times vary):
    `it` links in ~4.4 s under either, smaller binaries faster — and links are
    a small share of a build, so lld stays the default. The linker is plumbing,
    not the bottleneck.
+   **Incremental compilation is on for `dev`/`test` (VEL-004, I-45).** A
+   one-line change in `aurora-api` recompiles in ~35 s instead of ~250 s
+   (shared host, see build-performance.md §6). It applies to workspace crates
+   only; CI keeps `CARGO_INCREMENTAL=0`. Do not export `CARGO_INCREMENTAL=1`
+   locally (it would make registry deps uncacheable); run `just clean-stale`
+   when `target/` grows.
 4. **Playwright mock suites run 4 workers** (`web/playwright.config.ts`,
    `fullyParallel`); the dev server under test is a single `next dev` process,
    so more workers only queue there. Real-stack journeys

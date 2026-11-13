@@ -106,10 +106,44 @@ Use it in lanes by exporting the variables in the Orca worker environment, not i
 ### 5. Developer profile: `dev-fast` (I-36)
 
 `[profile.dev-fast]` (inherits `dev`, `incremental = true`) is used by `just dev`, `just migrate`,
-`just build-fast` (`AURORA_DEV_PROFILE=dev` switches back). One-line change in `aurora-api`: 7–14 s instead of
-127–243 s. Incremental data only exists for workspace members, and it lives in `target/dev-fast`
-(3.0 GB after building `aurora-api` plus its dependencies). `dev`, `test`, CI and worker lanes keep
-`incremental = false` (I-24 stands for them). Run `just clean-stale` or delete `target/dev-fast` if it grows.
+`just build-fast` (`AURORA_DEV_PROFILE=dev` switches back). **Since VEL-004 (I-45) `dev` itself is incremental
+and `dev-fast` is only an alias** (`inherits = "dev"`); see §6. CI keeps `CARGO_INCREMENTAL=0`.
+
+### 6. Incremental `dev`/`test` (VEL-004, I-45)
+
+`[profile.dev] incremental = true` (test inherits). Workspace members only; registry deps stay non-incremental and
+sccache-cached. `scripts/dev/rustc-wrapper.sh` passes `-C incremental=…` rustc calls straight through and unsets
+`CARGO_INCREMENTAL` before invoking sccache (sccache aborts every call, even `rustc -vV`, with
+"incremental compilation is prohibited" when that variable is set — reproduced). Do not export
+`CARGO_INCREMENTAL=1`: it makes registry crates incremental too.
+
+CI: `ci.yml` workflow env `CARGO_INCREMENTAL: "0"` (line 26, applies to every job); `nightly.yml` had none and now sets
+the same at workflow level. `just clean-stale` also prunes `target/*/incremental/<crate>-<hash>` untouched for N days
+(demo: 5 dirs aged 20 days → 11 GB → 7.4 GB).
+
+Measurement: one-line comment added at the top of one source file, then `cargo test <pkgs> --no-run`; A = non-incremental
+(`CARGO_PROFILE_DEV_INCREMENTAL` unset = old profile), B = incremental, separate target dirs, interleaved A,B,
+sccache on. **The machine was never idle** (other lanes compiling; load 5–50, listed per row), so read ratios, not seconds.
+
+| edit in | round | A non-incr. | B incr. | ratio | load at start of A→B |
+|---|---|---|---|---|---|
+| aurora-api (`domains/me/mod.rs`) | 1 | 250.6 s | 700.8 s | 0.36× (outlier) | 5.5 → 9.6, up to 28 during B |
+| | 2 | 252.6 s | 35.8 s | 7.1× | 28.5 → 15.0 |
+| | 3 | 325.8 s | 105.6 s | 3.1× | 17.3 → 30.8 (B ran right after a cache re-prime) |
+| aurora-gateway (`src/lib.rs`) | 1 | 149.5 s | 105.5 s | 1.4× | 22.4 → 16.3 |
+| | 2 | 38.5 s | 6.2 s | 6.2× | 9.0 → 8.8 |
+| aurora-db (`src/lib.rs`; builds db+api+gateway tests) | 1 | 438.6 s | 178.1 s | 2.5× | 8.3 → 21.5 |
+| | 2 | 436.8 s | 50.3 s | 8.7× | 23.2 → 13.3 |
+
+Round 1 of each pair was the first edit after the warm build and ran under heavy load (the api B run hit load 28; its
+cause was not isolated — contention, not a measured property of incremental). Steady-state edits are 6–9×;
+the worst loaded pair is 3.1×. Pending: re-run api on an idle machine.
+`du -sh target/debug`: non-incremental 5.0 GB (api) / 5.8 GB (gateway, db); incremental 12 GB / 14 GB / 16 GB (11 GB of it
+`incremental/`, i.e. the trade is ~2.5–3× disk for ~6× speed; bounded by I-34/I-35/clean-stale).
+
+sccache with incremental on (aurora-crypto, fresh target dir, warm cache): requests 14034 → 14086 (+52: 32 hits, 18 misses,
+workspace crates bypass sccache); with `CARGO_INCREMENTAL=1` env (wrapper unsets it): +52 requests, 43 hits, 7 misses, 0 errors.
+Registry crates still hit the cache.
 
 ## Disk hygiene
 

@@ -17,6 +17,8 @@ permissions:
 
 env:
   KIND_EXPERIMENTAL_PROVIDER: podman
+  # profile.dev is incremental locally (I-45); CI targets are throw-away and sccache cannot cache incremental crates.
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   first-run:
