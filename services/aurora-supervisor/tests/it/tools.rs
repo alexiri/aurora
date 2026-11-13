@@ -499,7 +499,9 @@ async fn terminate_all_signals_running_groups() {
 async fn process_table_is_bounded_and_concurrent_starts_respect_max_running() {
     use aurora_supervisor::process::MAX_EXITED_RECORDS;
     let d = TempDir::new();
-    let (pm, _rx) = procs(d.path());
+    let (pm, mut rx) = procs(d.path());
+    // The runner side drains the reports (records not yet reported are never pruned).
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
     for i in 0..200 {
         // Stay below `max_running`: this part is about exited records, not the running cap.
         while pm.running_ids().len() >= 8 {
