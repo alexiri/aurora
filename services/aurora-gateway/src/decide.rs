@@ -525,12 +525,44 @@ impl PolicyHandler {
     }
 }
 
-#[async_trait::async_trait]
-impl RequestHandler for PolicyHandler {
-    async fn handle(&self, req: PipelineRequest) -> Outcome {
+/// (FIX-084) The state a released hold hands to the second pass of [`PolicyHandler::handle_with`].
+#[derive(Clone, Copy)]
+struct Released {
+    /// The request's arrival, so the log row's latency includes the hold.
+    started: Instant,
+    /// Whether the client's body was empty (the replay stream no longer says).
+    bodyless: bool,
+    /// The held request had a credential to inject. One that no longer has any is refused
+    /// (`credential_unavailable`), not forwarded without it.
+    had_credential: bool,
+}
+
+/// The counter of a released request: its rule quotas were consumed once when the hold was
+/// created, so the second evaluation must neither be refused by that very count nor charge again.
+struct NoCount;
+
+impl RateCounter for NoCount {
+    fn is_exhausted(
+        &self,
+        _rule_key: Uuid,
+        _agent: Uuid,
+        _window: &aurora_policy::rule::RateLimit,
+    ) -> bool {
+        false
+    }
+    fn record(&self, _rule_key: Uuid, _agent: Uuid, _window: &aurora_policy::rule::RateLimit) {}
+}
+
+impl PolicyHandler {
+    /// The MITM-lane decision. `released` is `Some` on the second pass that follows an approved
+    /// hold: an approval authorizes the held request only under the policy in force when it is
+    /// released (docs/07 §Lifecycle), so the credential is resolved and the policy evaluated
+    /// again; a request that would now be blocked is refused as on arrival, one that would still
+    /// need approval is released (the approval stands, no second hold, no second charge).
+    async fn handle_with(&self, req: PipelineRequest, released: Option<Released>) -> Outcome {
         let PipelineRequest {
             identity,
-            lane: _,
+            lane,
             scheme,
             host,
             port,
@@ -542,14 +574,15 @@ impl RequestHandler for PolicyHandler {
             upgrade,
             body,
         } = req;
-        let bodyless = hyper::body::Body::is_end_stream(&body);
+        let bodyless =
+            released.map_or_else(|| hyper::body::Body::is_end_stream(&body), |r| r.bodyless);
         let mut ctx = Ctx {
             identity: identity.clone(),
             lane: "mitm",
             method: method.to_string(),
             host: host.clone(),
             path: path.clone(),
-            started: Instant::now(),
+            started: released.map_or_else(Instant::now, |r| r.started),
             secret_id: None,
             decision: "allow",
             rule: None,
@@ -672,6 +705,16 @@ impl RequestHandler for PolicyHandler {
             ctx.connection_id = Some(c.id);
         }
         ctx.app_id = app_match.as_ref().map(|m| m.entry.app_id.clone());
+        // (FIX-084) The grant or connection the hold stood on is gone: refuse, never send the
+        // approved request on without the credential it was approved for.
+        if winner.is_none() && released.is_some_and(|r| r.had_credential) {
+            let kind = if app_match.is_some() {
+                "connection"
+            } else {
+                "secret"
+            };
+            return Outcome::Respond(self.refuse(ctx, &credential_unavailable(kind), "error"));
+        }
         if winner.is_none() && app_unavailable {
             let err = ApiError::new(
                 StatusCode::FORBIDDEN,
@@ -769,24 +812,35 @@ impl RequestHandler for PolicyHandler {
         };
         // (P4-CNT) With a shared backend the counts are read first (peek) and passed in; the
         // evaluator stays pure.
-        let pk = self.rate.peek(&rv, identity.agent_id).await;
+        let pk = if released.is_some() {
+            Peeked::Local { fallback: false }
+        } else {
+            self.rate.peek(&rv, identity.agent_id).await
+        };
         let d = evaluate(
             &rv.org_policy,
             &rv.ws_policy,
             &facts,
-            pk.counter(&self.counters),
+            if released.is_some() {
+                &NoCount
+            } else {
+                pk.counter(&self.counters)
+            },
         );
         ctx.secret_id = wsec.map(|c| c.id);
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
         // The consume is the authority (all-or-nothing, after an allow / needs-approval verdict;
         // a held request consumes now, once, and is not charged again on approval).
-        match self.rate.settle(&pk, &d, &self.counters).await {
-            Settled::Refuse(err, decision) => {
-                return Outcome::Respond(self.refuse(ctx, &err, decision));
+        if released.is_none() {
+            match self.rate.settle(&pk, &d, &self.counters).await {
+                Settled::Refuse(err, decision) => {
+                    return Outcome::Respond(self.refuse(ctx, &err, decision));
+                }
+                Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
             }
-            Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
         }
         if d.verdict == Verdict::NeedsApproval
+            && released.is_none()
             && let Some(holds) = &self.holds
         {
             // 8. approval hold (nothing decrypted yet).
@@ -826,13 +880,38 @@ impl RequestHandler for PolicyHandler {
                     host: &host,
                     path: &red_path,
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    connection_id: ctx.connection_id,
                     batch: &aurora_headers,
                     summary: &summary,
                     rule_timeout_secs: d.approval_timeout_secs,
                 })
                 .await;
             match outcome {
-                HoldOutcome::Approved => ctx.decision = "approved",
+                // (FIX-084) Not forwarded on the strength of the pre-hold decision: the second
+                // pass resolves the credential and evaluates policy again, against the policy in
+                // force now, with the request exactly as it was held (the body is the buffered one).
+                HoldOutcome::Approved => {
+                    let again = PipelineRequest {
+                        identity,
+                        lane,
+                        scheme,
+                        host,
+                        port,
+                        method,
+                        path,
+                        query,
+                        headers,
+                        aurora_headers,
+                        upgrade,
+                        body,
+                    };
+                    let released = Released {
+                        started: ctx.started,
+                        bodyless,
+                        had_credential: winner.is_some(),
+                    };
+                    return Box::pin(self.handle_with(again, Some(released))).await;
+                }
                 HoldOutcome::Denied(id) => {
                     let err = ApiError::new(
                         StatusCode::FORBIDDEN,
@@ -869,6 +948,10 @@ impl RequestHandler for PolicyHandler {
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             }
+        } else if released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval)
+        {
+            // The approval stands: released, whatever the rules now say about asking.
+            ctx.decision = "approved";
         } else if let Some((err, decision)) = self.verdict_error(&rv, &d, &ctx.method, &path, &host)
         {
             return Outcome::Respond(self.refuse(ctx, &err, decision));
@@ -1179,6 +1262,13 @@ impl RequestHandler for PolicyHandler {
             response_headers,
             retry: None,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl RequestHandler for PolicyHandler {
+    async fn handle(&self, req: PipelineRequest) -> Outcome {
+        self.handle_with(req, None).await
     }
 
     async fn db_open(
@@ -1656,6 +1746,20 @@ struct DbSession {
 #[async_trait::async_trait]
 impl DbAuthorizer for DbSession {
     async fn authorize(&self, class: aurora_sqlclass::Class, statement: &str) -> DbVerdict {
+        self.authorize_with(class, statement, None).await
+    }
+}
+
+impl DbSession {
+    /// `released` is the arrival time on the second pass after an approved hold (FIX-084): the
+    /// grant and the policy are read again, a statement that would now be refused is refused, and
+    /// one that would still need approval is released without a second hold or charge.
+    async fn authorize_with(
+        &self,
+        class: aurora_sqlclass::Class,
+        statement: &str,
+        released: Option<Instant>,
+    ) -> DbVerdict {
         let h = &self.handler;
         let path = format!("/{}", class.as_str());
         let mut ctx = Ctx {
@@ -1664,7 +1768,7 @@ impl DbAuthorizer for DbSession {
             method: "POST".to_owned(),
             host: self.host.clone(),
             path: path.clone(),
-            started: Instant::now(),
+            started: released.unwrap_or_else(Instant::now),
             secret_id: None,
             decision: "allow",
             rule: None,
@@ -1737,26 +1841,37 @@ impl DbAuthorizer for DbSession {
             connect_time: false,
             host_apps: Vec::new(),
         };
-        let pk = h.rate.peek(&rv, self.identity.agent_id).await;
+        let pk = if released.is_some() {
+            Peeked::Local { fallback: false }
+        } else {
+            h.rate.peek(&rv, self.identity.agent_id).await
+        };
         let d = evaluate(
             &rv.org_policy,
             &rv.ws_policy,
             &facts,
-            pk.counter(&h.counters),
+            if released.is_some() {
+                &NoCount
+            } else {
+                pk.counter(&h.counters)
+            },
         );
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
-        match h.rate.settle(&pk, &d, &h.counters).await {
-            Settled::Refuse(err, decision) => {
-                h.refuse(ctx, &err, decision);
-                return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
-                    DbVerdict::Unavailable(err)
-                } else {
-                    DbVerdict::Deny(err)
-                };
+        if released.is_none() {
+            match h.rate.settle(&pk, &d, &h.counters).await {
+                Settled::Refuse(err, decision) => {
+                    h.refuse(ctx, &err, decision);
+                    return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
+                        DbVerdict::Unavailable(err)
+                    } else {
+                        DbVerdict::Deny(err)
+                    };
+                }
+                Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
             }
-            Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
         }
         if d.verdict == Verdict::NeedsApproval
+            && released.is_none()
             && let Some(holds) = &h.holds
         {
             let summary = aurora_summary::ApprovalSummary {
@@ -1785,6 +1900,7 @@ impl DbAuthorizer for DbSession {
                     host: &self.host,
                     path: &path,
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    connection_id: Some(self.conn.id),
                     batch: &crate::hygiene::AuroraHeaders::default(),
                     summary: &summary,
                     // RFE-011a (D-56): the rule's approval timeout applies to statements too.
@@ -1792,7 +1908,11 @@ impl DbAuthorizer for DbSession {
                 })
                 .await;
             match outcome {
-                HoldOutcome::Approved => ctx.decision = "approved",
+                // (FIX-084) Re-read the grant and the policy before the statement is released.
+                HoldOutcome::Approved => {
+                    return Box::pin(self.authorize_with(class, statement, Some(ctx.started)))
+                        .await;
+                }
                 HoldOutcome::Denied(id) => {
                     let err = ApiError::new(
                         StatusCode::FORBIDDEN,
@@ -1830,6 +1950,9 @@ impl DbAuthorizer for DbSession {
                     return DbVerdict::Unavailable(err);
                 }
             }
+        } else if released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval)
+        {
+            ctx.decision = "approved";
         } else if let Some((err, decision)) = h.verdict_error(&rv, &d, "POST", &path, &self.host) {
             h.refuse(ctx, &err, decision);
             return if err.status() == StatusCode::SERVICE_UNAVAILABLE {

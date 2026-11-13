@@ -336,6 +336,12 @@ impl Condition {
         let Ok(doc) = serde_json::from_slice::<Value>(&f.body_prefix) else {
             return Tri::Unknown;
         };
+        // (FIX-085, SEC-68) `Value` keeps the last of two equal keys; another parser keeps the
+        // first. A document that repeats a key on the way to the pointer has no single answer, so
+        // the condition is unknown for allow and restrictive rules alike.
+        if json_path::repeats_a_key(&f.body_prefix, ptr) {
+            return Tri::Unknown;
+        }
         let text = match doc.pointer(ptr) {
             None => None,
             Some(Value::String(s)) => Some(s.clone()),
@@ -348,6 +354,101 @@ impl Condition {
         match self.op {
             ConditionOp::NotContains => from_bool(!hit),
             _ => from_bool(hit),
+        }
+    }
+}
+
+/// Whether a JSON document repeats an object key along an RFC 6901 pointer.
+mod json_path {
+    use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+    use std::fmt;
+
+    /// `true` when some object on the way to `pointer` has the next token's key more than once.
+    /// A document that does not parse reports `false` (the caller has parsed it already).
+    pub fn repeats_a_key(body: &[u8], pointer: &str) -> bool {
+        let tokens: Vec<String> = match pointer {
+            "" => return false,
+            p if p.starts_with('/') => p[1..]
+                .split('/')
+                .map(|t| t.replace("~1", "/").replace("~0", "~"))
+                .collect(),
+            _ => return false,
+        };
+        let mut de = serde_json::Deserializer::from_slice(body);
+        Walk(&tokens).deserialize(&mut de).unwrap_or(false)
+    }
+
+    struct Walk<'a>(&'a [String]);
+
+    impl<'de> DeserializeSeed<'de> for Walk<'_> {
+        type Value = bool;
+        fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<bool, D::Error> {
+            if self.0.is_empty() {
+                d.deserialize_ignored_any(IgnoredAny)?;
+                return Ok(false);
+            }
+            d.deserialize_any(self)
+        }
+    }
+
+    impl<'de> Visitor<'de> for Walk<'_> {
+        type Value = bool;
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a JSON value")
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<bool, A::Error> {
+            let (token, rest) = (&self.0[0], &self.0[1..]);
+            let mut seen = 0_usize;
+            let mut deeper = false;
+            while let Some(key) = map.next_key::<String>()? {
+                if key == *token {
+                    seen += 1;
+                    // Only the first spelling is walked; the repeat alone decides.
+                    if seen == 1 {
+                        deeper = map.next_value_seed(Walk(rest))?;
+                        continue;
+                    }
+                }
+                map.next_value::<IgnoredAny>()?;
+            }
+            Ok(seen > 1 || deeper)
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<bool, A::Error> {
+            let (token, rest) = (&self.0[0], &self.0[1..]);
+            let want = token.parse::<usize>().ok();
+            let mut i = 0_usize;
+            let mut deeper = false;
+            loop {
+                if Some(i) == want {
+                    match seq.next_element_seed(Walk(rest))? {
+                        Some(d) => deeper = d,
+                        None => break,
+                    }
+                } else if seq.next_element::<IgnoredAny>()?.is_none() {
+                    break;
+                }
+                i += 1;
+            }
+            Ok(deeper)
+        }
+        // Scalars end the path: nothing to repeat.
+        fn visit_bool<E>(self, _: bool) -> Result<bool, E> {
+            Ok(false)
+        }
+        fn visit_i64<E>(self, _: i64) -> Result<bool, E> {
+            Ok(false)
+        }
+        fn visit_u64<E>(self, _: u64) -> Result<bool, E> {
+            Ok(false)
+        }
+        fn visit_f64<E>(self, _: f64) -> Result<bool, E> {
+            Ok(false)
+        }
+        fn visit_str<E>(self, _: &str) -> Result<bool, E> {
+            Ok(false)
+        }
+        fn visit_unit<E>(self) -> Result<bool, E> {
+            Ok(false)
         }
     }
 }

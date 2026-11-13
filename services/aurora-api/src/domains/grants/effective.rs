@@ -138,7 +138,10 @@ async fn compute_inner(
             } else {
                 Level::Organization
             };
-            let restrictions = snap.app(&c.app_id).map(|a| a.grants).unwrap_or_default();
+            // (FIX-084, SEC-67) An app absent from the snapshot is `custom_only` + `block_untooled`.
+            let restrictions = snap
+                .app(&c.app_id)
+                .map_or(super::service::ABSENT_APP, |a| a.grants);
             let cred = Credential::Connection {
                 id: c.id,
                 app_id: c.app_id.clone(),

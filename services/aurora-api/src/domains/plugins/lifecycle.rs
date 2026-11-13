@@ -149,6 +149,18 @@ pub async fn act(
             let done = upgrade::apply(&mut tx, &impact).await?;
             flipped = done.total;
             flip_meta = Some(done.metadata());
+            // (FIX-084) A request held under the `full` grant that was just converted must not be
+            // released on the strength of that approval.
+            for c in &done.converted {
+                aurora_db::repo::approvals::abandon_pending_depending_on(
+                    &mut tx,
+                    aurora_db::repo::approvals::Dependency::Connection {
+                        connection_id: c.connection_id,
+                        agent_id: Some(c.agent_id),
+                    },
+                )
+                .await?;
+            }
             // (P4-GRANTS, D-123) One security-critical audit row per converted grant, committed
             // with the activation (SEC-67).
             converted_events = done

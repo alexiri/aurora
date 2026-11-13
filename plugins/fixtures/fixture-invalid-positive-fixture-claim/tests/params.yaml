@@ -1,0 +1,23 @@
+# Every category is present, but the only "positive" case claims `describe_any` for a request that
+# carries two spellings of Action: the conditions do not hold, so it proves nothing.
+- name: "describe_any: claimed, not matched (Action in two spellings)"
+  request: { method: POST, url: "https://api.invalid.example.test/", headers: { content-type: application/x-www-form-urlencoded }, body: "ACTION=Delete&Action=DescribeThings" }
+  expect: { tool: describe_any }
+- name: "other value"
+  request: { method: POST, url: "https://api.invalid.example.test/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=DeleteThings" }
+  expect: { tool: call_any }
+- name: "missing"
+  request: { method: POST, url: "https://api.invalid.example.test/", headers: { content-type: application/x-www-form-urlencoded }, body: "Version=1" }
+  expect: { tool: call_any }
+- name: "repeated"
+  request: { method: POST, url: "https://api.invalid.example.test/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=DescribeThings&Action=DeleteThings" }
+  expect: { tool: call_any }
+- name: "conflict"
+  request: { method: POST, url: "https://api.invalid.example.test/?Action=DescribeThings", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=DescribeThings" }
+  expect: { tool: call_any }
+- name: "wrong content type"
+  request: { method: POST, url: "https://api.invalid.example.test/", headers: { content-type: application/json }, body: "Action=DescribeThings" }
+  expect: { tool: call_any }
+- name: "truncated"
+  request: { method: POST, url: "https://api.invalid.example.test/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=DescribeThings", body_truncated: true }
+  expect: { tool: call_any }

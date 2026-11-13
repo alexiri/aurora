@@ -264,19 +264,38 @@ fn form_value(name: &str, input: &ParamInput<'_>) -> Result<String, Outcome> {
 /// The decoded value of `name` when it occurs exactly once and everything is decodable.
 /// A pair whose name cannot be decoded might have been ours: doubt (`WrongContentType`).
 fn once(raw: &[u8], name: &str, plus_is_space: bool) -> Result<String, Outcome> {
+    // (FIX-085, SEC-68) A raw `;` is a pair separator for some servers (the older query-string
+    // grammar) and an ordinary value character for others, so one pair for us may be two for them
+    // (`Action=Describe;Action=Terminate`). Whichever the upstream does, we cannot know: doubt.
+    // `%3B` is exact and stays an ordinary character.
+    if raw.contains(&b';') {
+        return Err(Outcome::WrongContentType);
+    }
     let mut found: Option<String> = None;
+    let mut spellings = 0_usize;
     for (k, v) in pairs(raw) {
         let Some(k) = decode(k, plus_is_space) else {
             return Err(Outcome::WrongContentType);
         };
-        if k == name {
-            if found.is_some() {
+        // (FIX-085) Names are compared without case: a server that folds case sees `ACTION` and
+        // `Action` as one parameter given twice. The value is taken only from the exact spelling;
+        // two spellings are repeated, and a lone variant is doubt, never "absent": a caller that
+        // needs the parameter absent (the query-versus-body check) must not read it as absent.
+        if k.eq_ignore_ascii_case(name) {
+            spellings += 1;
+            if spellings > 1 {
                 return Err(Outcome::Repeated);
             }
-            found = Some(decode(v, plus_is_space).ok_or(Outcome::WrongContentType)?);
+            if k == name {
+                found = Some(decode(v, plus_is_space).ok_or(Outcome::WrongContentType)?);
+            }
         }
     }
-    found.ok_or(Outcome::Missing)
+    match (found, spellings) {
+        (Some(v), _) => Ok(v),
+        (None, 0) => Err(Outcome::Missing),
+        (None, _) => Err(Outcome::Repeated),
+    }
 }
 
 fn pairs(raw: &[u8]) -> impl Iterator<Item = (&[u8], &[u8])> {
@@ -540,6 +559,64 @@ mod tests {
         assert!(matches(&c, &i(Some("Action=A%20B"))));
         let c = vec![cond(ParamSource::Query, "Action", eq("A+B"))];
         assert!(matches(&c, &i(Some("Action=A%2BB"))));
+    }
+
+    /// FIX-085 (SEC-68): a raw `;` is a pair separator for some servers, so the body
+    /// `Action=Describe...;Action=Terminate...` may carry two actions; case variants of the
+    /// name are the same parameter to a server that folds case. All of it is doubt.
+    #[test]
+    fn semicolons_and_case_variants_of_the_name_are_doubt() {
+        let c = f(prefix("Describe"));
+        let h = [FORM];
+        let m = |body: &str| matches(&c, &form_input(None, &h, body, false));
+        assert!(m("Action=DescribeInstances&Version=1"), "control");
+        // The differential the review named: one `Action` for us, two for a `;` splitter.
+        assert!(!m(
+            "Action=DescribeInstances;Action=TerminateInstances&Version=1"
+        ));
+        assert!(!m("Version=1;Action=DescribeInstances"));
+        assert!(!m("Action=DescribeInstances&Note=a;b"));
+        // An encoded semicolon is exact and stays an ordinary character.
+        assert!(m("Action=DescribeInstances&Note=a%3Bb"));
+        // The exact spelling plus a case variant: one parameter given twice.
+        assert_eq!(
+            outcome(
+                &c[0],
+                &form_input(
+                    None,
+                    &h,
+                    "ACTION=TerminateInstances&Action=DescribeInstances",
+                    false
+                )
+            ),
+            Outcome::Repeated
+        );
+        assert!(!m("Action=DescribeInstances&action=TerminateInstances"));
+        // A lone variant is not our parameter: no match (and not a match by folding either).
+        assert!(!m("ACTION=DescribeInstances"));
+        // In the query, and in the query-versus-body conflict check.
+        let q = vec![cond(ParamSource::Query, "Action", prefix("Describe"))];
+        let qi = |query: &str| matches(&q, &form_input(Some(query), &[], "", false));
+        assert!(qi("Action=DescribeInstances"));
+        assert!(!qi("Action=DescribeInstances;Action=TerminateInstances"));
+        assert!(!qi("Action=DescribeInstances&ACTION=TerminateInstances"));
+        let with_body = form_input(
+            Some("Action=DescribeInstances"),
+            &h,
+            "ACTION=Terminate;x=1",
+            false,
+        );
+        assert!(!matches(&q, &with_body));
+        let with_variant = form_input(
+            Some("Action=DescribeInstances"),
+            &h,
+            "ACTION=TerminateInstances",
+            false,
+        );
+        assert!(
+            !matches(&q, &with_variant),
+            "a case variant in the body may be the same parameter"
+        );
     }
 
     #[test]

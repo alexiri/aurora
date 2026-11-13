@@ -1,0 +1,14 @@
+description: FIX-085 custom_only implies block_untooled - a legacy snapshot flag set carries custom_only alone, a hand network allow for the host exists, and the request matches no tool; it is blocked before any rule
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: hand-network-allow, action: allow, targets: [{type: network, host: indico.example.org}]}], default_action: block}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /api/admin/everything
+  method: POST
+  app_id: indico
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: organization, custom_only: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: block
+  reason: app_untooled_blocked
+  trace_via: {workspace: app_untooled_blocked}

@@ -537,7 +537,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | path | text not null | redacted (query values masked) |
 | app_id | text null | |
 | tool_id | text null | |
-| connection_id | uuid null | |
+| connection_id | uuid null | the app connection whose credential the held request would use (set by the gateway; null for a generic secret); no FK, history survives. Revoking the grant or disabling/deleting the connection abandons the pending row (`07 §Lifecycle`) |
 | rule_logical_id | uuid null | |
 | rule_name | text null | |
 | summary | jsonb not null | `ApprovalSummary` (`09 §Approval summaries`) |
