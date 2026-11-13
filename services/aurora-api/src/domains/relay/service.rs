@@ -311,6 +311,12 @@ async fn resolve_once(
         // filtered it (that is the silent `login` restart).
         return Ok(deny("not_found"));
     }
+    // The daily byte quota (`PREVIEW_BYTES_PER_SHARE_DAY`, shared across relay replicas): a
+    // holder of a live, authorized session may be told (429 `preview_quota`); nobody else
+    // ever reaches this line. No new stream opens, the sandbox is not woken for it.
+    if super::quota::exceeded(s, share.id).await? {
+        return Ok(deny("preview_quota"));
+    }
     relay_repo::touch_preview_session(&mut *conn, session.id).await?;
     let mut route = route_of(&mut conn, &share).await?;
     // A stopped sandbox: set the wake demand (`11 §Port previews`) — once per window; the
@@ -335,6 +341,7 @@ async fn resolve_once(
             port: share.port,
         }),
         route: Some(route),
+        user: Some(session.user_id),
     })
 }
 
@@ -344,6 +351,7 @@ fn deny(reason: &str) -> RelayResolveResponse {
         reason: Some(reason.to_owned()),
         share: None,
         route: None,
+        user: None,
     }
 }
 
@@ -353,6 +361,7 @@ fn login() -> RelayResolveResponse {
         reason: None,
         share: None,
         route: None,
+        user: None,
     }
 }
 
@@ -692,20 +701,31 @@ pub async fn report(
     let total_streams: i32 = req.shares.iter().map(|sh| sh.streams_open).sum();
     relay_repo::touch_relay_replica(&s.pool, ctx.replica, total_streams).await?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    let mut bytes: Vec<(Uuid, u64)> = Vec::new();
     for sh in &req.shares {
+        let moved = sh.bytes_to_app.saturating_add(sh.bytes_from_app);
         if let Some(row) = shares_repo::get(&mut *conn, sh.share_id).await? {
             shares_repo::touch_accessed(&mut conn, row.id).await?;
             relay_repo::keep_preview_awake(&mut *conn, row.agent_id).await?;
+            // Only real shares are counted (a relay cannot create counter keys at will).
+            if moved > 0 {
+                bytes.push((row.id, moved));
+            }
         }
-        // Byte accounting is a counter, not a row (docs/16: bytes are never logged).
-        if sh.bytes_to_app + sh.bytes_from_app > 0 {
+        // Byte accounting is a metric and a quota counter, not a row (docs/16: bytes are
+        // never logged).
+        if moved > 0 {
             metrics::counter!(
                 "aurora_preview_stream_bytes_total",
                 "direction" => "mixed"
             )
-            .increment(sh.bytes_to_app.saturating_add(sh.bytes_from_app));
+            .increment(moved);
         }
     }
+    // The shared daily counter of each share (`PREVIEW_BYTES_PER_SHARE_DAY`): one
+    // all-or-nothing add. Under a `closed` class with the store down this answers 503 and the
+    // relay re-sends the same bytes with its next heartbeat (see `quota`).
+    super::quota::add(s, &bytes).await?;
     Ok(RelayOkResponse { ok: true })
 }
 

@@ -284,7 +284,9 @@ pub const PREVIEW_STREAM_GRANT_TTL: Duration = Duration::from_secs(30);
 /// revalidation interval (worst-case revocation latency, SEC-81).
 pub const PREVIEW_AUTH_CACHE: Duration = Duration::from_secs(15);
 pub const PREVIEW_AUTH_CACHE_NEG: Duration = Duration::from_secs(5);
-/// concurrent streams per share / per sandbox / per user (per relay replica).
+/// concurrent streams per share / per sandbox / per user. Per share and per user are counted per
+/// relay replica and enforced in `aurora-relay` (`stream::Streams::reserve`, FIX-072); per
+/// sandbox is enforced in the supervisor.
 pub const PREVIEW_STREAMS_PER_SHARE: u32 = 32;
 pub const PREVIEW_STREAMS_PER_SANDBOX: u32 = 64;
 pub const PREVIEW_STREAMS_PER_USER: u32 = 64;

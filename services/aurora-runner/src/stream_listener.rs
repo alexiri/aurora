@@ -126,6 +126,10 @@ pub struct StreamListener {
     routes: Arc<Mutex<Routes>>,
     /// (P4-TERM, C-620) Last keep-awake stamp per sandbox (rate limit).
     last_stamp: Arc<Mutex<HashMap<Uuid, std::time::Instant>>>,
+    /// Idle and lifetime limits of a leg (production: [`IDLE_TIMEOUT`], [`LIFETIME`]; tests
+    /// build the listener with shortened ones through [`StreamListener::with_limits`]).
+    idle: Duration,
+    lifetime: Duration,
 }
 
 #[derive(Default)]
@@ -138,10 +142,19 @@ struct Routes {
 impl StreamListener {
     /// Builds the listener over the channel server.
     pub fn new(server: ChannelServer) -> Arc<Self> {
+        Self::with_limits(server, IDLE_TIMEOUT, LIFETIME)
+    }
+
+    /// The listener with explicit leg idle and lifetime limits. Production always uses
+    /// [`StreamListener::new`]; the tests of the idle and lifetime closes (`docs/18`) pass
+    /// shortened values, so they exercise the very code path that runs in production.
+    pub fn with_limits(server: ChannelServer, idle: Duration, lifetime: Duration) -> Arc<Self> {
         Arc::new(Self {
             server,
             routes: Arc::new(Mutex::new(Routes::default())),
             last_stamp: Arc::new(Mutex::new(HashMap::new())),
+            idle,
+            lifetime,
         })
     }
 
@@ -1052,8 +1065,8 @@ async fn serve_terminal_leg(
     let mut bytes_to_pty: u64 = 0;
     let mut bytes_from_pty: u64 = 0;
     tokio::pin! {
-        let idle = tokio::time::sleep(IDLE_TIMEOUT);
-        let lifetime = tokio::time::sleep(LIFETIME);
+        let idle = tokio::time::sleep(state.idle);
+        let lifetime = tokio::time::sleep(state.lifetime);
     }
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1065,7 +1078,7 @@ async fn serve_terminal_leg(
             msg = ws_stream.next() => {
                 match msg {
                     Some(Ok(Message::Binary(b))) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         if b.len() > TERMINAL_CHUNK {
                             break CLOSE_REFUSED;
                         }
@@ -1085,7 +1098,7 @@ async fn serve_terminal_leg(
                     // `0` names "this leg's PTY" and the runner stamps its own. Anything
                     // else is ignored (bytes are never parsed as text, never logged).
                     Some(Ok(Message::Text(t))) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         if let Ok(resize) = serde_json::from_str::<PtyResize>(&t)
                             && resize.pty_id == 0
                         {
@@ -1109,7 +1122,7 @@ async fn serve_terminal_leg(
             chunk = leg_rx.recv() => {
                 match chunk {
                     Some(LegIn::Data(b)) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         bytes_to_pty += b.len() as u64;
                         from_pty_unacked += b.len();
                         if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
@@ -1158,7 +1171,7 @@ async fn serve_terminal_leg(
                 while let Ok(chunk) = leg_rx.try_recv() {
                     match chunk {
                         LegIn::Data(b) => {
-                            idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                            idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                             if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                                 break;
                             }
@@ -1265,8 +1278,8 @@ async fn serve_leg(
     let mut bytes_to_app: u64 = 0;
     let mut bytes_from_app: u64 = 0;
     tokio::pin! {
-        let idle = tokio::time::sleep(IDLE_TIMEOUT);
-        let lifetime = tokio::time::sleep(LIFETIME);
+        let idle = tokio::time::sleep(state.idle);
+        let lifetime = tokio::time::sleep(state.lifetime);
     }
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1280,7 +1293,7 @@ async fn serve_leg(
                     Some(Ok(Message::Binary(b))) => {
                         // Reset the idle deadline (tokio ≥1.50 takes the absolute instant the
                         // sleep should fire again, not a restart of its duration).
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         if b.len() > PREVIEW_CHUNK {
                             break CLOSE_REFUSED;
                         }
@@ -1304,7 +1317,7 @@ async fn serve_leg(
                 match chunk {
                     Some(LegIn::Data(b)) => {
                         // Same absolute-deadline reset as the relay→app arm above.
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         bytes_to_app += b.len() as u64;
                         from_app_unacked += b.len();
                         if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
@@ -1353,7 +1366,7 @@ async fn serve_leg(
                 while let Ok(chunk) = leg_rx.try_recv() {
                     match chunk {
                         LegIn::Data(b) => {
-                            idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                            idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                             if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                                 break;
                             }

@@ -96,6 +96,16 @@ impl PtyHandle {
         rx.await.unwrap_or(false)
     }
 
+    /// Ends every PTY (the `shutdown` frame: `docs/12`, "closes everything on shutdown"):
+    /// each shell's master closes (SIGHUP) and the runner is told with `pty.close`. Returns
+    /// once the engine has done it.
+    pub async fn close_all(&self) {
+        let (tx, rx) = oneshot::channel();
+        if self.cmd_tx.send(Cmd::CloseAll { tx }).is_ok() {
+            let _ = rx.await;
+        }
+    }
+
     /// Opens a PTY from a sequenced `pty.open` (tests / older runners); the engine enforces
     /// the posture and answers. Waits for the pump to act.
     pub async fn pty_open(&self, o: aurora_protocol::runner::PtyOpen) -> bool {
@@ -134,6 +144,10 @@ enum Cmd {
     Open {
         open: aurora_protocol::runner::PtyOpen,
         tx: oneshot::Sender<bool>,
+    },
+    /// The supervisor is shutting down: end every PTY (`pty.close { channel_lost }`).
+    CloseAll {
+        tx: oneshot::Sender<()>,
     },
     #[cfg(test)]
     Settle {
@@ -267,6 +281,10 @@ impl PtyEngine {
                     Some(Cmd::Open { open, tx }) => {
                         self.on_open(open).await;
                         let _ = tx.send(true);
+                    }
+                    Some(Cmd::CloseAll { tx }) => {
+                        self.reset(PtyCloseReason::ChannelLost).await;
+                        let _ = tx.send(());
                     }
                     #[cfg(test)]
                     Some(Cmd::Settle { tx }) => {

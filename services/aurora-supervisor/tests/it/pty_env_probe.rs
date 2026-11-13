@@ -80,6 +80,11 @@ pub(crate) fn rig(home: &std::path::Path, enabled: bool) -> Rig {
 }
 
 impl Rig {
+    /// The engine's handle, as the supervisor holds it.
+    pub(crate) fn handle(&self) -> aurora_supervisor::pty::PtyHandle {
+        (*self.handle).clone()
+    }
+
     /// Drives a `pty.*` control frame in (as the runner's channel pump would).
     pub(crate) async fn frame(&self, msg: RunnerToSupervisor) {
         let _ = self.pty_tx.send(PtyIn::Frame(msg));

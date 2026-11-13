@@ -344,6 +344,8 @@ impl Supervisor {
             t.abort.notify_one();
             let _ = t.session.lock().await.abort().await;
         }
+        // Every terminal ends with the sandbox (`12 §Terminal`, `16 §W19`).
+        self.ptys.close_all().await;
         let deadline = Instant::now() + grace;
         while !self.turns.is_empty() {
             tokio::select! {

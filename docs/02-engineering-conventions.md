@@ -313,7 +313,7 @@ overridden by the named configuration key (`15`).
 | `PREVIEW_SESSION_TTL` / `PREVIEW_SESSION_IDLE` | (phase 4, P4-PRV-2) 8 h absolute (never past the dashboard session) / 1 h idle | `previews.session_ttl_secs`, `previews.session_idle_secs` (lower only) | 04 |
 | `PREVIEW_GRANT_TTL` / `PREVIEW_STREAM_GRANT_TTL` | (phase 4, P4-PRV-2) 60 s single-use authorization grant / 30 s single-use stream grant | — | 04, 16 |
 | `PREVIEW_AUTH_CACHE` | (phase 4, P4-PRV-2) 15 s positive, 5 s negative relay cache of a resolve; also the open-stream revalidation interval | — | 04, 15 |
-| `PREVIEW_STREAMS_PER_SHARE` / `_PER_SANDBOX` / `_PER_USER` | (phase 4, P4-PRV-2) 32 / 64 / 64 concurrent streams (the per-user value is per relay replica) | `relay.max_streams_per_user` (lower only) | 16 |
+| `PREVIEW_STREAMS_PER_SHARE` / `_PER_SANDBOX` / `_PER_USER` | (phase 4, P4-PRV-2) 32 / 64 / 64 concurrent streams; the per-share and per-user values are enforced per relay replica (429 `preview_streams_limit` or close 4409, FIX-072, C-636), the per-sandbox one in the supervisor | `relay.max_streams_per_user` (lower only) | 16 |
 | `PREVIEW_STREAM_WINDOW` / `PREVIEW_CHUNK` | (phase 4, P4-PRV-2) 128 KiB credit window per direction per stream / 16 KiB data chunk | — | 16 |
 | `PREVIEW_IDLE_TIMEOUT` / `PREVIEW_WS_IDLE_TIMEOUT` / `PREVIEW_STREAM_LIFETIME` | (phase 4, P4-PRV-2) 120 s plain HTTP stream / 600 s upgraded stream / 4 h | — | 16 |
 | `TERMINAL_GRANT_TTL` / `TERMINAL_CHUNK` / `TERMINAL_STREAM_WINDOW` | (phase 4, P4-TERM) 30 s single-use `auy_` grant / 16 KiB PTY data chunk / 128 KiB credit window per direction per PTY | — | 16 |
@@ -323,9 +323,9 @@ overridden by the named configuration key (`15`).
 | `TERMINAL_AUTH_CACHE` / `TERMINAL_WAKE_WINDOW` / `TERMINAL_WAKES_PER_AGENT_HOUR` | (phase 4, P4-TERM) 15 s revocation cache (freeze/disable closes sessions) / 60 s wake demand window / 12 wakes per agent per hour | — | 11 |
 | `PREVIEW_CONNECT_TIMEOUT` / `PREVIEW_HEADER_TIMEOUT` | (phase 4, P4-PRV-2) 10 s to open a stream (supervisor connect 5 s) / 60 s for upstream response headers | — | 16 |
 | `PREVIEW_REQUEST_BODY_MAX` | (phase 4, P4-PRV-2) 100 MiB | `relay.request_body_max_bytes` (lower only) | 15, 16 |
-| `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day (429 `preview_quota`) | `previews.bytes_per_share_day` | 16 |
+| `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day, one shared counter across relay replicas (429 `preview_quota` with `Retry-After` to the next UTC midnight; FIX-072, C-637, `16 §W18`) | `previews.bytes_per_share_day` | 16 |
 | `PREVIEW_API_RATE` | (phase 4, P4-PRV-2) 100 relay-plane requests/s per relay replica, burst 200 | — | 16 |
-| `PREVIEW_GRANT_RATE` | (phase 4, P4-PRV-2) 30 grant redemptions per minute per client address (and 10 per minute per share) at the relay | — | 04 |
+| `PREVIEW_GRANT_RATE` | (phase 4, P4-PRV-2) 30 grant redemptions per minute per client address (and 10 per minute per share) at the relay, per replica, fixed window (429 `grant_rate_limited`; FIX-072, C-636) | — | 04 |
 | `LIBRARIES_PER_ORG` | (phase 4, P4-GSL) 10 skill libraries | — | 10, 05 |
 | `LIBRARY_BYTES_PER_AGENT` / `_SKILLS_PER_AGENT` | (phase 4, P4-GSL) 1 MiB / 25 library-sourced skills at the agent tier (workspace tier 2 MiB / 50, org tier 4 MiB / 100: `LIBRARY_BYTES_PER_WORKSPACE`, `LIBRARY_SKILLS_PER_WORKSPACE`, `LIBRARY_BYTES_PER_ORG`, `LIBRARY_SKILLS_PER_ORG`) | `skills.library.bytes_per_agent` (lower only) | 10 |
 | `LIBRARY_FILE_MAX` / `LIBRARY_TREE_MAX` / `LIBRARY_BROWSE_MAX` | (phase 4, P4-GSL; D-154: also at most 50 files per skill directory) 64 KiB per file / 20 000 tree entries (a truncated or longer tree is `library_tree_too_large`: narrow `path`) / 200 listed skills | — | 09, 10 |
