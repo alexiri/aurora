@@ -124,10 +124,35 @@ integration config.
 
 ## Rendering
 
-- Neutral markdown → Mattermost markdown (largely identical). Mentions:
+- Neutral markdown → Mattermost markdown per the conversion table below
+  (`13 §4.6`). Mentions:
   `<@user:ID>` → `@username` (lookup), `<#space:ID>` → `~channel-name`,
-  `<@here>` → `@here` (only from the core). **Defuse** `@channel`, `@all`,
-  `@here` occurring in text by wrapping them in inline code.
+  `<@here>` → `@here` (only from the core: platform voice, or a standalone
+  `@here` in an agent's message body, `13 §4.3`). **Defuse** `@channel`, `@all`,
+  `@here` occurring in text by wrapping them in inline code — inside formatted
+  text too; code spans and fenced blocks are never altered.
+- (phase 5, FIX-142, D-227(c)) **Conversion table.** Native constructs pass
+  through byte for byte; the rest is converted as below; nothing is dropped.
+  "native — verify in step 4": FIX-142 step 4 confirms the row against the
+  Mattermost docs and the dev server — `mattermost-preview` 11.7.15 pinned by
+  digest in `scripts/mattermost/setup.sh` (used by `scripts/e2e/mattermost.sh`),
+  the supported version above — and rewrites the row to what it found.
+
+  | Construct | Mattermost | Conversion |
+  |---|---|---|
+  | Headings, emphasis, strong, strikethrough, inline code, block quotes, rules, nested/ordered lists, hard breaks, autolinks, emoji shortcodes | native — verify in step 4 (each) | — |
+  | Tables (alignment, inline formatting in cells) | native — verify in step 4 | — (a table longer than one post: the core splits it by rows, header row repeated in each post, `13 §5.2`) |
+  | Fenced code with a language | native, highlighted — verify in step 4 | — |
+  | Task lists | verify in step 4 | if not native: `☐` / `☑` list items |
+  | Footnotes | conversion | `[1]` at the reference, a "Notes" list at the end of the message |
+  | Alerts (`> [!NOTE]` …) | conversion | block quote starting with `ℹ️ **Note**` / `💡 **Tip**` / `❗ **Important**` / `⚠️ **Warning**` / `🛑 **Caution**` |
+  | Math `$$…$$`, ```` ```math ````, inline `$…$` | conversion (```` ```latex ```` blocks render when the server enables LaTeX) | ```` ```latex ```` block (renders when enabled, readable code otherwise); inline `$…$` left as is (renders when inline LaTeX is enabled) |
+  | Mermaid | conversion | ```` ```mermaid ```` code block |
+  | Allowlisted HTML (Mattermost renders no HTML) | conversion | `b`/`strong` → `**`, `i`/`em` → `_`, `s`/`del` → `~~`, `code`/`kbd` → `` ` ``, `br` → hard break, `hr` → `---`, `details`/`summary` → bold summary line + content, `sub`/`sup`/`ins`/`mark`/`small`/`span`/`div`/`p` → their content, HTML lists/tables → Markdown lists/tables |
+  | Link previews | the server may fetch the first URL of a post (`EnableLinkPreviews`) | **open question** (step 4): can a post suppress its preview? If yes, agent posts do; if no, one line in `docs/operator/plugins-and-connectors.md` (Mattermost) says an admin can turn previews off |
+
+  The dev server's `MM_*` overrides set no LaTeX option, so step 4 records the
+  server defaults for LaTeX and inline LaTeX next to the math rows.
 - Posts carry `props.aurora_op = <op_marker>`; when `maybe_sent` is true, the
   connector searches the last 50 posts of the target thread/channel for that
   prop before posting.
@@ -219,4 +244,7 @@ Stateless; any number of replicas (integration ownership via the core).
 - Connector conformance suite (`13 §7`) against a Mattermost server container
   (team, bot accounts and users seeded by a setup script) in CI.
 - Unit tests for rendering (cards, mentions, defusing), event mapping, error
-  mapping, catch-up deduplication.
+  mapping, catch-up deduplication. (phase 5, FIX-142) One rendering test per
+  conversion-table row: native constructs byte-identical, each conversion as
+  stated; rendered `<@here>` → live `@here`; literal `@channel`/`@all`/`@here`
+  defused.

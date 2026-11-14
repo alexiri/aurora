@@ -166,6 +166,7 @@ cards, one-line statuses, labels, notices or logs.
 | `block(s, max)` | As `one_line` but keeps `\n` (collapses >2 consecutive), clamps by chars. |
 | `label(s)` | `one_line(s, 80)`; used for connection labels, secret names shown to agents, plugin-provided names. |
 | `markdown_as_data(s, max)` | `block` + escape so that the dashboard/connector renders it as text, never as active markup (no raw HTML, links shown with their target). |
+| `markdown_safe(s, max)` | (phase 5, FIX-142, D-227; planned) `block` + minimal edits for D-227's security exceptions only (images → links, link scheme allowlist, host after a URL-looking label of another host, HTML outside GitHub's allowlist, typed neutral tokens), verified by re-parsing; everything else kept byte for byte. Only for an agent's own message body on a chat platform (`13 §4.3`); all other text uses `markdown_as_data`. |
 
 Dashboard rule: model/user/plugin text is rendered through a markdown renderer
 with raw HTML disabled and link targets displayed; never with

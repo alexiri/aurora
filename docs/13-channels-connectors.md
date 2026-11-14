@@ -321,12 +321,52 @@ integration) are claimable by any live replica of the connector.
 
 ### 4.3 Neutral content
 
-- **Text**: a CommonMark subset — bold, italics, inline code, code blocks,
-  links, lists, block quotes, simple tables. Mentions are tokens
-  `<@user:REF>`, `<#space:REF>`, `<@here>`; only the core may emit `<@here>`
-  and only when explicitly intentional (never from model text). Connectors
-  convert to platform markup and **must defuse** any platform broadcast syntax
-  (`@channel`, `@all`, `@here`) appearing in text.
+- **Text** (phase 5, FIX-142, D-227(a); phase 0–4: a CommonMark subset):
+  CommonMark 0.31 + the GFM spec (tables, task lists, strikethrough, extended
+  autolinks, tag filter) + github.com's additions (footnotes, alerts, emoji
+  shortcodes, fenced code with a language, math `$…$` / `$$…$$` /
+  ```` ```math ````, Mermaid, raw HTML from GitHub's allowlist — the list in
+  `docs/tasks/FIX-137.md` "What must render" item 3). Mentions are tokens
+  `<@user:REF>`, `<#space:REF>`, `<@here>`.
+- **Three kinds of text** — every text the core puts in `Content` is one of:
+  - *platform voice* (`Content::platform`): written by the core;
+  - *untrusted data* (`Content::untrusted` → `sanitize::markdown_as_data`):
+    labels, names, card text, notices, approval summaries, other people's
+    text — every Markdown-active character escaped, so it shows as text;
+  - (phase 5, FIX-142, D-226(a)) *an agent's own message body*
+    (`Content::agent_markdown` → `sanitize::markdown_safe`): turn answers
+    mirrored to a thread (§5.2) and `send_message` text (§5.10), nothing
+    else. Kept **byte for byte**, except D-227(b)'s security exceptions, the
+    only places the core changes what the agent wrote (model text can be
+    steered by prompt injection):
+    1. **images are never inline**: `![alt](url)` → `[🖼 alt](url)` (then
+       rule 2) — clients and image proxies fetch images with no click, so an
+       image URL leaks data the moment the post is shown;
+    2. **link schemes**: only `http`, `https`, `mailto` stay links; any other
+       (`javascript:`, `data:`, relative, …), in inline, reference, autolink
+       or raw `<a>` form, becomes its label as text (script execution,
+       meaningless targets). A link whose **label looks like a URL or domain
+       of another host** than the destination's gets ` (→ host)` after it
+       (the one link form that lies); ordinary labels are untouched;
+    3. **raw HTML outside the allowlist** is removed, keeping its text (XSS);
+       allowlisted HTML stays, for the connector to convert (§4.6);
+    4. **typed neutral tokens** (`<@user:…>`, `<#space:…>`, `<@here>`) never
+       form (forged mentions and broadcasts).
+
+    The core edits only those byte ranges, escaping replacement text for its
+    context, and verifies by re-parsing; a block that fails verification
+    falls back to `markdown_as_data` (D-227(d)). Idempotent.
+- **Mentions in an agent's message body** (D-226(b)): a platform `@username`
+  passes through as text (the platform resolves it); a standalone `@here`
+  (outside code, at a word boundary, any case) becomes the core's `<@here>`;
+  `@channel` and `@all` are left as text for the connector to defuse.
+- **`<@here>`** is emitted only by the core: in platform voice when
+  explicitly intentional, or from a standalone `@here` in an agent's message
+  body (above). Never from untrusted data; never from a token typed in any
+  text.
+- Connectors convert neutral text to platform markup (§4.6) and **must
+  defuse** any platform broadcast syntax (`@channel`, `@all`, `@here`)
+  appearing in text: only the `<@here>` token becomes a live broadcast.
 - **Content** = `{ text?, card? }`; **Card** = `{ blocks: [Block] }`, blocks:
   `header {text}`, `text {text}`, `fields {pairs: [{label, value}]}`
   (≤12), `context {text}`, `link {label, url}`, `buttons {items: [{label,
@@ -364,6 +404,25 @@ must match the event's. The connector never interprets tokens.
 | `files` | the core enforces min(core caps, platform caps) |
 | `commands` | settings only in the dashboard |
 | `history` | no mid-thread context; `read_conversation` unavailable |
+
+### 4.6 Rendering neutral text (connector duty)
+
+(phase 5, FIX-142, D-227(c)) Platform limitations are **conversions, not
+exceptions**; the only deliberate changes to an agent's message are the
+core's (§4.3).
+
+- Constructs the platform renders natively pass through **byte for byte**
+  (minimal edits, never re-emitted from a parse tree).
+- The rest is converted to its nearest native equivalent per a **conversion
+  table in the connector's spec** (`20 §Rendering` for Mattermost); every
+  construct of §4.3 has a row, "native" or its conversion.
+- Content is **never dropped**, and never left as raw syntax when an
+  equivalent exists. Each converted post still fits the integration's
+  `message_max_chars` (the core splits long answers, §5.2).
+- Mentions: `<@user:REF>` / `<#space:REF>` → the platform's mention syntax;
+  `<@here>` → the platform's live broadcast to the space. Broadcast words in
+  text are defused (§4.3), inside formatted text too. Code spans and fenced
+  blocks are never altered.
 
 ## 5. Core behaviour
 
@@ -448,7 +507,12 @@ no behaviour in phase 0.
   door `thread` finishes, its durable `text` events are posted once, complete
   (no streaming edits) to that thread link (`dedupe_key =
   answer:<turn_id>`); attachments sent with `send_file` follow as files. The
-  receipt is removed / placeholder resolved.
+  receipt is removed / placeholder resolved. (phase 5, FIX-142) The answer is
+  an agent's message body (§4.3). One longer than a post is split only
+  between top-level blocks: a fenced block cut is closed and reopened with the
+  same info string, a table is split by rows with the header and delimiter
+  rows repeated, a list between items; no post exceeds `message_max_chars`
+  after the connector's conversion (§4.6).
 - **Doorless turns** (system follow-ups, watch fires, schedule and peer-task
   reports, action-approval outcomes) in a conversation that has thread links
   are posted to its most recently used thread link.
@@ -626,8 +690,13 @@ Available to an agent only while it has an `active` presence.
   recipient id from `find_recipient`. Reach is re-checked at send. Messages to
   the current conversation's own thread are always allowed. Otherwise the
   agent's `proactive_messaging`: `off` → refused; `ask` → **action approval**
-  (`07`) with a platform-composed summary; `allow` → sent. Model text is never
-  allowed to emit broadcast mentions.
+  (`07`) with a platform-composed summary; `allow` → sent. `text` is an
+  agent's message body (§4.3). (phase 5, FIX-142, D-226(b)) **Broadcasts: only
+  `@here`** — a standalone `@here` becomes the core's `<@here>` and notifies
+  everyone online in the target space; `@channel` and `@all` are always
+  defused, and model text never forms a token itself. A held `send_message`
+  whose text carries `@here` adds "Notifies everyone online in the channel
+  (@here)" to its approval summary (still platform-composed, never the text).
 - `read_conversation {target?, limit?}`: requires `history`; current thread by
   default, or a space bound to this agent; returns sanitized messages labelled
   untrusted.
@@ -644,7 +713,13 @@ Available to an agent only while it has an `active` presence.
 3. **At-least-once in, at-most-once out**: inbox dedupe by event id; claimed
    ops with markers.
 4. **Untrusted text stays data**: the core sanitizes; connectors escape for
-   their markup and defuse broadcasts.
+   their markup and defuse broadcasts. (phase 5, FIX-142, D-226, D-227) The
+   one exception is an agent's own message body (§4.3): its Markdown renders,
+   changed only by D-227's four security exceptions (no inline images, link
+   scheme allowlist and deceptive-label host, HTML allowlist, no typed neutral
+   tokens); its only broadcast is a standalone `@here`, which the core turns
+   into `<@here>`. Connectors pass native constructs through unchanged and
+   convert the rest (§4.6).
 5. **Connectors never see Aurora credentials** (no API keys, no user sessions);
    they receive only their own platform credentials and opaque action tokens,
    and cannot read anything outside integrations of their own connector id.
@@ -661,7 +736,9 @@ Available to an agent only while it has an `active` presence.
   thread follow-up, bot added → binding, unlinked user → link flow, file in and
   out, approval card → click → settle, credential dies → `presence.removed` or
   `credential_dead`, redelivered event processed once, re-claimed post not
-  duplicated, broadcast mention defused, capability fallbacks.
+  duplicated, broadcast mention defused, capability fallbacks, (phase 5,
+  FIX-142) a formatted agent answer reaches the platform with every native
+  construct unchanged.
 - The phase 0 end-to-end suite runs the **real core** with the fake connector
   and the fake harness.
 
