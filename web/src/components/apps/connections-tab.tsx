@@ -85,7 +85,7 @@ function ConnectionRow({
                 size="sm"
                 variant="outline"
                 disabled={patch.isPending}
-                aria-label={c.access === "read" ? `Allow writes through ${c.label}` : `Make ${c.label} read-only`}
+                aria-label={c.access === "read" ? `Allow writes: ${c.label}` : `Make read-only: ${c.label}`}
                 onClick={() => patch.mutate({ id: c.id, access: c.access === "read" ? "write" : "read" })}
               >
                 {c.access === "read" ? "Allow writes" : "Make read-only"}
