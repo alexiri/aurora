@@ -284,6 +284,10 @@ tokens), group → workspace access bindings, group identities in policy
   `14` (Notifications, parked approvals, service worker), `15 §Approval park-and-resume and Web
   Push`, `16 §W16`, `18`. Not in phase 4: suspending a live harness process, parking BYO or
   streamed requests, retraction of delivered pushes, mobile-app push, per-rule push routing.
+  (P4-011B spec batch, 2026-11-14) Reconciled with instance settings, FIX-084 and the session
+  model by D-264..D-267 (contracts C-820..C-839, SEC-102, migrations `20261201000220..223`);
+  briefs `docs/tasks/P4-011B-1.md` … `P4-011B-5.md`. Still out: offline/PWA caching, an
+  org-level parking opt-out, push for anything other than approvals.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
 - **Slack connector**: decision deferred; if built, it is a connector covering

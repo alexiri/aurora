@@ -561,7 +561,12 @@ same conversation. Nothing is suspended and nothing stays in memory: the agent's
 ends, the sandbox idles and parks like any other, and the grant is only data in Postgres.
 
 **Opt-in.** `approvals.park.enabled` (default `false`). With it off nothing in this
-section runs and phase 2 behaviour is exact.
+section runs and phase 2 behaviour is exact. (P4-011B spec batch, D-264(b), D-265(c)) The
+`approvals.park.*` keys are **instance settings** (section `approvals`, `15 §Instance settings`),
+so the switch can change while parked rows exist: it governs only whether **new** approvals park.
+Grant lookup and consumption, decisions, follow-ups, reminders and expiry keep running for parked
+rows created earlier, so turning parking off never strands an approved grant; requests that would
+have parked are held and clamped from then on.
 
 **Which approvals park** (all must hold at the moment the gateway reaches the hold,
 `06` step 8; otherwise the request is held exactly as before):
@@ -590,6 +595,13 @@ section runs and phase 2 behaviour is exact.
    `pending` approvals and `PARK_PER_AGENT_HOUR` (60) new parked approvals per hour, else
    403 `approval_limit_reached` (`x-should-retry: false`): a prompt-injected agent cannot
    flood the approvers' queue. (Held approvals keep their existing behaviour.)
+6. (P4-011B spec batch, D-264(c)) The request is **not to a governed LLM endpoint** (`06` step
+   6a): that is the harness's own model call, which the agent cannot repeat byte-identically and
+   whose refusal would fail the turn. It is held and clamped as before.
+
+Settings rule (D-265(c), C-829): `approvals.park.threshold_secs ≤ approvals.max_timeout_secs ≤
+approvals.park.max_timeout_secs`, checked at start and on every settings write, so a timeout the
+hold cannot serve is always parkable (when the request is eligible) rather than silently clamped.
 
 **What is persisted** (`03 §Planned changes`, columns of `approvals`): `parked`, a salted
 request `fingerprint`, `resume_state`, `resume_expires_at`, `consumed_at`, `resume_turn_id`. The
@@ -622,6 +634,12 @@ critical audit and first-decision-wins, through dashboard, API or channel card):
   **platform-composed** — approval title, "approved by <label>", the sanitized redacted request
   line and the deadline — never model or request text beyond the sanitized summary. A frozen
   agent gets no turn (creation is refused, `04 §Freeze`) and the grant is revoked.
+  (P4-011B spec batch, D-264(e), C-823, C-824) The follow-up is written **in the deciding
+  transaction** (with the decision and its audit row), so a crash cannot leave a grant the agent
+  is never told about; a decision transaction that covers several parked approvals of one
+  conversation (a batch) writes **one** follow-up listing them (at most `PARK_FOLLOWUP_LINES_MAX`,
+  then "…and N more"). Its door is `{ kind: "system", ref: "approval:<id>" }`. A conversation that
+  no longer exists gets no follow-up and the grant is `revoked`.
 - **Deny** → `status = denied`; a follow-up tells the agent "denied by <label>, do not retry". A
   retry of the same fingerprint within `approvals.park.deny_cooldown_secs` (default 900 s) is
   answered 403 `manual_approval_denied` without creating a new approval.
@@ -632,8 +650,8 @@ critical audit and first-decision-wins, through dashboard, API or channel card):
 - **Resume window passes unused** → `resume_state = expired` (audit best-effort, transcript
   notice, no turn).
 
-**Consuming the grant** (gateway, step 8). When the verdict is `needs_approval` and parking is
-enabled, before creating anything the gateway looks for an open approval of the same agent and
+**Consuming the grant** (gateway, step 8). When the verdict is `needs_approval` (whatever
+`approvals.park.enabled` says now, D-264(b)), before creating anything the gateway looks for an open approval of the same agent and
 conversation (`parked`, `resume_state = ready`, unexpired), recomputes the fingerprint with that
 row's salt and, on a match, **consumes it atomically** (`UPDATE … SET resume_state = 'consumed',
 consumed_at = now() WHERE id = $1 AND resume_state = 'ready' AND resume_expires_at > now()
@@ -648,9 +666,17 @@ approval or hold proceeds as above.
 
 **What revokes a grant or approval.** Freezing the agent, its workspace or its org marks its
 `pending` parked approvals `abandoned` (as for holds, `§Approvals`) and its `ready` grants
-`resume_state = revoked`; unfreezing revives neither. Deleting the agent or conversation deletes
-the rows (the approval history survives as before, `03 §approvals`). A grant is bound to the
-conversation and agent, single use, short-lived, and dies with its window.
+`resume_state = revoked`; unfreezing revives neither. (P4-011B spec batch, D-264(d), C-826) The
+same holds, in the event's own transaction and with the predicate it already uses for pending
+holds (FIX-084, *Lifecycle*), for deleting or narrowing the grant the request would use, disabling
+or deleting its connection or secret, and activating a snapshot under which it would be blocked:
+the agent is told now (`approval_grant_revoked` notice) rather than after a futile retry, and
+consumption still re-resolves and re-evaluates. For the conversation concerned (or every
+conversation of the agent), **deleting the agent or the conversation** and **bumping
+`harness_session_epoch`** (a harness switch, a redaction with `reset_session`) also abandon its
+pending parked approvals and revoke its ready grants: there is no conversation to resume in, or the
+agent no longer holds the exact request. The rows themselves survive as history (`03 §approvals`).
+A grant is bound to the conversation and agent, single use, short-lived, and dies with its window.
 
 **Sandbox lifecycle.** A parked approval is **not** a keep-awake reason (`11 §Keep-awake`): the
 turn ends, the sandbox idles out after `IDLE_STOP` and parks (home volume kept) like any other.
@@ -662,7 +688,8 @@ point of parking: a pending approval costs a database row, not a container.
 unchanged and apply to parked approvals (the e-mail and push text says "the agent has stopped
 waiting and will resume when you approve"); a **reminder** is sent once, to deciders with a
 push subscription or e-mail enabled and no live watcher, when half of a parked approval's time
-has elapsed and it is still `pending`. Action approvals already work this way and are unaffected.
+has elapsed and it is still `pending` (D-265(b): the reminder e-mail is claimed in
+`approval_notifications` with `stage = 'reminder'`, the push in `approval_push_claims`; C-828). Action approvals already work this way and are unaffected.
 Batches (`x-aurora-batch-id`) park per request. The app-turn cap (`APP_TURN_CAP`) does not count
 system turns, and each resume needs a human decision, so a retry loop is metered by people.
 Limits and honesty: parking suits requests the agent can repeat **byte-identically**; a client
@@ -689,6 +716,14 @@ stops receiving and is deleted. Deciding needs a signed-in session, so a push to
 without one is noise at best and a leak at worst; this also fixes shared computers. Registering
 an endpoint that already exists under another user **moves** it to the registering user's
 current session (the browser profile that holds the endpoint is the one signed in now).
+(P4-011B spec batch, D-266(c), C-831) Precisely: sign-out, "sign out other sessions", an
+administrator's revocation and deactivation **delete** the session's subscriptions in the revoking
+transaction; idle or absolute expiry stops delivery at once (the send-time liveness check is the
+authentication check) and the daily session pruning deletes the rows. When the same person comes
+back in that browser with a new session, the dashboard **re-binds** the device silently
+(`rebind: true`), which succeeds only for an endpoint already registered **to the caller**; a
+different person never inherits a device without the deliberate gesture (a move needs a gesture
+registration).
 
 **Who receives what, and when.** On `aurora_approval created` (gateway hold, parked approval or
 action approval) the API picks the users with an unpaused, unexpired subscription whose session is
@@ -720,7 +755,8 @@ action buttons: deciding needs the dashboard and its session.
 
 **VAPID keys** (RFC 8292; ES256 on P-256). Instance-wide. Normally **generated** by the first API
 replica that finds none (under an advisory lock) and stored in `webpush_vapid_keys` with the private
-key **sealed** through the SecretVault (purpose `webpush.vapid`, `08 §1`) and the public key in
+key **sealed** through the SecretVault (purpose `webpush.vapid`, `08 §1`; D-266(b): always the
+`inline` store, as are the subscriptions' sealed material) and the public key in
 clear; only the API ever opens it (never the gateway, a runner, a sandbox or a response; the public
 key is served to signed-in users). An operator who prefers to manage the key sets
 `push.vapid.private_key_env` (the name of an environment variable holding it); Aurora then
@@ -728,7 +764,8 @@ generates and rotates nothing. **Rotation** (`aurora-api push rotate-vapid`) mak
 `active` and the old one `retired`; a browser subscription is tied to the application-server key it
 was created with, so each subscription keeps its `vapid_key_id` and is signed for with *its* key
 while the dashboard silently re-subscribes on the user's next visit (the permission persists) under
-the new key and deletes the old subscription; a retired key and its secret are destroyed when no
+the new key and deletes the old subscription (D-266(d): the browser reports the public key it
+subscribed with, so detection is the same for generated and operator-managed keys); a retired key and its secret are destroyed when no
 subscription references it or after `PUSH_VAPID_RETIRE` (30 days). With an operator-managed key
 rotation is a redeploy that invalidates every subscription (users re-subscribe). The VAPID subject
 (`push.vapid.subject`, default the external URL) is the contact the push service may use.
@@ -739,8 +776,11 @@ only, resolution pinned for the connection, TLS to system roots plus `tls.extra_
 redirects**, `push.timeout_secs` 10 s), and only to an endpoint whose host matches
 `push.allowed_endpoint_hosts` (validated at registration *and* before every send, `15`). Headers:
 `TTL` = the approval's remaining time capped at `PUSH_TTL_MAX` (24 h) and at least 60 s, `Urgency:
-high` for a new approval, `Topic` (≤ 32 URL-safe characters derived from the approval id) so a later
-push for the same approval replaces the earlier. Outcomes: 201 → success; 404/410 → the subscription
+high` for a new approval, `Topic` (32 URL-safe characters, D-266(e): derived from the
+subscription id and the approval id, so the push service learns neither the approval id nor which
+pushes to a person's devices concern the same approval) so a later push for the same approval
+replaces the earlier. In tests only, `push.dev_endpoint_overrides` sends to a loopback mock push
+service (D-267(b), C-837, C-839); it is refused outside a loopback development instance. Outcomes: 201 → success; 404/410 → the subscription
 is deleted; 413/400/403 → failure (a 403 after rotation means a key mismatch); 429/5xx → at most 3
 tries within 60 s. Five consecutive failures set `disabled_at` and the dashboard shows "not
 receiving — re-enable". A push failure never affects an approval, a decision or the e-mail. Metrics

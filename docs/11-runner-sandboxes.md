@@ -344,7 +344,11 @@ the agent was refused, its turn ends, and the pending decision lives in Postgres
 sandbox idles out and parks like any other; the resume follow-up (`10 §Turns`) is ordinary
 due work (start arm → new boot, harness session restored from `harness_session_ref`, home volume
 intact, processes of the old boot `parked`/`lost`). A *held* approval still keeps the sandbox awake
-through its active turn, as before.
+through its active turn, as before. (P4-011B spec batch, D-264(a)) The resume turn gets no
+priority, reservation or extra wake budget: it waits for capacity and fails exactly like any queued
+turn (`10 §Failure semantics`). If it fails to start, the grant stays `ready` until its window ends
+and a later turn of the conversation can still use it; the window is not extended. A frozen agent
+gets no resume turn at all (`07 §Park and resume`).
 
 `last_engaged_at` is stamped by person/turn engagement (a turn created by a
 person, schedule, webhook or watch); it is distinct from `last_active_at`

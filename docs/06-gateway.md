@@ -707,7 +707,10 @@ Decisions are written by the API (`07 §Approvals`); first decision wins.
 ### Parking and grants (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, SEC-74)
 
 With `approvals.park.enabled` (default off) step 8 gains two branches **before** step 1 of the
-list above; with it off the hold is exactly as written.
+list above; with it off the hold is exactly as written. (P4-011B spec batch, D-264(b)) The switch
+is a live instance setting and governs only the **Park** branch: the **Grant lookup** runs on every
+`needs_approval` verdict whatever it says (one indexed read on this slow path; no rows → nothing to
+do), so grants approved before the switch was turned off stay usable.
 
 - **Grant lookup.** When the verdict is `needs_approval` (one database read, only on this slow
   path), the gateway looks for an open approval of the same agent and conversation with
@@ -721,7 +724,8 @@ list above; with it off the hold is exactly as written.
 - **Park.** If the approval is parkable (`07`: parking enabled, effective timeout above
   `approvals.park.threshold_secs`, hosted context credential with conversation and turn, body
   complete within `approvals.park.max_body_bytes` and `PARK_BODY_READ_TIMEOUT`, verdict independent
-  of the speaker, agent under its parked-approval limits), the gateway reads and hashes the body
+  of the speaker, agent under its parked-approval limits, and — D-264(c) — not a request to a
+  governed LLM endpoint of step 6a), the gateway reads and hashes the body (C-821's canonical form)
   (bounded), inserts the `approvals` row with `parked = true`, the salt and fingerprint, **no
   holder is waiting** (`gateway_instance_id` is set for the NOT NULL but ignored by the holder
   sweeps), `NOTIFY aurora_approval created`, and answers **at once** 403 `approval_parked`
@@ -734,6 +738,10 @@ list above; with it off the hold is exactly as written.
   are `pending`, `07`). A store failure while inserting is 503 `approval_store_unavailable` as for
   a hold (fail closed); during a database outage (`§Operation during a Postgres outage`) nothing
   is parked or consumed.
+- **Request log** (D-265(a), C-827): a parked refusal and its identical repeats are logged with
+  decision `approval_parked`; a consumed grant `approved` with `resumed = true`; the deny-cooldown
+  answer `approval_denied`; the caps `rate_limited` with `error_code` `approval_limit_reached`.
+  Every hold, park and consumption fills `request_log.approval_id`.
 
 ## Guidance responses (agent-facing vocabulary)
 
@@ -765,9 +773,9 @@ dashboard URL to fix the problem when one exists.
 | `llm_path_not_permitted` | 403 | (phase 5 (D-138, moved from phase 4), P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
 | `llm_request_too_large` | 413 | (phase 5 (D-138, moved from phase 4), P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
 | `rate_limited` | 429 | rate-limit modifier | `limit`, `per` |
-| `manual_approval_denied` / `manual_approval_expired` | 403 | holds; (phase 5 (D-138, moved from phase 4), RFE-011b) also an identical retry within the deny cooldown of a denied parked approval | `approval_id` |
+| `manual_approval_denied` / `manual_approval_expired` | 403 | holds; (phase 5 (D-138, moved from phase 4), RFE-011b) also an identical retry within the deny cooldown of a denied parked approval | `approval_id`; for the cooldown also `cooldown_until` (C-820) |
 | `approval_parked` | 403 | (phase 5 (D-138, moved from phase 4), RFE-011b) the request needs an approval whose deadline is long: it was **not sent**, the agent should end its turn and will be messaged; carries `x-should-retry: false` | `approval_id`, `expires_at`, `resume_window_secs`, `manage_url` |
-| `approval_limit_reached` | 403 | (phase 5 (D-138, moved from phase 4), RFE-011b) the agent has too many parked approvals pending or created too many this hour (`x-should-retry: false`) | `limit`, `per` |
+| `approval_limit_reached` | 403 | (phase 5 (D-138, moved from phase 4), RFE-011b) the agent has too many parked approvals pending or created too many this hour (`x-should-retry: false`) | `limit`, `per` (`pending` \| `hour`, C-820) |
 | `gateway_restarting` | 503 | shutdown during hold | — |
 | `approval_store_unavailable` | 503 | cannot persist hold | — |
 | `gateway_degraded` | 503 | (phase 3, RFE-014) database unreachable and the identity, host or credential value is not in cache (fail closed for new state); not for an invalid token | `reason` (`database_unavailable` \| `credential_store_unavailable`), `retry-after: 5` |

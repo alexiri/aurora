@@ -175,7 +175,7 @@ starts even when the stored settings are invalid. On Kubernetes:
 | `email` | Email (SET-4) | `email.smtp_url`, `email.from`, `email.smtp_username`, `email.smtp_password` (secret) | — | API mailer rebuilt on reload |
 | `secrets` | Secret stores (FIX-124) | `secrets.default_store`, `secrets.stores` (Vault store definitions and `reference_scopes`) | keyed by `id`: `stores` | API and gateway rebuild their store registry (FIX-124) |
 | `agents` | Agents & sandboxes (SET-5) | `agents.default_name`, `agents.default_brief`, `hosted.enabled`, `hosted.default_harness`, `hosted.enabled_harnesses`, `hosted.default_timezone`, `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs`, `hosted.sandbox_ready_timeout_secs` | whole: `enabled_harnesses` | API only, read at use: defaults apply to workspaces and agents created afterwards, deadlines to turns and starts begun afterwards. `enabled_harnesses` must be among the harnesses registered runners report (422 `harness_not_available`). The page also shows each runner's sandbox sizes and `max_sandboxes` read-only (D-235(a)) |
-| `approvals` | Approvals (SET-5) | `approvals.timeout_secs`, `approvals.max_timeout_secs`, `approvals.email_notifications`; `approvals.park.*` when P4-011B lands | — | API and gateway, read per hold |
+| `approvals` | Approvals (SET-5) | `approvals.timeout_secs`, `approvals.max_timeout_secs`, `approvals.email_notifications`; (P4-011B, D-265(c), C-829; registered by whichever of SET-5 and P4-011B-2 lands second) `approvals.park.enabled`, `.threshold_secs`, `.max_timeout_secs`, `.resume_window_secs`, `.deny_cooldown_secs`, `.max_body_bytes`, `.max_pending_per_agent` | — | API and gateway, read per hold, park, grant lookup and decision. Cross-key rule `approvals.park.threshold_secs ≤ approvals.max_timeout_secs ≤ approvals.park.max_timeout_secs` (422 `settings_invalid`, codes `park_threshold_above_hold_max` / `park_max_below_hold_max`). The parking switch governs only new parked approvals (D-264(b)); turning it on and raising its maxima, window or caps are loosenings, lowering the threshold or the cooldown too |
 | `retention` | Retention & storage (SET-5) | `retention.request_log_days`, `retention.conversation_days_max`, `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max`, `attachments.days_max` | — | API jobs, read per sweep; a lower ceiling clamps organizations' effective values (tighten-only, `10`) |
 | `skills` | Skills (SET-5) | `skills.library.enabled`, `skills.library.refresh_interval_secs`, `skills.library.bytes_per_agent` | — | API, read per refresh |
 | `scim` | Directory sync (SET-5) | `scim.enabled`, `scim.allowed_email_domains`, `scim.rate_per_minute`, `scim.token_max_days` | whole: `allowed_email_domains` | API, read per request; `scim.enabled` defaults to `scim.available` and cannot be turned on without it |
@@ -193,7 +193,9 @@ roots (`§Required secrets`), `database.*`, `server.*`, `auth.instance_admins`, 
 every development or test switch: `auth.dev_idp.*`, `hosted.allow_fake_harness`,
 `gateway.insecure_loopback_injection`, `plugins.allow_unsigned`, `runner.dev_*`,
 `connector_host.test_types`, `ratelimit.api.enabled`, `email.log_links`, (phase 5, P4-LLM,
-D-260(e)) `llm.dev_upstream_overrides` (SEC-89).
+D-260(e)) `llm.dev_upstream_overrides`, (phase 5, P4-011B, D-267(b)) `push.dev_endpoint_overrides`
+(SEC-89). (P4-011B, D-266(a)) `push.*` stays here as D-237(b) decided: its switch renders an egress
+NetworkPolicy and its key is a secret root.
 
 ### Configuration reference (keys and defaults)
 
@@ -334,7 +336,7 @@ D-260(e)) `llm.dev_upstream_overrides` (SEC-89).
 | `scim.allowed_email_domains` | `[]` | api | (phase 4, P4-GRP-2) optional instance allow-list of the e-mail domains an org may provision (exact, case-insensitive); empty = any domain the org owner lists. Entries must be domains (no `@`, wildcard or single label), else startup refuses naming the key |
 | `scim.rate_per_minute` | 600 | api | (phase 4, P4-GRP-2) `SCIM_RATE` per token (burst is a fifth of it), 30–6000 |
 | `scim.token_max_days` | 730 | api | (phase 4, P4-GRP-2) longest lifetime of an `aud_` token, 1–730 (`SCIM_TOKEN_MAX_DAYS`, one ceiling since FIX-116); the default offered in the dashboard is 365 (never above this) |
-| `approvals.park.enabled` | `false` | gateway, api | (phase 5 (D-138, moved from phase 4), RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. The gateway and the API must agree (both read it from the shared configuration) |
+| `approvals.park.enabled` | `false` | gateway, api | (phase 5 (D-138, moved from phase 4), RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. (P4-011B, D-265(c)) Every `approvals.park.*` key is a movable instance setting (section `approvals`; setting it here locks it); the gateway and the API read the same effective value live. The switch governs only new parked approvals; grants and pending parked approvals created earlier are served whatever it says (D-264(b)) |
 | `approvals.park.threshold_secs` | 900 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) effective timeouts above this park; 60–`approvals.park.max_timeout_secs` |
 | `approvals.park.max_timeout_secs` | 86400 | gateway, api | (phase 5 (D-138, moved from phase 4), RFE-011b) longest deadline of a parked approval, 3600–604800 (also the upper bound of a rule's `approval_timeout_secs` when parking is enabled); requests that cannot park stay clamped to `approvals.max_timeout_secs` |
 | `approvals.park.resume_window_secs` | 1800 | api | (phase 5 (D-138, moved from phase 4), RFE-011b) how long an approved parked request can be repeated once, 60–86400 |
@@ -346,6 +348,7 @@ D-260(e)) `llm.dev_upstream_overrides` (SEC-89).
 | `push.vapid.private_key_env` | unset | api | (phase 5 (D-138, moved from phase 4), RFE-011b) name of an environment variable holding an operator-managed ES256 (P-256) VAPID private key (PKCS#8 PEM or raw base64url); unset = Aurora generates, seals and rotates its own key. Never the value |
 | `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 5 (D-138, moved from phase 4), RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
 | `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 5 (D-138, moved from phase 4), RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
+| `push.dev_endpoint_overrides` | unset | api | (phase 5, P4-011B, D-267(b), C-837) **tests and development only**: `{ "<allow-listed push host>": "<loopback http URL>" }` sends pushes for that host to the test kit's mock push service (the allow-list check and the VAPID `aud` still use the real origin). Refused at startup unless every target is a loopback URL and `server.external_url` is loopback; never rendered by the chart; not an instance setting (SEC-89) |
 | `blobs.backend` | `postgres` | api | (phase 5 (D-138, moved from phase 4), P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
 | `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 5 (D-138, moved from phase 4), P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
 | `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 5 (D-138, moved from phase 4), P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
@@ -1013,7 +1016,12 @@ set a rule's *Approval timeout* above `approvals.park.threshold_secs` (default 1
 gateway and the API read the same `approvals.park.*` values (`resume_window_secs` is the API's,
 `threshold_secs`/`max_body_bytes`/`max_pending_per_agent`/`deny_cooldown_secs` the gateway's); a
 rolling upgrade is safe because an older gateway simply holds (no `parked` row is ever created by it)
-and ignores grants. Operators should know the trade-off: the agent is *told* "not sent, wait for a
+and ignores grants. (P4-011B spec batch, D-265(c)) The keys are **instance settings**: Admin ›
+Approvals edits them live (instance admins, re-authentication, audited, `§Instance settings`);
+setting `config.approvals.park.*` in Helm locks them. There is no chart value. Turning parking off
+later stops new parked approvals only; approved grants and pending parked approvals already created
+keep working until they end (D-264(b)). Turn it on only after every gateway runs a release with
+P4-011B (an older gateway ignores the setting and holds). Operators should know the trade-off: the agent is *told* "not sent, wait for a
 message", so agents that cannot repeat a request byte-identically (timestamps or nonces in the body)
 will need a second approval. Metrics: `aurora_gateway_approvals_parked_total`,
 `aurora_gateway_approval_grants_consumed_total{result="consumed"|"no_match"|"expired"}`,
@@ -1035,8 +1043,15 @@ user must re-enable notifications. `aurora-api push status` shows key ids, subsc
 state and host. Metrics: `aurora_push_sent_total{result}`, `aurora_push_duration_seconds`,
 `aurora_push_subscriptions{state}`; alert on sustained `result=forbidden` (VAPID mismatch after a
 rotation or a wrong operator key) and on `result=rejected_host` (a push service moved to a host not
-in `push.allowed_endpoint_hosts`). Helm values: `approvals.park.*`, `push.enabled`, `push.vapid.*`,
-`push.allowedEndpointHosts`, `push.networkPolicy.egressTo`. A subscription (and so the notification)
+in `push.allowed_endpoint_hosts`). Helm values (C-837): `push.enabled` (the single switch: it
+mirrors `config.push.enabled` and renders the api's egress rule), `push.networkPolicy.egressTo`
+(required while push is on), `push.vapid.existingSecret`/`push.vapid.key` (an operator-managed key,
+mounted as `AURORA_PUSH_VAPID_KEY`), `push.allowedEndpointHosts`; `push.vapid.subject` is a config
+key. (P4-011B spec batch, D-266(b)) The generated key and every subscription are sealed in the
+`inline` store whatever `secrets.default_store` says, so Web Push never depends on Vault being
+reachable. Testing without a push service: `push.dev_endpoint_overrides` (development only, above).
+Real delivery to a browser through a real push service is a manual release check
+(`docs/operator`), not part of CI (D-267(b)). A subscription (and so the notification)
 belongs to the browser profile and the Aurora session that created it: shared-computer users should
 sign out, which ends delivery.
 

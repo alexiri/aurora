@@ -586,7 +586,12 @@ link requests use the same pattern. (phase 5 (D-138, moved from phase 4), RFE-01
 approval)"; it settles on approval ("Approved by X — <agent> will be told"), denial, deadline
 expiry and, if the grant is never used, "approval window ended" (an edit of the settled card, no
 new post). The reminder of `07 §Park and resume` is not a card (e-mail and push only).
-Clicker authorization is unchanged (`§5.5`).
+Clicker authorization is unchanged (`§5.5`). (P4-011B spec batch, D-264, C-825) A parked
+approval abandoned by a revocation event (`07` *What revokes*) settles as "No longer needed", and
+a grant revoked after approval edits the settled card to "Revoked"; the parked sentence adds no
+request detail, so the D-192 rule below is unchanged. The resume follow-up is a doorless turn
+whose **answer** is posted as usual (§5.2 *Doorless turns*); its platform-composed text is never
+posted.
 
 **What a card shows (D-192, owner decision Q-R5-9).** A card in a **shared**
 space (a channel or group message: every member sees it, including people who

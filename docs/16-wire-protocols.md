@@ -366,14 +366,17 @@ and Aurora owns only what it sends:
 |------|------|
 | Request | `POST <endpoint>` over TLS to a host in `push.allowed_endpoint_hosts`, resolved through the guarded resolver, no redirects followed, body `Content-Encoding: aes128gcm` (RFC 8291; record size 4096; per-message ephemeral key and salt; `auth` and `p256dh` from the subscription), `Content-Length` ≤ the push service's 4 096-byte limit (Aurora's plaintext is ≤ `PUSH_PAYLOAD_MAX`, 1 KiB) |
 | Authorization | `Authorization: vapid t=<JWT>, k=<application server public key>` (RFC 8292): ES256, claims `aud` = the endpoint's origin, `exp` ≤ now + 1 h (never the 24 h maximum), `sub` = `push.vapid.subject`; the key is the one named by the subscription's `vapid_key_id` |
-| Headers | `TTL` (remaining approval time capped at `PUSH_TTL_MAX`, ≥ 60 s), `Urgency: high` for `approval.pending` and `approval.reminder`, `normal` for digest and test, `Topic` (≤ 32 URL-safe characters, derived from the approval id, so a newer push for the same approval replaces the older one) |
+| Headers | `TTL` (remaining approval time capped at `PUSH_TTL_MAX`, ≥ 60 s), `Urgency: high` for `approval.pending` and `approval.reminder`, `normal` for digest and test, `Topic` (32 URL-safe characters, so a newer push for the same approval replaces the older one; (P4-011B spec batch, D-266(e), C-832) the first 32 base64url characters of SHA-256(subscription id ‖ approval id), or of SHA-256(subscription id ‖ "digest") for a digest: the push service learns neither the approval id nor which pushes to one person's devices concern the same approval) |
 | Payload (plaintext JSON, `v: 1`) | `{ v, type, approval_id?, workspace_id?, expires_at?, parked?, url?, count?, agent?, workspace? }`; no other field may be added without a version bump; `agent`/`workspace` present only when the subscription has `show_details`; **never** a title, summary, rule name, host, path, method, query, body, token, credential, approve/deny link, e-mail address or user name (`07 §Web Push`) |
 | Responses | 201 success; 404/410 → delete the subscription; 400/403/413 → failure (a 403 after a rotation is a key mismatch); 429/5xx → retry with backoff, at most 3 tries in 60 s; any other status → failure; bodies of responses are logged only as a status and a truncated, sanitized reason |
 | Client side | the service worker of `14` receives the decrypted payload, shows a notification and on click opens a same-origin path; it never calls the API |
 
 Conformance: the RFC 8291 Appendix A and RFC 8292 examples are test vectors for the encryption and
 the JWT; a mock push service in the test kit verifies VAPID, decrypts with a test subscription key
-pair and asserts the payload invariants (`18 §Approval park-and-resume and Web Push`).
+pair and asserts the payload invariants (`18 §Approval park-and-resume and Web Push`). (P4-011B spec
+batch, D-267(b), C-839) The mock is reached only through the development key
+`push.dev_endpoint_overrides` (loopback targets on a loopback instance); the request it receives is
+byte-for-byte what a push service would receive, including the JWT `aud` of the real origin.
 
 ---
 

@@ -15,8 +15,8 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Webhook verification secret | `webhooks.verification.secret_ref` | `webhook.verification` |
 | Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
 | Managed connector secret settings (phase 4, P4-MCON; owner = `connectors.secret_owner`, org = nil UUID) | `connectors.secret_refs` (one per field) | `connector.settings` |
-| Web Push VAPID private key (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the key id, org = nil UUID) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
-| Web Push subscription endpoint and keys (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the subscription id, org = nil UUID) | `push_subscriptions.secret_ref` | `webpush.subscription` |
+| Web Push VAPID private key (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the key id, org = nil UUID; always the `inline` store, D-266(b)) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
+| Web Push subscription endpoint and keys (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the subscription id, org = nil UUID; always the `inline` store, D-266(b)) | `push_subscriptions.secret_ref` | `webpush.subscription` |
 | Instance setting secrets: OIDC client secrets, the SMTP password, Vault AppRole secret ids (phase 5, SET-1, D-236(g); owner = the field's own id, org = nil UUID; **always the `inline` store**, whatever `secrets.default_store` says, so sign-in, mail and reaching Vault never depend on an external store) | `instance_settings.value` (`$secret` fields, `03 §Planned changes`) | `instance_setting` |
 
 Every such column holds a **SecretRef**. Code never interprets a SecretRef
@@ -192,8 +192,11 @@ filled from a Secret (Helm `counters.redis.existingSecret`), exactly like the Va
 
 (phase 5 (D-138, moved from phase 4), RFE-011b) **Web Push material** is opened only by the API: the VAPID private key
 (ES256) to sign a push request's JWT, and a subscription's sealed `{ endpoint, p256dh, auth }` to
-encrypt and address one push. Both live under the usual store registry (managed in the default
-store; an external store works the same), are never returned by a route, never logged and never
+encrypt and address one push. Both live under the usual store registry, (P4-011B spec batch,
+D-266(b); replaces "in the default store; an external store works the same") **always in the
+`inline` store** whatever `secrets.default_store` says — a push opens one secret per device per
+approval and must neither depend on nor fan out to an external store, and the material is the
+instance's, not an organization's — are never returned by a route, never logged and never
 sent to the gateway, a runner or a sandbox; an operator-managed VAPID key (`push.vapid.private_key_env`)
 is read from the environment at startup and never stored. The endpoint URL is sealed because it is a
 capability: with the subscription's keys it lets anyone who holds it push to that browser (VAPID
