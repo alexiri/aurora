@@ -2787,15 +2787,22 @@ fn valid_preview_domain(d: &str) -> bool {
     if d.parse::<std::net::IpAddr>().is_ok() || d.starts_with('[') {
         return false;
     }
+    // RFC 1123 labels: 1..=63 of `[a-z0-9-]`, starting and ending with a letter or digit (AUDIT-004
+    // F-2: `previews.audit4` and `p.example.org` are valid names and used to be refused, which
+    // crash-looped the chart's migrate hook). The last label must hold a letter, so no all-digit
+    // name looks like an address.
+    let alnum = |c: &u8| c.is_ascii_lowercase() || c.is_ascii_digit();
     let labels: Vec<&str> = d.split('.').collect();
     labels.len() >= 2
         && labels.iter().all(|l| {
             let b = l.as_bytes();
-            (2..=63).contains(&b.len())
-                && b[0].is_ascii_lowercase()
-                && b[b.len() - 1].is_ascii_lowercase()
-                && b.iter()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+            (1..=63).contains(&b.len())
+                && alnum(&b[0])
+                && alnum(&b[b.len() - 1])
+                && b.iter().all(|c| alnum(c) || *c == b'-')
         })
+        && labels
+            .last()
+            .is_some_and(|t| t.bytes().any(|c| c.is_ascii_lowercase()))
         && !PUBLIC_SUFFIXES.contains(&d)
 }

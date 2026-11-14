@@ -2325,9 +2325,20 @@ fn previews_domain_shape() {
             &[],
         )
     };
-    // A valid registrable domain passes (two labels, lower case, sane lengths).
-    ok("preview.example.org").unwrap();
-    ok("p.example.org").unwrap();
+    // Valid DNS names pass validation (AUDIT-004 F-2: labels may start/end with a digit and be one
+    // character long; `previews.audit4` was refused and crash-looped the chart's migrate hook).
+    for good in [
+        "preview.example.org",
+        "p.example.org",
+        "previews.audit4",
+        "4u.example.org",
+        "preview.k8s-2.example.org",
+    ] {
+        ok(good)
+            .unwrap()
+            .api_config()
+            .unwrap_or_else(|e| panic!("{good}: {e}"));
+    }
     // Shape refusals: upper case, one label, too long, IP literal, bad characters, bare suffix.
     for bad in [
         "Preview.Example.Org",
@@ -2341,6 +2352,8 @@ fn previews_domain_shape() {
         "co.uk",
         "github.io",
         "pages.dev",
+        "preview.123", // all-digit last label
+        "preview.ex_ample.org",
     ] {
         let e = ok(bad).unwrap().api_config().unwrap_err();
         assert!(e.has_key("previews.domain"), "{bad}: {e}");
