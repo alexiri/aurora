@@ -892,6 +892,19 @@ again" and "Show the getting-started guide again".
   **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
 
 ### Instance administration (`/admin/*`, instance admins only)
+(phase 5, P5-ADMDEL, D-234) **Organizations** (`/admin/orgs`): a `DataTable` of every
+organization — name, slug, members, workspaces, agents, created, state badges ("Frozen",
+"No owner") — with a row **Actions** menu: Freeze / Unfreeze (as before), **Workspaces**
+and **Delete organization…**. **Workspaces** opens `/admin/orgs/<id>`: the organization's
+counts and a table of its workspaces (name, slug, "Personal" badge, agents, created), each
+with **Delete workspace…**. Both deletes use a danger `FormDialog`: it names what goes
+("Deletes the organization Acme with its 4 workspaces, 12 agents and 30 members'
+access. Conversations, credentials and settings are deleted; the audit log and usage
+records are kept. This cannot be undone."), asks for the slug typed exactly, and on 412
+`reauth_required` runs the same re-authentication step as account deletion, then
+retries once. On success the list refreshes and a status notice names what was
+deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
+No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
 Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
 hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes; phase 4, P4-S3: the active blob backend, bytes and counts per backend, and for `s3` the bucket, prefix, health ("reachable" / "unreachable since …"), encryption and versioning state — never credentials; an unreachable store shows a banner and uploads show "Attachment storage is temporarily unavailable, try again in a moment" instead of the quota text; an expired chip is unchanged), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per

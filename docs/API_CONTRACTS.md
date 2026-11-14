@@ -1201,6 +1201,13 @@ Rule: `04 §SCIM`, `16 §W15` (wire subset), `05 §SCIM management`, `03 §scim_
 
 (7) **Sampling rule**: a trace id is sampled when its bytes 9..15 (the rightmost 7 bytes, big-endian) are < `floor(sample_ratio × 2^56)`. Ratio 1.0 samples every trace. Rust and the dashboard implement it from one shared vector fixture.
 
+### Phase 5 — P5-ADMDEL (instance admins delete organizations and workspaces, D-234)
+- C-733 **Admin organization metadata and deletes.** All routes: instance admin, session (`IA`); never an org role, never an API key.
+  1. `GET /v1/admin/orgs` gains per row `ownerless: bool`, `member_count` (active members), `workspace_count`, `agent_count`, `created_at` (additive; `frozen=true` filter and pagination unchanged).
+  2. `GET /v1/admin/orgs/{org}` → that row (404 unknown).
+  3. `GET /v1/admin/orgs/{org}/workspaces?limit=&cursor=` → `Page<{ id, slug, name, personal: bool, agent_count, created_at }>` (404 unknown org).
+  4. `DELETE /v1/admin/orgs/{org}` and `DELETE /v1/admin/workspaces/{ws}`, body `{ "confirm": "<slug>" }` → 204. Errors: 400 `confirmation_mismatch` (same code as the owner routes), 412 `reauth_required` when the session's last OIDC authentication is older than `REAUTH_WINDOW_SECS` (600 s, as `DELETE /v1/me`), 404 unknown, 503 when deprovisioning cannot seal its credentials (as the owner routes; nothing deleted). Allowed on frozen organizations. Runs the owner routes' deletion services unchanged, plus removal of the deleted workspace ids from `instance_placement.shared_workspaces` in the same transaction (also added to the owner routes). Audit `admin.org.delete` / `admin.workspace.delete`: security-critical, `org_id` null, target the organization / workspace, `metadata` `{ org_id, slug, name, member_count?, workspace_count?, agent_count }`.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._

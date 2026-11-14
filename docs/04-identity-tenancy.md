@@ -160,6 +160,13 @@ interface"); stored in the database, audited):
   e-mail list, this source **is** revoked by the sync when the value disappears from
   the token, at the next sign-in.
 - Instance admin is **not** an org role: it grants no access to org data.
+  (phase 5, P5-ADMDEL, D-234) The one exception is **removal**: an instance admin may
+  delete any organization or any workspace (session only, a recent OIDC
+  re-authentication, the slug typed to confirm), and to choose what to delete sees
+  per-organization metadata — name, slug, frozen and ownerless state, member,
+  workspace and agent counts — and each workspace's name, slug, personal marker and
+  agent count (C-733). Never members' names, conversations, agents' configuration,
+  credentials or any other content.
 
 ## Authentication
 
@@ -570,6 +577,7 @@ the frozen payload.
 | Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
 | Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
 | Freeze / unfreeze an **organization** (phase 2, RFE-006) | org `owner`, or instance admin |
+| Delete any **organization** or **workspace**; list organizations with their counts and an organization's workspaces (phase 5, P5-ADMDEL, D-234, C-733) | instance admin (session, recent re-authentication for the deletes) |
 | Create, rename, delete a group; add/remove members of a `manual` group; set or clear a group's org-role mapping (phase 4, P4-GRP-1) | org `owner`/`admin` (a mapping to `admin` is as powerful as granting `admin` by role change, which admins may already do; `owner` can never be mapped) |
 | List groups with names, source and member counts; read a group's members (phase 4, P4-GRP-1) | members and the impact view: org `owner`/`admin`; names and counts only (for the binding picker): `can_own` of any workspace of the org; a member sees only the groups they belong to (`/v1/me`) |
 | Bind / unbind / change the role of a **group** on a workspace, read the workspace's group bindings and the group-derived members (phase 4, P4-GRP-1) | `can_own` of the workspace (the same authority as user bindings, including granting `owner`); the group must belong to the workspace's org |
@@ -1168,6 +1176,18 @@ record and authority).
   the org; the managed secret values of every secret, connection and OAuth client of
   the org are discarded after the commit and the gateways invalidated (`org` scope).
   Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
+- **Deletion by an instance admin** (phase 5, P5-ADMDEL, D-234): `DELETE
+  /v1/admin/orgs/{org}` and `DELETE /v1/admin/workspaces/{ws}` (C-733) run **the same
+  services** as the owner paths above (same order, deprovisioning, secret discard,
+  gateway invalidation, sandbox teardown); nothing is skipped and there is no second
+  implementation. They also work on a frozen organization (freeze stops use, not
+  removal). Both remove the deleted workspaces from `instance_placement.shared_workspaces`
+  in the same transaction (the owner paths do too from this phase); deleting the
+  placement's default organization leaves `default_org_id` null as before. Audit:
+  `admin.org.delete` / `admin.workspace.delete`, security-critical, written as
+  instance-level rows (`org_id` null, so the instance Audit page shows them by default)
+  with the target and its slug, name and the counts in `metadata`; the deleted
+  organization's own ledgers remain as for an owner delete. No e-mail is sent.
 - **Deprovision ordering and content (phase 3, RFE-024).** For agent, workspace and
   org deletion the connector `presence.deprovision` operations are **inserted in
   the same transaction as the delete, before the cascade**, and are
@@ -1232,7 +1252,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Freeze (RFE-006) | `agent.freeze\|unfreeze`, `workspace.freeze\|unfreeze`, `org.freeze\|unfreeze` |
 | Groups (phase 4, P4-GRP-1) | `group.create\|update\|delete`, `group_member.add\|remove`, `group_access.set\|remove` (emitted as written; `§Groups`) |
 | SCIM (phase 4, P4-GRP-2) | `scim_token.create\|revoke`, `scim.update`; membership and group changes made by the IdP are the ordinary `member.add\|update\|remove` and `group*` rows with `metadata.via = "scim"` (`§SCIM`) |
-| Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015) |
+| Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015); (phase 5, D-234) `admin.org.delete`, `admin.workspace.delete` |
 | Channels | `channel_integration.create\|update\|delete\|autolink_enable\|autolink_disable` (RFE-001), `user_link.create\|delete` |
 | Data erasure and reassignment | `conversation.delete`, `transcript_event.redact`, `memory.redact`, `automation.reassign` (RFE-021) |
 
