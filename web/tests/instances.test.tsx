@@ -220,7 +220,7 @@ describe("connect dialog instance picker", () => {
     stub(routes());
     wrap(<ConnectView />);
     const picker = await screen.findByLabelText("Desk instance");
-    fireEvent.change(await screen.findByLabelText("Connection method"), { target: { value: "oauth" } });
+    fireEvent.click(await screen.findByRole("radio", { name: /Sign in/ }));
     // default host: the unbound client only
     let client = await screen.findByLabelText("OAuth client");
     expect(within(client).getAllByRole("option").map((o) => o.textContent)).toEqual(["Automatic", "workspace client (d)"]);

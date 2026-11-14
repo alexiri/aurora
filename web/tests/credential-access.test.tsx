@@ -336,8 +336,8 @@ describe("Give agents access step", () => {
   });
 
   const tools = [
-    { id: "issues.read", name: "Read issues", group: "read", host: "api.github.com", methods: ["GET"], path: "/issues", wildcard: false },
-    { id: "issues.write", name: "Create issues", group: "write", host: "api.github.com", methods: ["POST"], path: "/issues", wildcard: false },
+    { id: "issues.read", name: "Read issues", group: "read", host: "api.github.com", methods: ["GET"], path: "/issues", connect_methods: [], wildcard: false },
+    { id: "issues.write", name: "Create issues", group: "write", host: "api.github.com", methods: ["POST"], path: "/issues", connect_methods: [], wildcard: false },
   ];
 
   it("asks for the allowed tools first for a custom_only app and sends a custom grant", async () => {

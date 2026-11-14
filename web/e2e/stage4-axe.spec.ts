@@ -18,7 +18,8 @@ async function serious(page: Page) {
     .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
 }
 
-const NAMED = ["ws-overview", "ws-approvals", "ws-agent", "org-workspaces", "sign-in"];
+// (FIX-123) the connect window's "How do you want to connect?" chooser is checked at 390 px too.
+const NAMED = ["ws-overview", "ws-approvals", "ws-agent", "org-workspaces", "sign-in", "ws-app-connect"];
 
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`${scheme} theme, 1280 px`, () => {

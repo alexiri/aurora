@@ -65,7 +65,7 @@ const C_JIRA = "c0000000-0000-4000-8000-000000000041";
 const C_IND = "c0000000-0000-4000-8000-000000000042";
 
 const tool = (id: string, name: string, group: "read" | "write", over: Partial<Tool> = {}): Tool => ({
-  id, name, group, host: "api.github.com", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], wildcard: false, ...over,
+  id, name, group, host: "api.github.com", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], connect_methods: [], wildcard: false, ...over,
 });
 const ghTools: Tool[] = [
   tool("get_repo", "Get a repository", "read", { path: "/repos/*/*" }),
@@ -171,6 +171,25 @@ describe("connection list (owners)", () => {
 });
 
 describe("editor", () => {
+  it("offers only the tools that apply to the connection's connect method (FIX-123, D-214)", async () => {
+    const restricted = [
+      tool("get_repo", "Get a repository", "read"),
+      tool("get_authenticated_user", "Get the connected user", "read", { connect_methods: ["token", "oauth"] }),
+      tool("list_installation_repos", "List repositories of the installation", "read", { connect_methods: ["github_app"] }),
+    ];
+    setup({ appTools: restricted });
+    routes[`GET /v1/workspaces/${WS}/connections`] = () =>
+      json(200, { items: [{ ...conn(C_GH, "github", "acme-bot"), connect_method: "github_app" }, conn(C_JIRA, "atlassian", "Jira Cloud"), conn(C_IND, "indico", "CERN Indico")] });
+    view();
+    await screen.findByRole("list", { name: "Connection grants" });
+    await openEditor("Give access to acme-bot");
+    await screen.findByRole("radiogroup", { name: "Access mode" });
+    fireEvent.click(radio("Access mode", "Custom"));
+    expect(screen.getByRole("radiogroup", { name: "Access for Get a repository" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Access for List repositories of the installation" })).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: "Access for Get the connected user" })).toBeNull();
+  });
+
   it("full → custom starts with every tool on Block, groups Read and Write; Save sends allow and ask with the timeout and refreshes the views", async () => {
     setup();
     view();

@@ -1018,7 +1018,17 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   conditions, file and JSON-file imports), the requested scopes with names and
   access levels, the connect note and setup guide; OAuth methods redirect; the
   callback page posts a message to the opener (`{type: "aurora:connected",
-  connection_id}`) and closes.
+  connection_id}`) and closes. (FIX-123, D-195(a), D-214) **One app per service:** an app with
+  several connect methods opens on **"How do you want to connect?"**, a radio group of cards (the
+  shared `ChoiceCards` primitive) showing each method's `label`, its `description` (what it is,
+  when to use it) and a **Recommended** badge on the `recommended` one, which is preselected (a
+  method without a label shows its kind: "Sign in", "Access token or keys"). A reconnect opens on
+  the method the connection was made with (`Connection.connect_method`). Choosing a method shows
+  only that method's form. The grant editors offer only the tools that apply to the connection's
+  method (`Tool.connect_methods`; a connection with no recorded method hides nothing). One
+  catalogue tile per service: GitHub and AWS list no separate GitHub App / assume-role app.
+  Tokens only, both themes, no horizontal scroll at 390 px (`ws-app-connect` in the axe and narrow
+  route suites).
 - **Approval notifications (phase 2, RFE-011a)**: `approvals/stream` drives (1) the
   sidebar/tab-title counter "(N) Aurora" and (2) an optional **browser
   notification** — Account → "Notify me in this browser when an approval needs me"

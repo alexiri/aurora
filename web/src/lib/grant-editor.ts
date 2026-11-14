@@ -24,6 +24,15 @@ export const ASK_TIMEOUT_MAX = 14400;
 
 export const groupOf = (t: Tool): Group => (t.group === "write" ? "write" : "read");
 
+/**
+ * The tools that apply to a connection made with `method` (FIX-123, D-214): a tool restricted to other connect methods
+ * is not offered (the gateway does not classify it for this connection either). A tool without `connect_methods`
+ * applies to every method, and a connection with no recorded method hides nothing.
+ */
+export function toolsForMethod(tools: Tool[], method: string | null | undefined): Tool[] {
+  return tools.filter((t) => !method || (t.connect_methods ?? []).length === 0 || (t.connect_methods ?? []).includes(method));
+}
+
 /** The tools of a group, its umbrella first (an umbrella exists only where the manifest declares and proves one). */
 export function groupTools(tools: Tool[], g: Group): Tool[] {
   const own = tools.filter((t) => groupOf(t) === g);

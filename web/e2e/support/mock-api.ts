@@ -23,10 +23,8 @@ export const agent = {
 /** Real built-in packages: id, display name (plugin.yaml `name:`). Every one ships icon.png and icon-dark.png. */
 export const PACKAGES: { id: string; name: string; description: string }[] = [
   { id: "atlassian", name: "Atlassian", description: "Jira and Confluence Cloud" },
-  { id: "aws-keys", name: "AWS (access keys)", description: "AWS APIs signed with an access key" },
-  { id: "aws-role", name: "AWS (assume role)", description: "AWS APIs through an assumed IAM role" },
-  { id: "github", name: "GitHub", description: "Repositories, issues, pull requests, files and Actions runs" },
-  { id: "github-app", name: "GitHub App", description: "GitHub through an installed GitHub App" },
+  { id: "aws-keys", name: "AWS", description: "AWS APIs through an assumed IAM role or with access keys" },
+  { id: "github", name: "GitHub", description: "Repositories, issues, pull requests, files and Actions runs (GitHub App, OAuth or token)" },
   { id: "gitlab", name: "GitLab", description: "Projects, merge requests and pipelines" },
   { id: "google-workspace", name: "Google Workspace", description: "Gmail, Calendar and Drive" },
   { id: "indico", name: "Indico", description: "Events and contributions" },
@@ -43,7 +41,7 @@ const apps = PACKAGES.map((p) => ({
   // Mirrors plugins/builtin/*/plugin.yaml `grants:` (P4-GRANTS): Indico is custom access only; the AWS packages block untooled requests.
   app_restrictions: {
     custom_only: p.id === "indico",
-    block_untooled: p.id === "indico" || p.id === "aws-keys" || p.id === "aws-role",
+    block_untooled: p.id === "indico" || p.id === "aws-keys",
   },
   // (P4-GSL) the built-in GitHub and GitLab packages declare a `library` block.
   serves_library: p.id === "github" || p.id === "gitlab",
@@ -305,11 +303,27 @@ export async function mockApi(
     if (p === "/v1/apps") return json({ items: apps });
     if (/^\/v1\/apps\/[^/]+$/.test(p)) {
       const a = PACKAGES.find((x) => x.id === p.split("/")[3]) ?? PACKAGES[3];
-      // Connect methods as in plugins/builtin/github/plugin.yaml (token form and OAuth).
+      // Connect methods as in plugins/builtin/github/plugin.yaml (FIX-123: GitHub App, token form and OAuth),
+      // with the chooser's label, description and Recommended flag.
       const connect = [
         {
-          id: "token", kind: "fields", access_levels: [], default_scopes: [], scopes: [],
+          id: "github_app", kind: "hook", access_levels: [], default_scopes: [], scopes: [], recommended: true, label: "GitHub App",
+          description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams.",
+          fields: [
+            { name: "app_id", label: "GitHub App ID or client ID", type: "text", store: "metadata", required: true, placeholder: "123456" },
+            { name: "installation_id", label: "Installation ID", type: "text", store: "metadata", required: true, placeholder: "12345678" },
+            { name: "private_key", label: "Private key (.pem file)", type: "file", store: "credentials", required: true },
+          ],
+        },
+        {
+          id: "token", kind: "fields", access_levels: [], default_scopes: [], scopes: [], recommended: false, label: "Personal access token",
+          description: "Acts as you, on everything your account can reach. The quickest way to start for personal use; a fine-grained token can be limited to chosen repositories.",
           fields: [{ name: "access_token", label: "Personal access token", type: "secret", store: "credentials", required: true, placeholder: "Fine-grained or classic personal access token", help_url: "https://github.com/settings/personal-access-tokens" }],
+        },
+        {
+          id: "oauth", kind: "oauth2", access_levels: [], default_scopes: ["read:user"], recommended: false, label: "OAuth", client_key: "github", callback: "query",
+          description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered by an administrator.",
+          scopes: [{ scope: "read:user", name: "Read your profile", access: "read" }], fields: [],
         },
       ];
       return json({ ...apps.find((x) => x.app_id === a.id), connect, credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [] });
