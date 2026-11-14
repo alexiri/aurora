@@ -138,8 +138,23 @@ A secret-link credential is a destination fixed by the person:
   - the request log row and the spans contain the host but not a canary token in the path or query.
 - [ ] **Supervisor test:** `links.json` content, `0600`, removed when the list empties. A duplicated name keeps both entries; `connection_id` distinguishes them.
 - [ ] **End-to-end on the dev stack:** an agent lists `links.json`, reads a recorded ICS through the link and expands a weekly series with an exception and a moved instance correctly in the person's time zone.
-- [ ] **Live check by the lane** with the owner's throwaway links (Outlook, Google; never committed): connect, read, unpublish/reset → `link_not_found`. Results go in the report.
+- [ ] **Live check by the lane** with the owner's test link: one Google secret iCal address, which is enough because nothing depends on the provider.
+  - The link is at `~/.config/aurora-dev/p5-ics-test-link` (`0600`, outside the repo). Never copy it into the repo, fixtures, logs or a report.
+  - Connect it, read it through the gateway, check the request log and spans for the canary (its token), and report the results.
+  - Revocation (`link_not_found` after *Reset*) is tested with a recorded 404, unless the owner resets the link themselves.
 - [ ] `cargo fmt --check`, clippy, the touched crates' tests; `pnpm -C web test` if any web file changes (none is expected).
+
+## Coordinator check of the owner's link (2026-11-14; no content recorded)
+- **The response:**
+  - `GET` → `200`, no redirect, `text/calendar; charset=utf-8`, 123 KB, 0.5 s;
+  - 327 `VEVENT`s from 2011 to 2027, one `VTIMEZONE` (`X-WR-TIMEZONE: Europe/Paris`);
+  - one recurring series (`FREQ=WEEKLY;COUNT=5` with 3 `EXDATE`s; the other two `RRULE` lines are the time zone's);
+  - Google sends `Set-Cookie` (dropped by the gateway) and `Cache-Control: no-store` with no `ETag`/`Last-Modified`, so conditional requests gain nothing with Google.
+- **The echo check is confirmed:**
+  - the token appears nowhere in the body;
+  - the calendar id (path segment 3) appears **23 times** (`ORGANIZER`/`ATTENDEE`);
+  - so the needles must be the whole URL and path-with-query, never single path segments, as C-843 says.
+- **The recipe works:** `uv run --no-project --with icalendar==7.3.0 --with recurring-ical-events==3.8.2` on Python 3.13 expands the weekly series to its 2 remaining instances (5 − 3 cancelled), and `between()` over a window works. The sandbox base is AlmaLinux 10 (`python3` 3.12): the lane confirms these pins run there, or picks the newest that do.
 
 ## Ownership and sequencing
 - **Owns:**
