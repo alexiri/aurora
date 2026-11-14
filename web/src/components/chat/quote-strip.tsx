@@ -47,7 +47,7 @@ export function QuoteStrip({ quote, onJump, side }: { quote: QuoteData; onJump: 
       aria-label={`Jump to the message from ${quote.author_label ?? "the original author"}`}
       className={cn(
         "block w-full min-w-0 rounded-control border-l-2 px-2 py-1 text-left text-xs",
-        side === "person" ? "border-bubble-ink/60 bg-black/10 text-bubble-ink" : "border-accent bg-surface text-ink-2",
+        side === "person" ? "border-bubble-ink/60 bg-bubble-ink/10 text-bubble-ink" : "border-accent bg-surface text-ink-2",
       )}>
       <span className="block font-semibold">{quote.author_label ?? "Message"}</span>
       <span className="line-clamp-3 block whitespace-pre-line break-words">{quote.excerpt ?? ""}</span>
