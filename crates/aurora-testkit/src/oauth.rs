@@ -146,7 +146,7 @@ async fn me(headers: axum::http::HeaderMap) -> Response {
     if a == "Bearer bad" {
         return StatusCode::FORBIDDEN.into_response();
     }
-    // `X-OAuth-Scopes` is what GitHub answers for a classic token (a probe can store it).
+    // `X-OAuth-Scopes` is how some providers report a token's scopes (a probe can store it).
     (
         [("x-oauth-scopes", "repo, read:org")],
         Json(json!({"email": "me@acme.io", "org": {"name": "Acme"}, "auth": a})),

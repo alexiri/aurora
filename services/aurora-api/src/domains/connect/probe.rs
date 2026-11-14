@@ -312,8 +312,8 @@ pub async fn run(
         if !app.metadata.iter().any(|m| &m.name == name) {
             continue;
         }
-        // (FIX-133) `header:<name>` reads a response header instead of a JSON pointer: GitHub
-        // reports a classic token's scopes in `X-OAuth-Scopes` (a fine-grained token has none).
+        // (FIX-133) `header:<name>` reads a response header instead of a JSON pointer: some
+        // providers report a token's scopes in `X-OAuth-Scopes`.
         let v = match ptr.strip_prefix("header:") {
             Some(h) => resp
                 .headers()

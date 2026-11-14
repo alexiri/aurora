@@ -832,7 +832,7 @@ pub async fn start(
                 });
             }
             // (FIX-133) The reserved `aurora_access` key tells the hook what the connection may
-            // do so it can narrow the token it mints (GitHub-enforced); it is set here after the
+            // do so it can narrow the token it mints (vendor-enforced); it is set here after the
             // form was validated, so a user-supplied value never reaches the guest.
             let mut form = p.raw.clone();
             form.insert(
