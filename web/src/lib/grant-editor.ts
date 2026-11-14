@@ -88,6 +88,39 @@ export function customBody(decisions: Record<string, Decision>, timeoutText: str
   return body;
 }
 
+/**
+ * What the shared grant form edits (FIX-147): Full or Custom, the per-tool decisions (kept while the mode flips, so a
+ * look at Full does not lose a custom choice) and the ask timeout as typed.
+ */
+export interface GrantValue {
+  mode: "full" | "custom";
+  decisions: Record<string, Decision>;
+  timeout: string;
+}
+
+/** The form's starting value: the grant's own, else Full, or Custom with every tool blocked for a `custom_only` app. */
+export function initialGrantValue(tools: Tool[], grant: ConnectionGrant | null | undefined, customOnly: boolean): GrantValue {
+  return {
+    mode: grant?.mode === "custom" || customOnly ? "custom" : "full",
+    decisions: initialDecisions(tools, grant),
+    timeout: grant?.ask_timeout_secs != null ? String(grant.ask_timeout_secs) : "",
+  };
+}
+
+/** The body of a grant `PUT` / bulk `POST` for a value (a `custom_only` app is always custom). */
+export function grantValueBody(value: GrantValue, customOnly: boolean): PutConnectionGrant {
+  return customOnly || value.mode === "custom" ? customBody(value.decisions, value.timeout) : { mode: "full" };
+}
+
+/** Why a value cannot be saved yet: a custom grant that allows and asks nothing (422 `empty_custom`), a bad timeout. */
+export function grantValueProblem(value: GrantValue, customOnly: boolean): "empty" | "timeout" | null {
+  if (!customOnly && value.mode === "full") return null;
+  const c = counts(value.decisions);
+  if (c.allow + c.ask === 0) return "empty";
+  if (c.ask > 0 && (timeoutProblem(value.timeout) !== undefined || parseTimeout(value.timeout) === "invalid")) return "timeout";
+  return null;
+}
+
 /** Empty = no preference (null); a whole number otherwise; anything else is "invalid". */
 export function parseTimeout(text: string): number | null | "invalid" {
   const s = text.trim();

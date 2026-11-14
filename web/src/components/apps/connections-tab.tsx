@@ -103,6 +103,7 @@ function ConnectionRow({
             scope: { kind: scope.kind, id: scope.id },
             orgId: c.org_id,
             appId: c.app_id,
+            connectMethod: c.connect_method,
             appWorkspaceId: c.workspace_id ?? (scope.kind === "workspace" ? scope.id : undefined),
           }}
           title={c.label}

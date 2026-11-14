@@ -859,6 +859,7 @@ here, add it here and document it.
 | Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
 | Checkbox | `CheckboxField` | A checkbox with its label and optional hint; use it for boolean settings instead of a bare `<input type="checkbox">`. |
 | Setting | `SettingField` | (phase 5, SET-1) One instance setting (`§Instance administration`, Settings): label, hint, the control (built from `Field`, `CheckboxField` or a list editor) and a source `Badge` — "Helm", "Dashboard" or "Default". **Locked** (source Helm): the effective value as read-only text, the note "Configured in Helm (`<helm key>`)" and no control. **Dashboard**: a ghost **Reset to default** action naming the default. Its `id` is the key, so `#<key>` links scroll to it. |
+| Permission groups | `PermissionGroups`, `GrantForm`, `ScopeGroups` (in `web/src/components/grants`) | (phase 5, FIX-147, D-233) The one way to choose permissions anywhere. `PermissionGroups` is the grouped list: rows grouped Read / Write, a group-wide `Segmented` control (no option checked and "(mixed)" for assistive technology when the rows differ) and a `Segmented` control per row. `GrantForm` is the controlled grant editor built on it (Full / Custom, Allow / Ask / Block, ask timeout, inert tools, the `custom_only` and `block_untooled` notes); `ScopeGroups` is the same list with On / Off rows for provider scopes. No other component renders an app's tools or scopes as a checkbox list (a unit test guards it); add to these, do not build a second one. |
 | Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
@@ -1058,7 +1059,7 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     app update"), and the plugin approval screen shows the "N agent grants will be converted"
     banner next to the reconnect banner. Grants: connections (full / custom with allow/ask/block per
     tool, read/write groups, wildcard umbrellas only where valid, inert-tool
-    flags), secrets, LLM keys; "effective" view with org-ceiling explanations.
+    flags; the editor is the shared `GrantForm`, also used by "Give agents access"), secrets, LLM keys; "effective" view with org-ceiling explanations.
     (phase 4, FIX-021, D-136) For hosted agents, a **Model readiness** section
     (owners) from `GET /v1/agents/{a}/model-readiness`: each granted LLM key
     with "Ready" or its reason in words and the fix as a link (`08 §Model
@@ -1251,10 +1252,15 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     created, the form is replaced by a step "Give agents access" listing the
     agents the caller can grant (workspace scope: the workspace's agents; org
     scope: grouped by the workspaces the caller owns), nothing preselected,
-    with "Give access" and "Skip". For a connection it grants full access; for
-    a `custom_only` app it first asks for the allowed tools (all others
-    blocked) and applies that custom grant to each selected agent. Agents that
-    already had access are shown as such. Errors name the agent.
+    with "Give access" and "Skip". (Phase 5, FIX-147, D-233) For a connection the step
+    shows the **same grant form as the agent's Access tab** (`GrantForm`): **Full access** is
+    preselected, **Custom** offers Allow / Ask / Block per tool, grouped Read and Write with a
+    group-wide setter ("Allow all Read" in one click) and the approval timeout; a `custom_only`
+    app starts on Custom with every tool blocked and no Full option. The chosen grant (`mode`,
+    `allow_tools`, `ask_tools`, `ask_timeout_secs`) is applied to each selected agent. Agents
+    that already had access are shown as such with an **Edit** button that opens that agent's
+    own grant editor (the bulk call never changes an existing grant, C-504). Errors name the
+    agent.
   - Every credential row has an **Access** action (owners): the agents that
     have it (`GET …/grants`), "Remove" per agent (agent-side `DELETE`) and the
     same add picker.
@@ -1521,6 +1527,9 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   only that method's form. The grant editors offer only the tools that apply to the connection's
   method (`Tool.connect_methods`; a connection with no recorded method hides nothing). One
   catalogue tile per service: GitHub and AWS list no separate GitHub App / assume-role app.
+  (Phase 5, FIX-147) **Requested scopes** are the shared `ScopeGroups` (`PermissionGroups` with
+  On / Off rows): grouped Read / Write by `scope.access`, a group-wide On / Off and a control per
+  scope, not a flat checkbox list.
   Tokens only, both themes, no horizontal scroll at 390 px (`ws-app-connect` in the axe and narrow
   route suites).
 - **Approval notifications (phase 2, RFE-011a)**: `approvals/stream` drives (1) the

@@ -2,18 +2,29 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { GrantEditor } from "@/components/agents/grant-editor";
+import { GrantForm } from "@/components/grants/grant-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
-import { useApp } from "@/lib/api/apps";
+import { appRestrictions, useApp, useConnections } from "@/lib/api/apps";
+import { useGrants } from "@/lib/api/policy";
+import {
+  grantValueBody,
+  grantValueProblem,
+  initialGrantValue,
+  toolsForMethod,
+  type GrantValue,
+} from "@/lib/grant-editor";
 import {
   failingAgentId,
   useAddCredentialGrants,
   useCredentialGrants,
   useRemoveCredentialGrant,
+  type GrantedAgent,
   type GrantTarget,
 } from "@/lib/api/credential-grants";
 import { errorMessage } from "@/lib/api/errors";
@@ -27,11 +38,13 @@ export interface GrantSubject {
   scope: SecretScope;
   /** Needed for an organization scope (the workspaces list). */
   orgId: string;
-  /** Connections only: the app, to load its tools when the grant must be custom. */
+  /** Connections only: the app, to load its tools for the grant form (FIX-147). */
   appId?: string;
   /** Connections only: workspace used to read the app's tool list. */
   appWorkspaceId?: string;
-  /** Connections only: the app allows only custom grants (`custom_only`, P4-GRANTS), so ask for tools first. */
+  /** Connections only: how the connection was made; tools restricted to other methods are not offered (FIX-123). */
+  connectMethod?: string | null;
+  /** Connections only: the app allows only custom grants (`custom_only`, P4-GRANTS), so the form starts on Custom. */
   customOnly?: boolean;
   /** Agents ticked when the picker opens (the getting-started guide preselects the workspace's own agent). */
   preselect?: string[];
@@ -46,6 +59,7 @@ function AgentChecklist({
   toggle,
   disabled,
   idp,
+  onEdit,
 }: {
   agents: AgentLite[];
   has: Set<string>;
@@ -53,6 +67,8 @@ function AgentChecklist({
   toggle: (id: string) => void;
   disabled: boolean;
   idp: string;
+  /** Connections: opens the agent's grant editor (the bulk call never changes an existing grant, C-504). */
+  onEdit?: (agentId: string) => void;
 }) {
   if (agents.length === 0) return <p className="text-sm text-muted">No agents.</p>;
   return (
@@ -74,6 +90,11 @@ function AgentChecklist({
               <span className="min-w-0 break-words font-medium text-ink">{a.name}</span>
               <span className="font-mono text-xs text-muted">@{a.handle}</span>
               {already ? <Badge tone="accent">Has access</Badge> : null}
+              {already && onEdit ? (
+                <Button type="button" size="sm" variant="outline" aria-label={`Edit access for ${a.name}`} onClick={() => onEdit(a.id)}>
+                  Edit
+                </Button>
+              ) : null}
             </label>
           </li>
         );
@@ -96,6 +117,7 @@ function WorkspaceAgents({
   toggle: (id: string) => void;
   disabled: boolean;
   idp: string;
+  onEdit?: (agentId: string) => void;
 }) {
   const agents = useAgents(wsId);
   const items = useMemo(() => agents.data?.items ?? [], [agents.data]);
@@ -129,6 +151,7 @@ function AgentPicker({
   toggle: (id: string) => void;
   disabled: boolean;
   idp: string;
+  onEdit?: (agentId: string) => void;
 }) {
   const orgScope = subject.scope.kind === "organization";
   const workspaces = useWorkspaces(orgScope ? subject.orgId : undefined);
@@ -146,46 +169,28 @@ function AgentPicker({
   );
 }
 
-/** A custom connection grant needs the allowed tools; every other tool is blocked. */
-function ToolsChoice({
-  subject,
-  chosen,
-  onChange,
-}: {
-  subject: GrantSubject;
-  chosen: Set<string>;
-  onChange: (next: Set<string>) => void;
-}) {
-  const app = useApp(subject.appId, subject.appWorkspaceId);
-  if (!subject.appId || !subject.appWorkspaceId)
-    return <Notice tone="pending" role="status">This app only allows custom access. Choose the allowed tools on each agent&apos;s Access tab.</Notice>;
-  if (app.isPending) return <Loading />;
-  if (app.isError) return <ErrorState error={app.error} onRetry={() => app.refetch()} />;
-  const tools = app.data.tools;
+/** Opens one agent's own grant editor (the same dialog as the Access tab) for an agent that already has the connection. */
+function ExistingGrantEditor({ subject, agent, onClose }: { subject: GrantSubject; agent: GrantedAgent; onClose: () => void }) {
+  const conns = useConnections(subject.scope);
+  const grants = useGrants(agent.agent_id);
+  if (conns.isPending || grants.isPending) return <Loading />;
+  if (conns.isError) return <ErrorState error={conns.error} onRetry={() => conns.refetch()} />;
+  if (grants.isError) return <ErrorState error={grants.error} onRetry={() => grants.refetch()} />;
+  const connection = conns.data.items.find((c) => c.id === subject.target.id);
+  if (!connection) return <ErrorState error={{ code: "not_found" }} />;
+  const grant = grants.data.connections.find((g) => g.connection_id === connection.id) ?? null;
   return (
-    <fieldset className="min-w-0 space-y-1" aria-describedby="ga-tools-note">
-      <legend className="mb-1 text-sm font-semibold text-ink">Allowed tools</legend>
-      <p id="ga-tools-note" className="text-xs text-muted">
-        This app only allows custom access. Every tool you do not choose is blocked for the agents you select.
-      </p>
-      {tools.map((t) => (
-        <label key={t.id} className="flex min-h-9 items-center gap-2.5 text-sm">
-          <input
-            type="checkbox"
-            className="size-4 shrink-0 accent-accent"
-            checked={chosen.has(t.id)}
-            onChange={(e) => {
-              const next = new Set(chosen);
-              if (e.target.checked) next.add(t.id);
-              else next.delete(t.id);
-              onChange(next);
-            }}
-          />
-          <span className="min-w-0 break-words">{t.name}</span>
-          <Badge className="normal-case tracking-normal">{t.group === "write" ? "Write" : "Read"}</Badge>
-        </label>
-      ))}
-    </fieldset>
+    <GrantEditor
+      agentId={agent.agent_id}
+      wsId={agent.workspace_id}
+      connection={connection}
+      grant={grant}
+      restrictions={grant}
+      open
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    />
   );
 }
 
@@ -209,10 +214,17 @@ export function GiveAccessPanel({
   const [selected, setSelected] = useState<Set<string>>(() => new Set(subject.preselect ?? []));
   const [names, setNames] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ created: number; existing: number } | null>(null);
-  const [tools, setTools] = useState<Set<string>>(new Set());
-  // `full_grant_forbidden` (422) on a `custom_only` app: ask for the tools and send a custom grant.
+  // `full_grant_forbidden` (422) on a `custom_only` app: the form switches to Custom.
   const [forcedCustom, setForcedCustom] = useState(false);
-  const customMode = subject.target.kind === "connection" && (subject.customOnly === true || forcedCustom);
+  const isConnection = subject.target.kind === "connection";
+  // Connections: the same grant form as the agent's Access tab (FIX-147), Full preselected unless the app is custom-only.
+  const app = useApp(isConnection ? subject.appId : undefined, subject.appWorkspaceId);
+  const tools = useMemo(() => toolsForMethod(app.data?.tools ?? [], subject.connectMethod), [app.data, subject.connectMethod]);
+  const restrictions = appRestrictions(app.data);
+  const customOnly = isConnection && (subject.customOnly === true || forcedCustom || restrictions.custom_only);
+  const [edited, setEdited] = useState<GrantValue | null>(null);
+  const grantValue = edited ?? initialGrantValue(tools, null, customOnly);
+  const [editing, setEditing] = useState<GrantedAgent | null>(null);
 
   const has = useMemo(() => new Set((grants.data ?? []).map((g) => g.agent_id)), [grants.data]);
   const register = useMemo(
@@ -237,13 +249,16 @@ export function GiveAccessPanel({
       ? `Could not give access to ${names[failing] ?? "an agent"}: ${errorMessage(add.error)} No agent was changed.`
       : `${errorMessage(add.error)} No agent was changed.`
     : null;
-  const needsTools = customMode && tools.size === 0;
+  // The form needs the app's tools; without them (no app to read, still loading, failed) a custom-only app cannot be
+  // chosen for, and a normal app waits rather than sending a choice nobody saw.
+  const formReady = isConnection && !!subject.appId && !!app.data;
+  const needsTools = isConnection && !!subject.appId ? !formReady || grantValueProblem(grantValue, customOnly) !== null : customOnly;
 
   function submit() {
     add.reset();
     setResult(null);
     add.mutate(
-      { agentIds: [...selected], custom: customMode ? { allow_tools: [...tools] } : undefined },
+      { agentIds: [...selected], grant: formReady ? grantValueBody(grantValue, customOnly) : undefined },
       {
         onSuccess: (r) => {
           setResult({ created: r.created.length, existing: r.existing.length });
@@ -266,8 +281,39 @@ export function GiveAccessPanel({
         </Notice>
       ) : null}
       {grants.isError ? <ErrorState error={grants.error} onRetry={() => grants.refetch()} /> : null}
-      <AgentPicker subject={subject} register={register} has={has} selected={selected} toggle={toggle} disabled={add.isPending} idp={`ga-${subject.target.id}`} />
-      {customMode ? <ToolsChoice subject={subject} chosen={tools} onChange={setTools} /> : null}
+      <AgentPicker
+        subject={subject}
+        register={register}
+        has={has}
+        selected={selected}
+        toggle={toggle}
+        disabled={add.isPending}
+        idp={`ga-${subject.target.id}`}
+        onEdit={isConnection ? (id) => setEditing((grants.data ?? []).find((g) => g.agent_id === id) ?? null) : undefined}
+      />
+      {editing ? <ExistingGrantEditor subject={subject} agent={editing} onClose={() => setEditing(null)} /> : null}
+      {isConnection && subject.appId ? (
+        app.isPending ? (
+          <Loading />
+        ) : app.isError ? (
+          <ErrorState error={app.error} onRetry={() => app.refetch()} />
+        ) : (
+          <GrantForm
+            appName={app.data.name}
+            tools={tools}
+            customOnly={customOnly}
+            blockUntooled={restrictions.block_untooled}
+            value={grantValue}
+            onChange={setEdited}
+            disabled={add.isPending}
+            idPrefix="ga"
+          />
+        )
+      ) : customOnly ? (
+        <Notice tone="pending" role="status">
+          This app only allows custom access. Choose the allowed tools on each agent&apos;s Access tab.
+        </Notice>
+      ) : null}
       {errorText ? (
         <Notice tone="danger" role="alert">
           {errorText}

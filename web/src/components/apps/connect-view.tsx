@@ -4,7 +4,6 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ChoiceCards } from "@/components/ui/choice-cards";
@@ -32,6 +31,7 @@ import {
 import { useResolve } from "@/lib/api/queries";
 
 import { GiveAccessPanel } from "@/components/credentials/give-access";
+import { ScopeGroups } from "@/components/grants/scope-groups";
 
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "./markdown";
@@ -163,6 +163,7 @@ function ConnectForm({
               orgId,
               appId: app.app_id,
               appWorkspaceId: workspaceId,
+              connectMethod: method?.id,
               customOnly: appIsCustomOnly(app),
             }}
             onDismiss={() => {
@@ -256,20 +257,9 @@ function ConnectForm({
             </Field>
           ) : null}
           {method.scopes.length > 0 ? (
-            <fieldset className="min-w-0 space-y-2">
+            <fieldset className="min-w-0 space-y-3">
               <legend className="mb-1 text-sm font-medium text-ink">Requested scopes</legend>
-              {method.scopes.map((s) => (
-                <label key={s.scope} className="flex min-h-9 items-center gap-2.5 text-sm text-ink">
-                  <input
-                    type="checkbox"
-                    className="size-4 shrink-0 accent-accent"
-                    checked={scopes.includes(s.scope)}
-                    onChange={(e) => setScopes((cur) => (e.target.checked ? [...cur, s.scope] : cur.filter((x) => x !== s.scope)))}
-                  />
-                  <span>{s.name}</span>
-                  <Badge className="normal-case tracking-normal">{s.access === "write" ? "Read and write" : "Read only"}</Badge>
-                </label>
-              ))}
+              <ScopeGroups scopes={method.scopes} selected={scopes} onChange={setScopes} disabled={busy} />
             </fieldset>
           ) : null}
           {method.kind === "oauth2" && method.client_key ? (
