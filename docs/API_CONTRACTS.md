@@ -1322,6 +1322,34 @@ Rule: `07 §Park and resume` and `§Web Push`, `06 §Parking and grants` and §G
     - Response: streamed and capped at `SECRET_LINK_RESPONSE_MAX` (20 MiB); `Set-Cookie`/`Location` dropped.
     - Errors: 404 `link_not_found`, 403 `link_destination_refused`, 502 `upstream_echoed_credential` (needles: the URL and its path-with-query, raw and percent-encoded).
     - Request log rows and spans carry the connection id and the host, never the path or query.
+- C-844 **Calendar invitations** (P5-CALINV, D-274, SEC-108).
+  - **Agent tools** (family Calendar, present only with a configured mailer and the org's `calendar_invitations.enabled`, default `true`):
+    - `calendar_invite {title, start, end, timezone?, all_day?, location?, description?, repeat?, reminder_minutes?}` → `{ id: uuid, status: "sent" }`;
+    - `calendar_invite_update {id, …}` → `{ id, status: "sent" }`;
+    - `calendar_invite_cancel {id}` → `{ id, status: "cancelled" }`;
+    - `calendar_invite_list {}` → `{ items: [{ id, title, start, end, timezone, status }] }` (≤ 50, newest first; only this agent's invitations to the current person).
+  - **Bounds:**
+    - `title` ≤ 200, `location` ≤ 200, `description` ≤ 4,000 (plain text);
+    - `start`/`end` RFC 3339 local times with an IANA `timezone` (default: the person's profile zone, else the agent's `TZ`), or dates with `all_day`;
+    - `end > start`, duration ≤ 14 days, within 5 years;
+    - `repeat {freq: daily|weekly|monthly|yearly, interval?: 1–12, by_day?: [MO…SU], count?: 1–200, until?: date}` with exactly one of `count`/`until`;
+    - `reminder_minutes` 0–10,080.
+  - **Errors:** `invalid_argument` (the field named), `no_person` (no person behind the turn), `no_verified_email`, `not_found`, `rate_limited` (`retry_after_secs`; 20 per person per agent per hour, 60 per person per day), `mail_unavailable`.
+  - **Mail:**
+    - Sent to the turn's person at their verified email only, from `email.from`.
+    - `multipart/mixed`: `text/plain` with a fixed preface, `text/calendar; method=REQUEST|CANCEL; charset=utf-8`, and `invite.ics`.
+    - `UID` = `<id>@<instance host>`; `ORGANIZER` = `email.from` with CN `"<agent> (Aurora)"`; `ATTENDEE;RSVP=FALSE`.
+  - **Storage:** table `calendar_invitations` (migration `20261201000230`): `id, org_id, workspace_id, agent_id, person_id, conversation_id, uid, sequence, status, title, starts_at, ends_at, timezone, repeat, created_at, updated_at`. No description or location is stored.
+  - **Audit:** `calendar.invitation.{sent,updated,cancelled}`, with ids only.
+- C-845 **Person-pinned servers (`own_server`)** (P5-CALDAV, D-275, SEC-109).
+  - **Manifest:** `own_server: { url_field, hosts_field, inject: [basic|bearer|header stages] }`. An app with it has no `hosts[]`, `instances`, `tenant` or `rewrite_host`. Its tools use host `"{connection}"` and may use WebDAV methods. The linter refuses `{connection}` without the section. `check-builtin.sh` exempts its read tools from the GET-only rule.
+  - **Connect** (`fields`):
+    - The URL must be `https` with a DNS host (an IP literal only under `allowed_private`).
+    - Discovery runs through the destination guard and egress policy: `/.well-known/caldav` (≤ 3 redirects) → `current-user-principal` → `calendar-home-set`.
+    - **Stored:** metadata `url` (the home) and `hosts` (exact `host:port` origins used, ≤ 4).
+    - **Refusals (422):** `caldav_not_https`, `caldav_destination_refused`, `caldav_unreachable`, `caldav_unauthorized`, `caldav_not_caldav`, `server_host_claimed` (an origin held by a static claim, a registered instance, an LLM endpoint or an Aurora address; checked before any credential is sent), `caldav_needs_oauth` (Google), `caldav_unsupported` (Exchange/Outlook). None echoes a credential.
+  - **Gateway:** the app's `inject` stages run only for a request whose origin is exactly one of the connection's `hosts`, over TLS to that port, and never on a host that is (now) claimed, registered or Aurora's. Elsewhere no credential is injected. The `ical` decoder (summaries for `PUT` bodies: SUMMARY, DTSTART/DTEND/TZID, RRULE present, LOCATION, every ATTENDEE) joins `09 §5`.
+  - **Home sync:** `render_inputs.servers: [{ name, app_id, connection_id, url }]` for the agent's granted `own_server` connections. The supervisor writes `~/.aurora/servers.json` (`0600`, removed when empty) as `[{ name, app, url }]`.
 
 ## Shared schemas
 
