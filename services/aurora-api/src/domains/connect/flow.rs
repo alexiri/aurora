@@ -27,6 +27,9 @@ pub struct Flow {
     #[serde(default)]
     pub instance_id: Option<Uuid>,
     pub access_level: Option<String>,
+    /// (FIX-133, D-240) The connection's `read` | `write` access chosen at connect time.
+    #[serde(default)]
+    pub access: Option<String>,
     pub pkce_verifier: Option<String>,
     pub reconnect: Option<Uuid>,
     pub continuation: Option<String>,

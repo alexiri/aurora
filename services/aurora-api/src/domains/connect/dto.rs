@@ -17,6 +17,14 @@ pub struct ConnectRequest {
     pub fields: BTreeMap<String, String>,
     pub oauth_client_id: Option<Uuid>,
     pub access_level: Option<String>,
+    /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+    /// (the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the
+    /// connection's current value.
+    pub access: Option<String>,
+    /// (FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token
+    /// has ("Which scopes did you give this token?"). Absent = prefilled by the method's read
+    /// probes. Each must be one of the method's scopes.
+    pub scopes: Option<Vec<String>>,
     pub reconnect_connection_id: Option<Uuid>,
     /// A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's
     /// `default_host`.

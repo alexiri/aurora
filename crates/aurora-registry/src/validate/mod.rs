@@ -20,8 +20,8 @@ use regex::Regex;
 
 use crate::Violation;
 use crate::manifest::{
-    App, Connect, FieldType, Finalize, FormField, Hook, HostRule, INSTANCE_HOST, Inject, Manifest,
-    Probe, Source, Store, TokenKind, Transform, UrlOrTemplate,
+    Access, App, Connect, FieldType, Finalize, FormField, Hook, HostRule, INSTANCE_HOST, Inject,
+    Manifest, Probe, ProbeMethod, Source, Store, TokenKind, Transform, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -737,6 +737,20 @@ fn method_rules(cx: &mut Ctx<'_>) {
                 format!("connect method id `{}` appears twice", c.id()),
             );
         }
+        // (FIX-133, D-240) `aurora_*` form keys are Aurora's own channel to the hooks
+        // (`aurora_access`): a package may not declare one, so a user can never supply it.
+        for (j, f) in c.form_fields().iter().enumerate() {
+            if f.name.starts_with("aurora_") {
+                cx.v(
+                    "field_name_reserved",
+                    &format!("{p}/fields/{j}/name"),
+                    format!(
+                        "`{}` is reserved: field names may not start with `aurora_`",
+                        f.name
+                    ),
+                );
+            }
+        }
         for (key, v, max) in [
             ("label", c.label(), METHOD_LABEL_MAX),
             ("description", c.description(), METHOD_DESCRIPTION_MAX),
@@ -777,7 +791,61 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         );
                     }
                 }
+                // (FIX-136, D-241) A tool's `scopes` are ids some connect method declares.
+                for s in &it.scopes {
+                    if !app
+                        .connect
+                        .iter()
+                        .any(|c| c.declared_scopes().iter().any(|d| &d.scope == s))
+                    {
+                        cx.v(
+                            "tool_scope_unknown",
+                            &format!("/tools/{gname}/items/{j}/scopes"),
+                            format!(
+                                "tool `{}` needs scope `{s}`, which no connect method declares",
+                                it.id
+                            ),
+                        );
+                    }
+                }
             }
+        }
+    }
+    // (FIX-136) `fields` method scope declarations and their read probes.
+    for (i, c) in app.connect.iter().enumerate() {
+        let Connect::Fields(f) = c else { continue };
+        let mut seen = BTreeSet::new();
+        for (j, s) in f.scopes.iter().enumerate() {
+            if !seen.insert(s.scope.as_str()) {
+                cx.v(
+                    "duplicate_scope",
+                    &format!("/connect/{i}/scopes/{j}"),
+                    format!("scope `{}` is declared twice", s.scope),
+                );
+            }
+        }
+        let names: Vec<&str> = f.fields.iter().map(|x| x.name.as_str()).collect();
+        for (k, pr) in &f.probe_scopes {
+            let pp = format!("/connect/{i}/probe_scopes/{k}");
+            match f.scopes.iter().find(|s| &s.scope == k) {
+                None => cx.v(
+                    "probe_scope_unknown",
+                    &pp,
+                    format!("`probe_scopes` names scope `{k}`, which the method does not declare"),
+                ),
+                // Write scopes are never probed: a probe must not change anything, and a
+                // successful read says nothing about a write scope.
+                Some(s) if s.access != Access::Read => cx.v(
+                    "probe_scope_write",
+                    &pp,
+                    format!("scope `{k}` is a write scope: write scopes are never probed"),
+                ),
+                Some(_) => {}
+            }
+            if pr.method != ProbeMethod::Get {
+                cx.v("probe_scope_method", &pp, "a scope probe must be a GET");
+            }
+            probe(cx, pr, &pp, &names, true);
         }
     }
     // Only an app that uses the per-method `token` is held to the union rule: a package written

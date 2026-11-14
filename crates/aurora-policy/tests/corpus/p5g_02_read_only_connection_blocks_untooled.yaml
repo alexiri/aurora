@@ -1,0 +1,14 @@
+description: FIX-133 read-only connection - a request that matches no catalogue tool cannot be proven a read, so it is blocked (the app has no block_untooled flag)
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: hand-allow-network, action: allow, targets: [{type: network, host: api.github.com}]}]}
+facts:
+  host: api.github.com
+  port: 443
+  path: /something/unlisted
+  method: GET
+  app_id: github
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: github, scope: workspace, read_only: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: block
+  reason: read_only_connection
+  trace_via: {workspace: read_only_blocked}

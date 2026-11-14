@@ -66,9 +66,47 @@ Indico (or Indico discards an old one), requests fail with an upstream 401 until
 |---|---|---|
 | `read:user` | Check who is connected | official |
 | `read:legacy_api` | Search and read events, timetables, rooms and bookings | official |
-| `write:legacy_api` | Book a room for today through the HTTP API | official |
+| `write:legacy_api` | Book a single room slot through the HTTP API: start and end on the same day, today or later; no pre-booking, no recurrence | official |
 | `read:everything` | Read anything you can see in Indico through the extended read tools | extended |
 | `full:everything` | **Opt-in, off by default, listed last.** Extended write: recurring bookings, cancellations, favorites, event preparation — Indico's internal endpoints, which may change between versions (extended write tools) | extended |
+
+### Common tasks
+
+| You want to | Tick |
+|---|---|
+| Find and book a free room ("a room in building 513 for 5 people at 10am tomorrow") | `read:everything` + `write:legacy_api` (add `full:everything` for pre-bookings, which rooms that need confirmation require, and for recurring bookings) |
+| Read events and timetables | `read:legacy_api` |
+
+Finding a free room needs `read:everything`: Indico's official API cannot search by capacity, building
+or free time. Booking through `write:legacy_api` needs your Indico **login** (the agent asks for it; it
+is not your email address) and cannot book a room that needs confirmation.
+
+### Which tools need which scope, and what you will see
+
+Every tool names the scopes it needs, and Aurora compares them with the scopes your connection has:
+the scopes Indico granted (OAuth), or, for a **personal API token**, the scopes you say it has ("Which
+scopes did you give this token?" when connecting: Aurora checks the read ones with one harmless read
+request each, never the write ones; you can change the list later on the connection, "as you declared").
+
+- A tool whose scopes the connection lacks is **not offered**: the grant forms list it collapsed under
+  "Not available with this connection's token", with the scope it needs, and the agent is refused with
+  `tool_scope_missing` (nothing is sent to Indico) if it tries.
+- If the connection's scopes are unknown (a token with none declared), nothing is hidden or refused; Indico
+  answers 403 as before. Declared scopes only ever *remove* tools: they never widen what a token can do.
+
+| Tool group | Needs one of |
+|---|---|
+| Who is connected | `read:user` |
+| Official API, read: events, timetables, rooms, bookings (names end *(official API)* or have no suffix) | `read:legacy_api` |
+| Official API, write: *Book a room: one slot (official API)* | `write:legacy_api` |
+| Indico web API, read: search, favorites, room search by free time, my bookings, user search (*(Indico web API)*) | `read:everything` or `full:everything` |
+| Indico web API, write: *Book a room: recurring, with all options*, cancellations, favorites, event preparation | `full:everything` |
+
+*Official API* is Indico's documented HTTP API; *Indico web API* are the internal endpoints Indico's own
+pages use, which may change between Indico versions. The near-identical names tell them apart: *Book a
+room: one slot* (official) against *Book a room: recurring, with all options* (web API); *Find a room by
+name* / *Read rooms and their bookings* (official) against *List all rooms with details* / *Search rooms
+free in a time slot* (web API).
 
 `read:everything` and `full:everything` do **not** include the two `legacy_api` scopes: tick both
 if you want both tiers. The connect form pre-ticks only `read:user` and `read:legacy_api`; Indico has
@@ -132,8 +170,8 @@ Indico administrator bypass booking rules; approve it only knowingly.
 - **Indico has no API to create events.** Agents can *prepare* an event (title, start, duration,
   type): they get a link that opens Indico's creation dialog prefilled, and you finish creating
   it in Indico.
-- Bookings through the HTTP API (`book_room`) are for the same day and direct only (no
-  pre-booking, no recurrence). Use `create_booking` (extended) for those.
+- Bookings through the HTTP API (`book_room`) start and end on the same day (today or later) and are
+  direct only (no pre-booking, no recurrence). Use `create_booking` (extended) for those.
 - The extended endpoints may change with Indico upgrades. Agents are told to report a 404 or an
   unexpected response instead of guessing.
 - Legacy API keys (`ak` and signatures) are not supported; use tokens (Indico 3.0 and later).

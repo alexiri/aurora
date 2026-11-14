@@ -148,6 +148,7 @@ async fn compute_inner(
                 scope: level,
                 custom_only: restrictions.custom_only,
                 block_untooled: restrictions.block_untooled,
+                read_only: c.access != "write",
             };
             let selected_by: Vec<_> = rules
                 .iter()
@@ -196,6 +197,11 @@ async fn compute_inner(
                         tool_tags: aurora_policy::facts::ToolTags {
                             graphql: t.graphql.is_some(),
                             git: t.git.is_some(),
+                            write: t.group == "write",
+                            // (FIX-136, D-241) The token cannot serve the tool: shown blocked.
+                            scope_missing: !t.scopes.is_empty()
+                                && !c.scopes.is_empty()
+                                && !t.scopes.iter().any(|s| c.scopes.contains(s)),
                         },
                         winning_credential: Some(cred.clone()),
                         is_llm_host: false,

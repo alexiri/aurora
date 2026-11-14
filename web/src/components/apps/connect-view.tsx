@@ -4,7 +4,6 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ChoiceCards } from "@/components/ui/choice-cards";
@@ -32,6 +31,8 @@ import {
 import { useResolve } from "@/lib/api/queries";
 
 import { GiveAccessPanel } from "@/components/credentials/give-access";
+import { ScopeGroups } from "@/components/grants/scope-groups";
+import { Segmented } from "@/components/ui/segmented";
 
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "@/components/ui/markdown";
@@ -72,11 +73,17 @@ function ConnectForm({
   const [values, setValues] = useState<FieldValues>(() => defaultValues(first?.fields ?? []));
   const [scopes, setScopes] = useState<string[]>(first?.default_scopes ?? []);
   const [access, setAccess] = useState(first?.access_levels[0]?.id ?? "");
+  // (FIX-136) A pasted token's scopes: detected by the method's read probes, or ticked by the person.
+  const [scopeMode, setScopeMode] = useState<"detect" | "choose">("detect");
+  // (FIX-133, D-240) What agents may do through the connection: only offered for an app that has write tools, not on a
+  // reconnect (which keeps the connection's own choice). Read only is the recommended default.
+  const hasWriteTools = app.tools.some((t) => t.group === "write");
+  const [connAccess, setConnAccess] = useState<"read" | "write">("read");
   const [clientId, setClientId] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ missing: string[]; connectionId: string } | null>(null);
+  const [done, setDone] = useState<{ missing: string[]; connectionId: string; scopes: string[] } | null>(null);
   const [accessDone, setAccessDone] = useState(false);
   const guide = useAppGuide(app.app_id);
   const clients = useOAuthClients({ kind: "workspace", id: workspaceId });
@@ -118,6 +125,10 @@ function ConnectForm({
         ...(clientId ? { oauth_client_id: clientId } : {}),
         ...(instanceBound && instanceId ? { instance_id: instanceId } : {}),
         ...(access ? { access_level: access } : {}),
+        ...(method.kind === "fields" && method.scopes.length > 0 && (scopeMode === "choose" || method.probe_scopes.length === 0)
+          ? { scopes }
+          : {}),
+        ...(hasWriteTools && !reconnect ? { access: connAccess } : {}),
         ...(reconnect ? { reconnect_connection_id: reconnect } : {}),
       });
       if (res.kind === "redirect") {
@@ -132,7 +143,7 @@ function ConnectForm({
         (window.opener as Window).postMessage({ type: CONNECT_MESSAGE, connection_id: res.connection.id, missing_scopes: res.missing_scopes }, window.location.origin);
       }
       // The window stays open for the "Give agents access" step (D-137); Skip or Done closes it.
-      setDone({ missing: res.missing_scopes, connectionId: res.connection.id });
+      setDone({ missing: res.missing_scopes, connectionId: res.connection.id, scopes: res.connection.scopes ?? [] });
     } catch (err) {
       setSubmitError(err);
     } finally {
@@ -163,6 +174,8 @@ function ConnectForm({
               orgId,
               appId: app.app_id,
               appWorkspaceId: workspaceId,
+              connectMethod: method?.id,
+              scopes: done.scopes,
               customOnly: appIsCustomOnly(app),
             }}
             onDismiss={() => {
@@ -255,22 +268,60 @@ function ConnectForm({
               </select>
             </Field>
           ) : null}
-          {method.scopes.length > 0 ? (
-            <fieldset className="min-w-0 space-y-2">
+          {method.scopes.length > 0 && method.kind !== "fields" ? (
+            <fieldset className="min-w-0 space-y-3">
               <legend className="mb-1 text-sm font-medium text-ink">Requested scopes</legend>
-              {method.scopes.map((s) => (
-                <label key={s.scope} className="flex min-h-9 items-center gap-2.5 text-sm text-ink">
-                  <input
-                    type="checkbox"
-                    className="size-4 shrink-0 accent-accent"
-                    checked={scopes.includes(s.scope)}
-                    onChange={(e) => setScopes((cur) => (e.target.checked ? [...cur, s.scope] : cur.filter((x) => x !== s.scope)))}
-                  />
-                  <span>{s.name}</span>
-                  <Badge className="normal-case tracking-normal">{s.access === "write" ? "Read and write" : "Read only"}</Badge>
-                </label>
-              ))}
+              <ScopeGroups scopes={method.scopes} selected={scopes} onChange={setScopes} disabled={busy} />
             </fieldset>
+          ) : null}
+          {method.scopes.length > 0 && method.kind === "fields" ? (
+            <fieldset className="min-w-0 space-y-3">
+              <legend className="mb-1 text-sm font-medium text-ink">Which scopes did you give this token?</legend>
+              <p className="text-xs text-muted">
+                A pasted token does not tell Aurora what it may do. Aurora uses this only to hide tools the token cannot serve
+                (they would fail upstream); it never gives the token more than it has. You can change it later on the connection.
+              </p>
+              {method.probe_scopes.length > 0 ? (
+                <Segmented<"detect" | "choose">
+                  label="Token scopes"
+                  value={scopeMode}
+                  onChange={setScopeMode}
+                  options={[
+                    { value: "detect", label: "Detect read scopes" },
+                    { value: "choose", label: "I will tick them" },
+                  ]}
+                />
+              ) : null}
+              {scopeMode === "choose" || method.probe_scopes.length === 0 ? (
+                <ScopeGroups scopes={method.scopes} selected={scopes} onChange={setScopes} disabled={busy} />
+              ) : (
+                <p className="text-xs text-muted">
+                  Aurora checks each read scope with a harmless read request using this token. Write scopes are never checked:
+                  tick them yourself afterwards on the connection if the token has them.
+                </p>
+              )}
+            </fieldset>
+          ) : null}
+          {hasWriteTools && !reconnect ? (
+            <ChoiceCards
+              legend="What may agents do with this connection?"
+              value={connAccess}
+              onChange={setConnAccess}
+              options={[
+                {
+                  value: "read",
+                  label: "Read only",
+                  badge: "Recommended",
+                  description:
+                    "Agents can look things up but never change anything: Aurora blocks every write operation, whatever the token or the grants allow. You can change this later on the connection.",
+                },
+                {
+                  value: "write",
+                  label: "Read and write",
+                  description: "Agents may also make changes, as far as the grants you give them allow.",
+                },
+              ]}
+            />
           ) : null}
           {method.kind === "oauth2" && method.client_key ? (
             <Field id="cm-client" label="OAuth client" hint="Leave on automatic to use the most specific enabled client.">

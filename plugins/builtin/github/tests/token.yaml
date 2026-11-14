@@ -61,3 +61,47 @@
         response: { status: 503, body: "upstream unavailable" }
     expect: { outcome: unavailable }
   expect: { app: github }
+# (FIX-133) GitHub App user authorization (`oauth_app`): the same endpoints with the GitHub App's own
+# client (client_id is the app's Client ID); expiring 8-hour user token, rotating refresh token
+# (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/
+# refreshing-user-access-tokens: POST /login/oauth/access_token, grant_type=refresh_token, the old
+# refresh token and access token stop working). Fake values.
+- name: "token (oauth_app): a stale 401 refreshes with the GitHub App client and rotates the refresh token"
+  connection:
+    method: oauth_app
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "Iv1.fixtureappclient", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.github.com/user" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://github.com/login/oauth/access_token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "Iv1.fixtureappclient" }
+        response:
+          status: 200
+          body: '{"access_token":"ghu_fixturenew","expires_in":28800,"refresh_token":"ghr_fixture2","refresh_token_expires_in":15897600,"scope":"","token_type":"bearer"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://github.com/login/oauth/access_token"
+      credentials: { access_token: "ghu_fixturenew", refresh_token: "ghr_fixture2" }
+      retried:
+        url: "https://api.github.com/user"
+        headers: { authorization: "Bearer ghu_fixturenew" }
+  expect: { app: github, tool: get_authenticated_user }
+- name: "token (oauth_app): an expired refresh token needs re-authorization"
+  connection:
+    method: oauth_app
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "Iv1.fixtureappclient", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.github.com/user" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://github.com/login/oauth/access_token", form: { grant_type: refresh_token } }
+        response:
+          status: 400
+          body: '{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}'
+    expect: { outcome: reauth_required, request_url: "https://github.com/login/oauth/access_token" }
+  expect: { app: github }

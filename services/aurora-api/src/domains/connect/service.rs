@@ -15,7 +15,9 @@ use aurora_db::DbError;
 use aurora_db::repo::app_instances::{self, InstanceRow};
 use aurora_db::repo::connections::{self as repo, ConnectionRow, NewConnection};
 use aurora_db::repo::{credentials, derived_rules, gateway};
-use aurora_registry::manifest::{BodyFormat, ClientAuth, Connect, Oauth2Connect, UrlOrTemplate};
+use aurora_registry::manifest::{
+    BodyFormat, ClientAuth, Connect, FieldsConnect, Oauth2Connect, UrlOrTemplate,
+};
 use aurora_registry::snapshot::{AppEntry, OauthClientEntry, PackageEntry, Snapshot};
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
 use chrono::{DateTime, Utc};
@@ -269,6 +271,9 @@ struct Ctx<'a> {
     /// The registered self-hosted instance being connected (D-74); `None` = `default_host` or an
     /// app without `instances`.
     instance: Option<InstanceRow>,
+    /// (FIX-133, D-240) `read` | `write` requested for the connection (validated); `None` = `write`
+    /// for a new connection, unchanged for a reconnect.
+    access: Option<String>,
 }
 
 #[derive(Default)]
@@ -292,6 +297,45 @@ enum Kind {
 }
 
 impl Ctx<'_> {
+    /// (FIX-136) The declared read scopes whose probe a pasted token passes (write scopes are never
+    /// probed; a probe that fails or errors just leaves its scope off).
+    async fn probe_declared_scopes(&self, f: &FieldsConnect, g: &Gathered) -> Vec<String> {
+        let mut out = Vec::new();
+        for s in &f.scopes {
+            let Some(p) = f.probe_scopes.get(&s.scope) else {
+                continue;
+            };
+            let r = probe::run(
+                &self.state.connect,
+                self.snap,
+                self.app,
+                p,
+                &Vars {
+                    credentials: &g.credentials,
+                    metadata: &g.metadata,
+                    tenant_host: g.tenant_host.as_deref(),
+                    fields: &g.fields,
+                    instance_host: self.instance_host(),
+                    instance_registered: self.instance.is_some(),
+                },
+            )
+            .await;
+            if r.is_ok() {
+                out.push(s.scope.clone());
+            }
+        }
+        out
+    }
+
+    /// (FIX-133, D-240) The access the connection will have: the chosen one, else a reconnect's
+    /// current one, else `write`.
+    fn effective_access(&self) -> &str {
+        self.access
+            .as_deref()
+            .or_else(|| self.reconnect.as_ref().map(|r| r.access.as_str()))
+            .unwrap_or("write")
+    }
+
     /// The host `{instance}` stands for: the registered instance's, else the app's `default_host`.
     fn instance_host(&self) -> Option<&str> {
         match &self.instance {
@@ -348,6 +392,7 @@ impl Ctx<'_> {
             client_id: client,
             instance_id: self.instance.as_ref().map(|i| i.id),
             access_level: level,
+            access: self.access.clone(),
             pkce_verifier: None,
             reconnect: self.reconnect.as_ref().map(|r| r.id),
             continuation: None,
@@ -478,6 +523,7 @@ impl Ctx<'_> {
             instance_id: self.instance.as_ref().map(|i| i.id),
             credential_keys: &keys,
             connect_method: Some(method_id),
+            access: self.access.as_deref(),
         };
         let old = match self.write(caller, &n).await {
             Ok(o) => o,
@@ -702,6 +748,11 @@ pub async fn start(
         .find(|c| c.id() == req.method_id)
         .ok_or_else(|| invalid("/method_id", "unknown connect method"))?;
     let instance = resolve_instance(state, app, &t, req.instance_id, reconnect.as_ref()).await?;
+    let access = match req.access.as_deref() {
+        None => None,
+        Some(a @ ("read" | "write")) => Some(a.to_owned()),
+        Some(_) => return Err(invalid("/access", "must be read or write")),
+    };
     let ctx = Ctx {
         state,
         snap: &snap,
@@ -711,13 +762,32 @@ pub async fn start(
         t,
         reconnect,
         instance,
+        access,
     };
     match method {
         Connect::Fields(f) => {
             let p = fields::parse(&f.fields, &req.fields)?;
-            let (row, missing) = ctx
-                .finalize(caller, method, Kind::Fields, from_fields(p))
-                .await?;
+            let mut g = from_fields(p);
+            // (FIX-136, D-241) The scopes the pasted token has: declared by the person, else
+            // prefilled by the method's read probes. Stored as the connection's `scopes`; the
+            // gateway trusts them only to refuse a tool the token cannot serve.
+            if !f.scopes.is_empty() {
+                g.granted = Some(match &req.scopes {
+                    Some(s) => {
+                        if let Some(bad) =
+                            s.iter().find(|x| !f.scopes.iter().any(|d| &d.scope == *x))
+                        {
+                            return Err(invalid(
+                                "/scopes",
+                                &format!("`{bad}` is not a scope of this connect method"),
+                            ));
+                        }
+                        s.clone()
+                    }
+                    None => ctx.probe_declared_scopes(f, &g).await,
+                });
+            }
+            let (row, missing) = ctx.finalize(caller, method, Kind::Fields, g).await?;
             Ok(connected(row, missing, &snap))
         }
         Connect::Oauth2(o) => start_oauth(&ctx, o, &req).await,
@@ -761,7 +831,15 @@ pub async fn start(
                     cookie: Some(flow::cookie(&cookie, flow::cookie_ttl())),
                 });
             }
-            let input = exchange_input(&ctx, &h.id, json!({"form": kv(&p.raw)}), &cf, None, &cx);
+            // (FIX-133) The reserved `aurora_access` key tells the hook what the connection may
+            // do so it can narrow the token it mints (vendor-enforced); it is set here after the
+            // form was validated, so a user-supplied value never reaches the guest.
+            let mut form = p.raw.clone();
+            form.insert(
+                "aurora_access".into(),
+                Value::String(ctx.effective_access().to_owned()),
+            );
+            let input = exchange_input(&ctx, &h.id, json!({"form": kv(&form)}), &cf, None, &cx);
             match state
                 .connect
                 .hooks
@@ -1033,6 +1111,7 @@ async fn run_callback(
         t,
         reconnect,
         instance,
+        access: flow.access.clone(),
     };
     let client_row = match flow.client_id {
         Some(id) => aurora_db::repo::oauth_clients::get(&state.pool, id).await?,

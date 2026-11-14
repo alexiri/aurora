@@ -170,6 +170,34 @@ metadata:                       # stored in clear, non-secret
     - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.zendesk.com" }
   probe: { … }                  # optional, names the account
 ```
+**Tool scopes (FIX-136, D-241, C-741).** `tools[].scopes: [scope ids]` (any of; absent = no
+requirement) names the scopes a tool needs; each must be declared by one of the app's connect
+methods (`oauth2` `scopes`, or a `fields` method's new `scopes`), else `tool_scope_unknown`. A
+`fields` method may declare `scopes: [{ scope, name, access }]` (the scopes a pasted token may
+carry; the connect form asks "Which scopes did you give this token?", stored as the connection's
+`scopes`, editable later) and `probe_scopes: { <scope>: { method: GET, url } }` (a read probe per
+**read** scope, prefilling the declaration with the ones the token passes; write scopes are never
+probed, `probe_scope_write`; duplicates `duplicate_scope`; unknown scope `probe_scope_unknown`;
+non-GET `probe_scope_method`). The gateway refuses a tool whose scopes the connection's **known**
+scopes lack with `tool_scope_missing` (`07 §Tool scopes`); unknown (empty) scopes refuse nothing.
+No new column: `app_connections.scopes` already holds them (`03`).
+
+**Read only (FIX-133, D-240, C-740).** Independent of any method's `access_levels`, a connection's
+`access` (`read` | `write`) is Aurora's: for an app with a `tools.read`/`tools.write` split every
+connect method's window asks Read only / Read and write, and the gateway lets only `tools.read`
+items through a `read` connection (`07 §Read-only connections`). A method can additionally make its
+**credential** read-only where the vendor allows it (the `aurora_access` hook key, §8.2); the
+package's `docs/setup.md` says per method what the vendor enforces and what Aurora enforces.
+
+`scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
+parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
+permissions come from the app's registration, is the package's `oauth_app` method, with its own
+`oauth_clients` entry `github-app` on the same endpoints as the OAuth app, and an own
+`token: oauth2_refresh` for the 8-hour expiring user token with its rotating refresh token). A
+probe `metadata` pointer written `header:<name>` stores that response header (at most 500
+characters, nothing when absent) instead of a JSON field: the personal-token probe keeps a classic
+token's `X-OAuth-Scopes` as `token_scopes`, shown on the connection.
+
 `fields` on `oauth2` exist so a **first** connect with a templated `authorize_url`/`token_url`
 can take `connection.tenant_host` from the form. The host is validated (`tenant` zone, DNS
 name only: no IP literal, userinfo, port or path) **before** the authorize redirect or any
@@ -862,6 +890,13 @@ Outputs are validated against the manifest: credential/metadata keys must be
 declared; `tenant-host` must fall in the declared zone; `continue.url` must be
 https on a declared host or an `oauth_clients` authorize host; summaries are
 clamped to `SUMMARY_LIMITS`.
+
+**Reserved key `aurora_access` (FIX-133, D-240).** A hook learns the connection's access
+(`read` | `write`, §3.4, `07`) without any WIT change: the API adds `aurora_access` to the
+`connect.exchange` form after validating it, and the gateway adds it to the `token.mint` metadata
+(overriding anything stored under that name). A hook that can narrow its credential (GitHub App
+installation tokens) does so for `read` and treats any value but `write` as `read`. Field names
+starting with `aurora_` are reserved (`field_name_reserved`), so a user cannot supply the key.
 
 ### 8.3 The hook host (`aurora-hookhost`)
 
