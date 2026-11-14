@@ -432,6 +432,7 @@ async fn world() -> W {
             token_check: Duration::from_secs(2),
             capabilities: None,
             test_control: false,
+            net: aurora_connector_mattermost::api::NetPolicy::allow_all(),
         })
         .with_publisher("e2e-mm")
         .manifest(),
