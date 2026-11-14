@@ -1,24 +1,21 @@
 # Phase 4 exit verification (AUDIT-004) — run lane (`audit-run`)
 
-**DRAFT / PARTIAL HANDOFF (worker stopped at its context budget).** Done: steps 1, 2, 3, 4, 7, 8 and the install part of step 10.
-**Remaining for the continuing worker (step 10, on the existing cluster `aurora-audit4`, release `aurora`, ns `aurora`, UI/API
-`http://localhost:4154`, admin `audit4-admin@example.test` already pre-provisioned and signed in through the dev IdP):**
-(a) the SCIM provisioning guide (`docs/operator/scim-provisioning.md`: `helm upgrade --set scim.enabled=true`, org Directory sync
-switch + token, protocol probes, rotation, metrics), (b) the port-previews operations section (`docs/15`; relay is already enabled,
-`relay.domain=previews.auditfour.example.test`) and the terminal guide (`docs/operator/terminal.md`; `terminal.enabled=true` already), (c) `helm upgrade`
-(`--set web.replicas=2`) and `helm uninstall` per `install-helm.md`, (d) then delete everything (kind cluster, images, see Leftovers) and
-finish this file (verdict, deviations, final leftovers). The values file and kind config used are `phase4-logs/step10-values.yaml` and
-`step10-kind-config.yaml`; images were built with the doc's loop (`REG=localhost/aurora-audit4 TAG=local`) and `kind load image-archive`,
-then removed from the host store (the node keeps them).
+**Run half complete** (steps 1, 2, 3, 4, 7, 8, 10). The final verdict is the coordinator's, after folding in `phase4-exit-static.md`.
+The values file and kind config used for step 10 are `phase4-logs/step10-values.yaml` and `step10-kind-config.yaml`.
 
 **Audited commit:** `1f77f68f38d39c1322ef2b2ecccbdce6c85a9ff3` (master HEAD at lane start; branch `alexiri/audit-run`).
 Static lane (`audit-static`, steps 5, 6, 9, 11) is in `phase4-exit-static.md`; the coordinator folds it in.
 
-**Provisional verdict (run lane, steps 1–4, 7, 8 + install part of 10):** every build, lint, test, web, Vault, kind and e2e command is
-green (0 test failures: 2400 nextest, 705 vitest, 538 + 5 Playwright, all e2e suites) **except `upgrade.sh`** (F-1: 35/3 from the
-phase-3 base, 32/4 from the phase-0 base — a restart-after-upgrade delay of up to 90 s that the script does not wait for; passes 38/0 with a
-100 s wait). Step 10's SCIM/previews/terminal guides and the upgrade/uninstall legs are still open. Not final until the coordinator
-folds in `phase4-exit-static.md`.
+**Provisional verdict (run half, steps 1–4, 7, 8, 10):** every build, lint, test, web, Vault, kind and e2e command is green
+(0 test failures: 2400 nextest, 705 vitest, 538 + 5 Playwright, all e2e suites) **except `upgrade.sh`** (F-1: 35/3 from the
+phase-3 base, 32/4 from the phase-0 base; a restart-after-upgrade delay of up to 90 s that the script did not wait for; **fixed on
+master afterwards**, see F-1). Step 10 (install from scratch, SCIM guide, previews and terminal notes, `helm upgrade`, `helm uninstall`)
+worked end to end on the audited commit: the SCIM management and protocol surface, token rotation and metrics behave as the guide
+says and the three vendor fixture replays pass 26/26 against the live cluster. Step 10 found **one defect that blocks a documented
+feature** (F-3: the Directory sync error log never fills, `record_scim_error` has no caller), one that blocked the install (F-2,
+**fixed on master**), and three doc/reality gaps (F-4 dashboard has no relay line, F-5 uninstall leftovers, F-6 `PUT .../scim` response).
+None is a security or data-integrity defect. Provisional run-half verdict: **pass with open findings F-2 (closed by the fix), F-3..F-6
+(fix tasks)**; F-3 is the one to fix before sign-off. Not final until the coordinator folds in `phase4-exit-static.md`.
 
 ## Environment
 
@@ -105,7 +102,7 @@ passed names, format `crate::binary$path`, parsed from nextest's libtest-json-pl
 Step 3: the `secrets migrate` round trip is the 13 `secrets_migrate` tests (inline → Vault → inline, racing migrators, CAS);
 the manual walk of `docs/operator/vault.md` §4 was not repeated this phase.
 
-Step 10 (install from scratch, `docs/operator/install-helm.md`, cluster `aurora-audit4`) — in progress:
+Step 10 (install from scratch, `docs/operator/install-helm.md`, cluster `aurora-audit4`):
 
 | # | Command | Exit | Result | Duration |
 |---|---------|------|--------|----------|
@@ -115,6 +112,39 @@ Step 10 (install from scratch, `docs/operator/install-helm.md`, cluster `aurora-
 | 10 | `helm install … --wait --timeout 8m`, attempt 1 (previews domain `previews.audit4.example.test`) | **1** | `migrate` hook CrashLoop → `--wait` timed out at 8m58s: `previews.domain: must be a lower-case DNS name of at least two labels…` — see F-2 | 8m58s |
 | 10 | same after `helm uninstall` + Postgres cleanup lines of the doc + `kubectl delete ns aurora` (failed hook Job/Secret remained), domain `previews.auditfour.example.test` | 0 | all 9 Deployments Ready, 3 hook Jobs done | 1m09s |
 | 10 | post-install checks | 0 | `/v1/instance` 200 (dev provider listed, `setup_errors: []`); `/healthz`, `/metrics`, `/internal/v1/status` 404 through the ingress (as the doc says); `/` 200; `bootstrap-admin` through `kubectl exec … /usr/local/bin/aurora-api` printed the doc's message; dev-IdP sign-in → `is_instance_admin: true`; `GET /v1/admin/runners`: runner `backend: kubernetes`, capabilities incl. `terminal` | |
+| 10 | SCIM guide, step 1: `helm upgrade aurora deploy/helm/aurora -n aurora -f step10-values.yaml --set scim.enabled=true --wait` | 0 | revision 2; every Deployment rolled (config changed), `/scim/v2/*` routed at the edge (401 SCIM error body without a token) | 30s |
+| 10 | SCIM steps 2–3 through the API (owner session; `412 reauth_required` first, then the dev IdP's `reauth=1` flow): `PUT /v1/orgs/{org}/scim` with domains, `POST …/scim/tokens` | 0 | org switch on, 4 domains, `aud_…` token shown once; token limit: 5 active ok, the 6th → 422 `scim_token_limit_reached` | |
+| 10 | Vendor fixture replay against the live instance (`services/aurora-api/tests/fixtures/scim/{entra,okta,keycloak}/provisioning.json`, a small `curl`/`jq` loop in the scratchpad, statuses compared, one token per IdP, org domains `contoso.example`, `okta.example`, `keycloak.example`) | 0 | Entra 9/9, Okta 9/9 (incl. the 409), Keycloak 8/8 | seconds |
+| 10 | Rotation: create second token, both 200, `DELETE /v1/scim/tokens/{old}` → 204, old → 401 + `WWW-Authenticate: Bearer`, new → 200; no-token → 401; an `aud_` bearer on `/v1/me` → 401 | 0 | as the guide says | |
+| 10 | Negative probes: domain outside the org's list, `roles` attribute, unsupported filter operator | 0 | 400 / 400 / 400 | |
+| 10 | Monitoring: API pod :4101 `/metrics` (port-forward), `/healthz`, `/readyz` | 0 | `aurora_scim_requests_total{outcome=ok}` 29, `unauthorized` 3, `client_error` 4; `aurora_scim_auth_failures_total` 3; both probes 200. `GET …/scim/status`: users `removed` 3, groups 3, `last_request_at` set, **`errors` empty despite 4 rejected requests (F-3)** | |
+| 10 | Previews/terminal notes: relay Ready and registered (`GET /v1/admin/relays` lists it), relay :4193 `/healthz` `/readyz` 200, org `previews_enabled` switched on through `PATCH /v1/orgs/{org}`, NetworkPolicies read back (below) | 0 | relay `aurora-relay` policy: ingress 4112 from a namespaceSelector only; egress api 4101 and runner 4108 only; runner policy admits 4105 (namespace) and 4108 (two podSelectors: relay + api); runner reports `terminal` | |
+| 10 | `helm upgrade … --set scim.enabled=true --set web.replicas=2 --wait` (the doc's value-only upgrade) | 0 | revision 3, `aurora-web` 2/2, UI 200, SCIM token still valid; no migrate Job left (hooks deleted) | 19s |
+| 10 | `helm upgrade` with `scim.enabled` unset (back to false) | 0 | revision 4; `/scim/v2/*` answers 404 with and without a token (the edge route is gone, so the 404 comes from the web app, not the API) | 30s |
+| 10 | `helm uninstall aurora -n aurora --wait` | 0 | release removed in 6s; what stays: see Leftovers (F-5) | 6s |
+| 10 | `KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name aurora-audit4` | 0 | `kind get clusters` → none; `podman ps -a --filter name=audit4` empty; no audit4 image, volume or network | |
+
+Step 10 notes (operator guides). Read literally and run as written; the points where the guides and the cluster differ:
+- **SCIM guide, accurate:** every behaviour tested matched (instance switch → edge route + `[scim]`; owner-only org switch with re-auth;
+  one-time token; 5 active; rotation order; SCIM 401 body identical for causes; `aurora_scim_*` metric names and outcomes; owner-less
+  scope). It never says how to do the dashboard steps through the API; the lane used the C-471/C-472 routes with a session cookie and
+  the dev IdP's re-auth (`/v1/auth/oidc/dev/start?reauth=1&login_hint=…`). The Entra/Okta/Keycloak console sections cannot be
+  followed without those products; the fixture replays are the evidence (as the guide says), and they pass.
+- **F-3** ("The Directory sync page shows … the last rejected requests per org"): see below.
+- **F-6**: `PUT /v1/orgs/{org}/scim` answers 200 with a body that does not reflect the stored settings (observed `enabled:false`,
+  `email_domains:[]` right after saving `enabled:true` with four domains; a following `GET` is right). C-472 does not specify the body.
+- **Previews (docs/15 §Port previews, `operator/previews.md`):** the Helm side is accurate (one switch, `relay.domain` mirrors
+  `config.previews.domain`, wildcard Ingress host `*.previews.auditfour.example.test`, NetworkPolicy table matches the rendered
+  policies, relay probes and metric port 4193). The guide's "wait for … **Admin → Overview → Previews** to show the relay replicas" has
+  no dashboard counterpart in this build: `GET /v1/admin/relays` exists (it lists the relay; a stale replica row from before the upgrade
+  stays until the prune job runs) but nothing in `web/src` calls it (F-4). Not exercised here: DNS/TLS wildcard (the cluster is plain
+  http on localhost; previews are https only), an actual preview share (covered by `kind.sh` `k6` in step 7).
+- **Terminal (`operator/terminal.md`):** `terminal.enabled=true` rendered `config.terminal.enabled` and the runner's `terminal`
+  capability and :4108 rule as described; no extra workload. A live terminal session was not opened on this cluster (the guide's
+  flows are covered by `terminal.prod.spec.ts` and the hosted e2e in steps 4 and 8); the WebSocket-edge recipe is for nginx front
+  doors and was exercised by `FRONTDOOR=1 gateway.sh` (step 8), not by this ingress-nginx.
+- **install-helm.md steps 8–9:** `helm upgrade` is value-only and green (hooks run and are removed). `helm uninstall` leaves more than the guide
+  lists (F-5). The `aurora-sandboxes` namespace is gone after uninstall (checked once, after; whether it existed during the run was not checked).
 
 ## Open findings (run lane)
 
@@ -122,6 +152,14 @@ Step 10 (install from scratch, `docs/operator/install-helm.md`, cluster `aurora-
 |---|----------|---------|----------|---------------|
 | F-1 | medium (exit-criterion command fails as run) | `UPGRADE_STRICT=1 UPGRADE_BASE=a2d921ff… bash scripts/e2e/upgrade.sh` exits 1, deterministic over 3 runs (35/3); with the phase-0 base 32/4. Everything up to the restart is green (migrations 38→67, old supervisor + new runner/api turn, data readable, TLS). After `POST /v1/agents/{id}/restart` (202) the sandbox **keeps its boot and its old container/image**. Cause (from the code): the old runner replica cannot retire (the script stops the API first: `retire failed: transport: error sending request`), `sandboxes.owner_replica_id` still points at it, `claim_stops` only claims `owner_replica_id = <this replica>`, and `take_over` waits until the old replica's `last_seen_at` is older than `REPLICA_ONLINE_THRESHOLD` (90 s). With a 100 s sleep before the restart POST the same run passes 38/0. So after an upgrade (or any runner crash) restart/park/stop of its sandboxes is deferred up to 90 s, and `upgrade.sh` assumes it is immediate (it passed that way in phase 3: AUDIT-003 36/0 on the phase-0 base) | `8-upgrade-p3*.log` summary lines in the table above; `crates/aurora-db/src/repo/sandboxes.rs` `take_over`/`claim_stops`; `crates/aurora-core/src/limits.rs:175` | Decide: either `upgrade.sh` polls (≥ 100 s deadline) for the new boot, or the runner retires its replica when the API is unreachable at shutdown / the new replica of the same runner id takes over at once; document the ≤ 90 s window in `docs/15 §Upgrades` |
 | F-2 | low | The previews domain validator (`crates/aurora-config/src/validate.rs:2756 valid_preview_domain`) requires every label to start **and end** with a lower-case letter (2–63 chars): `previews.audit4.example.test` (label `audit4` ends in a digit) and e.g. `previews2.example.org` are refused, which DNS allows. Two consequences: the message does not name the rule, and `helm lint`/`helm template` accept the value, so the failure only shows as a `migrate` hook crash-loop and an `--wait` timeout of the full 8 min (a failed install also leaves the hook Job/Secrets behind: `helm uninstall` + the doc's two `kubectl delete` lines are not enough, the namespace had to go) | `helm install` attempt 1 above; `kubectl logs job/aurora-migrate` | Allow digits in labels (RFC 1123: only the first character must be a letter/digit and the last not `-`), say the rule in the message, and have the chart `fail` on an invalid `relay.domain` at template time |
+| F-3 | medium (a documented feature that cannot work) | The Directory sync status payload `GET /v1/orgs/{org}/scim/status` has an `errors` list ("the last rejected requests per org", C-472, `scim-provisioning.md` §Operation, docs/15) that is **always empty**: it reads audit rows `action = 'scim.error'`, and `record_scim_error` (`services/aurora-api/src/domains/scim/management.rs:563`) has **no caller** anywhere in the workspace. Live: 4 rejected requests (409, 3 × 400) and 3 × 401 later, `errors: []` (also after 20 s; the 401s have no org, so only the authenticated 4xx would be logged) | step 10 table; `grep -rn record_scim_error` → only the definition | Call it from the SCIM plane's error path (authenticated 4xx/5xx, sanitized as the doc comment says) and add an integration test that a rejected request shows in `/scim/status`; or drop the claim from the docs and the page |
+| F-4 | low (doc ahead of the dashboard) | `docs/15 §Port previews` and `operator/previews.md` tell the operator to wait for "**Admin → Overview → Previews**" to show the relay replicas the API has seen. `GET /v1/admin/relays` exists, but nothing under `web/src` calls it and `GET /v1/admin/overview` has no relay field, so the dashboard has no such line | `grep -rn adminListRelays web/src` → only `schema.d.ts` | Add the Previews line to Admin → Overview (FEATURES row P4-PRV-2 says what was promised), or change the guides to `GET /v1/admin/relays` and `up{job="aurora-relay"}` |
+| F-5 | low (doc gap) | After `helm uninstall` the namespace still holds the evaluation Postgres (StatefulSet, Service, PVC `data-aurora-postgres-0`: as `install-helm.md` §Database says) **and also** the Secrets `aurora-secrets` (generated: DB passwords, relay token…) and `aurora-gateway-ca` (CA **private key**) and the ConfigMap `aurora-config` (all hook resources). The guide's "what remains" (steps 9, §Database) and the chart's `NOTES.txt` cleanup lines name only the Postgres objects, so following them leaves the CA key and the generated secrets behind (a reinstall in the same namespace reuses them, which is also what makes the old PVC usable: worth saying) | `kubectl -n aurora get …` after step 10 uninstall | Extend the two doc places and `NOTES.txt` with the three objects and say which to keep for a reinstall |
+| F-6 | low | `PUT /v1/orgs/{org}/scim` answers 200 with a settings body that does not reflect what was just stored (twice: `enabled:false`, `email_domains:[]`; `GET` right after is correct) | step 10 notes | Return the stored settings from the PUT (it is what the dashboard form would expect) and assert it in the SCIM management IT |
+
+Coordinator note under F-1: fixed on master in 73d07309 (`upgrade.sh` stops the runner first, as a Helm rollout does; `docs/15 §Upgrades` documents the ≤ 90 s window after a runner dies without retiring); verified by the coordinator: `UPGRADE_STRICT=1 UPGRADE_BASE=a2d921ff bash scripts/e2e/upgrade.sh` → 38 passed, 0 failed.
+
+Coordinator note under F-2: fixed on master in d36213d2 by the coordinator. The config validator now accepts RFC 1123 labels: 1..=63 chars, alphanumeric at both ends, last label holding a letter. Labels ending in a digit (`previews.audit4`) or one character long (`p.example.org`) were wrongly refused, which crash-looped the migrate hook. The shape test now asserts that valid domains pass validation, and it fails on the old rule. `aurora-config` 66/66, clippy clean. The audited commit is unchanged; this is recorded only. (The chart-side `fail` at template time and the message wording suggested above are not part of that fix.)
 
 ## Deviations
 
@@ -132,7 +170,7 @@ Step 10 (install from scratch, `docs/operator/install-helm.md`, cluster `aurora-
 5. **Step 4:** the eight named Playwright specs were run as part of the whole `mocked` project (538 passed) plus the `production` project (5), the `ci.yml` form; the real-stack specs `first-run`, `no-default-model` and `onboarding-journeys` passed in step 8's kind part.
 6. **Step 7:** `kind.sh --fresh` / `--release-images` as written skip the previews scenario `k6`; a third run with `AURORA_E2E_PREVIEWS_DOMAIN` covers it (dev images, not release images).
 7. **SCIM conformance client:** not exercised by this lane — no conformance client built; IdP replay suites are the evidence (static lane).
-8. **Step 10:** partial, see the head of this file.
+8. **Step 10:** done on kind (`ingress-nginx`, plain http on localhost, dev IdP). The Entra/Okta/Keycloak console procedures were not followed (no such products): the fixture replays against the live cluster stand in, as the guide itself says. No wildcard DNS/TLS, so no preview opened in a browser and no live terminal session on this cluster; SCIM dashboard page not driven (API routes used instead).
 9. **Shared podman store:** `deploy/dev/kind-dev.sh up` rebuilds `localhost/aurora-dev/aurora-*:dev` — the same image names the owner's `aurora-dev` cluster uses — from the audited commit (the owner's running cluster has its own loaded copies and was not touched).
 
 ## Fixes made
@@ -141,7 +179,8 @@ None. `scripts/e2e/upgrade.sh` was edited temporarily (a `sleep 100` before the 
 
 ## Leftovers
 
-- kind cluster `aurora-audit4` (installed release, for the continuing worker) — delete with `KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name aurora-audit4` when step 10 is done.
-- Host podman images from scripts: `localhost/aurora-dev/aurora-*:dev` (see Deviation 9), build cache layers/volumes of `kind.sh`/`kind-dev.sh`/`upgrade.sh` runs (`localhost/aurora-upg-*` images were not listed as leftovers when checked, the audit4 and `aurora-e2e` images were removed).
+- Deleted at the end of step 10: kind cluster `aurora-audit4` (with the release, its evaluation Postgres, PVC, Secrets and the loaded images, which lived in the node); `kind get clusters` → none, `podman ps -a --filter name=audit4` empty, no `audit4` image, volume or network on the host.
+- Kept on purpose, not mine alone: host podman images `localhost/aurora-dev/aurora-*:dev`, `localhost/aurora-sandbox:0.1.0`, `localhost/aurora-llm-sandbox:0.1.0` (the names the owner's dev tooling uses, rebuilt from the audited commit by `kind-dev.sh`/`hosted.sh`; see Deviation 9) and build-cache layers of the script runs. Images `localhost/aurora-e2e-*/…` belong to other lanes' runs and were not touched.
+- Scratchpad (outside the repo): replay script and the dead cluster's SCIM tokens.
 - The lane's `target/` was deleted; `/home` has 70 GB free (lowest seen 51 GB, during step 10).
 - Raw logs were kept outside the repo (scratchpad); only summaries are in `phase4-logs/`.
