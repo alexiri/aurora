@@ -215,6 +215,7 @@ pub(crate) async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
                 cols: 80,
                 rows: 24,
                 shell: Default::default(),
+                models: None,
             },
         ))
         .await;
@@ -473,6 +474,7 @@ async fn pty_open_without_capability_is_refused_disabled() {
             cols: 80,
             rows: 24,
             shell: Default::default(),
+            models: None,
         },
     ))
     .await;
@@ -499,6 +501,7 @@ async fn pty_cap_per_sandbox_and_slot_release() {
             cols: 80,
             rows: 24,
             shell: Default::default(),
+            models: None,
         },
     ))
     .await;
