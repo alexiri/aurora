@@ -14,7 +14,13 @@ export function DataTable({
   ...props
 }: { caption: string } & HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="relative max-w-full overflow-x-auto rounded-card border border-line bg-surface shadow-card">
+    // A region that scrolls must be reachable by keyboard (axe `scrollable-region-focusable`).
+    <div
+      role="region"
+      aria-label={caption}
+      tabIndex={0}
+      className="relative max-w-full overflow-x-auto rounded-card border border-line bg-surface shadow-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+    >
       <table className={cn("w-full min-w-max text-left text-sm text-ink", className)} {...props}>
         <caption className="sr-only">{caption}</caption>
         {children}
