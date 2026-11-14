@@ -41,6 +41,31 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   "too many open tabs/streams" instead of reconnecting in a loop.
 - A "new version available" banner appears when `/v1/instance.version` differs
   from the build's version.
+- (phase 5, FIX-146, D-232, C-732, SEC-88) **Error reference.** The API client keeps the
+  `x-request-id` header of every failed response on its error (`ApiError`). Error toasts and error
+  states show it as "Reference: <first 8 chars>…" with a button that copies the full id, built from
+  the existing primitives (both themes, no horizontal scroll at 390 px). Network failures with no
+  response show no reference.
+- (phase 5, FIX-146, D-232(h)) **Browser tracing**, off unless the deployment enables it:
+  - The root layout reads `AURORA_TRACING_SAMPLE_RATIO` at request time (the chart renders it only
+    when an OTLP endpoint is set, `23`) and hands it to a client provider. Absent, nothing loads and
+    nothing is sent. Present, the OpenTelemetry web SDK (`@opentelemetry/api`,
+    `@opentelemetry/sdk-trace-web`, the OTLP/HTTP JSON exporter; **no zone.js**) is loaded with a
+    dynamic import into its own lazy chunk, never in the main bundle.
+  - Spans: `navigate {route template}` per App Router navigation, ending at the first commit of the
+    new page (template rebuilt from the pathname and `useParams` as `[param]` segments, never ids);
+    `{METHOD} {schemaPath}` per API call, from an `openapi-fetch` middleware that injects
+    `traceparent` (same-origin `/v1` only; the few raw `fetch` calls for uploads and streams use the
+    same helper); `stream connect {template}` per transcript stream (re)connect; action spans
+    `action send_message`, `action approval_decide` and `action app_connect` (at least), the roots
+    that make "click → turn → gateway" one trace; `browser.error` for unhandled errors, rejections and
+    error-boundary catches with `exception.type` and `exception.stacktrace` (frames only, query
+    strings stripped, ≤ `TELEMETRY_STACKTRACE_MAX`) and, for an `ApiError`, `aurora.error_code` —
+    **never the exception message**.
+  - The browser applies the sampling rule of C-732 (7) with that ratio (one shared vector fixture with
+    Rust) and exports only sampled spans, same-origin, to `POST /v1/telemetry/traces`, so the CSP keeps
+    `connect-src 'self'`. Nothing goes to a collector directly; the API rebuilds every span before
+    exporting it.
 - Copy lint: a test forbids platform/app names in core UI copy (they must come
   from API data) and a list of discouraged phrases.
 - Accessibility: WCAG 2.1 AA target; keyboard reachable dialogs and menus.

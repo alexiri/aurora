@@ -800,6 +800,9 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | last_event_n | int not null default 0 | highest applied supervisor event number (`16 §W5` idempotency) |
 | partial unique | (conversation_id) WHERE role=`turn` AND status IN (`queued`,`dispatched`,`running`) | one active turn per conversation |
 
+(phase 5, FIX-146, D-232) `turns.trace_context` is specified under §Planned changes; it moves into
+this table with its migration `20261201000150_turn_trace_context.sql`.
+
 ### `turn_answer_buffers`
 | Column | Type | Notes |
 |---|---|---|
@@ -1513,6 +1516,16 @@ tables above in the same change (and this section shrinks).
 `organizations.settings.scim` (jsonb key, no column): `{ "enabled": bool, "email_domains": [domain], "exclusive": bool }`, default absent = SCIM off. The gateway role gets nothing on these tables. Token liveness is read on every SCIM request (indexed by `token_hash`); there is no cache.
 
 `effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
+
+#### `turns` (request tracing; phase 5, FIX-146, D-232)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| trace_context | text null CHECK (trace_context ~ `'^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'`) | the W3C `traceparent` of the span that inserted the turn (`repo/turns.rs` insert, from the current span's context; NULL when there is no valid one). Written only by the API at insert and never updated; never taken from a sandbox or supervisor (SEC-88). Read by the runner plane (work items carry it, `16 §W5`, C-732 (3)), the API's supervisor-report and channel-event handling for the turn, and the gateway with the identity of the turn's context credential, so their spans are children of the turn's context. Child turns (`parent_turn_id`, peer tasks) are inserted under the parent turn's context. Migration `20261201000150_turn_trace_context.sql` | 5 (FIX-146, D-232) |
+
+The gateway reads the turn through `gateway_credentials.turn_id` and its database role has no grant
+on `turns` today (§Gateway database role grants). How the gateway gets this value — a column-level
+`SELECT (id, trace_context)` on `turns`, or a copy kept with the context credential — is decided
+before FIX-146 Part B and recorded with the migration.
 
 #### `approvals` (park and resume; phase 5, D-138)
 | Planned column | Type | Notes | Phase |

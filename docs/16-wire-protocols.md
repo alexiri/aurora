@@ -40,6 +40,7 @@ implementation repo and checked in (CI fails on drift).
 | Time | the API's database clock is truth; timestamps from runners, supervisors and connectors are informational only. |
 | Untrusted text | sanitized at the boundary where it enters platform voice. |
 | Secrets in logs | never; URLs only in redacted form. |
+| Trace context | (phase 5, FIX-146, D-232, C-732, SEC-88) HTTP calls between Aurora services carry W3C `traceparent` (and `tracestate` when present), injected by the one outgoing-call helper; receivers adopt it parent-based only on internal listeners and the machine planes (`/v1/runner/*`, `/v1/connector-host/*`, `/v1/relay/*`). Calls to upstream apps, LLM providers, IdPs and chat platforms never carry an Aurora `traceparent`. The supervisor channel (W6) and everything a sandbox sends carry no trace context and are never adopted; work on a turn is parented by `turns.trace_context` (W5 work items below). |
 
 ---
 
@@ -74,7 +75,12 @@ runner when it registers; open vocabulary, absent = none).
 
 ### Work items
 
-All carry `{ item_id, kind, sandbox_id, boot_id }`.
+All carry `{ item_id, kind, sandbox_id, boot_id }`. (phase 5, FIX-146, D-232, C-732 (3)) Items
+that concern a turn also carry `trace_context?: string`: the W3C traceparent
+`00-<32 hex>-<16 hex>-<2 hex>` read from the turn's `turns.trace_context` (`03`), absent when the
+column is NULL. The runner records its dispatch and sandbox-start spans for that turn as children of
+it and treats an absent or malformed value as none (no error, a new root under the sampling rule).
+It is never forwarded to the supervisor or the sandbox. Additive: an older runner ignores the field.
 
 | Kind | Body |
 |------|------|
