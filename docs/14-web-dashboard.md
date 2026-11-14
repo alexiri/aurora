@@ -863,7 +863,7 @@ here, add it here and document it.
 | Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
-| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. |
+| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
 | Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
@@ -1517,6 +1517,19 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   connect methods (fields with help links, selects with warnings, `show_when`
   conditions, file and JSON-file imports), the requested scopes with names and
   access levels, the connect note and setup guide; OAuth methods redirect; the
+  (Phase 5, FIX-149, D-272, C-842 — **supersedes "popup", "redirect" and "posts to the opener"
+  above**) **Connect dialog, not a window.** Connect (Apps tab) and Reconnect (Connections tab)
+  open the connect form as a `Dialog` (`size="lg"`) on the page itself, like Details; nothing
+  of the dashboard opens in another browser window. A deep link
+  (`…/credentials?tab=apps&connect=<app>`) opens the Apps tab with the dialog open, and the old
+  `…/apps/<app>/connect` route only redirects there. An OAuth method's **Continue to sign in**
+  opens the provider's sign-in page in a separate window with no handle on the dashboard (no
+  `opener`). Meanwhile the dialog says "Waiting for you to sign in to <App>…" and offers
+  **Open the sign-in window again** and **Cancel**. The callback page reports the result over a
+  same-origin `BroadcastChannel` (C-842). The dialog then continues with missing scopes and
+  **Give agents access**, or shows the error. A sign-in window closed without a result returns
+  the dialog to the form.
+  The text below predates FIX-149: read "window" as this dialog;
   callback page posts a message to the opener (`{type: "aurora:connected",
   connection_id}`) and closes. (FIX-123, D-195(a), D-214) **One app per service:** an app with
   several connect methods opens on **"How do you want to connect?"**, a radio group of cards (the
