@@ -3000,6 +3000,18 @@ async fn my_spaces_need_a_link_and_probe_errors_do_not_echo_credentials() {
         (409, Some("link_required")),
         "{v}"
     );
+    // A linked workspace member without can_own is refused.
+    let link = format!("/v1/channel-integrations/{integ}/user-links");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &link,
+            Some(json!({"platform_user_ref": "U-2", "user_id": w.users.wsmember})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(w.call(&w.wsmember, Method::GET, &mine, None).await.0, 403);
     let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
     let body = w.create_body(&w.fake);
     for (code, want) in [
@@ -3083,6 +3095,13 @@ async fn dashboard_binding_requires_membership_and_the_bot() {
             .await
             .0,
         403
+    );
+    // Someone outside the org cannot see the agent at all.
+    assert_eq!(
+        w.call(&w.outsider, Method::POST, &url, Some(body("C1")))
+            .await
+            .0,
+        404
     );
     // Another integration id is a 404.
     let (s, v) = w

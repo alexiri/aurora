@@ -1401,7 +1401,11 @@ export interface paths {
         /** Space bindings of an agent (`can_own`). */
         get: operations["listAgentSpaceBindings"];
         put?: never;
-        post?: never;
+        /**
+         * Bind an agent to a space from the dashboard (C-713, `can_own`): only a space the caller's
+         *     linked chat account is a member of and the shared bot is already in.
+         */
+        post: operations["createAgentSpaceBinding"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1965,6 +1969,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connector-availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per connector type: is it usable, and if not, what is missing and which instance admins to
+         *     ask (C-712). No secrets or settings.
+         */
+        get: operations["getConnectorAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/connectors": {
         parameters: {
             query?: never;
@@ -2376,6 +2400,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/integrations/{id}/spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Spaces the caller is in and the bot is in (C-714). */
+        get: operations["listMyIntegrationSpaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/invitations/accept": {
         parameters: {
             query?: never;
@@ -2731,6 +2772,27 @@ export interface paths {
          *     (C-33). 409 `tenant_already_bound`, 422 `credentials_invalid`, 503 `connector_unavailable`.
          */
         post: operations["createChannelIntegration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/channel-integrations:probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe credentials before creating an integration (C-711): returns the choices a connector
+         *     offers for fields such as the Mattermost team. Nothing is stored. 422 `credentials_invalid`,
+         *     `probe_unsupported`, 503 `connector_unavailable`.
+         */
+        post: operations["probeChannelIntegration"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5410,6 +5472,19 @@ export interface components {
         ConnectorAdminList: {
             items: components["schemas"]["ConnectorAdmin"][];
         };
+        ConnectorAvailability: {
+            /** @description The connector's id when one exists. */
+            connector_id?: string | null;
+            icon_url?: string | null;
+            name: string;
+            setup_state: components["schemas"]["SetupState"];
+            type_id: string;
+        };
+        ConnectorAvailabilityList: {
+            /** @description Display names only, at most 10. */
+            instance_admins: components["schemas"]["InstanceAdminName"][];
+            items: components["schemas"]["ConnectorAvailability"][];
+        };
         ConnectorHostInfo: {
             /** Format: uuid */
             instance_id: string;
@@ -5603,6 +5678,13 @@ export interface components {
             /** @description A lower-case DNS name: no port, path, userinfo or IP literal. */
             host: string;
             label: string;
+        };
+        /** @description `POST /agents/{agent}/space-bindings` (C-713). */
+        CreateBindingRequest: {
+            /** Format: uuid */
+            integration_id: string;
+            listen?: null | components["schemas"]["Listen"];
+            space_ref: string;
         };
         CreateConnectorRequest: {
             /** @description Managed (required): the manifest digest the administrator reviewed. */
@@ -6401,6 +6483,9 @@ export interface components {
             pattern: string;
             replacement: string;
         };
+        InstanceAdminName: {
+            name: string;
+        };
         /** @description (phase 3, RFE-013) The instance level of the agent-token maximum age. */
         InstanceAgentTokens: {
             /** Format: int32 */
@@ -6881,6 +6966,17 @@ export interface components {
         };
         Models: {
             items: components["schemas"]["ModelItem"][];
+        };
+        MySpace: {
+            /** @description Always true: `spaces.list` is the bot's own view (C-714). */
+            bot_present: boolean;
+            /** @description `channel` or `private`. */
+            kind: string;
+            label: string;
+            space_ref: string;
+        };
+        MySpacesList: {
+            items: components["schemas"]["MySpace"][];
         };
         NamedRef: {
             /** Format: uuid */
@@ -8770,6 +8866,25 @@ export interface components {
         PreviewsInfo: {
             domain?: string | null;
             enabled: boolean;
+        };
+        ProbeChoice: {
+            label: string;
+            value: string;
+        };
+        /** @description `POST /orgs/{org}/channel-integrations:probe` body (C-711): the create shapes. */
+        ProbeIntegrationRequest: {
+            config?: Record<string, never>;
+            connector_id: string;
+            /** @description Write-only: used once, never stored or logged. */
+            credentials: Record<string, never>;
+        };
+        ProbeIntegrationResponse: {
+            /** @description Per setup field that declares `choices: "from_validate"`. */
+            choices: {
+                [key: string]: components["schemas"]["ProbeChoice"][];
+            };
+            tenant_label?: string | null;
+            warnings: string[];
         };
         PublishRequest: {
             /** Format: int64 */
@@ -16170,6 +16285,90 @@ export interface operations {
             };
         };
     };
+    createAgentSpaceBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBindingRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceBinding"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     agentStartFailures: {
         parameters: {
             query?: never;
@@ -18421,6 +18620,42 @@ export interface operations {
             };
         };
     };
+    getConnectorAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorAvailabilityList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listConnectors: {
         parameters: {
             query?: never;
@@ -20014,6 +20249,92 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listMyIntegrationSpaces: {
+        parameters: {
+            query?: {
+                /** @description Must be `true`. */
+                mine?: boolean | null;
+                query?: string | null;
+                /** @description 1..=50, default 25. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Integration id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MySpacesList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21808,6 +22129,90 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    probeChannelIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProbeIntegrationRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeIntegrationResponse"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

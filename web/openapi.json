@@ -37687,7 +37687,8 @@
         ],
         "properties": {
           "bot_present": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Always true: `spaces.list` is the bot's own view (C-714)."
           },
           "kind": {
             "type": "string",

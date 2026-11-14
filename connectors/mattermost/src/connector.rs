@@ -277,7 +277,7 @@ impl MattermostConnector {
             })
             .take(100)
             .collect();
-        choices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        choices.sort_by_key(|c| c.label.to_lowercase());
         // A team that was typed must still resolve; an unset one is not an error.
         if let Some(t) = team {
             let path = if crate::api::is_mm_id(&t) {
