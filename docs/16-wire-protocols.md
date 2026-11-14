@@ -221,6 +221,12 @@ Callers treat transport errors and timeouts as `credential_unavailable`
 -- <cmd>` (container config applied to a child process), `approvals watch`
 (long-poll, interactive approve/deny), `plugin …` (`09 §12`), `admin …`
 (instance-admin helpers: plugins, runners, connectors).
+(FIX-118, D-188) The CLI talks to `https://` unless the host is loopback (`login --url` and
+`AURORA_URL` refuse `http://` elsewhere); a login to a different server drops the stored agent
+tokens of the previous one; `run --forward` requires a per-run secret from the child (proxy
+basic auth, checked before any upstream connection); server-supplied strings are printed with
+control characters stripped; `logout` revokes the API key (and stored agent tokens) or says
+that it did not.
 
 ---
 

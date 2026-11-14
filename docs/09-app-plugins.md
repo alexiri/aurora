@@ -420,7 +420,15 @@ Sources: `path` (`segment` index, 1-based over `/`-split path), `query`
 `proxy-*`, `x-api-key`, or any header injected by a mechanism), `body`
 (`steps`). Steps are core **decoders**: `json` (pointer), `form` (field name),
 `graphql` (`operation_name` | `field_names`), `base64url`, `base64`,
-`mime_header` (name), `mime_text` (first text/plain part, clamped). Link
+`mime_header` (name; every header of that name, joined), `mime_text` (first text/plain part,
+clamped). (FIX-118, D-188) `json` accepts `*` as a path segment (every element of an array,
+scalar leaves joined with `, `: `/message/toRecipients/*/emailAddress/address`), `json_count`
+(pointer: the number of elements of that array, `0` when absent), `json_text` (pointer: every
+`text`/`content` string below it, joined with spaces — Atlassian document format, Notion rich
+text) and `mime_attachments` (the number of attachments of a message). **A summary of a request
+that sends content to people outside the workspace (mail, calendar invitations, public issues and
+pages) lists every recipient and shows a clamped preview of the content; packages use a
+`summarize` hook where a template cannot.** Link
 templates may use `{request.host}`, `{path.N}`, `{query.name}`, `{field.Label}`
 and must resolve to https on a host in `hosts` or `about.web_hosts`.
 

@@ -772,6 +772,13 @@ pub enum Decoder {
     Base64(NoParams),
     MimeHeader(String),
     MimeText(NoParams),
+    /// (FIX-118) Number of attachments of an RFC 5322 message, as text.
+    MimeAttachments(NoParams),
+    /// (FIX-118) Number of elements of the JSON array at this pointer (`0` when it is absent).
+    JsonCount(String),
+    /// (FIX-118) Every `text`/`content` string below the JSON value at this pointer, joined with
+    /// spaces (Atlassian document format, Notion rich text).
+    JsonText(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

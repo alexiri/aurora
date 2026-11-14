@@ -93,17 +93,27 @@ apps:
           - { id: send_draft, name: Send a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts/send", methods: [POST] }
           - { id: modify_message, name: Add or remove labels on a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*/modify", methods: [POST] }
     approvals:
+      # Every recipient (all To/Cc/Bcc lines), a clamped body preview and the attachment count:
+      # the approval is the only control on outbound mail (FIX-118, 09 §approvals).
       send_message:
         title: Send mail
         fields:
           - { label: To, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: To } ] }
+          - { label: Cc, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: Cc } ] }
+          - { label: Bcc, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: Bcc } ] }
           - { label: Subject, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: Subject } ] }
+          - { label: Message, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_text: {} } ] }
+          - { label: Attachments, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_attachments: {} } ] }
         link: "https://mail.google.com/mail/u/0/#sent"
       create_draft:
         title: Create a mail draft
         fields:
           - { label: To, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: To } ] }
+          - { label: Cc, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: Cc } ] }
+          - { label: Bcc, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: Bcc } ] }
           - { label: Subject, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: Subject } ] }
+          - { label: Message, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_text: {} } ] }
+          - { label: Attachments, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_attachments: {} } ] }
         link: "https://mail.google.com/mail/u/0/#drafts"
       send_draft:
         title: Send a draft
@@ -123,7 +133,9 @@ apps:
         GET /gmail/v1/users/me/messages?q=... (the Gmail search syntax), then read a message with
         ?format=metadata&metadataHeaders=Subject or ?format=full. Sending takes a JSON body
         {"raw": "<base64url of an RFC 5322 message>"} with content-type application/json, so approvals can
-        show the recipient and subject. Deleting mail is not available.
+        show every recipient (To, Cc and Bcc), a preview of the message and the attachment count.
+        Deleting mail is not offered as a tool: a connection with a full grant can still call
+        DELETE, so do not do it unless the user asked.
       env:
         - { name: GMAIL_API_URL, value: "https://gmail.googleapis.com/gmail/v1" }
 
@@ -206,6 +218,7 @@ apps:
           - { label: Calendar, source: path, segment: 4 }
           - { label: Title, source: body, steps: [ { json: /summary } ] }
           - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+          - { label: Attendees, source: body, steps: [ { json: "/attendees/*/email" } ] }
         link: "https://calendar.google.com/calendar/"
       update_event:
         title: Change calendar event
@@ -213,6 +226,7 @@ apps:
           - { label: Calendar, source: path, segment: 4 }
           - { label: Event, source: path, segment: 6 }
           - { label: Title, source: body, steps: [ { json: /summary } ] }
+          - { label: Attendees, source: body, steps: [ { json: "/attendees/*/email" } ] }
         link: "https://calendar.google.com/calendar/"
       delete_event:
         title: Delete calendar event
@@ -368,7 +382,8 @@ apps:
         downloaded that way, use GET /drive/v3/files/{id}/export?mimeType=... instead. Send JSON metadata
         with content-type application/json, and multipart uploads (uploadType=multipart) with the JSON
         metadata as the first part, so approvals can show the file name, type and folder. Sharing and
-        every change are held for approval. Deleting files permanently is not available (trash a file with
-        PATCH {"trashed": true}).
+        every change are held for approval. Deleting files permanently is not offered as a tool (trash a file with
+        PATCH {"trashed": true}); a connection with a full grant can still send DELETE, which cannot be
+        undone, so do not do it unless the user asked.
       env:
         - { name: GOOGLE_DRIVE_API_URL, value: "https://www.googleapis.com/drive/v3" }

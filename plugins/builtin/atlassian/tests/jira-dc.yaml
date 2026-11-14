@@ -74,11 +74,11 @@
     method: POST
     url: "https://jira.example.com/rest/api/2/issue"
     headers: { content-type: application/json }
-    body: '{"fields":{"project":{"key":"DEMO"},"issuetype":{"name":"Bug"},"summary":"Crash on save"}}'
+    body: '{"fields":{"project":{"key":"DEMO"},"issuetype":{"name":"Bug"},"summary":"Crash on save","description":"Open a 2 GB file and save it."}}'
   expect:
     app: jira-dc
     tool: create_issue
-    summary: { title: "Create Jira issue", fields: { Project: "DEMO", Type: "Bug", Summary: "Crash on save" } }
+    summary: { title: "Create Jira issue", fields: { Project: "DEMO", Type: "Bug", Summary: "Crash on save", Description: "Open a 2 GB file and save it." } }
 - name: "negative create_issue: GET on the issue collection selects no tool on the registered host"
   connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: GET, url: "https://jira.example.com/rest/api/2/issue" }
@@ -89,11 +89,11 @@
     method: PUT
     url: "https://jira.example.com/rest/api/2/issue/DEMO-7"
     headers: { content-type: application/json }
-    body: '{"fields":{"summary":"Crash on save of large files"}}'
+    body: '{"fields":{"summary":"Crash on save of large files","description":"Only above 1 GB."}}'
   expect:
     app: jira-dc
     tool: edit_issue
-    summary: { title: "Edit Jira issue", fields: { Issue: "DEMO-7", Summary: "Crash on save of large files" } }
+    summary: { title: "Edit Jira issue", fields: { Issue: "DEMO-7", Summary: "Crash on save of large files", Description: "Only above 1 GB." } }
 - name: "negative edit_issue: PATCH selects no tool on the registered host"
   connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: PATCH, url: "https://jira.example.com/rest/api/2/issue/DEMO-7" }

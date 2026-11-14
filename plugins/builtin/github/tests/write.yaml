@@ -10,7 +10,7 @@
   expect:
     app: github
     tool: create_issue
-    summary: { title: "Create issue", fields: { Owner: example, Repository: demo, Title: "Broken build" } }
+    summary: { title: "Create issue", fields: { Owner: example, Repository: demo, Title: "Broken build", Body: "CI is red" } }
 - name: "negative create_issue: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://api.github.com/repos/example/demo/issues" }
@@ -21,10 +21,10 @@
     method: PATCH
     url: "https://api.github.com/repos/example/demo/issues/7"
     headers: { content-type: application/json }
-    body: '{"state":"closed"}'
+    body: '{"state":"closed","body":"Closing as a duplicate of #5"}'
   expect:
     tool: update_issue
-    summary: { title: "Update issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed } }
+    summary: { title: "Update issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed, Body: "Closing as a duplicate of #5" } }
 - name: "negative update_issue: POST selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://api.github.com/repos/example/demo/issues/7" }
@@ -49,10 +49,10 @@
     method: POST
     url: "https://api.github.com/repos/example/demo/pulls"
     headers: { content-type: application/json }
-    body: '{"title":"Add feature","head":"feature-x","base":"main"}'
+    body: '{"title":"Add feature","head":"feature-x","base":"main","body":"Adds feature x"}'
   expect:
     tool: create_pull
-    summary: { title: "Create pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", From: feature-x, Into: main } }
+    summary: { title: "Create pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", Body: "Adds feature x", From: feature-x, Into: main } }
 - name: "negative create_pull: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://api.github.com/repos/example/demo/pulls" }
@@ -80,7 +80,7 @@
     body: '{"message":"Update readme","content":"aGVsbG8=","branch":"feature-x"}'
   expect:
     tool: write_contents
-    summary: { title: "Change repository file", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme" } }
+    summary: { title: "Change repository file", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme", Content: hello } }
 - name: "write_contents: DELETE is the same write tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:

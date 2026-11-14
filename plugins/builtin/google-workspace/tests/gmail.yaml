@@ -100,11 +100,13 @@
     method: POST
     url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
     headers: { content-type: application/json }
-    body: '{"raw":"VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogUXVhcnRlcmx5IHJlcG9ydA0KDQpIZWxsbw"}'
+    # Two To lines, Cc, an external Bcc, a text part and one attachment (FIX-118, PKG-1):
+    # the approver sees every recipient, not just the first.
+    body: '{"raw":"VG86IGJvYkBleGFtcGxlLmNvbQ0KVG86IGRhbmFAZXhhbXBsZS5jb20NCkNjOiBlcmluQGV4YW1wbGUuY29tDQpCY2M6IHNweUBldmlsLmV4YW1wbGUNClN1YmplY3Q6IFF1YXJ0ZXJseSByZXBvcnQNCkNvbnRlbnQtVHlwZTogbXVsdGlwYXJ0L21peGVkOyBib3VuZGFyeT1iDQoNCi0tYg0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluDQoNCkhlbGxvIHRlYW0NCi0tYg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9wZGYNCkNvbnRlbnQtRGlzcG9zaXRpb246IGF0dGFjaG1lbnQ7IGZpbGVuYW1lPSJxLnBkZiINCg0KUERGDQotLWItLQ0K"}'
   expect:
     app: gmail
     tool: send_message
-    summary: { title: "Send mail", fields: { To: "bob@example.com", Subject: "Quarterly report" } }
+    summary: { title: "Send mail", fields: { To: "bob@example.com, dana@example.com", Cc: "erin@example.com", Bcc: "spy@evil.example", Subject: "Quarterly report", Message: "Hello team", Attachments: "1" } }
 - name: "negative send_message: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send" }
@@ -115,10 +117,10 @@
     method: POST
     url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
     headers: { content-type: application/json }
-    body: '{"message":{"raw":"VG86IGNhcm9sQGV4YW1wbGUuY29tDQpTdWJqZWN0OiBEcmFmdCBub3Rlcw0KDQpCb2R5"}}'
+    body: '{"message":{"raw":"VG86IGJvYkBleGFtcGxlLmNvbQ0KVG86IGRhbmFAZXhhbXBsZS5jb20NCkNjOiBlcmluQGV4YW1wbGUuY29tDQpCY2M6IHNweUBldmlsLmV4YW1wbGUNClN1YmplY3Q6IFF1YXJ0ZXJseSByZXBvcnQNCkNvbnRlbnQtVHlwZTogbXVsdGlwYXJ0L21peGVkOyBib3VuZGFyeT1iDQoNCi0tYg0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluDQoNCkhlbGxvIHRlYW0NCi0tYg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9wZGYNCkNvbnRlbnQtRGlzcG9zaXRpb246IGF0dGFjaG1lbnQ7IGZpbGVuYW1lPSJxLnBkZiINCg0KUERGDQotLWItLQ0K"}}'
   expect:
     tool: create_draft
-    summary: { title: "Create a mail draft", fields: { To: "carol@example.com", Subject: "Draft notes" } }
+    summary: { title: "Create a mail draft", fields: { To: "bob@example.com, dana@example.com", Cc: "erin@example.com", Bcc: "spy@evil.example", Subject: "Quarterly report", Message: "Hello team", Attachments: "1" } }
 - name: "negative create_draft: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts" }

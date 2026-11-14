@@ -38,3 +38,5 @@
 - { sql: "select a::text, cast(b as numeric(10,2)) from t", class: read }
 - { sql: "select * from t tablesample system (10)", class: read }
 - { sql: "select * from only t", class: read }
+- { sql: "select 1 operator(pg_catalog.+) 1", class: read }
+- { sql: "select a::pg_catalog.text, b::regclass, c::timestamptz, d::jsonb, e::uuid[] from t", class: read }

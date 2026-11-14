@@ -104,16 +104,18 @@ apps:
           - { label: Project, source: body, steps: [ { json: /fields/project/key } ] }
           - { label: Type, source: body, steps: [ { json: /fields/issuetype/name } ] }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+          - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
       edit_issue:
         title: Edit Jira issue
         fields:
           - { label: Issue, source: path, segment: 8 }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+          - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
       add_issue_comment:
         title: Comment on Jira issue
         fields:
           - { label: Issue, source: path, segment: 8 }
-          - { label: Comment, source: body, steps: [ { json: /body/content/0/content/0/text } ] }
+          - { label: Comment, source: body, steps: [ { json_text: /body } ] }
       transition_issue:
         title: Move Jira issue
         fields:
@@ -177,6 +179,10 @@ apps:
       - match: { host: api.atlassian.com, path_prefix: /ex/confluence }
         inject:
           - bearer: "{credentials.access_token}"
+      # The connect probe (accessible-resources) must lie on a declared host entry of this app
+      # (probe::declared_host). The exact path cannot be claimed here: it is Jira's, a tie goes to
+      # the smaller app id (`confluence`), which would take the path (and `list_accessible_sites`)
+      # away from Jira. So this stays the broader prefix; see FIX-118 report (open question).
       - match: { host: api.atlassian.com, path_prefix: /oauth/token }
         inject:
           - bearer: "{credentials.access_token}"
@@ -214,12 +220,14 @@ apps:
           - { label: Space, source: body, steps: [ { json: /spaceId } ] }
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Status, source: body, steps: [ { json: /status } ] }
+          - { label: Content, source: body, steps: [ { json: /body/value } ] }
       update_page:
         title: Update Confluence page
         fields:
           - { label: Page, source: path, segment: 8 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Version, source: body, steps: [ { json: /version/number } ] }
+          - { label: Content, source: body, steps: [ { json: /body/value } ] }
       create_footer_comment:
         title: Comment on Confluence page
         fields:
@@ -300,11 +308,13 @@ apps:
           - { label: Project, source: body, steps: [ { json: /fields/project/key } ] }
           - { label: Type, source: body, steps: [ { json: /fields/issuetype/name } ] }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+          - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
       edit_issue:
         title: Edit Jira issue
         fields:
           - { label: Issue, source: path, segment: 5 }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+          - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
         link: "https://{request.host}/browse/{path.5}"
       add_issue_comment:
         title: Comment on Jira issue
@@ -387,12 +397,14 @@ apps:
           - { label: Type, source: body, steps: [ { json: /type } ] }
           - { label: Space, source: body, steps: [ { json: /space/key } ] }
           - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Content, source: body, steps: [ { json: /body/storage/value } ] }
       update_content:
         title: Update Confluence page
         fields:
           - { label: Page, source: path, segment: 4 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Version, source: body, steps: [ { json: /version/number } ] }
+          - { label: Content, source: body, steps: [ { json: /body/storage/value } ] }
         link: "https://{request.host}/pages/viewpage.action?pageId={path.4}"
     agent:
       instructions: |
