@@ -186,6 +186,27 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         })?,
     );
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
+    // (FIX-138 item 1b) What the terminal's `claude`/`codex` wrappers source: the machine proxy,
+    // the CA, the placeholder and the enabled harnesses; no secret. Written now (before any
+    // turn) and again with the agent's model at each session start.
+    let harness_env = aurora_supervisor::harness_env::HarnessEnvConfig {
+        path: PathBuf::from(aurora_supervisor::harness_env::DEFAULT_PATH),
+        enabled: doc.terminal_harnesses(),
+        proxy_url: format!("http://127.0.0.1:{MACHINE_PROXY_PORT}"),
+        ca_path: boot::DEFAULT_CA_PATH.to_owned(),
+    };
+    if let Err(e) = aurora_supervisor::harness_env::write(
+        &harness_env.path,
+        &aurora_supervisor::harness_env::render(&harness_env, None),
+    ) {
+        tracing::warn!(error = %e, "could not write harness.env for the terminal wrappers");
+    }
+    if let Err(e) =
+        aurora_supervisor::harness_env::ensure_state_dirs(Path::new(boot::HOME_DIR), 1000, 1000)
+    {
+        tracing::warn!(error = %e, "could not create the terminal harness state directories");
+    }
+    cfg.harness_env = Some(harness_env);
     cfg.pg = Some(aurora_supervisor::pgrelay::RELAY_PORT);
     cfg.tools.socket = Some(PathBuf::from(aurora_supervisor::tools::DEFAULT_SOCKET));
     if let Ok(exe) = std::env::current_exe() {

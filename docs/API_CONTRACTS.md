@@ -1316,6 +1316,8 @@ Rule: `07 §Park and resume` and `§Web Push`, `06 §Parking and grants` and §G
     - Errors: 404 `link_not_found`, 403 `link_destination_refused`, 502 `upstream_echoed_credential` (needles: the URL and its path-with-query, raw and percent-encoded).
     - Request log rows and spans carry the connection id and the host, never the path or query.
 
+- C-750 **Terminal harness wrappers** (FIX-138 item 1b, D-247; `11 §The boot document`, `12 §Terminal`). (1) The boot document gains `enabled_harnesses: string[]` (`hosted.enabled_harnesses`; optional on the supervisor side, absent = only `harness.id`). (2) The supervisor writes `/run/aurora/harness.env` (0644, shell-sourceable, **no secret**) at boot and again at every session start: `HARNESSES_ENABLED`, `HTTPS_PROXY`/`HTTP_PROXY` (+ lowercase) = `http://127.0.0.1:3128`, `NO_PROXY`, `SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS`/`CODEX_CA_CERTIFICATE` = `/run/aurora/ca.pem`, the CLIs' telemetry/auto-update switches, the placeholder `aurora-placeholder` for `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`OPENAI_API_KEY`, and with a known model `ANTHROPIC_MODEL` (+ `ANTHROPIC_BASE_URL` for a non-Anthropic endpoint) or `AURORA_CODEX_MODEL`/`AURORA_CODEX_BASE_URL`. (3) `/opt/aurora/bin/{claude,codex}` refuse with "`<harness>`: not enabled on this instance" (exit 127) when the binary is absent or the harness is not in `HARNESSES_ENABLED`; otherwise they source the file, set `CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude` / `CODEX_HOME=/workspace/.aurora/terminal/codex` and exec the pinned binary. No wire, API route or database change.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._

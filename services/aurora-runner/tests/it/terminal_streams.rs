@@ -125,6 +125,24 @@ async fn next_text(ws: &mut Client) -> Value {
 /// The API mocks one boot needs: claim (welcome), hold, the terminal-shape redemption
 /// (`kind: "terminal"` answer — no `port`, no `share_id`, C-617) and the keep-awake stamp.
 async fn mount_runner_api(api: &MockServer, sandbox: Uuid, boot: Uuid) {
+    mount_runner_api_with_shell(api, sandbox, boot, None).await;
+}
+
+/// [`mount_runner_api`] whose redemption answer carries the person's chosen `shell`
+/// (FIX-138; absent = the field is left out, as an API without a choice does).
+async fn mount_runner_api_with_shell(
+    api: &MockServer,
+    sandbox: Uuid,
+    boot: Uuid,
+    shell: Option<&str>,
+) {
+    let mut answer = json!({
+        "sandbox_id": sandbox, "boot_id": boot, "window": WINDOW,
+        "idle_secs": 600, "max_lifetime_secs": 14400
+    });
+    if let Some(s) = shell {
+        answer["shell"] = json!(s);
+    }
     Mock::given(method("POST"))
         .and(path("/v1/runner/channel/claim"))
         .respond_with(
@@ -141,10 +159,7 @@ async fn mount_runner_api(api: &MockServer, sandbox: Uuid, boot: Uuid) {
         .await;
     Mock::given(method("POST"))
         .and(path("/v1/runner/preview-streams/open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sandbox_id": sandbox, "boot_id": boot, "window": WINDOW,
-            "idle_secs": 600, "max_lifetime_secs": 14400
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(answer))
         .mount(api)
         .await;
     Mock::given(method("POST"))
@@ -322,6 +337,26 @@ async fn terminal_leg_round_trip_tags_0x02_and_stamps_awake() {
     .await
     .unwrap();
     assert_eq!(close_code(&mut term).await, CLOSE_NORMAL);
+}
+
+/// (FIX-138) The shell the redemption answer carries reaches the supervisor as the enumerated
+/// `pty.open.shell`; an answer without one (an API that predates the choice) opens bash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pty_open_carries_the_shell_of_the_redemption_answer() {
+    for (answered, expected) in [(Some("zsh"), "zsh"), (Some("bash"), "bash"), (None, "bash")] {
+        let api = MockServer::start().await;
+        let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+        mount_runner_api_with_shell(&api, sandbox, boot, answered).await;
+        let (ch_addr, st_addr, _server, _stop, _stop2) = rig(&api).await;
+        let mut sup = connect_supervisor(ch_addr).await;
+        let _term = dial(st_addr);
+        let opened = next_text(&mut sup).await;
+        assert_eq!(opened["kind"], "pty.open", "{opened}");
+        assert_eq!(
+            opened["body"]["shell"], expected,
+            "answer {answered:?} must open {expected}: {opened}"
+        );
+    }
 }
 
 /// A `pty.refused {limit}` before the 101 is a plain HTTP refusal (the supervisor's

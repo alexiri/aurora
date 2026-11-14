@@ -568,13 +568,36 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   terminal: `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin` (the image's
   `ENV PATH`, `/etc/profile.d/aurora.sh` for bash login shells, `/etc/zsh/zshenv` for zsh, the PTY
   spawn's environment and the supervisor's spawn default `spawn::IMAGE_PATH`). `/opt/aurora/bin`
-  is the directory reserved for the `claude` and `codex` wrappers (not yet built, below). System-wide **interactive** defaults (aliases `ls`,
+  is the directory of the `claude` and `codex` wrappers (below). System-wide **interactive** defaults (aliases `ls`,
   `ll`, `la`, `l`, `grep`, colours, a prompt `user@<agent handle>:cwd`, history size and
   de-duplication, zsh `compinit`) live only in the image's system rc files (`/etc/bashrc`,
   `/etc/zshrc`) — not in the agent's home, so a person's own `~/.bashrc`/`~/.zshrc` still wins —
   and are read by interactive shells only: agent turns and `bash -c` never see the aliases.
-  *Open (not built in this part):* the harness wrappers' gateway wiring and separate harness state
-  (`CLAUDE_CONFIG_DIR`/`CODEX_HOME` under `/workspace/.aurora/terminal/…`), brief item 1b.
+- **Harnesses in the terminal (FIX-138 item 1b, D-247).** `claude` and `codex` on `PATH` are the
+  wrappers `/opt/aurora/bin/claude` and `/opt/aurora/bin/codex` (image files, `images/sandbox/bin`),
+  not the pinned binaries (`/opt/aurora/harness/…`, off `PATH`). At boot, and again with the agent's
+  model at every session start, the supervisor writes **`/run/aurora/harness.env`** (mode 0644,
+  shell-sourceable, **no secret**): the harnesses the instance enables (boot document
+  `enabled_harnesses`, from `hosted.enabled_harnesses`; absent = only the booted one), the machine
+  proxy `http://127.0.0.1:3128` (`HTTPS_PROXY`…: the loopback forwarder adds the boot token, the
+  terminal never holds it), the CA bundle (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`,
+  `CODEX_CA_CERTIFICATE`), the placeholder credential `aurora-placeholder` that the gateway
+  replaces with the agent's governed LLM key (SEC-01/SEC-34: a real key is never in a terminal's
+  environment or on disk), the CLIs' telemetry/auto-update switches, and — once a turn has chosen
+  one — the model, and for a non-Anthropic endpoint its base URL, exactly the values the adapters
+  put into a turn's environment (Codex takes its provider from `-c` overrides the wrapper builds,
+  not from a config file). Before the first turn the CLI's own default model applies and the
+  gateway's governance (model allow-lists) decides. Each wrapper refuses with "`<harness>`: not
+  enabled on this instance" (exit 127) when its binary is not in the image or its harness is not
+  in `HARNESSES_ENABLED`; otherwise it sources the file, sets its **own state directory**
+  (`CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude`, `CODEX_HOME=/workspace/.aurora/terminal/codex`,
+  created by the supervisor and owned by the agent user) so an interactive session never reads or
+  changes the agent harness's configuration, sessions or memory (FIX-095), and `exec`s the binary.
+  The terminal session does not read the agent's instructions or skills. **Attribution:** the
+  traffic goes through the same machine proxy and boot-token credential as a turn's model calls, so
+  the gateway attributes it to the **agent** (lane `mitm`, no turn or conversation), counts it
+  against the same budgets and rate limits and shows it in the request log (`07`) like any other
+  model call of that agent; the person at the terminal is not recorded as a speaker.
 - `pty.resize { cols, rows }` applies `TIOCSWINSZ`; bytes are relayed with the W18 credit
   machinery (`16 §W19`, tag `0x02`), never logged, never counted beyond byte totals, never
   visible to the harness, the gateway or the loopback proxies. A terminal session is **not**

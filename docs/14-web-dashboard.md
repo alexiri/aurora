@@ -1223,6 +1223,11 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the
     default and sends no query). If the image lacks the chosen shell the pane prints the
     supervisor's one-line fallback notice (`12 §Terminal`).
+    (FIX-138 item 1b, D-247) `claude` and `codex` typed in the pane run the image's wrappers
+    (`12 §Terminal`): they reach the LLM through the gateway with the placeholder credential and
+    their own state under `/workspace/.aurora/terminal`; a harness the instance does not enable
+    prints "not enabled on this instance". The pane carries no hint line for them (the web does
+    not know which harnesses an image holds; the wrapper's message is the answer).
   - **SSH** (phase 5, P4-SSH-1/2, D-239, C-795) — a page of the **Computer** section beside Terminal
     and Previews (`?tab=ssh`), with the same availability rule as Terminal but on `features.ssh`:
     hosted agents only, `can_use`, hidden for BYO agents and non-`can_use` callers; a frozen agent shows

@@ -1787,3 +1787,360 @@ async fn s11_database_lane_psql_service_read_allowed_write_needs_approval() {
     assert_eq!(n, 1, "the table survived");
     st.finish().await;
 }
+
+// ---------------------------------------------------------------------------------------------
+// FIX-138: the web terminal's shells and harness wrappers.
+//
+// A terminal is an interactive login shell on a PTY with the environment of every supervisor
+// child (the container's minus `AURORA_*`). The probes below run a real PTY driver through the
+// supervisor's `process_start` (the same environment, the same PATH), so no part of the shell
+// start-up is imitated.
+
+/// Python PTY driver: starts `<shell> -l` on a pseudo-terminal like the supervisor's PTY engine
+/// (`TERM=xterm-256color`), sends each step's bytes, and prints what the terminal showed after
+/// each one (ESC rendered as `<ESC>`), reading until the output is idle.
+const TERM_DRIVER: &str = r#"
+import json, os, pty, select, sys, time
+shell, steps_path = sys.argv[1], sys.argv[2]
+steps = json.load(open(steps_path))
+pid, fd = pty.fork()
+if pid == 0:
+    os.environ["TERM"] = "xterm-256color"
+    os.environ["SHELL"] = shell
+    os.execv(shell, [shell, "-l"])
+def drain(idle=0.8, cap=10.0):
+    out = b""
+    end = time.time() + cap
+    last = time.time()
+    while time.time() < end and time.time() - last < idle:
+        r, _, _ = select.select([fd], [], [], 0.1)
+        if r:
+            try:
+                d = os.read(fd, 65536)
+            except OSError:
+                break
+            if not d:
+                break
+            out += d
+            last = time.time()
+    return out.decode("utf8", "replace").replace("\x1b", "<ESC>")
+print("=== step 0")
+print(drain(1.5, 20.0))
+for i, s in enumerate(steps):
+    os.write(fd, s.encode())
+    print("=== step %d" % (i + 1))
+    print(drain())
+os.write(fd, b"exit\r")
+print("=== end")
+"#;
+
+/// Runs `steps` in an interactive login `shell` through the supervisor (as the agent) and returns
+/// the transcript, one string per step (index 0 = the start-up output, index n = step n).
+async fn terminal_steps(
+    c: &str,
+    conv: &str,
+    name: &str,
+    shell: &str,
+    steps: &[&str],
+) -> Vec<String> {
+    use base64::Engine as _;
+    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+    let steps_json = serde_json::to_string(steps).unwrap();
+    let (rc, w) = exec_in(
+        c,
+        &format!(
+            "echo {} | base64 -d > /workspace/term-driver.py && echo {} | base64 -d > /workspace/{name}.steps.json",
+            b64(TERM_DRIVER),
+            b64(&steps_json)
+        ),
+    );
+    assert_eq!(rc, 0, "could not write the PTY driver: {w}");
+    let out = process_output(
+        c,
+        conv,
+        name,
+        &format!("python3 /workspace/term-driver.py {shell} /workspace/{name}.steps.json"),
+        240,
+    )
+    .await;
+    // "=== step 0" opens the transcript: the pieces after splitting are [prefix, step 0, step 1, …].
+    out.split("=== step ").skip(1).map(str::to_owned).collect()
+}
+
+const IMAGE_PATH: &str = "/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin";
+
+/// FIX-138 (e2e, hosted, both shells): Tab completes, history (Up) works, `ll`/`ls` are aliased,
+/// `ls` emits colour without `--color`, `PATH` is the image's one, `claude`/`codex` resolve to the
+/// wrappers (which refuse where the harness binary is not in the image), a non-interactive shell
+/// never sees the aliases, and no `AURORA_*` variable reaches the terminal. Runs on whatever image
+/// the stack uses (the min image has no harness binaries: the wrappers' refusal is exercised).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s13_terminal_shells_complete_alias_colour_and_resolve_the_wrappers() {
+    if !enabled() {
+        return;
+    }
+    let (st, api) = fx(Opts::default()).await;
+    let conv = api.direct().await;
+    run_turn(&st, &api, &conv, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+    let has_claude = exec_in(
+        c,
+        "test -x /opt/aurora/harness/claude-code/node_modules/.bin/claude",
+    )
+    .0 == 0;
+    let steps: [&str; 12] = [
+        "ech\t",                                         // 1: Tab completes `echo`
+        "\u{15}alias ll\r",                              // 2: Ctrl-U clears the line first
+        "alias ls\r",                                    // 3
+        "mkdir -p ~/cdir && ls ~\r",                     // 4: colour without --color
+        "echo PATH=$PATH\r",                             // 5
+        "which claude codex\r",                          // 6
+        "claude --version; echo rc=$?\r",                // 7
+        "bash -c 'type ll'; echo rc=$?\r",               // 8: a turn's shell never sees the alias
+        "echo history-probe\r",                          // 9
+        "\u{1b}[A",                                      // 10: Up recalls it
+        "echo auroravars=$(env | grep -c '^AURORA_')\r", // 11
+        "\r",                                            // 12
+    ];
+    for (shell, tag) in [("/bin/bash", "bash"), ("/usr/bin/zsh", "zsh")] {
+        let parts = terminal_steps(c, &conv, &format!("term-{tag}"), shell, &steps).await;
+        assert!(
+            parts.len() >= 13,
+            "{tag}: the driver did not finish: {parts:?}"
+        );
+        let step = |n: usize| parts[n].as_str();
+        assert!(
+            step(1).contains("echo"),
+            "{tag}: Tab did not complete: {}",
+            step(1)
+        );
+        assert!(
+            step(2).contains("ls -l"),
+            "{tag}: no `ll` alias: {}",
+            step(2)
+        );
+        assert!(
+            step(3).contains("--color=auto"),
+            "{tag}: no `ls` alias: {}",
+            step(3)
+        );
+        assert!(
+            step(4).contains("<ESC>[01;34m") && step(4).contains("cdir"),
+            "{tag}: ls emitted no colour for a directory: {}",
+            step(4)
+        );
+        assert!(
+            step(5).contains(&format!("PATH={IMAGE_PATH}")),
+            "{tag}: PATH: {}",
+            step(5)
+        );
+        assert!(
+            step(6).contains("/opt/aurora/bin/claude") && step(6).contains("/opt/aurora/bin/codex"),
+            "{tag}: the wrappers are not first on PATH: {}",
+            step(6)
+        );
+        if !has_claude {
+            assert!(
+                step(7).contains("not enabled on this instance") && step(7).contains("rc=127"),
+                "{tag}: a harness missing from the image must refuse: {}",
+                step(7)
+            );
+        }
+        assert!(
+            step(8).contains("not found") && step(8).contains("rc=1"),
+            "{tag}: the alias leaked into a non-interactive shell: {}",
+            step(8)
+        );
+        assert!(
+            step(10).contains("echo history-probe"),
+            "{tag}: Up did not recall: {}",
+            step(10)
+        );
+        assert!(
+            step(11).contains("auroravars=0"),
+            "{tag}: AURORA_* in the terminal: {}",
+            step(11)
+        );
+    }
+    st.finish().await;
+}
+
+/// FIX-138 item 1b (e2e, hosted, **full image**): with only Codex enabled on the instance, the
+/// terminal's `codex` wrapper reaches the mock Responses upstream **through the gateway** (the
+/// placeholder is replaced there: the upstream sees the seeded key, the terminal never does), the
+/// attribution is the agent's with no conversation, its state is separate from the agent
+/// harness's, `rg` is installed, and `claude` — in the image but not enabled — refuses. Needs
+/// `AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh` (otherwise SKIPPED).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s13b_terminal_codex_wrapper_reaches_the_gateway_and_a_disabled_harness_refuses() {
+    if !enabled() {
+        return;
+    }
+    let Ok(image) = std::env::var("AURORA_E2EH_FULL_IMAGE_TAG") else {
+        eprintln!(
+            "SKIPPED: AURORA_E2EH_FULL_IMAGE_TAG is not set; run AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh"
+        );
+        return;
+    };
+    const SEED: &str = "sk-e2e-terminal-SEEDED-3e8b51f2";
+    let up = aurora_testkit::responses::MockResponses::start_on("127.0.0.2").await;
+    let toml = format!(
+        r#"
+[hosted]
+enabled_harnesses = ["codex"]
+default_harness = "codex"
+
+[llm]
+enabled_providers = ["litellm"]
+provider_preference = ["litellm"]
+
+[[llm.endpoints]]
+id = "codex-mock"
+provider = "litellm"
+display_name = "Mock Responses upstream"
+base_url = "{}"
+dialects = ["openai_responses"]
+default_model = "say"
+"#,
+        up.base()
+    );
+    Stack::wipe();
+    let st = Stack::start_with(
+        Opts {
+            image: Some(image),
+            ..Opts::default()
+        },
+        &toml,
+    )
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    sqlx::query(
+        "UPDATE agents SET harness = 'codex', model_provider = 'litellm', \
+         model_endpoint_id = 'codex-mock', model_id = 'say' WHERE id = $1::uuid",
+    )
+    .bind(&api.daneel)
+    .execute(st.pool())
+    .await
+    .unwrap();
+    let (s, v) = api
+        .post(
+            &format!("/v1/workspaces/{}/secrets", api.ws),
+            json!({"name": "codex-mock-key", "kind": "llm",
+                   "llm": {"endpoint_id": "codex-mock", "auth_mode": "api_key"},
+                   "value": SEED}),
+        )
+        .await;
+    assert_eq!(s, 201, "llm key: {v}\n{}", st.log_tails());
+    api.grant(&api.daneel, v["id"].as_str().unwrap()).await;
+
+    // One agent turn: it boots the sandbox and gives the supervisor the agent's model, which it
+    // writes to /run/aurora/harness.env for the terminal's wrappers.
+    let conv = api.direct().await;
+    run_turn(&st, &api, &conv, "Reply with exactly the word: pong").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+    let (_, env_file) = exec_in(
+        c,
+        "stat -c '%a' /run/aurora/harness.env; cat /run/aurora/harness.env",
+    );
+    assert!(env_file.starts_with("644"), "harness.env mode: {env_file}");
+    assert!(env_file.contains("HARNESSES_ENABLED='codex'"), "{env_file}");
+    assert!(env_file.contains("AURORA_CODEX_MODEL='say'"), "{env_file}");
+    assert!(
+        env_file.contains("OPENAI_API_KEY='aurora-placeholder'"),
+        "{env_file}"
+    );
+    assert!(
+        !env_file.contains(SEED),
+        "a real key in harness.env: {env_file}"
+    );
+    let seen_before = up.requests().len();
+    let (_, agent_cfg_before) = exec_in(c, "sha256sum /workspace/.codex/config.toml 2>&1");
+
+    // The terminal, as a person types it: `rg`, the wrappers, a refused harness, the environment.
+    let out = process_output(
+        c,
+        &conv,
+        "termcli",
+        "rg --version | head -1; which codex; claude --version; echo claude-rc=$?; echo '--- env'; env",
+        90,
+    )
+    .await;
+    assert!(out.contains("ripgrep"), "rg: {out}");
+    assert!(out.contains("/opt/aurora/bin/codex"), "which codex: {out}");
+    assert!(
+        out.contains("claude: not enabled on this instance") && out.contains("claude-rc=127"),
+        "an image harness that is not enabled must refuse: {out}"
+    );
+    let env_part = out.split("--- env").nth(1).unwrap_or_default();
+    assert!(!env_part.contains(SEED), "the key is in the terminal env");
+    assert!(
+        !env_part.lines().any(|l| l.starts_with("AURORA_")),
+        "AURORA_* in the terminal env: {env_part}"
+    );
+
+    let run = process_output(
+        c,
+        &conv,
+        "termcodex",
+        "codex exec --skip-git-repo-check 'Reply with exactly the word: pong'; echo codex-rc=$?",
+        150,
+    )
+    .await;
+    assert!(
+        run.contains("pong") && run.contains("codex-rc=0"),
+        "the wrapper did not reach the model: {run}\n{}",
+        st.log_tails()
+    );
+    assert!(!run.contains(SEED), "the key reached the terminal: {run}");
+
+    // The upstream got the request through the gateway with the key injected (the terminal held
+    // the placeholder only); the gateway attributes it to the agent, with no conversation.
+    let seen = up.requests();
+    assert!(
+        seen.len() > seen_before,
+        "no terminal request reached the upstream"
+    );
+    for r in &seen {
+        assert_eq!(
+            r.authorization.as_deref(),
+            Some(format!("Bearer {SEED}").as_str()),
+            "the gateway did not replace the placeholder: {r:?}"
+        );
+    }
+    let end = std::time::Instant::now() + Duration::from_secs(60);
+    let rows = loop {
+        let rows: Vec<(Option<String>, Option<String>, i32)> = sqlx::query_as(
+            "SELECT conversation_id::text, secret_id::text, status FROM request_log \
+             WHERE host LIKE '127.0.0.2%' AND path LIKE '/v1/responses%' AND conversation_id IS NULL",
+        )
+        .fetch_all(st.pool())
+        .await
+        .unwrap();
+        if !rows.is_empty() || std::time::Instant::now() > end {
+            break rows;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    assert!(
+        rows.iter()
+            .any(|(_, s, status)| s.is_some() && *status == 200),
+        "no agent-attributed, conversation-less 200 row for the terminal's model call: {rows:?}"
+    );
+
+    // Separate state: the agent harness's own Codex home is byte-identical, the terminal's is its own.
+    let (_, agent_cfg_after) = exec_in(c, "sha256sum /workspace/.codex/config.toml 2>&1");
+    assert_eq!(
+        agent_cfg_before, agent_cfg_after,
+        "the terminal changed the agent harness's config"
+    );
+    let (_, term_home) = exec_in(c, "ls -A /workspace/.aurora/terminal/codex | head -5");
+    assert!(
+        !term_home.trim().is_empty(),
+        "the wrapper's own CODEX_HOME is empty: {term_home:?}"
+    );
+    st.finish().await;
+}

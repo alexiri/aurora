@@ -108,6 +108,11 @@ pub struct BootDocument {
     #[serde(default)]
     pub files: Vec<BootFile>,
     pub harness: BootHarness,
+    /// (FIX-138 item 1b) Harness ids the instance enables (`hosted.enabled_harnesses`); the
+    /// terminal's `claude`/`codex` wrappers refuse a harness not listed. Absent (an older API):
+    /// only the booted harness.
+    #[serde(default)]
+    pub enabled_harnesses: Vec<String>,
     #[serde(default)]
     pub timezone: Option<String>,
     /// (RFE-003) What the sandbox may do beyond ordinary traffic; phase 1: `browser`.
@@ -119,6 +124,15 @@ pub struct BootDocument {
 impl BootDocument {
     pub fn has_capability(&self, cap: &str) -> bool {
         self.capabilities.iter().any(|c| c == cap)
+    }
+
+    /// The harnesses the terminal's wrappers may start: the document's list, else the booted one.
+    pub fn terminal_harnesses(&self) -> Vec<String> {
+        if self.enabled_harnesses.is_empty() {
+            vec![self.harness.id.clone()]
+        } else {
+            self.enabled_harnesses.clone()
+        }
     }
 
     /// Decode and validate the raw (base64url JSON) document.

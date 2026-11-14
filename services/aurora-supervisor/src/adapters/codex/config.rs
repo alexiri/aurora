@@ -57,12 +57,16 @@ pub fn wire_api(dialect: &str) -> Result<&'static str, HarnessError> {
 /// The endpoint base URL in OpenAI form: the provider's own `OPENAI_BASE_URL` (placeholder-only
 /// client environment, e.g. LiteLLM's `<base>/v1`) when it supplied one, else `base_url`.
 pub fn provider_base_url(opts: &SessionOptions) -> String {
-    opts.model
-        .client_env
+    openai_base_url(&opts.model)
+}
+
+/// [`provider_base_url`] for a model choice (the terminal's `harness.env` uses it too).
+pub fn openai_base_url(m: &aurora_protocol::runner::ModelChoice) -> String {
+    m.client_env
         .iter()
         .find(|(k, _)| k == "OPENAI_BASE_URL")
         .map_or_else(
-            || opts.model.base_url.clone(),
+            || m.base_url.clone(),
             |(_, v)| v.trim_end_matches('/').to_owned(),
         )
 }
