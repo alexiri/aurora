@@ -84,7 +84,7 @@ describe("addon sources view (P5-ASRC, C-590..C-602)", () => {
     expect(screen.getByText("OK")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("1 addon has a newer version");
     // The per-source addon list: versions, installed, update, removed upstream.
-    fireEvent.click(screen.getByRole("button", { name: "Addons of CERN addons" }));
+    fireEvent.click(screen.getByRole("button", { name: "1 addon: CERN addons" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Indigo SSO")).toBeTruthy();
     expect(within(dialog).getByText("Update available")).toBeTruthy();
@@ -177,7 +177,7 @@ describe("addon sources view (P5-ASRC, C-590..C-602)", () => {
       },
     });
     wrap(<AddonSourcesView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Check CERN addons now" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Check now: CERN addons" }));
     await waitFor(() => expect(calls).toBe(1));
     const notices = await screen.findAllByRole("status");
     const text = notices.map((n) => n.textContent).join("\n");
@@ -197,7 +197,7 @@ describe("addon sources view (P5-ASRC, C-590..C-602)", () => {
     });
     wrap(<AddonSourcesView />);
     expect(await screen.findByText("Signing key changed")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Review the new signing key of CERN addons" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review key: CERN addons" }));
     const dialog = await screen.findByRole("dialog");
     // Old and new side by side.
     expect(within(dialog).getByLabelText("Old fingerprint").textContent).toBe(FP);

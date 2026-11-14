@@ -70,7 +70,7 @@ function AddonList({ addons }: { addons: AddonEntry[] }) {
           <p className="font-medium text-ink">
             {a.name} <span className="font-mono text-xs text-muted">{a.id}</span>
           </p>
-          {a.description ? <p className="text-sm text-ink-2">{a.description}</p> : null}
+          {a.description ? <p className="text-sm text-ink-2 [overflow-wrap:anywhere]">{a.description}</p> : null}
           <ul className="mt-2 flex flex-wrap gap-2">
             {a.versions.map((v) => (
               <li key={v.version} className="flex flex-wrap items-center gap-1 text-xs">
@@ -169,7 +169,7 @@ export function AddSourceDialog({ open, onOpenChange }: { open: boolean; onOpenC
           <div className="mt-5 space-y-4" aria-label="Repository review">
             <div>
               <h3 className="font-display text-base font-semibold text-ink">{p.repo.name}</h3>
-              {p.repo.description ? <p className="text-sm text-ink-2">{p.repo.description}</p> : null}
+              {p.repo.description ? <p className="text-sm text-ink-2 [overflow-wrap:anywhere]">{p.repo.description}</p> : null}
               <dl className="mt-2 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
                 <dt className="text-muted">Publisher</dt>
                 <dd className="font-mono">{p.publisher}</dd>
@@ -458,21 +458,21 @@ export function AddonSourcesView() {
                     </div>
                   </Td>
                   <Td>
-                    <Button size="sm" variant="outline" aria-label={`Addons of ${s.name}`} onClick={() => setDetails(s)}>
-                      {s.addon_count}
+                    <Button size="sm" variant="outline" aria-label={`${s.addon_count} ${s.addon_count === 1 ? "addon" : "addons"}: ${s.name}`} onClick={() => setDetails(s)}>
+                      {`${s.addon_count} ${s.addon_count === 1 ? "addon" : "addons"}`}
                     </Button>
                   </Td>
                   <Td>
                     <div className="flex flex-wrap gap-1.5">
                       {s.status === "signing_key_changed" ? (
-                        <Button size="sm" variant="danger" aria-label={`Review the new signing key of ${s.name}`} onClick={() => setRekey(s)}>
+                        <Button size="sm" variant="danger" aria-label={`Review key: ${s.name}`} onClick={() => setRekey(s)}>
                           Review key
                         </Button>
                       ) : null}
                       <Button
                         size="sm"
                         variant="outline"
-                        aria-label={`Check ${s.name} now`}
+                        aria-label={`Check now: ${s.name}`}
                         disabled={running === s.id}
                         onClick={() => {
                           setRunning(s.id);

@@ -396,6 +396,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-placement", path: "/admin/placement" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },
+  { name: "admin-addon-sources", path: "/admin/addon-sources" },
   { name: "admin-connectors", path: "/admin/connectors" },
   { name: "admin-storage", path: "/admin/storage" },
   { name: "admin-host-claims", path: "/admin/host-claims" },
