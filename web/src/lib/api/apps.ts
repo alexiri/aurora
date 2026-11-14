@@ -199,7 +199,7 @@ export function useConnections(scope: CredScope & { kind: "workspace" | "organiz
 export function usePatchConnection(scope: CredScope & { kind: "workspace" | "organization" }) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; status?: "active" | "disabled"; label?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; status?: "active" | "disabled"; label?: string; access?: "read" | "write"; scopes?: string[] }) =>
       unwrap(api.PATCH("/v1/connections/{id}", { params: { path: { id } }, body })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: appKeys.connections(scope) });

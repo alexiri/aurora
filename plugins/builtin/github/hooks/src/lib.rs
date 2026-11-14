@@ -40,7 +40,33 @@ struct Settings {
     installation_id: String,
     base: String,
     ghes: bool,
+    /// (FIX-133, D-240) The connection is read-only: the minted token is narrowed to `read`
+    /// permissions, so GitHub itself refuses writes.
+    read_only: bool,
+    /// Repository names (of the installation's account) the token is limited to; empty = every
+    /// repository the installation has.
+    repositories: Vec<String>,
 }
+
+/// The installation permissions a read-only token may keep, each as `read`: what the app's read
+/// tools need (repository contents, issues, pull requests, Actions runs, checks, statuses,
+/// deployments, discussions, packages and the always-granted metadata). Anything else the
+/// installation holds (administration, secrets, workflows, hooks, security events, organisation
+/// permissions) is dropped from a read-only token even as `read`.
+const READ_ALLOWLIST: &[&str] = &[
+    "actions",
+    "checks",
+    "contents",
+    "deployments",
+    "discussions",
+    "issues",
+    "metadata",
+    "packages",
+    "pull_requests",
+    "statuses",
+];
+/// GitHub accepts at most 500 repository names per token.
+const MAX_REPOS: usize = 500;
 
 fn base64url(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -124,12 +150,68 @@ fn settings(app: &str, src: &[Kv], form: bool) -> Result<Settings, HookError> {
         }
         _ => return Err(HookError::Unsupported),
     };
+    // The reserved `aurora_access` key is set by Aurora (the api on the connect form, the gateway
+    // on a mint), never by the user. Anything but an explicit `write` narrows: fail closed.
+    let read_only = kv_get(src, "aurora_access").is_some_and(|a| a != "write");
+    let repositories = repositories(kv_get(src, "repositories").unwrap_or_default()).ok_or_else(|| {
+        bad("repositories must be repository names (not owner/name) separated by commas, at most 500")
+    })?;
     Ok(Settings {
         app_id: app_id.to_owned(),
         installation_id: installation_id.to_owned(),
         base,
         ghes,
+        read_only,
+        repositories,
     })
+}
+
+/// Comma, space or newline separated repository names; `None` when one is malformed.
+fn repositories(raw: &str) -> Option<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for n in raw.split([',', ' ', '\n', '\r', '\t']).map(str::trim).filter(|n| !n.is_empty()) {
+        let ok = n.len() <= 100
+            && n != "."
+            && n != ".."
+            && n.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+        if !ok {
+            return None;
+        }
+        if !out.iter().any(|o| o == n) {
+            out.push(n.to_owned());
+        }
+    }
+    (out.len() <= MAX_REPOS).then_some(out)
+}
+
+/// The `POST …/access_tokens` body: for a read-only connection every installation permission
+/// that is on the read allowlist, as `read`; the repository subset when one is configured;
+/// `None` (an empty body: all of the installation's permissions and repositories) otherwise.
+/// A read-only connection whose installation has no permission on the allowlist cannot be
+/// narrowed and is refused rather than minting something wider.
+fn mint_body(s: &Settings, installation: Option<&serde_json::Value>) -> Result<Option<serde_json::Value>, HookError> {
+    let mut body = serde_json::Map::new();
+    if s.read_only {
+        let held = installation
+            .and_then(|i| i.get("permissions"))
+            .and_then(|p| p.as_object())
+            .ok_or_else(|| HookError::Upstream("GitHub answered without the installation permissions".into()))?;
+        let narrowed: serde_json::Map<String, serde_json::Value> = READ_ALLOWLIST
+            .iter()
+            .filter(|k| held.contains_key(**k))
+            .map(|k| ((*k).to_owned(), serde_json::Value::String("read".into())))
+            .collect();
+        if narrowed.is_empty() {
+            return Err(HookError::Upstream(
+                "the installation holds none of the permissions Aurora needs for a view-only token: give the app Contents, Issues or Pull requests access on GitHub".into(),
+            ));
+        }
+        body.insert("permissions".into(), narrowed.into());
+    }
+    if !s.repositories.is_empty() {
+        body.insert("repositories".into(), s.repositories.clone().into());
+    }
+    Ok((!body.is_empty()).then_some(body.into()))
 }
 
 /// Accept PKCS#1 (`RSA PRIVATE KEY`, what GitHub downloads) and PKCS#8 PEM, tolerating the
@@ -208,10 +290,30 @@ fn denied_message(s: &Settings, m: &str) -> String {
 }
 
 /// `POST {base}/app/installations/{installation_id}/access_tokens`, authenticated as the app.
-fn mint_request(s: &Settings, jwt: &str) -> HttpRequest {
+fn mint_request(s: &Settings, jwt: &str, body: Option<&serde_json::Value>) -> HttpRequest {
+    let mut headers = kv([
+        ("authorization", format!("Bearer {jwt}").as_str()),
+        ("accept", "application/vnd.github+json"),
+        ("x-github-api-version", "2022-11-28"),
+        ("user-agent", "aurora-github-app"),
+    ]);
+    if body.is_some() {
+        headers.extend(kv([("content-type", "application/json")]));
+    }
     HttpRequest {
         method: "POST".into(),
         url: format!("{}/app/installations/{}/access_tokens", s.base, s.installation_id),
+        headers,
+        body: body.map(|b| b.to_string().into_bytes()),
+    }
+}
+
+/// `GET {base}/app/installations/{installation_id}`, authenticated as the app: what the
+/// installation was granted (`permissions`), which bounds what a narrowed token may ask for.
+fn installation_request(s: &Settings, jwt: &str) -> HttpRequest {
+    HttpRequest {
+        method: "GET".into(),
+        url: format!("{}/app/installations/{}", s.base, s.installation_id),
         headers: kv([
             ("authorization", format!("Bearer {jwt}").as_str()),
             ("accept", "application/vnd.github+json"),
@@ -222,16 +324,39 @@ fn mint_request(s: &Settings, jwt: &str) -> HttpRequest {
     }
 }
 
-fn mint(s: &Settings, key: &RsaPrivateKey) -> Result<(String, u64), HookError> {
-    let now = now_unix_seconds();
-    let jwt = app_jwt(key, &s.app_id, now)?;
-    let r = fetch(&mint_request(s, &jwt)).map_err(|e| match e {
+fn send(s: &Settings, req: &HttpRequest) -> Result<HttpResponse, HookError> {
+    let r = fetch(req).map_err(|e| match e {
         FetchError::Denied(m) => HookError::Upstream(denied_message(s, &m)),
         FetchError::Timeout => HookError::Upstream("timeout".into()),
         FetchError::TooLarge => HookError::Upstream("response too large".into()),
         FetchError::Network(m) => HookError::Upstream(m),
     })?;
-    match r.status {
+    check_status(r.status)?;
+    Ok(r)
+}
+
+fn mint(s: &Settings, key: &RsaPrivateKey) -> Result<(String, u64), HookError> {
+    let now = now_unix_seconds();
+    let jwt = app_jwt(key, &s.app_id, now)?;
+    // A read-only connection first learns what the installation holds, so the narrowed
+    // `permissions` never ask for more than that (GitHub answers 422 to a permission the
+    // installation lacks).
+    let installation = if s.read_only {
+        let r = send(s, &installation_request(s, &jwt))?;
+        Some(
+            serde_json::from_slice::<serde_json::Value>(&r.body)
+                .map_err(|_| HookError::Upstream("GitHub answered with a malformed body".into()))?,
+        )
+    } else {
+        None
+    };
+    let body = mint_body(s, installation.as_ref())?;
+    let r = send(s, &mint_request(s, &jwt, body.as_ref()))?;
+    parse_token(&r, now)
+}
+
+fn check_status(status: u16) -> Result<(), HookError> {
+    match status {
         200 | 201 => {}
         401 => {
             return Err(HookError::ReauthRequired(
@@ -248,8 +373,17 @@ fn mint(s: &Settings, key: &RsaPrivateKey) -> Result<(String, u64), HookError> {
                 "GitHub refused to mint a token (the installation may be suspended)".into(),
             ));
         }
+        422 => {
+            return Err(HookError::Upstream(
+                "GitHub refused the requested repositories or permissions: check that every listed repository is part of the installation".into(),
+            ));
+        }
         st => return Err(HookError::Upstream(format!("GitHub answered {st}"))),
     }
+    Ok(())
+}
+
+fn parse_token(r: &HttpResponse, now: u64) -> Result<(String, u64), HookError> {
     let body: serde_json::Value = serde_json::from_slice(&r.body)
         .map_err(|_| HookError::Upstream("GitHub answered with a malformed body".into()))?;
     let token = body
@@ -281,6 +415,10 @@ impl Hooks for Guest {
             other => other,
         })?;
         let mut metadata = vec![("app_id", s.app_id.as_str()), ("installation_id", s.installation_id.as_str())];
+        let repos = s.repositories.join(",");
+        if !repos.is_empty() {
+            metadata.push(("repositories", repos.as_str()));
+        }
         let host;
         if s.ghes {
             host = kv_get(form, "ghes_host").and_then(normalise_host).unwrap_or_default();
@@ -358,7 +496,16 @@ mod tests {
             installation_id: "7".into(),
             base: SAAS_BASE.into(),
             ghes: false,
+            read_only: false,
+            repositories: vec![],
         }
+    }
+
+    fn installation() -> serde_json::Value {
+        serde_json::json!({"id": 7, "permissions": {
+            "contents": "write", "issues": "write", "pull_requests": "read", "metadata": "read",
+            "administration": "write", "secrets": "read", "workflows": "write", "members": "read"
+        }})
     }
 
     #[test]
@@ -383,8 +530,9 @@ mod tests {
 
     #[test]
     fn mint_request_targets_the_documented_path_with_a_bearer_jwt() {
-        let r = mint_request(&saas(), "aaa.bbb.ccc");
+        let r = mint_request(&saas(), "aaa.bbb.ccc", None);
         assert_eq!(r.method, "POST");
+        assert!(r.body.is_none(), "read-and-write sends no body");
         assert_eq!(r.url, "https://api.github.com/app/installations/7/access_tokens");
         assert_eq!(kv_get(&r.headers, "authorization"), Some("Bearer aaa.bbb.ccc"));
         let ghes = Settings {
@@ -393,9 +541,83 @@ mod tests {
             ..saas()
         };
         assert_eq!(
-            mint_request(&ghes, "x.y.z").url,
+            mint_request(&ghes, "x.y.z", None).url,
             "https://github.example.com/api/v3/app/installations/7/access_tokens"
         );
+    }
+
+    #[test]
+    fn read_and_write_mints_with_no_narrowing() {
+        let s = saas();
+        assert_eq!(mint_body(&s, None).unwrap(), None);
+        // Even when the installation answer is at hand, nothing is narrowed.
+        assert_eq!(mint_body(&s, Some(&installation())).unwrap(), None);
+    }
+
+    #[test]
+    fn read_only_narrows_to_the_read_allowlist_intersected_with_the_installation() {
+        let s = Settings { read_only: true, ..saas() };
+        let body = mint_body(&s, Some(&installation())).unwrap().unwrap();
+        // Held by the installation and on the allowlist, all as `read`; administration, secrets,
+        // workflows and organisation permissions never appear, nor does anything it lacks.
+        assert_eq!(
+            body,
+            serde_json::json!({"permissions": {
+                "contents": "read", "issues": "read", "pull_requests": "read", "metadata": "read"
+            }})
+        );
+        let none = serde_json::json!({"permissions": {"administration": "write", "secrets": "write"}});
+        assert!(matches!(mint_body(&s, Some(&none)), Err(HookError::Upstream(_))));
+        assert!(matches!(mint_body(&s, None), Err(HookError::Upstream(_))));
+        assert!(matches!(
+            mint_body(&s, Some(&serde_json::json!({"id": 7}))),
+            Err(HookError::Upstream(_))
+        ));
+    }
+
+    #[test]
+    fn a_repository_subset_is_sent_alone_or_with_the_read_permissions() {
+        let rw = Settings { repositories: vec!["api".into(), "web".into()], ..saas() };
+        assert_eq!(mint_body(&rw, None).unwrap(), Some(serde_json::json!({"repositories": ["api", "web"]})));
+        let ro = Settings { read_only: true, ..rw };
+        let body = mint_body(&ro, Some(&installation())).unwrap().unwrap();
+        assert_eq!(body["repositories"], serde_json::json!(["api", "web"]));
+        assert_eq!(body["permissions"]["contents"], "read");
+        let r = mint_request(&ro, "a.b.c", Some(&body));
+        assert_eq!(kv_get(&r.headers, "content-type"), Some("application/json"));
+        let sent: serde_json::Value = serde_json::from_slice(&r.body.unwrap()).unwrap();
+        assert_eq!(sent, body);
+    }
+
+    #[test]
+    fn the_installation_lookup_targets_the_documented_path() {
+        assert_eq!(installation_request(&saas(), "a.b.c").url, "https://api.github.com/app/installations/7");
+        assert_eq!(installation_request(&saas(), "a.b.c").method, "GET");
+    }
+
+    #[test]
+    fn access_comes_only_from_the_reserved_key_and_fails_closed() {
+        let base = [("app_id", "1"), ("installation_id", "7")];
+        let with = |a: &str| {
+            let mut v = base.to_vec();
+            v.push(("aurora_access", a));
+            settings(APP_SAAS, &kv(v), false).unwrap().read_only
+        };
+        assert!(with("read"));
+        assert!(!with("write"));
+        assert!(with("anything-else"));
+        assert!(!settings(APP_SAAS, &kv(base), false).unwrap().read_only);
+    }
+
+    #[test]
+    fn repositories_parse_names_only() {
+        assert_eq!(repositories(""), Some(vec![]));
+        assert_eq!(repositories(" api, web\nweb docs.v2 "), Some(vec!["api".into(), "web".into(), "docs.v2".into()]));
+        for bad in ["owner/api", "..", "a b/c", "x;y", &"a".repeat(101)] {
+            assert_eq!(repositories(bad), None, "{bad}");
+        }
+        let many: Vec<String> = (0..501).map(|i| format!("r{i}")).collect();
+        assert_eq!(repositories(&many.join(",")), None);
     }
 
     #[test]

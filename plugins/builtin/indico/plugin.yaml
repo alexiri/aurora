@@ -45,6 +45,19 @@ apps:
             required: true
             placeholder: "indp_…"
             help_url: https://docs.getindico.io/en/stable/http-api/access/#api-token-authentication
+        # A personal token does not tell Aurora its scopes (Indico shows them only on the token page).
+        # The names are Indico's own (indico/core/oauth/scopes.py, 3.3.14); the read ones are probed with
+        # one harmless GET each, the write ones are never probed.
+        scopes:
+          - { scope: "read:user", name: Read your Indico profile, access: read }
+          - { scope: "read:legacy_api", name: "Read events, timetables, rooms and bookings (official API)", access: read }
+          - { scope: "write:legacy_api", name: "Book rooms through the official API", access: write }
+          - { scope: "read:everything", name: "Read everything you can see (Indico web API)", access: read }
+          - { scope: "full:everything", name: "Change everything you can change (Indico web API)", access: write }
+        probe_scopes:
+          "read:user": { method: GET, url: "https://{instance}/api/user/" }
+          "read:legacy_api": { method: GET, url: "https://{instance}/export/categ/0.json?limit=1" }
+          "read:everything": { method: GET, url: "https://{instance}/rooms/api/locations" }
         probe:
           method: GET
           url: "https://{instance}/api/user/"
@@ -101,48 +114,48 @@ apps:
     tools:
       read:
         items:
-          - { id: get_current_user, name: Get the connected Indico user, host: "{instance}", path: /api/user/, methods: [GET] }
-          - { id: list_favorite_category_events, name: List events in my favorite categories, host: "{instance}", path: "/export/categ/favorites*", methods: [GET] }
-          - { id: list_category_events, name: List events in categories, host: "{instance}", path: "/export/categ/*", methods: [GET] }
-          - { id: search_events, name: Search events by title, host: "{instance}", path: "/export/event/search/*", methods: [GET] }
-          - { id: get_event, name: "Read an event (contributions, sessions, attachments, notes)", host: "{instance}", path: "/export/event/*", methods: [GET] }
-          - { id: get_event_file, name: Download an event file or read part of an event, host: "{instance}", path: "/export/event/*/*/**", methods: [GET] }
-          - { id: get_timetable, name: Read an event timetable, host: "{instance}", path: "/export/timetable/*", methods: [GET] }
-          - { id: get_rooms, name: Read rooms and their bookings, host: "{instance}", path: "/export/room/*/*", methods: [GET] }
-          - { id: find_room_by_name, name: Find a room by name, host: "{instance}", path: "/export/roomName/*/**", methods: [GET] }
-          - { id: list_reservations, name: List room bookings at a location, host: "{instance}", path: "/export/reservation/*", methods: [GET] }
-          - { id: search, name: "Search events, contributions, categories, notes and files (extended)", host: "{instance}", path: /search/api/search, methods: [GET] }
-          - { id: search_categories, name: Search categories (extended), host: "{instance}", path: /category/search, methods: [GET] }
-          - { id: list_favorite_users, name: List my favorite users (extended), host: "{instance}", path: /user/api/favorites/users, methods: [GET] }
-          - { id: list_favorite_categories, name: List my favorite categories (extended), host: "{instance}", path: "/user/api/favorites/categories/**", methods: [GET] }
-          - { id: list_favorite_events, name: List my favorite events (extended), host: "{instance}", path: "/user/api/favorites/events/**", methods: [GET] }
-          - { id: list_favorite_rooms, name: List my favorite rooms (extended), host: "{instance}", path: "/rooms/api/user/favorite-rooms/**", methods: [GET] }
-          - { id: list_room_locations, name: List room booking locations (extended), host: "{instance}", path: /rooms/api/locations, methods: [GET] }
-          - { id: list_equipment_types, name: List room equipment types (extended), host: "{instance}", path: /rooms/api/equipment, methods: [GET] }
-          - { id: list_all_rooms, name: List all rooms (extended), host: "{instance}", path: /rooms/api/rooms/, methods: [GET] }
-          - { id: search_rooms, name: "Search rooms, including rooms free in a time slot (extended)", host: "{instance}", path: /rooms/api/rooms/search, methods: [GET] }
-          - { id: get_room_availability, name: Check a room's availability (extended), host: "{instance}", path: "/rooms/api/rooms/*/availability/**", methods: [GET] }
-          - { id: get_room_details, name: Read a room's details (extended), host: "{instance}", path: "/rooms/api/rooms/*", methods: [GET] }
-          - { id: list_my_upcoming_bookings, name: List my next room bookings (extended), host: "{instance}", path: /rooms/api/bookings/mine, methods: [GET] }
-          - { id: get_booking_calendar, name: Read the booking calendar (extended), host: "{instance}", path: /rooms/api/calendar, methods: [GET] }
-          - { id: get_booking, name: Read a room booking (extended), host: "{instance}", path: "/rooms/api/bookings/*", methods: [GET] }
-          - { id: get_user_search_token, name: Start a user search (extended), host: "{instance}", path: /user/search/token, methods: [GET] }
-          - { id: search_users, name: Search Indico users (extended; returns personal data), host: "{instance}", path: /user/search/, methods: [GET] }
+          - { id: get_current_user, name: Get the connected Indico user, host: "{instance}", path: /api/user/, methods: [GET], scopes: ["read:user"] }
+          - { id: list_favorite_category_events, name: List events in my favorite categories, host: "{instance}", path: "/export/categ/favorites*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: list_category_events, name: List events in categories, host: "{instance}", path: "/export/categ/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: search_events, name: Search events by title, host: "{instance}", path: "/export/event/search/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_event, name: "Read an event (contributions, sessions, attachments, notes)", host: "{instance}", path: "/export/event/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_event_file, name: Download an event file or read part of an event, host: "{instance}", path: "/export/event/*/*/**", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_timetable, name: Read an event timetable, host: "{instance}", path: "/export/timetable/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_rooms, name: "Read rooms and their bookings (official API)", host: "{instance}", path: "/export/room/*/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: find_room_by_name, name: "Find a room by name (official API)", host: "{instance}", path: "/export/roomName/*/**", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: list_reservations, name: "List room bookings at a location (official API)", host: "{instance}", path: "/export/reservation/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: search, name: "Search events, contributions, categories, notes and files (Indico web API)", host: "{instance}", path: /search/api/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: search_categories, name: Search categories (Indico web API), host: "{instance}", path: /category/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_users, name: List my favorite users (Indico web API), host: "{instance}", path: /user/api/favorites/users, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_categories, name: List my favorite categories (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_events, name: List my favorite events (Indico web API), host: "{instance}", path: "/user/api/favorites/events/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_rooms, name: List my favorite rooms (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_room_locations, name: List room booking locations (Indico web API), host: "{instance}", path: /rooms/api/locations, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_equipment_types, name: List room equipment types (Indico web API), host: "{instance}", path: /rooms/api/equipment, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_all_rooms, name: "List all rooms with details (Indico web API)", host: "{instance}", path: /rooms/api/rooms/, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: search_rooms, name: "Search rooms free in a time slot (Indico web API)", host: "{instance}", path: /rooms/api/rooms/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_room_availability, name: Check a room's availability (Indico web API), host: "{instance}", path: "/rooms/api/rooms/*/availability/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_room_details, name: Read a room's details (Indico web API), host: "{instance}", path: "/rooms/api/rooms/*", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_my_upcoming_bookings, name: List my next room bookings (Indico web API), host: "{instance}", path: /rooms/api/bookings/mine, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_booking_calendar, name: Read the booking calendar (Indico web API), host: "{instance}", path: /rooms/api/calendar, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_booking, name: Read a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_user_search_token, name: Start a user search (Indico web API), host: "{instance}", path: /user/search/token, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: search_users, name: Search Indico users (Indico web API; returns personal data), host: "{instance}", path: /user/search/, methods: [GET], scopes: ["read:everything", "full:everything"] }
       write:
         items:
-          - { id: book_room, name: Book a room (HTTP API), host: "{instance}", path: "/api/roomBooking/bookRoom*", methods: [POST] }
-          - { id: create_booking, name: "Book a room (room booking, extended)", host: "{instance}", path: /rooms/api/booking/create, methods: [POST] }
-          - { id: cancel_booking, name: Cancel a room booking (extended), host: "{instance}", path: "/rooms/api/bookings/*/cancel", methods: [POST] }
-          - { id: cancel_booking_occurrence, name: Cancel one date of a room booking (extended), host: "{instance}", path: "/rooms/api/bookings/*/*/cancel", methods: [POST] }
-          - { id: add_favorite_user, name: Add a favorite user (extended), host: "{instance}", path: "/user/api/favorites/users/*", methods: [PUT] }
-          - { id: remove_favorite_user, name: Remove a favorite user (extended), host: "{instance}", path: "/user/api/favorites/users/*", methods: [DELETE] }
-          - { id: add_favorite_category, name: Add a favorite category (extended), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [PUT] }
-          - { id: remove_favorite_category, name: Remove a favorite category (extended), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [DELETE] }
-          - { id: add_favorite_event, name: Add a favorite event (extended), host: "{instance}", path: "/user/api/favorites/events/*", methods: [PUT] }
-          - { id: remove_favorite_event, name: Remove a favorite event (extended), host: "{instance}", path: "/user/api/favorites/events/*", methods: [DELETE] }
-          - { id: add_favorite_room, name: Add a favorite room (extended), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [PUT] }
-          - { id: remove_favorite_room, name: Remove a favorite room (extended), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [DELETE] }
-          - { id: prepare_event, name: Prepare an event for me to create (extended), host: "{instance}", path: /event/create/prepare, methods: [POST] }
+          - { id: book_room, name: "Book a room: one slot (official API)", host: "{instance}", path: "/api/roomBooking/bookRoom*", methods: [POST], scopes: ["write:legacy_api"] }
+          - { id: create_booking, name: "Book a room: recurring, with all options (Indico web API)", host: "{instance}", path: /rooms/api/booking/create, methods: [POST], scopes: ["full:everything"] }
+          - { id: cancel_booking, name: Cancel a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*/cancel", methods: [POST], scopes: ["full:everything"] }
+          - { id: cancel_booking_occurrence, name: Cancel one date of a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*/*/cancel", methods: [POST], scopes: ["full:everything"] }
+          - { id: add_favorite_user, name: Add a favorite user (Indico web API), host: "{instance}", path: "/user/api/favorites/users/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_user, name: Remove a favorite user (Indico web API), host: "{instance}", path: "/user/api/favorites/users/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: add_favorite_category, name: Add a favorite category (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_category, name: Remove a favorite category (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: add_favorite_event, name: Add a favorite event (Indico web API), host: "{instance}", path: "/user/api/favorites/events/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_event, name: Remove a favorite event (Indico web API), host: "{instance}", path: "/user/api/favorites/events/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: add_favorite_room, name: Add a favorite room (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_room, name: Remove a favorite room (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: prepare_event, name: Prepare an event for me to create (Indico web API), host: "{instance}", path: /event/create/prepare, methods: [POST], scopes: ["full:everything"] }
     approvals:
       book_room:
         title: Book room

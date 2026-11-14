@@ -32084,7 +32084,8 @@
           "fields",
           "scopes",
           "default_scopes",
-          "access_levels"
+          "access_levels",
+          "probe_scopes"
         ],
         "properties": {
           "access_levels": {
@@ -32139,6 +32140,13 @@
             ],
             "description": "(FIX-123, D-214) Short name for the connect window's \"How do you want to connect?\"\nchooser; `null` = the window falls back to the kind."
           },
+          "probe_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration\n(\"Which scopes did you give this token?\"); the others are asked without a prefill."
+          },
           "recommended": {
             "type": "boolean",
             "description": "The chooser preselects this method and badges it \"Recommended\" (at most one per app)."
@@ -32175,6 +32183,13 @@
           "method_id"
         ],
         "properties": {
+          "access": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools\n(the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the\nconnection's current value."
+          },
           "access_level": {
             "type": [
               "string",
@@ -32226,6 +32241,16 @@
           "scope": {
             "type": "string",
             "description": "`organization` | `workspace`."
+          },
+          "scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "(FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token\nhas (\"Which scopes did you give this token?\"). Absent = prefilled by the method's read\nprobes. Each must be one of the method's scopes."
           },
           "workspace_id": {
             "type": [
@@ -32316,11 +32341,16 @@
           "scopes",
           "missing_scopes",
           "metadata",
+          "access",
           "created_at",
           "updated_at",
           "injecting"
         ],
         "properties": {
+          "access": {
+            "type": "string",
+            "description": "(FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools\n(the gateway blocks write tools and untooled requests through it, whatever the grants say)."
+          },
           "app_id": {
             "type": "string"
           },
@@ -39596,11 +39626,16 @@
                 "scopes",
                 "missing_scopes",
                 "metadata",
+                "access",
                 "created_at",
                 "updated_at",
                 "injecting"
               ],
               "properties": {
+                "access": {
+                  "type": "string",
+                  "description": "(FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools\n(the gateway blocks write tools and untooled requests through it, whatever the grants say)."
+                },
                 "app_id": {
                   "type": "string"
                 },
@@ -42213,11 +42248,28 @@
       "PatchConnectionRequest": {
         "type": "object",
         "properties": {
+          "access": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it."
+          },
           "label": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "(FIX-136, D-241) Replace the scopes the connection has: only for a connection made with a\n`fields` method that declares scopes (a pasted token's scopes are declared by the person, an\nOAuth connection's are what the provider granted), each one of that method's scopes."
           },
           "status": {
             "type": [
@@ -47889,7 +47941,8 @@
           "host",
           "path",
           "methods",
-          "connect_methods"
+          "connect_methods",
+          "scopes"
         ],
         "properties": {
           "connect_methods": {
@@ -47940,6 +47993,13 @@
           },
           "path": {
             "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement."
           },
           "wildcard": {
             "type": "boolean"

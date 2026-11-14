@@ -70,6 +70,7 @@
       "workspace_id"
     ],
     "app_connections": [
+      "access",
       "app_id",
       "app_version",
       "connect_method",
@@ -1253,6 +1254,7 @@
       "workspace_id": "uuid null"
     },
     "app_connections": {
+      "access": "text not null",
       "app_id": "text not null",
       "app_version": "text not null",
       "connect_method": "text null",

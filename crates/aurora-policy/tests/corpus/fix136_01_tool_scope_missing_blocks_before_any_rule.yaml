@@ -1,0 +1,17 @@
+description: FIX-136 a tool whose scopes the connection lacks is blocked before any rule, even with a hand allow rule
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: hand-allow, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: hand-allow-network, action: allow, targets: [{type: network, host: indico.example.org}]}]}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /rooms/api/rooms/search
+  method: GET
+  app_id: indico
+  tool_id: search_rooms
+  tool_tags: {scope_missing: true}
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: block
+  reason: tool_scope_missing
+  trace_via: {organization: tool_scope_blocked, workspace: tool_scope_blocked}

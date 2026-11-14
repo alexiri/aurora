@@ -321,6 +321,15 @@ pub enum Connect {
 }
 
 impl Connect {
+    /// (FIX-136) The scopes the method can grant or let a person declare (none for a hook).
+    pub fn declared_scopes(&self) -> &[ScopeDecl] {
+        match self {
+            Self::Oauth2(c) => &c.scopes,
+            Self::Fields(c) => &c.scopes,
+            Self::Hook(_) => &[],
+        }
+    }
+
     pub fn id(&self) -> &str {
         match self {
             Self::Oauth2(c) => &c.id,
@@ -483,6 +492,15 @@ pub struct FieldsConnect {
     pub token: Option<Token>,
     pub fields: Vec<FormField>,
     pub probe: Option<Probe>,
+    /// (FIX-136, D-241) The scopes a pasted token may carry, which the connect form asks the
+    /// person to declare ("Which scopes did you give this token?"); stored as the connection's
+    /// `scopes` and trusted only to *refuse* a tool the token cannot serve, never to widen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<ScopeDecl>,
+    /// (FIX-136) Read probes that prefill the declaration: one entry per **read** scope; a probe
+    /// answering one of its `expect_status` ticks the scope. Write scopes are never probed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub probe_scopes: BTreeMap<String, Probe>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -796,6 +814,10 @@ pub struct ToolItem {
     /// methods of the tool.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connect_methods: Vec<String>,
+    /// (FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement. Ids come from
+    /// the scopes of the app's connect methods (`oauth2` `scopes`, `fields` `scopes`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
     pub graphql: Option<GraphqlKind>,
     pub git: Option<GitKind>,
     /// (phase 4, P4-GRANTS, Q8, D-124) 1–4 AND-ed parameter conditions (a classifier beside

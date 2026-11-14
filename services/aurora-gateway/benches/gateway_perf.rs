@@ -168,6 +168,8 @@ fn conn(w: &World, n: usize) -> AppConnectionRow {
         tenant_host: None,
         instance_id: None,
         connect_method: None,
+        access: "write".into(),
+        scopes: Vec::new(),
     }
 }
 

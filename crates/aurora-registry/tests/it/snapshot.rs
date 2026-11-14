@@ -419,6 +419,6 @@ fn the_shipped_builtin_packages_compile_without_a_host_claim_decision() {
     }
     let gh = snap.apps.iter().find(|a| a.app_id == "github").unwrap();
     let methods: Vec<&str> = gh.connect.iter().map(|c| c.id()).collect();
-    assert_eq!(methods, ["github_app", "token", "oauth"]);
+    assert_eq!(methods, ["github_app", "token", "oauth", "oauth_app"]);
     assert_eq!(gh.connect.iter().filter(|c| c.recommended()).count(), 1);
 }

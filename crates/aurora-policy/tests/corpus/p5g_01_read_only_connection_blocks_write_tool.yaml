@@ -1,0 +1,17 @@
+description: FIX-133 read-only connection - a write tool is blocked before any rule, even with a hand allow rule and a full grant style target
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: hand-allow, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: hand-allow-network, action: allow, targets: [{type: network, host: api.github.com}]}]}
+facts:
+  host: api.github.com
+  port: 443
+  path: /repos/acme/app/issues
+  method: POST
+  app_id: github
+  tool_id: create_issue
+  tool_tags: {write: true}
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: github, scope: workspace, read_only: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: block
+  reason: read_only_connection
+  trace_via: {organization: read_only_blocked, workspace: read_only_blocked}

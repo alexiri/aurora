@@ -351,11 +351,12 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | status | text CHECK in (`active`,`reauth_required`,`disabled`,`orphaned`) | |
 | status_reason | text null (≤ 300 chars) | open vocabulary; a plugin major upgrade sets `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (`09 §10`, ≤300 chars) |
 | connect_method | text null | (FIX-123, D-195, D-214) id of the manifest `connect[]` method that created or last reconnected the connection; the gateway's refresh/mint paths use that method's `token` (falling back to the app's), tools restricted by `connect_methods` apply by it. Null = unknown (rows older than the column, where the package had several methods): the app's `token`, no tool hidden. Backfilled by migration `000110` from the recorded package version's single method |
+| access | text not null default `write` CHECK in (`read`,`write`) | (FIX-133, D-240, C-740) `read` = the gateway allows only the app's `read` tools through this connection and blocks write tools and untooled requests before any rule (`07 §Read-only connections`). Chosen at connect time or changed by `PATCH`; existing rows are `write`; a reconnect without a value keeps it. Migration `20261201000160` |
 | credentials_ref | text not null | SecretRef of the credential JSON (fields per manifest `credentials`) |
 | credential_keys | text[] null | (phase 3, RFE-022) **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows: the upgrade check derives the names from the manifest of the row's `app_version`, else fails closed). Used by the plugin major-upgrade check (`09 §10`). The gateway role's column-level `UPDATE` list includes it |
 | credentials_version | bigint not null default 1 | CAS authority for refresh/mint writes |
 | credentials_expires_at | timestamptz null | access-token expiry (refresh trigger) |
-| scopes | text[] not null default `{}` | granted scopes |
+| scopes | text[] not null default `{}` | granted scopes; (FIX-136, D-241) for a connection made with a `fields` method that declares scopes: the scopes the person declared (or the read probes found) for the pasted token, editable; the gateway refuses a tool needing others only when this is non-empty |
 | requested_scopes | text[] not null default `{}` | scopes requested at authorize time; `missing_scopes = requested_scopes − scopes` (I-33) |
 | metadata | jsonb not null default `{}` | non-secret, plugin-declared keys only |
 | tenant_host | text null | for tenant-bound hosts |
