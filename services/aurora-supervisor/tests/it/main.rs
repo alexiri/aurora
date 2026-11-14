@@ -7,6 +7,7 @@ mod pgrelay;
 mod previews;
 mod pty_env_probe;
 mod pty_leak;
+mod pty_shell;
 mod spawn_env;
 mod streams;
 mod tools;

@@ -279,6 +279,8 @@ pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiE
         // (phase 1, RFE-003) The supervisor starts the open proxy only with `browser`.
         "capabilities": i.capabilities,
         "harness": {"id": i.harness, "capabilities_expected": []},
+        // (FIX-138 item 1b) The harnesses the terminal's `claude`/`codex` wrappers may start.
+        "enabled_harnesses": s.config.hosted.enabled_harnesses,
         "timezone": s.config.hosted.default_timezone,
     });
     let bytes = serde_json::to_vec(&doc).map_err(|e| ApiError::internal(e.to_string()))?;

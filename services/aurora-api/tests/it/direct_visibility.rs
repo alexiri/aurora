@@ -452,6 +452,17 @@ async fn approvals_naming_a_direct_conversation_are_hidden_from_other_members() 
         assert!(got.contains(&plain.to_string()));
         assert_eq!(got.contains(&dm.to_string()), want == 2);
     }
+    // P5-AGENT-1 (C-700): the `agent_id` filter never reveals a hidden direct approval.
+    let filtered = format!("{list}?agent_id={}", f.agent);
+    for (who, want) in [(&f.o, 2), (&f.m, 1)] {
+        let (s, v) = f
+            .req(Method::GET, &filtered, ("cookie", &who.cookie), None)
+            .await;
+        assert_eq!(s, 200);
+        let got = ids(&v);
+        assert_eq!(got.len(), want, "{v}");
+        assert_eq!(got.contains(&dm.to_string()), want == 2);
+    }
     // Pending long-poll (wait=0) with every credential kind.
     for cred in Fx::creds(&f.m) {
         let (s, v) = f

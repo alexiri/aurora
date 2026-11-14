@@ -227,6 +227,115 @@
         credentials: { access_token: "tok-fixture-inst-5" }
         metadata: { app_id: "123456", installation_id: "7" }
         label: "GitHub App 123456 (installation 7)"
+# (FIX-133, D-240) Read-only: the api puts `aurora_access` in the form and the gateway in the mint
+# metadata. The hook first reads the installation (`GET /app/installations/7`, consumed: an unused
+# entry fails the case), then mints with the narrowed permissions; the request body (permissions,
+# repositories) is asserted by the guest's unit tests, the cassette matches method and URL only.
+- name: token.mint (github) read-only reads the installation, then mints a narrowed token
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: token.mint
+    app_id: github
+    http_cassette:
+      - request: { method: GET, url: "https://api.github.com/app/installations/7" }
+        response: { status: 200, body: '{"id":7,"permissions":{"contents":"write","issues":"write","metadata":"read","administration":"write"}}' }
+      - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
+        response: { status: 201, body: '{"token":"tok-fixture-ro-1","expires_at":"2099-01-01T00:00:00Z","permissions":{"contents":"read","issues":"read","metadata":"read"}}' }
+    input:
+      credentials: { private_key: *key }
+      metadata: { app_id: "123456", installation_id: "7", aurora_access: read }
+    expect: { credentials: { access_token: "tok-fixture-ro-1" } }
+- name: token.mint (github) read-only with a repository subset
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: token.mint
+    app_id: github
+    http_cassette:
+      - request: { method: GET, url: "https://api.github.com/app/installations/7" }
+        response: { status: 200, body: '{"id":7,"permissions":{"contents":"read","metadata":"read"}}' }
+      - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
+        response: { status: 201, body: '{"token":"tok-fixture-ro-2","expires_at":"2099-01-01T00:00:00Z","repository_selection":"selected"}' }
+    input:
+      credentials: { private_key: *key }
+      metadata: { app_id: "123456", installation_id: "7", aurora_access: read, repositories: "api,web" }
+    expect: { credentials: { access_token: "tok-fixture-ro-2" } }
+- name: token.mint (github) read-and-write with a repository subset sends no installation lookup
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: token.mint
+    app_id: github
+    http_cassette:
+      - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
+        response: { status: 201, body: '{"token":"tok-fixture-rw-1","expires_at":"2099-01-01T00:00:00Z"}' }
+    input:
+      credentials: { private_key: *key }
+      metadata: { app_id: "123456", installation_id: "7", aurora_access: write, repositories: "api" }
+    expect: { credentials: { access_token: "tok-fixture-rw-1" } }
+- name: token.mint (github) read-only refuses an installation with nothing readable
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: token.mint
+    app_id: github
+    http_cassette:
+      - request: { method: GET, url: "https://api.github.com/app/installations/7" }
+        response: { status: 200, body: '{"id":7,"permissions":{"administration":"write","secrets":"write"}}' }
+    input:
+      credentials: { private_key: *key }
+      metadata: { app_id: "123456", installation_id: "7", aurora_access: read }
+    expect: { error: upstream, message_contains: "none of the permissions" }
+- name: token.mint (github) read-only maps a missing installation to reauth-required
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: token.mint
+    app_id: github
+    http_cassette:
+      - request: { method: GET, url: "https://api.github.com/app/installations/7" }
+        response: { status: 404, body: '{"message":"Not Found"}' }
+    input:
+      credentials: { private_key: *key }
+      metadata: { app_id: "123456", installation_id: "7", aurora_access: read }
+    expect: { error: reauth-required, message_contains: "installation not found" }
+- name: token.mint (github) a repository GitHub refuses is reported
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: token.mint
+    app_id: github
+    http_cassette:
+      - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
+        response: { status: 422, body: '{"message":"Validation Failed"}' }
+    input:
+      credentials: { private_key: *key }
+      metadata: { app_id: "123456", installation_id: "7", repositories: "nope" }
+    expect: { error: upstream, message_contains: "refused the requested repositories" }
+- name: connect.exchange (github) read-only reads the installation first and stores the repository subset
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: connect.exchange
+    app_id: github
+    http_cassette:
+      - request: { method: GET, url: "https://api.github.com/app/installations/7" }
+        response: { status: 200, body: '{"id":7,"permissions":{"contents":"write","metadata":"read"}}' }
+      - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
+        response: { status: 201, body: '{"token":"tok-fixture-ro-3","expires_at":"2099-01-01T00:00:00Z"}' }
+    input:
+      method_id: github_app
+      source:
+        form: { app_id: "123456", installation_id: "7", private_key: *key, repositories: "api, web", aurora_access: read }
+    expect:
+      connected:
+        credentials: { access_token: "tok-fixture-ro-3" }
+        metadata: { app_id: "123456", installation_id: "7", repositories: "api,web" }
+        label: "GitHub App 123456 (installation 7)"
+- name: connect.exchange (github) refuses a malformed repository list
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  hook:
+    point: connect.exchange
+    app_id: github
+    input:
+      method_id: github_app
+      source:
+        form: { app_id: "123456", installation_id: "7", private_key: *key, repositories: "owner/api" }
+    expect: { error: invalid-input, message_contains: "repositories" }
 - name: connect.exchange (github) reports a rejected key without echoing it
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:

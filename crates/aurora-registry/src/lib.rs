@@ -7,6 +7,7 @@ pub mod claims;
 pub mod diff;
 pub mod digest;
 pub mod index;
+pub mod instance;
 pub mod library;
 pub mod manifest;
 pub mod package;

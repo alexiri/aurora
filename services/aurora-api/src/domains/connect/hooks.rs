@@ -66,25 +66,36 @@ pub struct Call<'a> {
     /// The connection's instance host (or the app's `default_host`): what `{instance}` in the
     /// package's egress list stands for (D-74).
     pub instance_host: Option<&'a str>,
+    /// (C-249, D-231) The registration's base path: informational for hooks that build URLs;
+    /// egress stays per host.
+    pub instance_base_path: Option<&'a str>,
 }
 
 impl HookClient {
-    pub fn new(base: &str, ring: &aurora_crypto::SecretRing) -> Result<Self, String> {
+    pub fn new(
+        base: &str,
+        ring: &aurora_crypto::SecretRing,
+        extra_ca_bundle: Option<&str>,
+    ) -> Result<Self, String> {
         Ok(Self {
             base: base.trim_end_matches('/').to_owned(),
             bearer: ring.active_bearer(),
             key_id: ring.active_id().to_owned(),
-            http: reqwest::Client::builder()
-                .timeout(HOOK_WALL)
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|e| format!("hook client: {e}"))?,
+            http: aurora_secrets::tls::with_extra_roots(
+                reqwest::Client::builder()
+                    .timeout(HOOK_WALL)
+                    .redirect(reqwest::redirect::Policy::none()),
+                extra_ca_bundle,
+            )?
+            .build()
+            .map_err(|e| format!("hook client: {e}"))?,
         })
     }
 
     async fn call(&self, hook: &str, c: &Call<'_>, input: Value) -> Result<Value, HookFail> {
         let body = json!({"package_id": c.package_id, "package_digest": c.package_digest,
-            "app_id": c.app_id, "instance_host": c.instance_host, "input": input});
+            "app_id": c.app_id, "instance_host": c.instance_host,
+            "instance_base_path": c.instance_base_path, "input": input});
         let resp = self
             .http
             .post(format!("{}/internal/v1/hooks/{hook}", self.base))

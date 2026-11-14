@@ -122,22 +122,22 @@ describe("markdown on both sides (P2-UI-5b)", () => {
     const log = screen.getByRole("log");
     const p = within(log).getByText(/Line one/).closest("p")!;
     expect(p.querySelectorAll("br")).toHaveLength(1);
-    expect(p.textContent).toBe("Line oneline two");
+    expect(p.textContent?.replace(/\s+/g, " ")).toBe("Line one line two");
     expect(within(log).getByText("bold", { selector: "strong" })).toBeTruthy();
     expect(within(log).getByText("inline", { selector: "code" })).toBeTruthy();
     expect(within(log).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["GitHub", "Linear"]);
-    expect(log.querySelector("pre code")!.textContent).toBe("npm run build && echo <ok>");
+    expect(log.querySelector("pre code")!.textContent?.trimEnd()).toBe("npm run build && echo <ok>");
   });
 
-  it("shows <script> and <img onerror> in a person's message as inert text", () => {
+  it("drops <script> and the onerror of an <img> in a person's message (D-227: raw HTML is sanitised)", () => {
     const evil = '<script>window.__pwn = 1</script>\n<img src=x onerror="window.__pwn = 2">';
     st.events = [e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: evil })];
     mock();
     pane();
     const log = screen.getByRole("log");
-    expect(log.querySelector("script, img")).toBeNull();
-    expect(log.textContent).toContain("<script>window.__pwn = 1</script>");
-    expect(log.textContent).toContain('<img src=x onerror="window.__pwn = 2">');
+    expect(log.querySelector("script")).toBeNull();
+    expect(log.querySelector("[onerror]")).toBeNull();
+    expect(log.innerHTML).not.toContain("onerror");
     expect((window as unknown as { __pwn?: number }).__pwn).toBeUndefined();
   });
 
@@ -155,7 +155,7 @@ describe("markdown on both sides (P2-UI-5b)", () => {
     pane();
     const p = within(screen.getByRole("log")).getByText(/Alpha/).closest("p")!;
     expect(p.querySelectorAll("br")).toHaveLength(0);
-    expect(p.textContent).toBe("Alpha beta bold");
+    expect(p.textContent?.replace(/\s+/g, " ")).toBe("Alpha beta bold");
   });
 });
 

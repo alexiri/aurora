@@ -33,6 +33,17 @@ export function toolsForMethod(tools: Tool[], method: string | null | undefined)
   return tools.filter((t) => !method || (t.connect_methods ?? []).length === 0 || (t.connect_methods ?? []).includes(method));
 }
 
+/**
+ * Splits a connection's tools by what its token can do (FIX-136, D-241): a tool that declares `scopes` is unavailable when
+ * the connection's scopes are known (non-empty) and hold none of them (the gateway refuses it with `tool_scope_missing`).
+ * Unknown scopes (empty) hide nothing: they are trusted only to refuse, never to widen.
+ */
+export function splitByScopes(tools: Tool[], scopes: string[] | null | undefined): { usable: Tool[]; unavailable: Tool[] } {
+  const have = scopes ?? [];
+  const lacks = (t: Tool) => have.length > 0 && (t.scopes ?? []).length > 0 && !(t.scopes ?? []).some((s) => have.includes(s));
+  return { usable: tools.filter((t) => !lacks(t)), unavailable: tools.filter(lacks) };
+}
+
 /** The tools of a group, its umbrella first (an umbrella exists only where the manifest declares and proves one). */
 export function groupTools(tools: Tool[], g: Group): Tool[] {
   const own = tools.filter((t) => groupOf(t) === g);
@@ -86,6 +97,39 @@ export function customBody(decisions: Record<string, Decision>, timeoutText: str
   const t = parseTimeout(timeoutText);
   if (ask_tools.length > 0 && t !== null && t !== "invalid") body.ask_timeout_secs = t;
   return body;
+}
+
+/**
+ * What the shared grant form edits (FIX-147): Full or Custom, the per-tool decisions (kept while the mode flips, so a
+ * look at Full does not lose a custom choice) and the ask timeout as typed.
+ */
+export interface GrantValue {
+  mode: "full" | "custom";
+  decisions: Record<string, Decision>;
+  timeout: string;
+}
+
+/** The form's starting value: the grant's own, else Full, or Custom with every tool blocked for a `custom_only` app. */
+export function initialGrantValue(tools: Tool[], grant: ConnectionGrant | null | undefined, customOnly: boolean): GrantValue {
+  return {
+    mode: grant?.mode === "custom" || customOnly ? "custom" : "full",
+    decisions: initialDecisions(tools, grant),
+    timeout: grant?.ask_timeout_secs != null ? String(grant.ask_timeout_secs) : "",
+  };
+}
+
+/** The body of a grant `PUT` / bulk `POST` for a value (a `custom_only` app is always custom). */
+export function grantValueBody(value: GrantValue, customOnly: boolean): PutConnectionGrant {
+  return customOnly || value.mode === "custom" ? customBody(value.decisions, value.timeout) : { mode: "full" };
+}
+
+/** Why a value cannot be saved yet: a custom grant that allows and asks nothing (422 `empty_custom`), a bad timeout. */
+export function grantValueProblem(value: GrantValue, customOnly: boolean): "empty" | "timeout" | null {
+  if (!customOnly && value.mode === "full") return null;
+  const c = counts(value.decisions);
+  if (c.allow + c.ask === 0) return "empty";
+  if (c.ask > 0 && (timeoutProblem(value.timeout) !== undefined || parseTimeout(value.timeout) === "invalid")) return "timeout";
+  return null;
 }
 
 /** Empty = no preference (null); a whole number otherwise; anything else is "invalid". */

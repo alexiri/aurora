@@ -1,6 +1,6 @@
 package:
   id: atlassian
-  version: 1.0.2
+  version: 1.0.3
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -330,9 +330,9 @@ apps:
         link: "https://{request.host}/browse/{path.5}"
     agent:
       instructions: |
-        Jira Data Center is connected. Use the REST API v2 at https://<host>/rest/api/2 (for example
-        https://<host>/rest/api/2/issue/PROJ-1 or https://<host>/rest/api/2/search?jql=...), where
-        <host> is the host of the Jira connection. Aurora adds the credentials; never ask for or write
+        Jira Data Center is connected. Use the REST API v2 at <address>/rest/api/2 (for example
+        <address>/rest/api/2/issue/PROJ-1 or <address>/rest/api/2/search?jql=...), where <address>
+        is the address shown with the account. Aurora adds the credentials; never ask for or write
         a token, and never send a request for this connection to another host. Descriptions and comments
         are plain text (wiki markup) in API v2. Send JSON bodies with content-type application/json so
         approvals can show what a change does. Jira permissions still apply: a 403 or 404 means the
@@ -408,9 +408,9 @@ apps:
         link: "https://{request.host}/pages/viewpage.action?pageId={path.4}"
     agent:
       instructions: |
-        Confluence Data Center is connected. Use the REST API at https://<host>/rest/api (for example
-        https://<host>/rest/api/content?spaceKey=DOC&expand=body.storage or
-        https://<host>/rest/api/search?cql=...), where <host> is the host of the Confluence connection.
+        Confluence Data Center is connected. Use the REST API at <address>/rest/api (for example
+        <address>/rest/api/content?spaceKey=DOC&expand=body.storage or
+        <address>/rest/api/search?cql=...), where <address> is the address shown with the account.
         Aurora adds the credentials; never ask for or write a token, and never send a request for this
         connection to another host. A new comment is POST /rest/api/content with type "comment" and a
         container; updating a page needs the next version number. Send JSON bodies with content-type

@@ -11,6 +11,7 @@ pub mod boot;
 pub mod channel;
 pub mod fake;
 pub mod harness;
+pub mod harness_env;
 pub mod harvest;
 pub mod home;
 pub mod inbox;

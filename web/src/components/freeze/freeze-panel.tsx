@@ -75,6 +75,7 @@ export function FreezeControl({
   freeze,
   unfreeze,
   inMenu = false,
+  menuExtra,
 }: {
   subject: FreezeSubject;
   name: string;
@@ -84,6 +85,8 @@ export function FreezeControl({
   unfreeze: UnfreezeMutation;
   /** Offer Freeze as an entry of an overflow menu instead of a button (the confirm dialog is the same). */
   inMenu?: boolean;
+  /** (P5-AGENT-2) More entries for that menu (the agent page adds "Delete agent…"). */
+  menuExtra?: ReactNode;
 }) {
   const label = SUBJECT_LABEL[subject];
   const [open, setOpen] = useState(false);
@@ -141,7 +144,7 @@ export function FreezeControl({
         // Non-modal: a modal menu aria-hides the rest of the page while its controls stay focusable (axe).
         <Menu modal={false}>
           <MenuTrigger asChild>
-            <Button variant="ghost" size="sm" aria-label={`${SUBJECT_LABEL[subject][0].toUpperCase()}${SUBJECT_LABEL[subject].slice(1)} actions`} className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+            <Button variant="outline" size="sm" aria-label={`${SUBJECT_LABEL[subject][0].toUpperCase()}${SUBJECT_LABEL[subject].slice(1)} actions`} className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
               <MoreIcon width={20} height={20} />
             </Button>
           </MenuTrigger>
@@ -149,6 +152,7 @@ export function FreezeControl({
             <MenuItem className="text-danger-ink data-[highlighted]:bg-danger-soft" onSelect={() => setOpen(true)}>
               Freeze {label}…
             </MenuItem>
+            {menuExtra}
           </MenuContent>
         </Menu>
       ) : (

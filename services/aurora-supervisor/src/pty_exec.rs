@@ -43,16 +43,20 @@ fn make_session() -> std::io::Result<()> {
 /// The `__pty-exec` subcommand: session + controlling terminal, then exec the shell.
 /// Diverges on success (`exec` replaces this process); a failure prints on the pty and
 /// exits non-zero.
-pub fn run(shell: &str) -> ExitCode {
+pub fn run(shell: &str, args: &[String], notice: Option<&str>) -> ExitCode {
     if let Err(e) = make_session() {
         eprintln!("aurora-supervisor {SUBCOMMAND}: {e}");
         return ExitCode::FAILURE;
+    }
+    // (FIX-138) A one-line notice for the pane when the chosen shell was not available.
+    if let Some(n) = notice {
+        println!("{n}");
     }
     // The environment was scrubbed by the supervisor before spawning this bootstrap
     // (`PtySession::spawn`); exec the shell with exactly that environ. On success `exec`
     // never returns.
     let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
-    let e = crate::spawn::exec(shell, env);
+    let e = crate::spawn::exec(shell, args, env);
     eprintln!("aurora-supervisor {SUBCOMMAND}: exec {shell}: {e}");
     ExitCode::FAILURE
 }

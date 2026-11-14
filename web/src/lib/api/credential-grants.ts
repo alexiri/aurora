@@ -72,8 +72,8 @@ export function useCredentialGrants(target: GrantTarget, enabled = true) {
 
 export interface AddGrantsInput {
   agentIds: string[];
-  /** Connections only: a custom grant (every other tool blocked). Absent = `full`. */
-  custom?: { allow_tools: string[] };
+  /** Connections only: the grant to give (`mode`, `allow_tools`, `ask_tools`, `ask_timeout_secs`, C-504). Absent = `full`. */
+  grant?: PutConnectionGrant;
 }
 
 export interface AddGrantsResult {
@@ -85,7 +85,7 @@ export interface AddGrantsResult {
 export function useAddCredentialGrants(target: GrantTarget) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ agentIds, custom }: AddGrantsInput): Promise<AddGrantsResult> => {
+    mutationFn: async ({ agentIds, grant }: AddGrantsInput): Promise<AddGrantsResult> => {
       const items =
         target.kind === "secret"
           ? (
@@ -97,9 +97,7 @@ export function useAddCredentialGrants(target: GrantTarget) {
               await unwrap(
                 api.POST("/v1/connections/{id}/grants", {
                   params: { path: { id: target.id } },
-                  body: custom
-                    ? { agent_ids: agentIds, mode: "custom", allow_tools: custom.allow_tools, ask_tools: [] }
-                    : { agent_ids: agentIds, mode: "full" },
+                  body: { agent_ids: agentIds, ...(grant ?? { mode: "full" as const }) },
                 }),
               )
             ).items;

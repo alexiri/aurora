@@ -92,6 +92,7 @@
       "workspace_id"
     ],
     "app_connections": [
+      "access",
       "app_id",
       "app_version",
       "connect_method",
@@ -119,6 +120,7 @@
     ],
     "app_instances": [
       "app_id",
+      "base_path",
       "created_by",
       "host",
       "id",
@@ -1041,7 +1043,8 @@
       "grant_hash",
       "granted_by",
       "id",
-      "sandbox_id"
+      "sandbox_id",
+      "shell"
     ],
     "thread_links": [
       "agent_id",
@@ -1298,6 +1301,7 @@
       "workspace_id": "uuid null"
     },
     "app_connections": {
+      "access": "text not null",
       "app_id": "text not null",
       "app_version": "text not null",
       "connect_method": "text null",
@@ -1325,6 +1329,7 @@
     },
     "app_instances": {
       "app_id": "text not null",
+      "base_path": "text null",
       "created_by": "uuid null",
       "host": "text not null",
       "id": "uuid not null",
@@ -2247,7 +2252,8 @@
       "grant_hash": "text not null",
       "granted_by": "uuid not null",
       "id": "uuid not null",
-      "sandbox_id": "uuid not null"
+      "sandbox_id": "uuid not null",
+      "shell": "text not null"
     },
     "thread_links": {
       "agent_id": "uuid",

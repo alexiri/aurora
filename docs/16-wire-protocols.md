@@ -552,7 +552,7 @@ runner increasing per channel connection, interleaved round-robin):
 
 | Direction | Frame | Body |
 |---|---|---|
-| runner → supervisor | `pty.open` | `{ pty_id: u32, window: bytes, cols: u16, rows: u16 }` |
+| runner → supervisor | `pty.open` | `{ pty_id: u32, window: bytes, cols: u16, rows: u16, shell?: "bash"\|"zsh" }` — (FIX-138) `shell` is the person's enumerated choice carried from the grant (the redemption answer of `/preview-streams/open` gains `shell`); absent = `bash`; the supervisor maps it to a fixed binary (`12 §Terminal`) |
 | supervisor → runner | `pty.opened` / `pty.refused` | `{ pty_id, window }` / `{ pty_id, reason: "disabled"\|"limit"\|"error" }` |
 | runner → supervisor | `pty.resize` | `{ pty_id, cols, rows }` |
 | both | `pty.close` | `{ pty_id, reason: "eof"\|"hangup"\|"idle"\|"lifetime"\|"channel_lost"\|"error", bytes_in?, bytes_out? }` |

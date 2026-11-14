@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { AvailabilityEditor } from "@/components/apps/availability-view";
 import { DynamicForm } from "@/components/apps/dynamic-form";
-import { Markdown, safeHref } from "@/components/apps/markdown";
+import { Markdown, safeHref } from "@/components/ui/markdown";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import {
   buildClientPatchFields,
@@ -80,14 +80,16 @@ describe("postMessage origin check", () => {
 });
 
 describe("markdown", () => {
-  it("does not render raw HTML or unsafe links, and shows link targets", () => {
-    const { container } = render(<Markdown source={'<script>x</script> [ok](https://e.com/a) [bad](javascript:alert(1))'} />);
+  it("does not render disallowed raw HTML or unsafe links, and keeps the full target in the tooltip", () => {
+    const { container } = render(<Markdown source={'<script>x</script>\n\n[ok](https://e.com/a) [bad](javascript:alert(1))'} />);
     expect(container.querySelector("script")).toBeNull();
-    expect(container.textContent).toContain("<script>");
+    // D-227: raw HTML outside the allowlist is dropped (a script's content with it, as on github.com).
+    expect(container.textContent).not.toContain("<script>");
     const links = container.querySelectorAll("a");
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://e.com/a");
-    expect(links[0].textContent).toContain("https://e.com/a");
+    expect(links[0]).toHaveAttribute("title", "https://e.com/a");
+    expect(container.textContent).toContain("bad");
     expect(safeHref("javascript:alert(1)")).toBeNull();
   });
 });
@@ -189,6 +191,48 @@ describe("connection missing scopes", () => {
   it("shows no TLS warning for a verified database connection", async () => {
     await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: {} }));
     expect(screen.queryByLabelText(/TLS verification is off/)).toBeNull();
+  });
+  it("shows the scopes a classic token reported and warns that repo allows writes (FIX-133)", async () => {
+    await show(conn({ metadata: { token_scopes: "repo, read:org" } }));
+    expect(screen.getByText(/Token scopes/)).toHaveTextContent("repo, read:org");
+    expect(screen.getByText(/Token scopes/)).toHaveTextContent("make this connection read-only");
+  });
+  it("shows no repo warning on a read-only connection or without a repo scope", async () => {
+    await show(conn({ access: "read", metadata: { token_scopes: "repo" } }));
+    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
+    cleanup();
+    await show(conn({ metadata: { token_scopes: "read:user, public_repo" } }));
+    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
+  });
+  it("shows a pasted token's declared scopes and saves an edit (FIX-136)", async () => {
+    const methods = [
+      {
+        id: "token", kind: "fields", fields: [], default_scopes: [], access_levels: [], probe_scopes: ["read:a"],
+        scopes: [{ scope: "read:a", name: "Read A", access: "read" }, { scope: "write:a", name: "Write A", access: "write" }],
+      },
+    ];
+    const patched: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (req: Request) => {
+        const url = new URL(req.url);
+        if (req.method === "PATCH") {
+          patched.push(await req.json());
+          return json(200, conn({ connect_method: "token", scopes: ["read:a", "write:a"] }));
+        }
+        if (url.pathname.startsWith("/v1/apps/") && !url.pathname.endsWith("/apps")) return json(200, { app_id: "acme", connect: methods, tools: [] });
+        return json(200, { items: [conn({ connect_method: "token", scopes: ["read:a"] })], next_cursor: null });
+      }),
+    );
+    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
+    await screen.findByText("me@acme.io");
+    const box = await screen.findByLabelText("Token scopes of me@acme.io");
+    expect(box).toHaveTextContent("as you declared");
+    expect(box).toHaveTextContent("Read A");
+    fireEvent.click(screen.getByRole("button", { name: "Edit scopes" }));
+    fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Write A" })).getByLabelText("On"));
+    fireEvent.click(screen.getByRole("button", { name: "Save scopes" }));
+    await waitFor(() => expect(patched).toEqual([{ scopes: ["read:a", "write:a"] }]));
   });
   it("shows no connection help for other apps", async () => {
     await show(conn({ database: null }));

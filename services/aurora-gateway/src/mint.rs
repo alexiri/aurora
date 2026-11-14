@@ -16,6 +16,9 @@ pub struct MintInput {
     pub tenant_host: Option<String>,
     /// The connection's instance host (D-74): what `{instance}` in the hook's egress resolves to.
     pub instance_host: Option<String>,
+    /// (C-249, D-231) The registration's base path: informational for hooks that build URLs;
+    /// egress stays per host.
+    pub instance_base_path: Option<String>,
     /// Non-secret and secret OAuth client fields, when the app declares a client.
     pub client: Map<String, Value>,
     pub client_secret: Map<String, Value>,
@@ -122,6 +125,7 @@ impl Minter for HttpMinter {
             "package_digest": i.package_digest,
             "app_id": i.app_id,
             "instance_host": i.instance_host,
+            "instance_base_path": i.instance_base_path,
             "input": {
                 "app_id": i.app_id,
                 "credentials": kv(&i.credentials),

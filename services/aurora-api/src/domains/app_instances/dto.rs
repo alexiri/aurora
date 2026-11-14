@@ -27,6 +27,10 @@ pub struct AppInstance {
     pub package_id: String,
     pub app_id: String,
     pub host: String,
+    /// (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root.
+    pub base_path: Option<String>,
+    /// `https://<host><base_path>`: how the registration is named everywhere.
+    pub base_url: String,
     pub label: String,
     /// `active` | `disabled`.
     pub status: String,
@@ -47,7 +51,10 @@ impl From<InstanceRow> for AppInstance {
             org_id: r.org_id,
             package_id: r.package_id,
             app_id: r.app_id,
+            base_url: aurora_registry::instance::InstanceBase::new(&r.host, r.base_path.as_deref())
+                .base_url(),
             host: r.host,
+            base_path: r.base_path,
             label: r.label,
             status: r.status,
             created_by: r.created_by.map(|id| ConnectedBy {
@@ -77,6 +84,11 @@ pub struct CreateAppInstanceRequest {
     pub app_id: String,
     /// A lower-case DNS name: no port, path, userinfo or IP literal.
     pub host: String,
+    /// (C-731, D-231) Only if the app is served under a path: `/wiki` for
+    /// `https://its.cern.ch/wiki`. Normalized (`/wiki/` = `/wiki`, `""` and `/` = none); cannot be
+    /// changed later.
+    #[serde(default)]
+    pub base_path: Option<String>,
     pub label: String,
 }
 

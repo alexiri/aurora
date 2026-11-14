@@ -152,9 +152,24 @@ fn method(c: &Connect) -> ConnectMethod {
         access_levels: Vec::new(),
         client_key: None,
         callback: None,
+        probe_scopes: Vec::new(),
     };
     match c {
-        Connect::Fields(f) => empty(&f.id, "fields", f.fields.iter().map(field).collect()),
+        // (FIX-136) A `fields` method that declares scopes asks the person which the pasted
+        // token has; `default_scopes` are the ones a read probe is defined for.
+        Connect::Fields(f) => ConnectMethod {
+            scopes: f
+                .scopes
+                .iter()
+                .map(|x| ScopeInfo {
+                    scope: x.scope.clone(),
+                    name: x.name.clone(),
+                    access: s(&x.access),
+                })
+                .collect(),
+            probe_scopes: f.probe_scopes.keys().cloned().collect(),
+            ..empty(&f.id, "fields", f.fields.iter().map(field).collect())
+        },
         Connect::Hook(h) => empty(&h.id, "hook", h.fields.iter().map(field).collect()),
         Connect::Oauth2(o) => ConnectMethod {
             scopes: o
@@ -208,6 +223,7 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 path: "/*".to_owned(),
                 methods: methods.into_iter().map(str::to_owned).collect(),
                 connect_methods: Vec::new(),
+                scopes: Vec::new(),
                 graphql: None,
                 git: None,
             });
@@ -223,6 +239,7 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 path: i.path.clone(),
                 methods: i.methods.clone(),
                 connect_methods: i.connect_methods.clone(),
+                scopes: i.scopes.clone(),
                 graphql: i.graphql.as_ref().map(s),
                 git: i.git.as_ref().map(s),
             });

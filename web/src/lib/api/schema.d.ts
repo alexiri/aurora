@@ -5177,6 +5177,10 @@ export interface components {
         /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
         AppInstance: {
             app_id: string;
+            /** @description (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root. */
+            base_path?: string | null;
+            /** @description `https://<host><base_path>`: how the registration is named everywhere. */
+            base_url: string;
             /**
              * Format: int64
              * @description Connections bound to this instance.
@@ -5606,6 +5610,11 @@ export interface components {
              *     chooser; `null` = the window falls back to the kind.
              */
             label?: string | null;
+            /**
+             * @description (FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration
+             *     ("Which scopes did you give this token?"); the others are asked without a prefill.
+             */
+            probe_scopes: string[];
             /** @description The chooser preselects this method and badges it "Recommended" (at most one per app). */
             recommended: boolean;
             scopes: components["schemas"]["ScopeInfo"][];
@@ -5615,6 +5624,12 @@ export interface components {
             url?: string | null;
         };
         ConnectRequest: {
+            /**
+             * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+             *     (the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the
+             *     connection's current value.
+             */
+            access?: string | null;
             access_level?: string | null;
             fields?: {
                 [key: string]: string;
@@ -5637,6 +5652,12 @@ export interface components {
             reconnect_connection_id?: string | null;
             /** @description `organization` | `workspace`. */
             scope: string;
+            /**
+             * @description (FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token
+             *     has ("Which scopes did you give this token?"). Absent = prefilled by the method's read
+             *     probes. Each must be one of the method's scopes.
+             */
+            scopes?: string[] | null;
             /** Format: uuid */
             workspace_id?: string | null;
         };
@@ -5658,6 +5679,11 @@ export interface components {
         };
         /** @description A connection. Credentials are never returned (SEC-12). */
         Connection: {
+            /**
+             * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+             *     (the gateway blocks write tools and untooled requests through it, whatever the grants say).
+             */
+            access: string;
             app_id: string;
             app_version: string;
             /**
@@ -5990,6 +6016,12 @@ export interface components {
         };
         CreateAppInstanceRequest: {
             app_id: string;
+            /**
+             * @description (C-731, D-231) Only if the app is served under a path: `/wiki` for
+             *     `https://its.cern.ch/wiki`. Normalized (`/wiki/` = `/wiki`, `""` and `/` = none); cannot be
+             *     changed later.
+             */
+            base_path?: string | null;
             /** @description A lower-case DNS name: no port, path, userinfo or IP literal. */
             host: string;
             label: string;
@@ -6874,6 +6906,10 @@ export interface components {
         };
         /** @description The registered self-hosted instance a connection is bound to (C-243). */
         InstanceRef: {
+            /** @description (C-731, D-231) The path the app is served under on `host`; `null` = the host root. */
+            base_path?: string | null;
+            /** @description `https://<host><base_path>`. */
+            base_url: string;
             host: string;
             /** Format: uuid */
             id: string;
@@ -7795,6 +7831,10 @@ export interface components {
         Page_AppInstance: {
             items: {
                 app_id: string;
+                /** @description (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root. */
+                base_path?: string | null;
+                /** @description `https://<host><base_path>`: how the registration is named everywhere. */
+                base_url: string;
                 /**
                  * Format: int64
                  * @description Connections bound to this instance.
@@ -7922,6 +7962,11 @@ export interface components {
         };
         Page_Connection: {
             items: {
+                /**
+                 * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+                 *     (the gateway blocks write tools and untooled requests through it, whatever the grants say).
+                 */
+                access: string;
                 app_id: string;
                 app_version: string;
                 /**
@@ -8645,7 +8690,15 @@ export interface components {
             listen?: null | components["schemas"]["Listen"];
         };
         PatchConnectionRequest: {
+            /** @description (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it. */
+            access?: string | null;
             label?: string | null;
+            /**
+             * @description (FIX-136, D-241) Replace the scopes the connection has: only for a connection made with a
+             *     `fields` method that declares scopes (a pasted token's scopes are declared by the person, an
+             *     OAuth connection's are what the provider granted), each one of that method's scopes.
+             */
+            scopes?: string[] | null;
             /** @description `active` | `disabled`. */
             status?: string | null;
         };
@@ -10410,6 +10463,8 @@ export interface components {
             methods: string[];
             name: string;
             path: string;
+            /** @description (FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement. */
+            scopes: string[];
             wildcard: boolean;
         };
         TraceEntry: {
@@ -30495,6 +30550,8 @@ export interface operations {
             query?: {
                 /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
                 status?: string;
+                /** @description (C-700) Only this agent's approvals; an unknown or foreign agent yields an empty page. */
+                agent_id?: string;
                 limit?: number;
                 cursor?: string;
             };

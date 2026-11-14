@@ -61,6 +61,15 @@ pub(crate) struct Rig {
 /// A PTY engine over hand-built ends, rooted at `home` (the cwd parameter replaces the
 /// image's `/workspace`).
 pub(crate) fn rig(home: &std::path::Path, enabled: bool) -> Rig {
+    rig_with_shells(home, enabled, aurora_supervisor::pty::ShellPaths::default())
+}
+
+/// [`rig`] with explicit shell binaries (FIX-138: stand-ins for bash/zsh).
+pub(crate) fn rig_with_shells(
+    home: &std::path::Path,
+    enabled: bool,
+    shells: aurora_supervisor::pty::ShellPaths,
+) -> Rig {
     let (pty_out_tx, pty_out_rx) = mpsc::channel(1024);
     let (pty_in_tx, pty_in_rx) = mpsc::unbounded_channel();
     let (epoch_tx, epoch_rx) = tokio::sync::watch::channel(0u64);
@@ -69,7 +78,14 @@ pub(crate) fn rig(home: &std::path::Path, enabled: bool) -> Rig {
         inbound: pty_in_rx,
         epoch: epoch_rx,
     };
-    let handle = PtyEngine::spawn(ends, enabled, None, home.to_path_buf(), bootstrap_exe());
+    let handle = PtyEngine::spawn_with_shells(
+        ends,
+        enabled,
+        None,
+        home.to_path_buf(),
+        bootstrap_exe(),
+        shells,
+    );
     Rig {
         handle,
         pty_tx: pty_in_tx,
@@ -198,6 +214,7 @@ pub(crate) async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
                 window: 131_072,
                 cols: 80,
                 rows: 24,
+                shell: Default::default(),
             },
         ))
         .await;
@@ -455,6 +472,7 @@ async fn pty_open_without_capability_is_refused_disabled() {
             window: 131_072,
             cols: 80,
             rows: 24,
+            shell: Default::default(),
         },
     ))
     .await;
@@ -480,6 +498,7 @@ async fn pty_cap_per_sandbox_and_slot_release() {
             window: 131_072,
             cols: 80,
             rows: 24,
+            shell: Default::default(),
         },
     ))
     .await;

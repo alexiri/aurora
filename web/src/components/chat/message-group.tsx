@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Avatar } from "@/components/agent-avatar";
-import { Markdown } from "@/components/apps/markdown";
+import { Markdown } from "@/components/ui/markdown";
 import { RedactDialog } from "@/components/agents/conversation-actions";
 import { Badge } from "@/components/ui/badge";
 import { CheckIcon, CopyIcon, MoreIcon } from "@/components/ui/icons";
@@ -119,8 +119,6 @@ function Bubble({
           side === "person"
             ? "max-w-bubble rounded-card rounded-tr-tail bg-bubble text-bubble-ink"
             : "max-w-bubble rounded-card rounded-tl-tail bg-subtle text-ink",
-          "[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-surface [&_code]:px-1 [&_code]:text-ink dark:[&_code]:bg-canvas",
-          "[&_pre]:border [&_pre]:border-line [&_pre]:bg-surface dark:[&_pre]:bg-canvas [&_pre_code]:border-0 [&_pre_code]:px-0",
         )}
       >
         <Markdown source={text} breaks={side === "person"} />
@@ -332,7 +330,7 @@ export function StreamingBubble({ text, agent }: { text: string; agent?: AgentId
     <div className="flex items-start gap-2">
       <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={32} />
       <div className="min-w-0 max-w-bubble rounded-card rounded-tl-tail bg-subtle px-3.5 py-2.5 text-sm text-ink">
-        <Markdown source={text} />
+        <Markdown source={text} streaming />
       </div>
     </div>
   );

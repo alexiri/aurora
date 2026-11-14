@@ -1,0 +1,39 @@
+# (FIX-136, D-241) Tools declare the scopes they need (any of); a connection's known scopes (an OAuth token's
+# granted scopes, or the ones declared for a pasted personal token) decide which tools its token can serve. A tool the
+# token cannot serve is refused before injection (`tool_scope_missing`); unknown scopes refuse nothing. Scope names and
+# which endpoint needs which are Indico's (indico/core/oauth/scopes.py; indico/web/http_api/handlers.py: the official
+# API needs read:legacy_api for GET and write:legacy_api otherwise; every other endpoint needs one of the `everything`
+# scopes by default, `full:everything` for anything but GET; /api/user/ is the user API: read:user; the `everything` scopes do not include the two legacy_api scopes, see
+# docs/setup.md). All values are fake.
+- name: "scopes: an official read tool is served with read:legacy_api"
+  connection: { instance_host: indico.example.org, scopes: ["read:user", "read:legacy_api"], credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/event/1234.json" }
+  expect: { app: indico, tool: get_event, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "scopes: an extended read tool is refused on a token without the everything scopes"
+  connection: { instance_host: indico.example.org, scopes: ["read:user", "read:legacy_api"], credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/search?capacity=4" }
+  expect: { app: indico, tool: search_rooms, refused: tool_scope_missing }
+- name: "scopes: an extended read tool is served with read:everything"
+  connection: { instance_host: indico.example.org, scopes: ["read:everything"], credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/search?capacity=4" }
+  expect: { app: indico, tool: search_rooms, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "scopes: full:everything also serves the extended read tools"
+  connection: { instance_host: indico.example.org, scopes: ["full:everything"], credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/search?capacity=4" }
+  expect: { app: indico, tool: search_rooms }
+- name: "scopes: the extended booking write needs full:everything"
+  connection: { instance_host: indico.example.org, scopes: ["read:everything", "write:legacy_api"], credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/booking/create" }
+  expect: { app: indico, tool: create_booking, refused: tool_scope_missing }
+- name: "scopes: the official booking write is served with write:legacy_api"
+  connection: { instance_host: indico.example.org, scopes: ["read:everything", "write:legacy_api"], credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/api/roomBooking/bookRoom?roomid=1" }
+  expect: { app: indico, tool: book_room }
+- name: "scopes: the official booking write is refused on a read-only token"
+  connection: { instance_host: indico.example.org, scopes: ["read:legacy_api"], credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/api/roomBooking/bookRoom?roomid=1" }
+  expect: { app: indico, tool: book_room, refused: tool_scope_missing }
+- name: "scopes: unknown scopes (a token that declared none) refuse nothing"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/booking/create" }
+  expect: { app: indico, tool: create_booking }

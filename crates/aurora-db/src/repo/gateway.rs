@@ -684,6 +684,11 @@ pub struct AppConnectionRow {
     pub instance_id: Option<Uuid>,
     /// (FIX-123, D-214) The `connect[]` method the connection was made with; null = unknown.
     pub connect_method: Option<String>,
+    /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools.
+    pub access: String,
+    /// (FIX-136, D-241) The scopes the connection has (granted by OAuth, or declared for a pasted
+    /// token); empty = unknown.
+    pub scopes: Vec<String>,
 }
 
 /// An `active` app instance visible to an org, as the gateway needs it (D-74).
@@ -692,6 +697,8 @@ pub struct InstanceHostRow {
     pub id: Uuid,
     pub app_id: String,
     pub host: String,
+    /// (FIX-145, D-231) The path the app is served under on `host`; null = the host root.
+    pub base_path: Option<String>,
 }
 
 /// `active` instances visible to the organization (instance-wide and its own).
@@ -700,7 +707,7 @@ pub async fn visible_instances(
     org_id: Uuid,
 ) -> Result<Vec<InstanceHostRow>, DbError> {
     Ok(sqlx::query_as::<_, InstanceHostRow>(
-        "SELECT id, app_id, host FROM app_instances \
+        "SELECT id, app_id, host, base_path FROM app_instances \
          WHERE status = 'active' AND (org_id IS NULL OR org_id = $1) ORDER BY host, id",
     )
     .bind(org_id)
@@ -719,7 +726,7 @@ pub async fn app_connections(
 ) -> Result<Vec<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id, connect_method \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access, scopes \
          FROM app_connections \
          WHERE org_id = $1 AND (workspace_id IS NULL OR workspace_id = $2) \
            AND app_id = ANY($3) AND status IN ('active', 'disabled', 'reauth_required') \
@@ -743,7 +750,7 @@ pub async fn app_connection_by_id(
 ) -> Result<Option<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id, connect_method \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access, scopes \
          FROM app_connections \
          WHERE id = $1 AND org_id = $2 AND (workspace_id IS NULL OR workspace_id = $3)",
     )
@@ -764,7 +771,7 @@ pub async fn app_connection_in_org(
 ) -> Result<Option<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id, connect_method \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access, scopes \
          FROM app_connections WHERE id = $1 AND org_id = $2",
     )
     .bind(id)

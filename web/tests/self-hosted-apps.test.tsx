@@ -68,22 +68,27 @@ const APP = {
   instances: { label: "Desk instance", default_host: "saas.desk.example" },
 };
 
-const row = (over: Record<string, unknown>) => ({
-  id: "i1",
-  org_id: "o1",
-  org_name: "Acme",
-  org_slug: "acme",
-  package_id: "selfhost",
-  app_id: "desk",
-  host: "desk.acme.example",
-  label: "Acme desk",
-  status: "active",
-  created_by: null,
-  created_at: "",
-  updated_at: "",
-  connections: 2,
-  ...over,
-});
+const row = (over: Record<string, unknown>) => {
+  const r = {
+    id: "i1",
+    org_id: "o1",
+    org_name: "Acme",
+    org_slug: "acme",
+    package_id: "selfhost",
+    app_id: "desk",
+    host: "desk.acme.example",
+    base_path: null as string | null,
+    label: "Acme desk",
+    status: "active",
+    created_by: null,
+    created_at: "",
+    updated_at: "",
+    connections: 2,
+    ...over,
+  };
+  // (C-731) Registrations are named by `https://<host><base_path>`.
+  return { base_url: `https://${r.host}${r.base_path ?? ""}`, ...r };
+};
 
 interface Call {
   method: string;
@@ -143,16 +148,16 @@ describe("Admin › Self-hosted apps (FIX-132)", () => {
     expect(within(table).getByText("Organization", { selector: "th" })).toBeInTheDocument();
     expect(within(table).getByText("Acme")).toBeInTheDocument();
     // an organization's registration can only be promoted (the admin manages the instance-wide ones)
-    expect(screen.queryByRole("button", { name: "Delete desk.acme.example" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Delete desk.wide.example" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Make desk.wide.example instance-wide" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete https://desk.acme.example" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Delete https://desk.wide.example" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Make https://desk.wide.example instance-wide" })).toBeNull();
 
     const orgSelect = screen.getByLabelText("Organization", { selector: "select" });
     await within(orgSelect).findByRole("option", { name: "Acme" });
     fireEvent.change(orgSelect, { target: { value: "o1" } });
     await waitFor(() => expect(calls.some((c) => c.search.includes("org=o1"))).toBe(true));
 
-    fireEvent.click(screen.getByRole("button", { name: "Make desk.acme.example instance-wide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Make https://desk.acme.example instance-wide" }));
     const dlg = await screen.findByRole("dialog");
     expect(dlg.textContent).toMatch(/Every organization will see this self-hosted app/);
     expect(calls.some((c) => c.method === "POST")).toBe(false);

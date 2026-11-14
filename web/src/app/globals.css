@@ -278,6 +278,270 @@ a {
   /* The pane fills the tab column and scrolls internally (no page-level horizontal scroll). */
   width: 100%;
   max-width: 100%;
+  /* (FIX-138) A bounded height: `autoResize` derives a fixed grid from it, so output scrolls inside the pane's
+     scrollback instead of growing the page (at least ~16 rows). On phones a fixed share of the viewport. */
+  height: max(18rem, calc(100dvh - 25rem));
+  overflow-y: auto;
+}
+
+@media (max-width: 767px) {
+  .wterm.term-pane {
+    height: 60dvh;
+  }
+}
+
+/* The standalone terminal window (`…/agents/<agent>/terminal`): the pane fills the viewport below its title bar. */
+.wterm.term-pane.term-pane-window {
+  height: calc(100dvh - 11rem);
+  border-radius: 0;
+}
+
+/*
+ * Rendered Markdown (FIX-137, `components/ui/markdown.tsx`): github.com-like prose sized for a chat bubble,
+ * tokens only, both themes. Tables and code blocks scroll inside their own box (never the page).
+ */
+.md {
+  overflow-wrap: anywhere;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin-top: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.md h1 {
+  font-size: 1.125rem;
+}
+.md h2 {
+  font-size: 1.0625rem;
+}
+.md h3 {
+  font-size: 1rem;
+}
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 0.9375rem;
+}
+.md h6 {
+  color: var(--muted);
+}
+.md ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.md ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+}
+.md li > p {
+  margin: 0;
+}
+.md li + li {
+  margin-top: 0.125rem;
+}
+.md ul.contains-task-list {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+.md .task-list-item input {
+  margin-right: 0.5rem;
+  accent-color: var(--accent);
+}
+.md blockquote {
+  border-left: 3px solid var(--line-strong);
+  padding-left: 0.75rem;
+  color: var(--ink-2);
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.md :not(pre) > code {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+:root[data-theme="dark"] .md :not(pre) > code {
+  background: var(--canvas);
+}
+.md .md-code {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}
+:root[data-theme="dark"] .md .md-code {
+  background: var(--canvas);
+}
+.md .md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  background: var(--subtle);
+  padding: 0.125rem 0.5rem;
+}
+.md pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.md pre code {
+  font-family: inherit;
+}
+.md .md-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.md th,
+.md td {
+  border: 1px solid var(--line-strong);
+  padding: 0.25rem 0.625rem;
+  text-align: left;
+}
+.md th {
+  background: var(--subtle);
+  font-weight: 600;
+}
+.md details {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 0.25rem 0.625rem;
+}
+.md summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.md kbd {
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 0 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.md mark {
+  background: var(--pending-soft);
+  color: var(--pending-ink);
+}
+.md .md-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-control);
+}
+.md .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md section[data-footnotes] {
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+.md .md-alert {
+  --alert-line: var(--accent);
+  --alert-bg: var(--accent-soft);
+  --alert-ink: var(--accent-ink);
+  border-left: 3px solid var(--alert-line);
+  border-radius: var(--radius-control);
+  background: var(--alert-bg);
+  color: var(--alert-ink);
+  padding: 0.5rem 0.75rem;
+}
+.md .md-alert-important {
+  --alert-line: var(--avatar-lavender-ink);
+  --alert-bg: var(--avatar-lavender);
+  --alert-ink: var(--avatar-lavender-ink);
+}
+.md .md-alert-warning {
+  --alert-line: var(--pending-ink);
+  --alert-bg: var(--pending-soft);
+  --alert-ink: var(--pending-ink);
+}
+.md .md-alert-caution {
+  --alert-line: var(--danger-ink);
+  --alert-bg: var(--danger-soft);
+  --alert-ink: var(--danger-ink);
+}
+.md .md-alert-note {
+  --alert-line: var(--avatar-blue-ink);
+  --alert-bg: var(--avatar-blue);
+  --alert-ink: var(--avatar-blue-ink);
+}
+.md .md-alert-title {
+  margin: 0;
+  font-weight: 600;
+}
+.md .md-alert > :not(.md-alert-title) {
+  margin-top: 0.25rem;
+}
+/* Highlighted code: the terminal's contrast-checked palette, per theme. */
+.md .hljs-comment,
+.md .hljs-quote {
+  color: var(--muted);
+}
+.md .hljs-keyword,
+.md .hljs-selector-tag,
+.md .hljs-doctag {
+  color: var(--aurora-term-color-5);
+}
+.md .hljs-string,
+.md .hljs-regexp,
+.md .hljs-addition,
+.md .hljs-meta .hljs-string {
+  color: var(--aurora-term-color-2);
+}
+.md .hljs-number,
+.md .hljs-literal,
+.md .hljs-attr,
+.md .hljs-attribute,
+.md .hljs-variable,
+.md .hljs-template-variable {
+  color: var(--aurora-term-color-3);
+}
+.md .hljs-title,
+.md .hljs-section,
+.md .hljs-name,
+.md .hljs-selector-id,
+.md .hljs-selector-class {
+  color: var(--aurora-term-color-4);
+}
+.md .hljs-built_in,
+.md .hljs-type,
+.md .hljs-symbol,
+.md .hljs-bullet,
+.md .hljs-meta {
+  color: var(--aurora-term-color-6);
+}
+.md .hljs-deletion {
+  color: var(--aurora-term-color-1);
+}
+.md .hljs-emphasis {
+  font-style: italic;
+}
+.md .hljs-strong {
+  font-weight: 700;
 }
 
 @media (prefers-reduced-motion: reduce) {

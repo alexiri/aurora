@@ -218,6 +218,12 @@ carve-out is deliberate and was undocumented until phase 3:
   governs requests to an LLM host on which Aurora injects nothing (the agent
   brought its own key): they are blocked unless allow-listed. (3) The `allow`
   Default Rule is unaffected (it allows anyway). (4) Everything in `08 §11`.
+- (phase 5, FIX-138 item 1b, D-247) **The web terminal's `claude`/`codex` are the agent's traffic.**
+  They reach the LLM through the same machine proxy and boot-token credential as a turn's model
+  calls, so governance and this carve-out apply unchanged, the calls count against the agent's
+  budgets and rate limits, and the request log shows them as the agent's `mitm` requests with the
+  agent's injected key and **no turn or conversation** (the person at the terminal is not
+  recorded as a speaker). The terminal holds only the placeholder credential (SEC-01/SEC-34).
 - (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
   providers of `08 §Phase 4 providers` (OpenAI, Azure OpenAI, Bedrock, Vertex, generic
   OpenAI-compatible) add the **exact hosts** of their configured endpoints to the
@@ -341,6 +347,26 @@ facts of the approved manifest, copied into the snapshot, and apply **below** th
   override it, and it applies under every grant mode and to hand-written rules alike. It
   does not apply at CONNECT time (no credential is injected there) and does not affect
   requests to the same host without that connection as the winning credential.
+- **Read-only connections** (phase 5, FIX-133, D-240, C-740). A connection's `access` is `read`
+  or `write` (`03 §app_connections`; default `write`). For a request whose winning credential
+  is a `read` connection, the scope verdict is `block` **before any rule is consulted**, like
+  `block_untooled`, unless the request's `tool_id` is a tool of the app's `read` group: a write
+  tool, and a request that matches no catalogue tool (it cannot be proven a read), is refused
+  (403 `blocked_by_policy`, `details.reason = "read_only_connection"`; reason
+  `read_only_connection` in the trace and request log, trace `via = read_only_blocked`). Order
+  within the two pre-rule checks: `block_untooled` first, then read-only. No grant, rule or
+  approval overrides it; it applies under every grant mode, to hand-written rules, and not at
+  CONNECT time. It works for any app with a read/write split and does not rely on the vendor.
+  The effective view and the simulator evaluate it too. Grants of a read-only connection are
+  shown with a "Read-only connection" note (`14`).
+- **Tool scopes** (phase 5, FIX-136, D-241, C-741). A tool may declare `scopes` (any of). When the
+  request's `tool_id` declares them and the winning connection's scopes are **known** (non-empty:
+  an OAuth token's granted scopes, or those declared for a pasted token) and hold none, the scope
+  verdict is `block` before any rule is consulted (after `block_untooled` and the read-only check),
+  403 `tool_scope_missing` with `details.tool_id` and `details.needs`, trace `via = tool_scope_blocked`;
+  nothing is injected, so the token is not sent. Unknown scopes refuse nothing, and declared scopes
+  never widen: they can only remove tools. Not at `CONNECT` time. The effective view evaluates it,
+  so the grant forms list such tools as unavailable (`14`). No grant, rule or approval overrides it.
 - **Composition.** The restrictions only tighten: they combine with grants, rules,
   approvals, governance and the Default Rule by the usual strictness order (`block` wins), never
   add an allow, and never change a custom grant's compilation (rules 1–3 above already block

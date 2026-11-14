@@ -474,6 +474,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const wsId = useResolve(orgSlug, wsSlug).data?.workspace?.id;
   const side = { orgSlug, wsSlug, wsId, pathname };
 
+  // (FIX-138) The standalone terminal window has no app chrome: it is a pane that fills the browser window.
+  if (/^\/o\/[^/]+\/w\/[^/]+\/agents\/[^/]+\/terminal\/?$/.test(pathname)) return <>{children}</>;
+
   return (
     <div className="min-h-screen md:flex">
       <aside

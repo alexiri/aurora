@@ -129,6 +129,8 @@ impl From<ApprovalRow> for Approval {
 pub struct ListQuery {
     /// `pending` | `approved` | `denied` | `expired` | `abandoned`
     pub status: Option<String>,
+    /// (C-700) Only this agent's approvals; an unknown or foreign agent yields an empty page.
+    pub agent_id: Option<Uuid>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
 }

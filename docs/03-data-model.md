@@ -351,11 +351,12 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | status | text CHECK in (`active`,`reauth_required`,`disabled`,`orphaned`) | |
 | status_reason | text null (≤ 300 chars) | open vocabulary; a plugin major upgrade sets `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (`09 §10`, ≤300 chars) |
 | connect_method | text null | (FIX-123, D-195, D-214) id of the manifest `connect[]` method that created or last reconnected the connection; the gateway's refresh/mint paths use that method's `token` (falling back to the app's), tools restricted by `connect_methods` apply by it. Null = unknown (rows older than the column, where the package had several methods): the app's `token`, no tool hidden. Backfilled by migration `000110` from the recorded package version's single method |
+| access | text not null default `write` CHECK in (`read`,`write`) | (FIX-133, D-240, C-740) `read` = the gateway allows only the app's `read` tools through this connection and blocks write tools and untooled requests before any rule (`07 §Read-only connections`). Chosen at connect time or changed by `PATCH`; existing rows are `write`; a reconnect without a value keeps it. Migration `20261201000160` |
 | credentials_ref | text not null | SecretRef of the credential JSON (fields per manifest `credentials`) |
 | credential_keys | text[] null | (phase 3, RFE-022) **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows: the upgrade check derives the names from the manifest of the row's `app_version`, else fails closed). Used by the plugin major-upgrade check (`09 §10`). The gateway role's column-level `UPDATE` list includes it |
 | credentials_version | bigint not null default 1 | CAS authority for refresh/mint writes |
 | credentials_expires_at | timestamptz null | access-token expiry (refresh trigger) |
-| scopes | text[] not null default `{}` | granted scopes |
+| scopes | text[] not null default `{}` | granted scopes; (FIX-136, D-241) for a connection made with a `fields` method that declares scopes: the scopes the person declared (or the read probes found) for the pasted token, editable; the gateway refuses a tool needing others only when this is non-empty |
 | requested_scopes | text[] not null default `{}` | scopes requested at authorize time; `missing_scopes = requested_scopes − scopes` (I-33) |
 | metadata | jsonb not null default `{}` | non-secret, plugin-declared keys only |
 | tenant_host | text null | for tenant-bound hosts |
@@ -392,12 +393,9 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | label | text not null | 1–120 characters |
 | status | text CHECK in (`active`,`disabled`) default `active` | `disabled` stops injection without deleting |
 | created_by | uuid null FK→users (set null) | |
-| unique | (org_id, app_id, host) nulls not distinct | a host is additionally unique across scopes that can see each other (instance-wide vs any org); enforced by the API in the creating transaction |
+| base_path | text null | (phase 5, FIX-145, D-231, C-731) the path the app is served under on `host` (`/jira` for `https://its.cern.ch/jira`); null = served at the host root. Stored normalized (trailing `/` dropped; `""` and `/` stored as null; case kept). Set at registration and never updated (immutable like `host`). Every `{instance}` URL of the registration resolves to `https://<host><base_path>`, and the gateway injects the registration's connections only under it (`09 §3.4 Instance-bound hosts`, SEC-59). CHECK `app_instances_base_path_ck` mirrors the API validation (`instance_base_path_invalid`): starts with `/`, 1–8 segments of 1–64 characters from `[A-Za-z0-9._~-]`, no `.` or `..` segment, no trailing `/`, ≤ 128 characters |
+| unique | (org_id, app_id, host, base_path) nulls not distinct | one app may be registered twice on one host in one scope under disjoint base paths. A host with overlapping base paths (either null, equal, or one a segment prefix of the other) is additionally refused across scopes that can see each other (instance-wide vs any org); enforced by the API in the creating transaction under the per-host lock (`instance_host_conflict`) — a unique key cannot express the prefix rule |
 | index | (host); (org_id) | |
-
-(Phase 5, FIX-145, D-231) `app_instances` gains `base_path` and its unique key widens: see
-`§Planned changes` › `app_instances` (base path). The rows move here with migration
-`20261201000140`.
 
 ---
 
@@ -1633,13 +1631,7 @@ Absent when the operator supplies the key through `push.vapid.private_key_env` (
 
 The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades). (P4-011B spec batch, D-266(c)) Sign-out, "sign out other sessions", an administrator's revocation and deactivation delete the session's `push_subscriptions` rows in the revoking transaction (the cascade only covers deleted session rows). The sealed secrets (`webpush.vapid`, `webpush.subscription`) are always in the `inline` store (D-266(b)). Migration `20261201000223_web_push.sql` (P4-011B-3) creates `webpush_vapid_keys`, `push_subscriptions` and `approval_push_claims` together; the partial unique index `webpush_vapid_keys (status) WHERE status = 'active'` enforces one active key.
 
-#### `app_instances` (base path; phase 5, FIX-145, D-231)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| base_path | text null | (C-731) the path the app is served under on `host` (`/jira` for `https://its.cern.ch/jira`); null = served at the host root. Stored normalized (trailing `/` dropped; `""` and `/` stored as null; case kept). Set at registration and never updated (immutable like `host`). Every `{instance}` URL of the registration resolves to `https://<host><base_path>`, and the gateway injects the registration's connections only under it (`09 §3.4 Instance-bound hosts`, SEC-59) | 5 (FIX-145, D-231) |
-| check | `base_path IS NULL OR (base_path ~ '^(/[A-Za-z0-9._~-]{1,64}){1,8}$' AND base_path !~ '(^\|/)\.\.?(/\|$)' AND char_length(base_path) <= 128)` | mirrors the API validation (`instance_base_path_invalid`): starts with `/`, 1–8 segments of 1–64 unreserved characters, no `.` or `..` segment, no trailing `/`, ≤ 128 characters; defence in depth for SEC-59 like the `host` CHECK | 5 (FIX-145, D-231) |
-| unique | (org_id, app_id, host, base_path) nulls not distinct (replaces (org_id, app_id, host)) | one app may be registered twice on one host in one scope under disjoint base paths. Overlap between registrations visible to each other (either base path null, equal, or one a segment prefix of the other) is refused by the API in the creating transaction under the per-host lock, as before (`instance_host_conflict`); a unique key cannot express the prefix rule | 5 (FIX-145, D-231) |
-
+#### `app_instances` (base path; phase 5, FIX-145, D-231) — now in `§app_instances`
 Migration `20261201000140_app_instance_base_path.sql` (block `000140..149`) adds the column null
 (existing rows keep `null`: they are served at the host root, today's behaviour). The `(host)`
 index still serves the conflict check and the gateway's instance lookup. The gateway role already
@@ -1857,6 +1849,7 @@ their share, user or dashboard session goes; the `sessions` retention job's dele
 | grant_hash | text not null unique | SHA-256 of the `auy_` grant (the value is never stored) |
 | expires_at | timestamptz not null | `now() + TERMINAL_GRANT_TTL` (30 s) |
 | consumed_at | timestamptz null | set by the single-use compare-and-set at redemption |
+| shell | text not null default `'bash'` check `bash`/`zsh` | (FIX-138) the person's shell choice (the enumerated `?shell=`, never a path); returned by the redemption answer so the runner's `pty.open` carries it |
 | index | unique `(grant_hash)`; `(expires_at)` | redemption, pruning |
 
 No foreign keys (the rows die young, like `preview_stream_grants`); rows pruned after 24 h. The

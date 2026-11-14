@@ -1,6 +1,6 @@
 package:
   id: sentry
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -324,9 +324,9 @@ apps:
         link: "https://{request.host}/organizations/{path.4}/issues/{path.6}/"
     agent:
       instructions: |
-        A self-hosted Sentry is connected. Use the API at https://<host>/api/0/ (for example
-        https://<host>/api/0/organizations/<org>/issues/?query=is:unresolved), where <host> is the host
-        of the Sentry connection; paths end with a slash. Aurora adds the token; never ask for or
+        A self-hosted Sentry is connected. Use the API at <address>/api/0/ (for example
+        <address>/api/0/organizations/<org>/issues/?query=is:unresolved), where <address> is the
+        address shown with the account; paths end with a slash. Aurora adds the token; never ask for or
         write one, and never send this connection's requests to another host. Page through results
         with the cursor in the Link response header. Send JSON bodies for changes so approvals can
         show what changes; resolving an issue is PUT with {"status":"resolved"}.

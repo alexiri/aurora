@@ -565,6 +565,38 @@ pub struct PtyOpen {
     pub window: u32,
     pub cols: u16,
     pub rows: u16,
+    /// (FIX-138) The shell the person chose; absent (an older runner) = bash. An enumerated
+    /// value, never a path: the supervisor maps it to a fixed binary.
+    #[serde(default)]
+    pub shell: PtyShell,
+}
+
+/// (FIX-138) The terminal's shell choice (`12 §Terminal`, `16 §W19`, `05` `?shell=`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PtyShell {
+    #[default]
+    Bash,
+    Zsh,
+}
+
+impl PtyShell {
+    /// Wire/query spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bash => "bash",
+            Self::Zsh => "zsh",
+        }
+    }
+
+    /// Parses the API's `?shell=` value: exactly `bash` or `zsh`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "bash" => Some(Self::Bash),
+            "zsh" => Some(Self::Zsh),
+            _ => None,
+        }
+    }
 }
 
 /// The supervisor accepted a PTY; `window` is its own credit window.
@@ -705,6 +737,9 @@ pub struct PreviewStreamOpenResponse {
     pub idle_secs: u32,
     /// Total stream lifetime (`PREVIEW_STREAM_LIFETIME`).
     pub max_lifetime_secs: u32,
+    /// (FIX-138) Terminal grant only: the shell the person chose (absent = bash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<PtyShell>,
 }
 
 impl Validate for PreviewStreamOpenRequest {

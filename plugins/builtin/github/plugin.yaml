@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.0.0
+  version: 2.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -26,6 +26,20 @@ oauth_clients:
       - { name: client_id, label: Client ID }
       - { name: client_secret, label: Client secret, secret: true }
     setup_note: "On GitHub open Settings, Developer settings, OAuth Apps and register a new OAuth app (or use an organization's). Set the authorization callback URL to the Aurora redirect URI and generate a client secret."
+  # A GitHub App's user authorization uses the same two endpoints as an OAuth app but is a
+  # different registration: no scopes (permissions are set on the app), expiring user tokens
+  # (8 hours) with a rotating refresh token (6 months), PKCE supported.
+  # https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+  - id: github-app
+    authorize_url: https://github.com/login/oauth/authorize
+    token_url: https://github.com/login/oauth/access_token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: "Client ID (not the App ID)" }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "On GitHub open Settings, Developer settings, GitHub Apps and register a new GitHub App (or use an organization's). Set the callback URL to the Aurora redirect URI, keep expiring user tokens enabled, grant the permissions you want agents to have (Contents, Issues and Pull requests read access for a read-only setup) and generate a client secret. Use the Client ID, not the App ID."
   - id: github-ghes
     authorize_url: "https://{instance}/login/oauth/authorize"
     token_url: "https://{instance}/login/oauth/access_token"
@@ -36,6 +50,16 @@ oauth_clients:
       - { name: client_id, label: Client ID }
       - { name: client_secret, label: Client secret, secret: true }
     setup_note: "Register an OAuth app on your GitHub Enterprise Server (Settings, Developer settings, OAuth Apps). Every GitHub Enterprise Server instance has its own OAuth app."
+  - id: github-app-ghes
+    authorize_url: "https://{instance}/login/oauth/authorize"
+    token_url: "https://{instance}/login/oauth/access_token"
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: "Client ID (not the App ID)" }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "Register a GitHub App on your GitHub Enterprise Server (Settings, Developer settings, GitHub Apps), keep expiring user tokens enabled and grant the permissions you want agents to have. Every GitHub Enterprise Server instance has its own GitHub App."
 apps:
   - about:
       id: github
@@ -57,11 +81,13 @@ apps:
       - { name: login }
       - { name: app_id }
       - { name: installation_id }
+      - { name: repositories }
+      - { name: token_scopes }
     connect:
       - id: github_app
         kind: hook
         label: GitHub App
-        description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams."
+        description: "An app installed on the repositories you choose; tokens last one hour and do not depend on one person's account. GitHub enforces the app's permissions and repositories. With Read only chosen, Aurora also asks GitHub for a read-only token (and can limit it to named repositories). Recommended for teams."
         recommended: true
         authorize: false
         token: { kind: hook, max_lifetime_secs: 3600 }
@@ -69,28 +95,32 @@ apps:
           - { name: app_id, label: GitHub App ID or client ID, type: text, store: metadata, required: true, placeholder: "123456", help_url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app }
           - { name: installation_id, label: Installation ID, type: text, store: metadata, required: true, placeholder: "12345678", help_url: https://docs.github.com/en/rest/apps/apps#list-installations-for-the-authenticated-app }
           - { name: private_key, label: Private key (.pem file), type: file, store: credentials, required: true, help_url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps }
+          - { name: repositories, label: Limit to repositories (optional), type: text, store: metadata, placeholder: "api, web", help_url: https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app }
       - id: token
         kind: fields
         label: Personal access token
-        description: "Acts as you, on everything your account can reach. The quickest way to start for personal use; a fine-grained token can be limited to chosen repositories."
+        description: "Acts as you. Use a fine-grained token: GitHub itself then limits it to the repositories and permissions you pick (the link below pre-fills read access to contents, issues, pull requests and Actions). A classic token is all or nothing per scope (repo is read AND write); with one, choose Read only above and Aurora blocks writes for you."
         fields:
           - name: access_token
             label: Personal access token
             type: secret
             store: credentials
             required: true
-            placeholder: "Fine-grained or classic personal access token"
-            help_url: https://github.com/settings/personal-access-tokens
+            placeholder: "Fine-grained (github_pat_…) or classic personal access token"
+            help_url: "https://github.com/settings/personal-access-tokens/new?name=Aurora+read-only&description=Read-only+access+for+Aurora+agents&expires_in=90&contents=read&issues=read&pull_requests=read&actions=read"
         probe:
           method: GET
           url: "https://api.github.com/user"
           expect_status: [200]
           label: /login
-          metadata: { login: /login }
+          # A classic token's scopes come back in X-OAuth-Scopes; GitHub sends none for a
+          # fine-grained token (its permissions are not exposed by any endpoint), so then nothing
+          # is stored.
+          metadata: { login: /login, token_scopes: "header:x-oauth-scopes" }
       - id: oauth
         kind: oauth2
         label: OAuth
-        description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered by an administrator."
+        description: "Sign in with GitHub and act as you, with the scopes you tick. GitHub has no read-only repository scope (repo allows writes), so GitHub does not stop writes here: choose Read only and Aurora blocks them. For GitHub enforcing read-only, use GitHub App sign-in. Needs an OAuth app registered by an administrator."
         client: github
         scopes:
           - { scope: "read:user", name: Read your profile, access: read }
@@ -100,6 +130,37 @@ apps:
           - { scope: workflow, name: Add and update GitHub Actions workflow files, access: write }
         default_scopes: ["read:user", "read:org"]
         callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://api.github.com/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
+      - id: oauth_app
+        kind: oauth2
+        label: GitHub App sign-in
+        description: "Sign in with GitHub through a GitHub App and act as you with only the permissions the app was given, on the repositories both you and the app can reach (GitHub enforces this). Tokens last eight hours and refresh by themselves. Needs a GitHub App registered by an administrator."
+        client: github-app
+        # A GitHub App has no scopes: its permissions are set on its registration, so the
+        # authorization request carries none (GitHub ignores any; `offline_access` only forces
+        # expiring tokens, which a new app has by default).
+        scopes: []
+        default_scopes: []
+        callback: query
+        token:
+          kind: oauth2_refresh
+          client: github-app
+          refresh_field: refresh_token
+          rotate_refresh_token: true
+          max_lifetime_secs: 28800
+          stale_codes:
+            - { status: 401, body_contains: Bad credentials }
+          reauth_codes: [bad_refresh_token]
         token_response:
           access_token: /access_token
           refresh_token: /refresh_token
@@ -152,8 +213,8 @@ apps:
         items:
           # Acting as a user: an installation token has no user, so these two exist only for the
           # OAuth and personal-token methods; `list_installation_repos` only for the GitHub App.
-          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET], connect_methods: [token, oauth] }
-          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET], connect_methods: [token, oauth] }
+          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
           - { id: list_installation_repos, name: List repositories of the installation, host: api.github.com, path: /installation/repositories, methods: [GET], connect_methods: [github_app] }
           - { id: get_repo, name: Get a repository, host: api.github.com, path: "/repos/*/*", methods: [GET] }
           - { id: list_issues, name: List issues, host: api.github.com, path: "/repos/*/*/issues", methods: [GET] }
@@ -283,11 +344,13 @@ apps:
       - { name: app_id }
       - { name: installation_id }
       - { name: ghes_host }
+      - { name: repositories }
+      - { name: token_scopes }
     connect:
       - id: github_app
         kind: hook
         label: GitHub App
-        description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams."
+        description: "An app installed on the repositories you choose; tokens last one hour and do not depend on one person's account. GitHub enforces the app's permissions and repositories. With Read only chosen, Aurora also asks GitHub for a read-only token (and can limit it to named repositories). Recommended for teams."
         recommended: true
         authorize: false
         token: { kind: hook, max_lifetime_secs: 3600 }
@@ -296,10 +359,11 @@ apps:
           - { name: app_id, label: GitHub App ID or client ID, type: text, store: metadata, required: true, placeholder: "123456" }
           - { name: installation_id, label: Installation ID, type: text, store: metadata, required: true, placeholder: "12345678" }
           - { name: private_key, label: Private key (.pem file), type: file, store: credentials, required: true }
+          - { name: repositories, label: Limit to repositories (optional), type: text, store: metadata, placeholder: "api, web" }
       - id: token
         kind: fields
         label: Personal access token
-        description: "Acts as you, on everything your account can reach. The quickest way to start for personal use."
+        description: "Acts as you. A fine-grained token (where your server supports them) is limited by GitHub to the repositories and permissions you pick; a classic token is all or nothing per scope (repo is read AND write), so with one choose Read only above and Aurora blocks writes for you."
         fields:
           - name: access_token
             label: Personal access token
@@ -312,11 +376,11 @@ apps:
           url: "https://{instance}/api/v3/user"
           expect_status: [200]
           label: /login
-          metadata: { login: /login }
+          metadata: { login: /login, token_scopes: "header:x-oauth-scopes" }
       - id: oauth
         kind: oauth2
         label: OAuth
-        description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered on the server by an administrator."
+        description: "Sign in with GitHub and act as you, with the scopes you tick. GitHub has no read-only repository scope (repo allows writes), so GitHub does not stop writes here: choose Read only and Aurora blocks them. Needs an OAuth app registered on the server by an administrator."
         client: github-ghes
         scopes:
           - { scope: "read:user", name: Read your profile, access: read }
@@ -326,6 +390,34 @@ apps:
           - { scope: workflow, name: Add and update GitHub Actions workflow files, access: write }
         default_scopes: ["read:user", "read:org"]
         callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://{instance}/api/v3/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
+      - id: oauth_app
+        kind: oauth2
+        label: GitHub App sign-in
+        description: "Sign in through a GitHub App registered on the server and act as you with only the permissions the app was given, on the repositories both you and the app can reach (GitHub enforces this). Tokens expire and refresh by themselves. Needs a GitHub App registered on the server by an administrator."
+        client: github-app-ghes
+        scopes: []
+        default_scopes: []
+        callback: query
+        token:
+          kind: oauth2_refresh
+          client: github-app-ghes
+          refresh_field: refresh_token
+          rotate_refresh_token: true
+          max_lifetime_secs: 28800
+          stale_codes:
+            - { status: 401, body_contains: Bad credentials }
+          reauth_codes: [bad_refresh_token]
         token_response:
           access_token: /access_token
           refresh_token: /refresh_token
@@ -379,8 +471,8 @@ apps:
     tools:
       read:
         items:
-          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET], connect_methods: [token, oauth] }
-          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET], connect_methods: [token, oauth] }
+          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
           - { id: list_installation_repos, name: List repositories of the installation, host: "{instance}", path: /api/v3/installation/repositories, methods: [GET], connect_methods: [github_app] }
           - { id: get_repo, name: Get a repository, host: "{instance}", path: "/api/v3/repos/*/*", methods: [GET] }
           - { id: list_issues, name: List issues, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [GET] }
@@ -478,10 +570,10 @@ apps:
           - { label: Repository, source: path, segment: 2 }
     agent:
       instructions: |
-        GitHub Enterprise Server is connected. Use the REST API at https://<host>/api/v3 (for example
-        https://<host>/api/v3/repos/<owner>/<repo>/issues), GraphQL at https://<host>/api/graphql and
-        git over HTTPS (https://<host>/<owner>/<repo>.git), where <host> is the host of the GitHub
-        Enterprise Server connection. Aurora adds the credentials; never ask for or write a token, and
+        GitHub Enterprise Server is connected. Use the REST API at <address>/api/v3 (for example
+        <address>/api/v3/repos/<owner>/<repo>/issues), GraphQL at <address>/api/graphql and
+        git over HTTPS (<address>/<owner>/<repo>.git), where <address> is the address shown with the
+        account. Aurora adds the credentials; never ask for or write a token, and
         never send a request for this connection to another host. Send JSON request bodies so approvals
         can show what a change does. A connection made with a GitHub App installation reaches only the
         repositories the app is installed on and only the permissions it was granted; endpoints that

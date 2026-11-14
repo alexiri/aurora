@@ -72,6 +72,9 @@ pub struct Opts {
     pub idle_stop_secs: Option<u64>,
     /// Sandbox image for this stack instead of `AURORA_E2EH_IMAGE` (the full image scenario).
     pub image: Option<String>,
+    /// Only these harnesses are enabled (`hosted.enabled_harnesses`; the first is also the default
+    /// harness). Default: `claude-code` and `codex`.
+    pub only_harness: Option<String>,
 }
 
 pub struct Stack {
@@ -223,7 +226,7 @@ aurora-runner = "{bridge}"
 enabled = true
 allow_fake_harness = true
 # P4-HAR: Codex is opt-in; only an image whose label lists it (the full image) offers it.
-enabled_harnesses = ["claude-code", "codex"]
+{harnesses}
 idle_stop_secs = {idle}
 
 [auth]
@@ -256,6 +259,10 @@ multiplier = 10.0
 [api]
 hookhost_url = "http://127.0.0.1:9"
 "#,
+            harnesses = match &o.only_harness {
+                Some(h) => format!("enabled_harnesses = [\"{h}\"]\ndefault_harness = \"{h}\""),
+                None => "enabled_harnesses = [\"claude-code\", \"codex\"]".to_owned(),
+            },
             sock = env("AURORA_E2EH_SOCK"),
             net = env("AURORA_E2EH_NETWORK"),
             ca = dir.join("ca").display(),

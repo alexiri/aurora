@@ -437,10 +437,33 @@ impl PolicyHandler {
         method: &str,
         path: &str,
         host: &str,
+        tool: Option<(&str, &[String])>,
     ) -> Option<(ApiError, &'static str)> {
         let policy_url = self.url(rv, "policy");
         match d.verdict {
             Verdict::Allow => None,
+            // (FIX-136, D-241) The token cannot serve the tool: refused before injection, so the
+            // agent gets a clear answer instead of an upstream 403 and the token is not sent.
+            Verdict::Block {
+                reason: BlockReason::ToolScopeMissing,
+            } => {
+                let (tool_id, needs) = tool.unwrap_or(("", &[]));
+                Some((
+                    ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "tool_scope_missing",
+                        format!(
+                            "This connection's token does not have the scope this tool needs ({}). Reconnect with it, or edit the connection's scopes if the token has it.",
+                            needs.join(" or ")
+                        ),
+                    )
+                    .with_details(json!({
+                        "tool_id": tool_id, "needs": needs, "method": method, "path": path,
+                        "manage_url": policy_url
+                    })),
+                    "tool_scope_missing",
+                ))
+            }
             Verdict::Block {
                 reason: BlockReason::Rule,
             } => {
@@ -487,6 +510,21 @@ impl PolicyHandler {
                     "manage_url": policy_url
                 })),
                 "app_untooled_blocked",
+            )),
+            // (FIX-133, D-240) Decided before any rule: the connection is read-only.
+            Verdict::Block {
+                reason: BlockReason::ReadOnlyConnection,
+            } => Some((
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "blocked_by_policy",
+                    "This connection is read-only: it allows only the app's read tools, and this request is not one of them. No rule can allow it.".to_owned(),
+                )
+                .with_details(json!({
+                    "reason": "read_only_connection", "method": method, "path": path,
+                    "manage_url": policy_url
+                })),
+                "read_only_connection",
             )),
             Verdict::Block {
                 reason: BlockReason::DefaultDenied,
@@ -637,12 +675,47 @@ impl PolicyHandler {
         let registry = rv.registry.clone();
         // (D-74) A host that is exactly a registered app instance serves that app's `{instance}`
         // host entries; otherwise the static host index decides.
+        // (D-231, SEC-59) Registrations may share the host under disjoint base paths: the one whose
+        // base path covers the (already normalized) path serves the request, and every manifest
+        // decision (host entry `path_prefix`, tool `path`/`params`, `{path.N}`) uses the **app
+        // path**, the path below the base path. A path outside every base path matches no
+        // instance: nothing is injected.
+        let inst =
+            aurora_registry::instance::select(&rv.instances, &path, |i| i.base_path.as_deref());
+        let inst_id = inst.map(|i| i.id);
+        let inst_app_path = inst
+            .map(|i| aurora_registry::instance::app_path(i.base_path.as_deref(), &path).to_owned());
         let app_match = registry.as_ref().and_then(|l| {
-            rv.instance
-                .as_ref()
-                .and_then(|i| apps::identify_instance_app(l, &i.app_id, &path))
+            inst.zip(inst_app_path.as_deref())
+                .and_then(|(i, ap)| apps::identify_instance_app(l, &i.app_id, ap))
                 .or_else(|| apps::identify_app(l, &host, port, &path))
         });
+        let app_path: String = match (&app_match, inst_app_path) {
+            (Some(m), Some(ap)) if m.instance => ap,
+            _ => path.clone(),
+        };
+        // A named connection of a registration on this host, used outside every registered base
+        // path: refused like a connection on the wrong host (421 with `expected_base_url`), when
+        // the agent may use it at all.
+        if inst.is_none()
+            && !rv.instances.is_empty()
+            && let Some(c) = aurora_headers
+                .connection_id
+                .as_deref()
+                .and_then(|n| Uuid::parse_str(n).ok())
+                .and_then(|n| rv.conns.iter().find(|c| c.id == n))
+                .filter(|c| {
+                    c.instance_id.is_some()
+                        && c.instance_host
+                            .as_deref()
+                            .is_some_and(|h| h.eq_ignore_ascii_case(&host))
+                })
+            && !selected_candidates(rv.all_rules(), &fi, &[Cand::App(c.clone()).credential()])
+                .is_empty()
+        {
+            let err = guidance::host_mismatch(&host, c.instance_base_path.as_deref());
+            return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
+        }
         // Candidates serving this path; selection by allow rules (07 §Injection selection).
         let mut cands: Vec<Cand> = rv
             .secrets
@@ -663,7 +736,7 @@ impl PolicyHandler {
                 .collect();
             // Tenant-bound entries only offer connections stored for this host; when none
             // does, the mismatching ones stay so that the guard answers 421.
-            let on_instance = rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id);
+            let on_instance = inst_id.filter(|_| m.instance);
             let bound: Vec<_> = if let Some(iid) = on_instance {
                 // Instance host: only connections bound to this very instance; connections of
                 // other instances stay so the guard answers 421, default-host ones never ride here.
@@ -792,7 +865,7 @@ impl PolicyHandler {
             .is_some_and(|g| Governance::needs_body(g, &host_port, wsec))
             || app_match
                 .as_ref()
-                .is_some_and(|m| apps::needs_body(m, &host, port, &path, method.as_str()));
+                .is_some_and(|m| apps::needs_body(m, &host, port, &app_path, method.as_str()));
         let (body_prefix, truncated, mut body) = if rv.needs_body() || may_hold || llm_body {
             let limit = if rv.needs_body() || llm_body {
                 self.condition_body_limit
@@ -819,7 +892,7 @@ impl PolicyHandler {
                 m,
                 &host,
                 port,
-                &path,
+                &app_path,
                 query.as_deref(),
                 method.as_str(),
                 &body_prefix,
@@ -859,7 +932,19 @@ impl PolicyHandler {
             truncated,
             app_id: ctx.app_id.clone(),
             tool_id: ctx.tool_id.clone(),
-            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            tool_tags: tool
+                .zip(app_match.as_ref())
+                .map(|(t, m)| {
+                    apps::tool_tags(
+                        m.app,
+                        t,
+                        match &winner {
+                            Some(Cand::App(c)) => Some(c.as_ref()),
+                            _ => None,
+                        },
+                    )
+                })
+                .unwrap_or_default(),
             winning_credential: winner.as_ref().map(Cand::credential),
             is_llm_host: rv.is_llm_host,
             identity: fi,
@@ -901,6 +986,7 @@ impl PolicyHandler {
         {
             // 8. approval hold (nothing decrypted yet).
             let red_path = crate::reqlog::redact_path(&path);
+            let red_app_path = crate::reqlog::redact_path(&app_path);
             let hdr = |n: &str| {
                 headers
                     .get(n)
@@ -919,7 +1005,9 @@ impl PolicyHandler {
                 &crate::hold::SummaryRequest {
                     method: &ctx.method,
                     host: &host,
-                    path: &red_path,
+                    // `{path.N}` in the summary counts from the app path (D-231); the approval
+                    // display below keeps the full path.
+                    path: &red_app_path,
                     query: query.as_deref(),
                     content_type: content_type.as_deref(),
                     header: &hdr,
@@ -1008,8 +1096,14 @@ impl PolicyHandler {
         {
             // The approval stands: released, whatever the rules now say about asking.
             ctx.decision = "approved";
-        } else if let Some((err, decision)) = self.verdict_error(&rv, &d, &ctx.method, &path, &host)
-        {
+        } else if let Some((err, decision)) = self.verdict_error(
+            &rv,
+            &d,
+            &ctx.method,
+            &path,
+            &host,
+            tool.map(|t| (t.id.as_str(), t.scopes.as_slice())),
+        ) {
             return Outcome::Respond(self.refuse(ctx, &err, decision));
         }
         self.apply_hits(&d, &pk);
@@ -1030,19 +1124,15 @@ impl PolicyHandler {
             match mechanisms::route::instance_guard(
                 conn.instance_id,
                 conn.instance_host.as_deref(),
-                rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id),
+                conn.instance_base_path.as_deref(),
+                inst_id.filter(|_| m.instance),
                 &host,
+                &path,
             ) {
                 Ok(()) => {}
                 Err(mechanisms::route::GuardError::Mismatch { expected }) => {
-                    let err = ApiError::new(
-                        StatusCode::MISDIRECTED_REQUEST,
-                        "host_mismatch",
-                        format!(
-                            "This connection is bound to {expected}; send the request to that host."
-                        ),
-                    )
-                    .with_details(json!({ "expected_host": expected }));
+                    let err =
+                        guidance::host_mismatch(&expected, conn.instance_base_path.as_deref());
                     return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
                 }
                 Err(mechanisms::route::GuardError::Unavailable) => {
@@ -1131,7 +1221,7 @@ impl PolicyHandler {
             };
             // 9. token interception: answered locally, never forwarded.
             if let Some(i) = &m.entry.intercept
-                && mechanisms::intercept::matches(i, &method, &path)
+                && mechanisms::intercept::matches(i, &method, &app_path)
             {
                 let Some(tok) = exec.credential("access_token") else {
                     return unavailable(self, ctx);
@@ -1600,7 +1690,7 @@ impl RequestHandler for PolicyHandler {
         );
         let mut ctx = ctx;
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
-        match self.verdict_error(&rv, &d, "CONNECT", "/", host) {
+        match self.verdict_error(&rv, &d, "CONNECT", "/", host, None) {
             None => {
                 // A CONNECT counts as one request (consumed once, when it is allowed).
                 if let Settled::Refuse(err, decision) =
@@ -1911,7 +2001,10 @@ impl DbSession {
             truncated,
             app_id: ctx.app_id.clone(),
             tool_id: ctx.tool_id.clone(),
-            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            tool_tags: tool
+                .zip(app)
+                .map(|(t, a)| apps::tool_tags(a, t, None))
+                .unwrap_or_default(),
             winning_credential: Some(cred),
             is_llm_host: false,
             identity: fi,
@@ -2030,7 +2123,9 @@ impl DbSession {
         } else if released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval)
         {
             ctx.decision = "approved";
-        } else if let Some((err, decision)) = h.verdict_error(&rv, &d, "POST", &path, &self.host) {
+        } else if let Some((err, decision)) =
+            h.verdict_error(&rv, &d, "POST", &path, &self.host, None)
+        {
             h.refuse(ctx, &err, decision);
             return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
                 DbVerdict::Unavailable(err)

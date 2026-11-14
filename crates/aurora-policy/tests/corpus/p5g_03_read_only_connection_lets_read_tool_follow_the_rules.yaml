@@ -1,0 +1,13 @@
+description: FIX-133 read-only connection - a read tool is not touched by the read-only check (the rules decide); a write connection and a secret winner are unaffected too
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: hand-allow-network, action: allow, targets: [{type: network, host: api.github.com}]}]}
+facts:
+  host: api.github.com
+  port: 443
+  path: /repos/acme/app/issues
+  method: GET
+  app_id: github
+  tool_id: list_issues
+  tool_tags: {write: false}
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: github, scope: workspace, read_only: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect: {verdict: allow, workspace_rule: hand-allow-network}

@@ -421,3 +421,33 @@ async fn approval_needs_an_instance_admin() {
         .await;
     assert_eq!(s, 403);
 }
+
+/// The real manifests of a built-in package (FIX-133/FIX-136 version bumps): `indico` 1.1.1 is
+/// active, the shipped 1.2.0 arrives and — no permission widened, no connection broken — becomes
+/// the active version by itself, the old one superseded. (The project signing key is not
+/// available to tests, so both versions go through the directory source under publisher `acme`;
+/// the activation rules for a package that already has an approved version are the same.)
+/// `github` 2.0.0 -> 2.1.0 has hooks and is covered at the manifest level in
+/// `aurora-registry` (`builtin_versions`).
+#[tokio::test]
+async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let load = |p: &str| {
+        std::fs::read_to_string(format!("{root}/{p}"))
+            .unwrap()
+            .replace("publisher: aurora", "publisher: acme")
+    };
+    let previous = load("../../crates/aurora-registry/tests/fixtures/previous/indico-1.1.1.yaml");
+    let shipped = load("../../plugins/builtin/indico/plugin.yaml");
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let v1 = a.upload(&previous).await;
+    assert_eq!(v1["status"], "pending_approval", "{v1}");
+    let (s, b) = a.act(&v1["id"], "approve").await;
+    assert_eq!(s, 200, "{b}");
+    let v2 = a.upload(&shipped).await;
+    assert_eq!(v2["package_id"], "indico", "{v2}");
+    assert_eq!(v2["version"], "1.2.0", "{v2}");
+    assert_eq!(v2["status"], "active", "activated without approval: {v2}");
+    assert_eq!(a.status(&v1["id"]).await["status"], "superseded");
+}

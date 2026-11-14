@@ -220,19 +220,19 @@ test.describe("layout, 1280 px", () => {
       expect(await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight), "page scrolls").toBeLessThanOrEqual(0);
       await page.screenshot({ path: `${dir}/chat-${scheme}-1280x800.png` });
       expect(await serious(page)).toEqual([]);
-      // Another tab keeps the full header.
-      await page.getByRole("tab", { name: "Instructions" }).click();
-      await expect(page.getByRole("button", { name: "Freeze agent" })).toBeVisible();
+      // (D-200) Every section has the same one-line header; Freeze and Delete are in Agent actions.
+      await page.getByRole("tab", { name: "Behaviour" }).click();
+      await expect(page.getByRole("button", { name: "Agent actions" })).toBeVisible();
       await page.screenshot({ path: `${dir}/instructions-${scheme}-1280x800.png` });
     });
   }
 
-  test("the panel is at least 560 px tall and the list is 272-320 px wide", async ({ page }) => {
+  test("the panel is at least 560 px tall and the list is 232 px wide (D-201: the status rail takes the rest)", async ({ page }) => {
     await openChat(page, "light", DEFAULT);
     const nav = page.getByRole("navigation", { name: "Conversations" });
     const list = await nav.boundingBox();
-    expect(list!.width).toBeGreaterThanOrEqual(272 - 1);
-    expect(list!.width).toBeLessThanOrEqual(320 + 1);
+    expect(Math.round(list!.width)).toBeGreaterThanOrEqual(232 - 1);
+    expect(Math.round(list!.width)).toBeLessThanOrEqual(232 + 1);
     const panel = await nav.locator("xpath=../..").boundingBox(); // nav > pane > panel
     expect(panel!.height).toBeGreaterThanOrEqual(560);
   });

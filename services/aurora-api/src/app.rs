@@ -129,10 +129,12 @@ impl AppState {
             &config.governance,
             &llm,
         ));
-        let llm_http = reqwest::Client::builder()
-            .timeout(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT)
-            .build()
-            .map_err(|e| format!("http client: {e}"))?;
+        let llm_http = aurora_secrets::tls::with_extra_roots(
+            reqwest::Client::builder().timeout(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT),
+            config.tls.extra_ca_bundle.as_deref(),
+        )?
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
         let derived = Arc::new(
             aurora_crypto::DerivedKeys::from_ring(&config.signing_ring)
                 .map_err(|e| format!("derived keys: {e}"))?,
@@ -142,6 +144,7 @@ impl AppState {
             &config.hookhost_url,
             &config.internal_ring,
             &config.gateway_allowed_private,
+            config.tls.extra_ca_bundle.as_deref(),
         )?);
         let card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests> =
             Arc::new(crate::domains::channels::cards::requests::CardsImpl::new(
@@ -162,6 +165,7 @@ impl AppState {
             crate::domains::skill_libraries::gateway::HttpGateway::new(
                 &config.gateway_internal_url,
                 &config.internal_ring,
+                config.tls.extra_ca_bundle.as_deref(),
             )?,
         )));
         Ok(Self {
@@ -243,11 +247,19 @@ impl AppState {
             &self.config.hookhost_url,
             &self.config.internal_ring,
             &self.config.gateway_allowed_private,
+            self.config.tls.extra_ca_bundle.as_deref(),
         ) {
             let mut env = env;
             env.override_origin = reqwest::Url::parse(origin).ok();
             self.connect = Arc::new(env);
         }
+        self
+    }
+
+    /// Shorten the registration probe's timeout (tests).
+    #[must_use]
+    pub fn with_probe_timeout(self, d: std::time::Duration) -> Self {
+        self.connect.set_probe_timeout(d);
         self
     }
 

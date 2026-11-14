@@ -56,6 +56,8 @@ aurora-registry = { workspace = true }
 serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 reqwest = { workspace = true }
+rustls = { workspace = true }
+hyper-util = { workspace = true }
 openidconnect = { workspace = true }
 percent-encoding = { workspace = true }
 image = { workspace = true }
@@ -64,6 +66,8 @@ metrics = { workspace = true }
 [dev-dependencies]
 aurora-secrets = { workspace = true, features = ["memory-store"] }
 wiremock = { workspace = true }
+rcgen = { workspace = true }
+tokio-rustls = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 aurora-testkit = { workspace = true }
 percent-encoding = { workspace = true }

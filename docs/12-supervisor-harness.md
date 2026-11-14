@@ -545,9 +545,16 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
 
 ### Terminal (phase 4, P4-TERM, D-161; wire in `16 §W19`)
 
-- On `pty.open { pty_id, window, cols, rows }` from its channel — which only the runner sends,
+- On `pty.open { pty_id, window, cols, rows, shell? }` from its channel — which only the runner sends,
   and only for an API-redeemed terminal grant of the current boot — the supervisor spawns the
-  image's shell (`/bin/sh`, or `$SHELL` if set) under a pseudo-terminal as the agent user
+  person's chosen shell under a pseudo-terminal as the agent user (FIX-138, D-246: `shell` is
+  the enumeration `bash` (default, also when absent) or `zsh`, never a path; the supervisor maps
+  it to the fixed binaries `/bin/bash` and `/usr/bin/zsh` and starts them as an interactive
+  **login** shell, `-l`. A missing zsh falls back to bash; a missing bash — or neither — to
+  `/bin/sh` without `-l`; each fallback prints one line in the pane ("zsh is not installed in
+  this sandbox image; starting bash instead." / "bash and zsh are not installed in this sandbox
+  image; starting sh (no completion or history)."). `$SHELL` of the supervisor is no longer
+  consulted; the PTY's `SHELL` is the chosen binary)
   (uid/gid as the process manager uses), cwd `/workspace`, own session with the
   pseudo-terminal as its controlling terminal (job control works); the supervisor opens both
   ends with `O_NOCTTY` and never acquires a terminal itself (it is PID 1 and a session leader
@@ -557,6 +564,40 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   variable** and minus the boot document: no platform credential, no token, no supervisor
   handle ever appears in a terminal's environment (SEC-01/SEC-34 posture) — the shell has
   exactly the privilege a `process_start` command already has, in a PTY.
+- **`PATH` and interactive defaults (FIX-138).** One `PATH` for both shells, a turn and the
+  terminal: `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin` (the image's
+  `ENV PATH`, `/etc/profile.d/aurora.sh` for bash login shells, `/etc/zsh/zshenv` for zsh, the PTY
+  spawn's environment and the supervisor's spawn default `spawn::IMAGE_PATH`). `/opt/aurora/bin`
+  is the directory of the `claude` and `codex` wrappers (below). System-wide **interactive** defaults (aliases `ls`,
+  `ll`, `la`, `l`, `grep`, colours, a prompt `user@<agent handle>:cwd`, history size and
+  de-duplication, zsh `compinit`) live only in the image's system rc files (`/etc/bashrc`,
+  `/etc/zshrc`) — not in the agent's home, so a person's own `~/.bashrc`/`~/.zshrc` still wins —
+  and are read by interactive shells only: agent turns and `bash -c` never see the aliases.
+- **Harnesses in the terminal (FIX-138 item 1b, D-247).** `claude` and `codex` on `PATH` are the
+  wrappers `/opt/aurora/bin/claude` and `/opt/aurora/bin/codex` (image files, `images/sandbox/bin`),
+  not the pinned binaries (`/opt/aurora/harness/…`, off `PATH`). At boot, and again with the agent's
+  model at every session start, the supervisor writes **`/run/aurora/harness.env`** (mode 0644,
+  shell-sourceable, **no secret**): the harnesses the instance enables (boot document
+  `enabled_harnesses`, from `hosted.enabled_harnesses`; absent = only the booted one), the machine
+  proxy `http://127.0.0.1:3128` (`HTTPS_PROXY`…: the loopback forwarder adds the boot token, the
+  terminal never holds it), the CA bundle (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`,
+  `CODEX_CA_CERTIFICATE`), the placeholder credential `aurora-placeholder` that the gateway
+  replaces with the agent's governed LLM key (SEC-01/SEC-34: a real key is never in a terminal's
+  environment or on disk), the CLIs' telemetry/auto-update switches, and — once a turn has chosen
+  one — the model, and for a non-Anthropic endpoint its base URL, exactly the values the adapters
+  put into a turn's environment (Codex takes its provider from `-c` overrides the wrapper builds,
+  not from a config file). Before the first turn the CLI's own default model applies and the
+  gateway's governance (model allow-lists) decides. Each wrapper refuses with "`<harness>`: not
+  enabled on this instance" (exit 127) when its binary is not in the image or its harness is not
+  in `HARNESSES_ENABLED`; otherwise it sources the file, sets its **own state directory**
+  (`CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude`, `CODEX_HOME=/workspace/.aurora/terminal/codex`,
+  created by the supervisor and owned by the agent user) so an interactive session never reads or
+  changes the agent harness's configuration, sessions or memory (FIX-095), and `exec`s the binary.
+  The terminal session does not read the agent's instructions or skills. **Attribution:** the
+  traffic goes through the same machine proxy and boot-token credential as a turn's model calls, so
+  the gateway attributes it to the **agent** (lane `mitm`, no turn or conversation), counts it
+  against the same budgets and rate limits and shows it in the request log (`07`) like any other
+  model call of that agent; the person at the terminal is not recorded as a speaker.
 - `pty.resize { cols, rows }` applies `TIOCSWINSZ`; bytes are relayed with the W18 credit
   machinery (`16 §W19`, tag `0x02`), never logged, never counted beyond byte totals, never
   visible to the harness, the gateway or the loopback proxies. A terminal session is **not**

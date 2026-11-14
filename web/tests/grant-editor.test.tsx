@@ -65,7 +65,7 @@ const C_JIRA = "c0000000-0000-4000-8000-000000000041";
 const C_IND = "c0000000-0000-4000-8000-000000000042";
 
 const tool = (id: string, name: string, group: "read" | "write", over: Partial<Tool> = {}): Tool => ({
-  id, name, group, host: "api.github.com", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], connect_methods: [], wildcard: false, ...over,
+  id, name, group, host: "api.github.com", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], connect_methods: [], scopes: [], wildcard: false, ...over,
 });
 const ghTools: Tool[] = [
   tool("get_repo", "Get a repository", "read", { path: "/repos/*/*" }),

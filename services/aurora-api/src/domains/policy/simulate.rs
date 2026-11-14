@@ -115,7 +115,11 @@ fn scope_trace(t: &aurora_policy::eval::ScopeTrace, derived: &HashSet<Uuid>) -> 
         }
         // (P4-GRANTS) Only a connection of a `block_untooled` app can win this way; the simulator
         // judges generic secrets, so it is never produced here (the trace stays rule-less).
-        Via::Rule | Via::Nothing | Via::AppUntooledBlocked => None,
+        Via::Rule
+        | Via::Nothing
+        | Via::AppUntooledBlocked
+        | Via::ReadOnlyBlocked
+        | Via::ToolScopeBlocked => None,
     };
     if let Some((name, reason, matched)) = default {
         considered.push(TraceEntry {
@@ -365,7 +369,11 @@ pub async fn run(
         Verdict::Allow => (None, None),
         Verdict::NeedsApproval | Verdict::RateLimited => (Some(SimReason::Rule), None),
         Verdict::Block {
-            reason: BlockReason::Rule | BlockReason::AppUntooledBlocked,
+            reason:
+                BlockReason::Rule
+                | BlockReason::AppUntooledBlocked
+                | BlockReason::ReadOnlyConnection
+                | BlockReason::ToolScopeMissing,
         } => (Some(SimReason::Rule), Some("blocked_by_policy")),
         Verdict::Block {
             reason: BlockReason::DefaultDenied,
@@ -490,7 +498,11 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
         ),
         Verdict::RateLimited => (SimVerdict::RateLimited, Some(SimReason::Rule), None),
         Verdict::Block {
-            reason: BlockReason::Rule | BlockReason::AppUntooledBlocked,
+            reason:
+                BlockReason::Rule
+                | BlockReason::AppUntooledBlocked
+                | BlockReason::ReadOnlyConnection
+                | BlockReason::ToolScopeMissing,
         } => (
             SimVerdict::Block,
             Some(SimReason::Rule),

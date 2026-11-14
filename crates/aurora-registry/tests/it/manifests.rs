@@ -135,6 +135,35 @@ fn codes(yaml: &str) -> BTreeSet<&'static str> {
     run(yaml).iter().map(|x| x.code).collect()
 }
 
+/// (FIX-136) A `fields` method declares the scopes a pasted token may carry, with read probes;
+/// tools name them.
+#[test]
+fn tool_scopes_and_declared_token_scopes_are_valid() {
+    let y = METHODS
+        .replace(
+            "          - { name: access_token, label: Token, type: secret, required: true }\n",
+            "          - { name: access_token, label: Token, type: secret, required: true }\n        scopes:\n          - { scope: read, name: Read, access: read }\n          - { scope: write, name: Write, access: write }\n        probe_scopes:\n          read: { url: \"https://api.example.com/user\" }\n",
+        )
+        .replace("connect_methods: [token] }", "connect_methods: [token], scopes: [read, write] }");
+    let v = run(&y);
+    assert!(v.is_empty(), "{v:#?}");
+    let m = Manifest::parse(&y, RUNNING).unwrap();
+    let Some(aurora_registry::manifest::Connect::Fields(f)) = m.apps[0].connect.first() else {
+        panic!("first method is the fields method")
+    };
+    assert_eq!(f.scopes.len(), 2);
+    assert_eq!(f.probe_scopes.len(), 1);
+    let t = &m.apps[0]
+        .tools
+        .as_ref()
+        .unwrap()
+        .read
+        .as_ref()
+        .unwrap()
+        .items[0];
+    assert_eq!(t.scopes, ["read", "write"]);
+}
+
 #[test]
 fn connect_methods_with_token_presentation_and_tool_filter_are_valid() {
     let v = run(METHODS);
@@ -165,6 +194,51 @@ fn connect_method_rules_reject_each_invalid_case() {
             "tool names an unknown method",
             METHODS.replace("connect_methods: [token]", "connect_methods: [nope]"),
             "tool_method_unknown",
+        ),
+        (
+            "tool needs a scope no method declares",
+            METHODS.replace("connect_methods: [token] }", "connect_methods: [token], scopes: [nope] }"),
+            "tool_scope_unknown",
+        ),
+        (
+            "scope declared twice",
+            METHODS.replace(
+                "          - { name: access_token, label: Token, type: secret, required: true }\n",
+                "          - { name: access_token, label: Token, type: secret, required: true }\n        scopes:\n          - { scope: a, name: A, access: read }\n          - { scope: a, name: A2, access: read }\n",
+            ),
+            "duplicate_scope",
+        ),
+        (
+            "probe for a scope the method does not declare",
+            METHODS.replace(
+                "          - { name: access_token, label: Token, type: secret, required: true }\n",
+                "          - { name: access_token, label: Token, type: secret, required: true }\n        probe_scopes:\n          nope: { url: \"https://api.example.com/x\" }\n",
+            ),
+            "probe_scope_unknown",
+        ),
+        (
+            "probe for a write scope",
+            METHODS.replace(
+                "          - { name: access_token, label: Token, type: secret, required: true }\n",
+                "          - { name: access_token, label: Token, type: secret, required: true }\n        scopes:\n          - { scope: w, name: W, access: write }\n        probe_scopes:\n          w: { url: \"https://api.example.com/x\" }\n",
+            ),
+            "probe_scope_write",
+        ),
+        (
+            "scope probe that is not a GET",
+            METHODS.replace(
+                "          - { name: access_token, label: Token, type: secret, required: true }\n",
+                "          - { name: access_token, label: Token, type: secret, required: true }\n        scopes:\n          - { scope: r, name: R, access: read }\n        probe_scopes:\n          r: { method: POST, url: \"https://api.example.com/x\" }\n",
+            ),
+            "probe_scope_method",
+        ),
+        (
+            "form field uses the reserved aurora_ key space",
+            METHODS.replace(
+                "{ name: private_key, label: Key, type: file, required: true }",
+                "{ name: private_key, label: Key, type: file, required: true }\n          - { name: aurora_access, label: Access, type: text, store: metadata }",
+            ),
+            "field_name_reserved",
         ),
         (
             "two recommended",

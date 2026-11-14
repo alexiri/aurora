@@ -42,11 +42,27 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 FROM ${SANDBOX_BASE_IMAGE} AS os
 # `postgresql` is the psql client: `psql service=<name>` is how agents use database connections
 # (P2-DBL-2; the supervisor writes the libpq service, password and CA files).
+# (FIX-138) The web terminal's shells: bash (default, with bash-completion) and zsh, both in the
+# OS layer so every target has them; `which` for the shells' `type`/completion helpers.
 RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common postgresql rpm \
+         bash bash-completion zsh which ncurses \
     && useradd --uid 1000 --user-group --home-dir /workspace --no-create-home --shell /bin/bash agent \
-    && mkdir -p /workspace /run/aurora /opt/aurora \
+    && mkdir -p /workspace /run/aurora /opt/aurora /opt/aurora/bin \
     && chown 1000:1000 /workspace \
+    && test -x /usr/bin/zsh && test -x /bin/bash \
     && dnf clean all && rm -rf /var/cache/dnf /var/log/dnf* /tmp/*
+# (FIX-138) One PATH for both shells, a turn and the terminal (`12 §Terminal`): the image ENV,
+# /etc/profile.d/aurora.sh (bash login + interactive defaults) and /etc/zshenv + /etc/zshrc (zsh).
+# System files, never the agent's home: a person's own ~/.bashrc / ~/.zshrc still wins.
+ENV PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin
+COPY images/sandbox/etc/profile.d/aurora.sh /etc/profile.d/aurora.sh
+COPY images/sandbox/etc/zshenv /etc/zshenv
+COPY images/sandbox/etc/zshrc /etc/zshrc
+# (FIX-138 item 1b) `claude` and `codex` for the web terminal: wrappers on PATH that source
+# /run/aurora/harness.env (written by the supervisor, no secret), keep their own state under
+# /workspace/.aurora/terminal and exec the pinned binaries; a harness missing from the image or not
+# enabled on the instance prints "not enabled on this instance".
+COPY --chmod=0755 images/sandbox/bin/claude images/sandbox/bin/codex /opt/aurora/bin/
 WORKDIR /workspace
 
 # ---- base: developer tool set (rebuilt rarely)
@@ -64,7 +80,6 @@ RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     && npm config set prefix /workspace/.local --global \
     # No privilege escalation or package management for the agent.
     && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/dnf* /usr/bin/yum /usr/bin/rpm* 2>/dev/null; true
-ENV PATH=/workspace/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Chromium wrapper: browsers go through the open proxy 127.0.0.1:3129, which exists only when the
 # sandbox booted with the `browser` capability (RFE-003).
 COPY images/sandbox/chromium-wrapper.sh /usr/local/bin/chromium-browser

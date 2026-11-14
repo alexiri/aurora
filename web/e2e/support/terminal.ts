@@ -11,6 +11,8 @@ export interface MockPty {
   output: Uint8Array;
   /** The `pty.resize` controls the pane sent, in order. */
   resizes: { pty_id: number; cols: number; rows: number }[];
+  /** (FIX-138) The keystroke frames the pane sent (UTF-8 decoded), when the spec wants to see them. */
+  inputs?: string[];
 }
 
 /** The leg-1 server half: replays the greeting, records the pane's resize controls. */
@@ -23,7 +25,8 @@ export function servePty(ws: WebSocketRoute, pty: MockPty) {
       }
       return;
     }
-    // Binary keystrokes are accepted and dropped (the mock shell does not echo).
+    // Binary keystrokes are accepted and dropped (the mock shell does not echo); a spec may record them.
+    if (pty.inputs) pty.inputs.push(Buffer.from(message).toString("utf8"));
   });
   if (pty.output.length > 0) ws.send(Buffer.from(pty.output));
 }

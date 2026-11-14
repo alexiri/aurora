@@ -6,6 +6,7 @@ use crate::app::AppState;
 use crate::domains::terminal::service;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
+use aurora_protocol::runner::PtyShell;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
@@ -23,6 +24,8 @@ struct TerminalQuery {
     /// Long-poll ≤ `TERMINAL_WAKE_WAIT` before answering (the dashboard's default is to take
     /// the `202 {waking: true}` and retry on ready).
     wait: Option<bool>,
+    /// (FIX-138) `bash` (default) or `zsh`; anything else is 422 `invalid_shell`.
+    shell: Option<String>,
 }
 
 /// The upgrade itself: admission (C-616's matrix) happens before the upgrade so every refusal
@@ -62,6 +65,13 @@ async fn terminal(
         }
     }
     let wait = q.wait.unwrap_or(false);
+    // An enumerated value, never a path (FIX-138): the supervisor maps it to a fixed binary.
+    let shell = match q.shell.as_deref() {
+        None => PtyShell::Bash,
+        Some(v) => PtyShell::parse(v).ok_or_else(|| {
+            ApiError::unprocessable("invalid_shell", "`shell` must be `bash` or `zsh`.")
+        })?,
+    };
     // The upgrade must be requested here (extractor in this handler) and consumed by the
     // service on success only.
     let ws = WebSocketUpgrade::from_request_parts(&mut parts, &s)
@@ -73,5 +83,5 @@ async fn terminal(
                 "A WebSocket upgrade is required.",
             )
         })?;
-    service::upgrade(s, caller, agent, ws, wait).await
+    service::upgrade(s, caller, agent, ws, wait, shell).await
 }

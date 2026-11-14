@@ -11,6 +11,7 @@ mod recipe;
 mod reference;
 mod registry;
 mod store;
+pub mod tls;
 mod vault;
 
 pub use error::{Result, SecretError};

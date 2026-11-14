@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import {
   useAdminFreezeOrg,
   useFreezeAgent,
@@ -21,6 +23,7 @@ export function AgentFreeze({
   frozen,
   canOwn,
   inMenu = false,
+  menuExtra,
 }: {
   agentId: string;
   name: string;
@@ -29,13 +32,15 @@ export function AgentFreeze({
   canOwn: boolean;
   /** Compact header: Freeze is an overflow-menu entry (the banner and Unfreeze are unchanged). */
   inMenu?: boolean;
+  /** More entries of that menu (the agent page's "Delete agent…"). */
+  menuExtra?: ReactNode;
 }) {
   const m = useFreezeAgent(agentId);
   const rank = useFreezeAuthority(orgId);
   // A workspace or organization freeze is shown by the shell banner (frozen-entity-banner).
   if (frozen && frozen.level !== "agent") return null;
   if (!canOwn) return frozen ? <FrozenBanner frozen={frozen} subject="agent" /> : null;
-  return <FreezeControl subject="agent" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} inMenu={inMenu} />;
+  return <FreezeControl subject="agent" name={name} frozen={frozen} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} inMenu={inMenu} menuExtra={menuExtra} />;
 }
 
 /** Workspace settings, danger zone (`can_own`). */
