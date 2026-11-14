@@ -299,31 +299,69 @@ export function connectApp(app: string, body: ConnectRequest): Promise<ConnectRe
   return unwrap(api.POST("/v1/apps/{app}/connect", { params: { path: { app } }, body }));
 }
 
-export const CONNECT_MESSAGE = "aurora:connected";
+// ---- OAuth sign-in window and its result channel (D-272, C-842) ----
 
-/** Accept only same-origin `aurora:connected` messages; returns the connection id. */
-export function parseConnectedMessage(ev: { origin: string; data: unknown }, origin: string): string | null {
-  if (ev.origin !== origin) return null;
-  const d = ev.data;
-  if (typeof d !== "object" || d === null) return null;
-  const { type, connection_id } = d as Record<string, unknown>;
-  return type === CONNECT_MESSAGE && typeof connection_id === "string" ? connection_id : null;
+export const CONNECT_CHANNEL = "aurora-connect";
+
+/** What the OAuth callback page reports on the channel (ids and scope names; nothing secret). */
+export type ConnectChannelMessage =
+  | { type: "connected"; appId: string; connectionId: string; missingScopes: string[] }
+  | { type: "failed"; appId: string | null; error: string };
+
+/** Accept only the callback page's two message shapes; anything else (including our own acks) is null. */
+export function parseConnectMessage(data: unknown): ConnectChannelMessage | null {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (d.type === "aurora:connected" && typeof d.app_id === "string" && typeof d.connection_id === "string") {
+    const missing = Array.isArray(d.missing_scopes) ? d.missing_scopes.filter((s): s is string => typeof s === "string") : [];
+    return { type: "connected", appId: d.app_id, connectionId: d.connection_id, missingScopes: missing };
+  }
+  if (d.type === "aurora:connect-failed" && typeof d.error === "string") {
+    return { type: "failed", appId: typeof d.app_id === "string" ? d.app_id : null, error: d.error };
+  }
+  return null;
 }
 
-/** Listens for the popup's `aurora:connected` message. */
-export function useConnectedListener(onConnected: (connectionId: string) => void) {
+/** Tell the callback page a dialog took its result, so the page closes itself. */
+export function ackConnect(ack: { connectionId?: string; error?: string }): void {
+  try {
+    const ch = new BroadcastChannel(CONNECT_CHANNEL);
+    ch.postMessage({
+      type: "aurora:connect-ack",
+      ...(ack.connectionId ? { connection_id: ack.connectionId } : {}),
+      ...(ack.error ? { error: ack.error } : {}),
+    });
+    ch.close();
+  } catch {
+    // No BroadcastChannel: the page stays and shows its link.
+  }
+}
+
+/** Listens for the callback page's result on the channel. Every dashboard tab uses it to refresh its lists. */
+export function useConnectChannel(onMessage: (m: ConnectChannelMessage) => void) {
   useEffect(() => {
-    const handler = (ev: MessageEvent) => {
-      const id = parseConnectedMessage(ev, window.location.origin);
-      if (id) onConnected(id);
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel(CONNECT_CHANNEL);
+    ch.onmessage = (ev: MessageEvent) => {
+      const m = parseConnectMessage(ev.data);
+      if (m) onMessage(m);
     };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [onConnected]);
+    return () => ch.close();
+  }, [onMessage]);
 }
 
-export function openConnectWindow(url: string): Window | null {
-  return window.open(url, "aurora-connect", "popup=yes,width=560,height=760");
+/**
+ * The OAuth provider's sign-in page is the one thing opened in a separate window. Call this synchronously in the click
+ * handler (an `about:blank` window is not blocked by popup blockers), then {@link navigateSignIn} once the redirect URL is known.
+ */
+export function openSignInWindow(): Window | null {
+  return window.open("about:blank", "aurora-sign-in", "popup=yes,width=560,height=760");
+}
+
+/** The provider's page must not get a handle on the dashboard window (reverse tabnabbing, WEBC-3). */
+export function navigateSignIn(w: Window, url: string): void {
+  Reflect.set(w, "opener", null);
+  w.location.replace(url);
 }
 
 // ---- pure form helpers (unit tested) ----
@@ -376,9 +414,12 @@ export function defaultValues(fields: FormField[]): FieldValues {
   return out;
 }
 
-export function connectWindowPath(org: string, ws: string, app: string, reconnectId?: string): string {
-  const base = `/o/${org}/w/${ws}/apps/${encodeURIComponent(app)}/connect`;
-  return reconnectId ? `${base}?reconnect=${encodeURIComponent(reconnectId)}` : base;
+/** The connect deep link (I-29, C-842): the Apps tab with the Connect dialog open, or the Connections tab with Reconnect open. */
+export function connectDeepLink(org: string, ws: string, app: string, reconnectId?: string | null): string {
+  const base = `/o/${org}/w/${ws}/credentials`;
+  return reconnectId
+    ? `${base}?tab=connections&reconnect=${encodeURIComponent(reconnectId)}`
+    : `${base}?tab=apps&connect=${encodeURIComponent(app)}`;
 }
 
 /** Toggle an allow-list entry (app, workspace-or-null). */

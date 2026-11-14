@@ -175,7 +175,7 @@ async fn find_template(lock_conn: &mut PgConnection, hash: &str) -> anyhow::Resu
 
 /// Fast path: look up the template on a short-lived connection.
 async fn find_template_on_server(server_url: &str, hash: &str) -> anyhow::Result<Option<String>> {
-    let mut conn = PgConnection::connect(server_url)
+    let mut conn = crate::connect_admin(server_url)
         .await
         .context("connecting to test server")?;
     let found = find_template(&mut conn, hash).await;
@@ -186,7 +186,7 @@ async fn find_template_on_server(server_url: &str, hash: &str) -> anyhow::Result
 /// Build the template for `hash` under the advisory lock (double-checked), or
 /// return the name an earlier builder already left.
 async fn build_template(server_url: &str, hash: &str) -> anyhow::Result<&'static str> {
-    let mut lock_conn = PgConnection::connect(server_url)
+    let mut lock_conn = crate::connect_admin(server_url)
         .await
         .context("connecting to test server for template lock")?;
 
@@ -296,7 +296,7 @@ pub(crate) fn leaked_db_is_old(name: &str, now_ms: u64) -> bool {
 /// out in-flight clones), and only when there is something to reap. Returns the number of databases
 /// dropped. Never touches the `aurora` database or any name outside the test namespace.
 pub async fn reap_leaked(server_url: &str, now_ms: u64) -> anyhow::Result<usize> {
-    let mut conn = PgConnection::connect(server_url)
+    let mut conn = crate::connect_admin(server_url)
         .await
         .context("connecting to test server to reap leaked databases")?;
     let names: Vec<(String,)> =
@@ -368,7 +368,7 @@ pub async fn reap_leaked(server_url: &str, now_ms: u64) -> anyhow::Result<usize>
 /// period, exclusive against in-flight clones. Normally this runs after a template build; exposed so
 /// the clone/reap protocol can be exercised directly. Returns `false` when the reap lock was not had.
 pub async fn reap_templates(server_url: &str) -> anyhow::Result<bool> {
-    let mut conn = PgConnection::connect(server_url)
+    let mut conn = crate::connect_admin(server_url)
         .await
         .context("connecting to test server to reap templates")?;
     let ok = lock_reap_exclusive(&mut conn).await;

@@ -33,7 +33,8 @@ export function CredentialsView({
   title: string;
 }) {
   // `?tab=` selects the tab (C-506); an unknown value, or Proposals/Apps on an org page, falls back to Secrets.
-  const [requested, setTab] = useTabParam<Tab>(TABS, "secrets");
+  // The connect / reconnect dialogs are addressed by `?connect=` / `?reconnect=` (C-842): another tab drops them.
+  const [requested, setTab] = useTabParam<Tab>(TABS, "secrets", { drop: () => ["connect", "reconnect"] });
   const tab: Tab = requested === "proposals" || requested === "apps" ? (scope.kind === "workspace" ? requested : "secrets") : requested;
   const [adding, setAdding] = useState(false);
   const secrets = useSecrets(scope);
@@ -117,7 +118,7 @@ export function CredentialsView({
             {list("llm")}
           </>
         ) : null}
-        {tab === "apps" && scope.kind === "workspace" ? <AppsTab workspaceId={scope.id} canOwn={canOwn} /> : null}
+        {tab === "apps" && scope.kind === "workspace" ? <AppsTab workspaceId={scope.id} orgId={orgId} canOwn={canOwn} /> : null}
         {tab === "connections" ? <ConnectionsTab scope={scope} canOwn={canOwn} /> : null}
         {tab === "oauth" ? <OAuthClientsPanel scope={scope} canOwn={canOwn} orgId={orgId} /> : null}
         {tab === "proposals" ? (

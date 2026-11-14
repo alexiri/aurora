@@ -70,7 +70,7 @@ for (const scheme of ["light", "dark"] as const) {
           }
           return route.fallback();
         });
-        await page.goto("/o/acme/w/main/apps/github/connect");
+        await page.goto("/o/acme/w/main/credentials?tab=apps&connect=github");
 
         const methods = page.getByRole("radiogroup", { name: "How do you want to connect?" });
         await expect(methods.getByText("GitHub enforces the app's permissions and repositories.")).toBeVisible();

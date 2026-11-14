@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConnectView } from "@/components/apps/connect-view";
+import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { toolsForMethod, type Tool } from "@/lib/grant-editor";
 
 // FIX-123 (D-195(a), D-214): one app per service; the ways to authenticate are connect methods, and the connect
@@ -13,6 +13,12 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main", app: "github" }),
   useSearchParams: () => new URLSearchParams(search),
 }));
+
+// The connect flow is a dialog now (D-272); `search` carries the connection to reconnect, as the old route's query did.
+function ConnectView() {
+  const reconnect = new URLSearchParams(search).get("reconnect") ?? undefined;
+  return <ConnectDialog appId="github" workspaceId="w1" orgId="o1" reconnect={reconnect} onClose={() => {}} />;
+}
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

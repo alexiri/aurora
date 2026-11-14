@@ -15515,7 +15515,7 @@
         "tags": [
           "connections"
         ],
-        "summary": "OAuth callback: HTML page posting `aurora:connected` to the opener, or `error=<code>`.",
+        "summary": "OAuth callback: HTML page posting `aurora:connected` on the `aurora-connect` BroadcastChannel, or\n`aurora:connect-failed` and `error=<code>` (C-842).",
         "operationId": "oauthCallback",
         "responses": {
           "200": {

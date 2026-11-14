@@ -240,7 +240,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   right-aligned (wrapping on narrow screens). **Page widths are theme tokens**,
   never arbitrary values: `max-w-page` (1160 px) for list and detail pages,
   `max-w-page-narrow` (880 px) for single-column pages such as Approvals; the
-  agent page uses neither (FIX-129: the full content width). Other one-off sizes
+  agent page uses neither (FIX-129: the full content width). The shell's
+  `<main>` has no max width of its own (owner 2026-11-14): each page sets its
+  width, so a page without one spans the whole content area. Other one-off sizes
   that recur are tokens too: `tracking-label`/`text-label` (caps labels),
   `max-w-bubble`/`max-w-chat-card`/`max-w-chat-notice` and `rounded-*-tail`
   (chat), `layout-aside-sm|md|lg` (a fixed aside next to a fluid column from
@@ -1153,7 +1155,8 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     because…" shows "Preview in use". No horizontal scroll at 390 px (rows collapse to cards, the
     URL wraps), both themes, tokens and primitives only.
   - **Computer** — sandbox state, "awake because…" reasons, processes,
-    restart; (FIX-025, D-158, C-584) a **Last start attempt** section when the
+    restart; (FIX-138, owner 2026-11-14) a **Terminal** card with the terminal's **Shell**
+    control (see Terminal) where the Terminal page exists; (FIX-025, D-158, C-584) a **Last start attempt** section when the
     sandbox has one: when it started, the last phase and detail the runner
     reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`,
     `creating`, `booting`…), the elapsed time to the runner's last progress
@@ -1209,7 +1212,12 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     least 18 rem, otherwise the viewport minus the page chrome; 60 % of the viewport below
     768 px), so `autoResize` derives a fixed grid and output scrolls inside the pane's
     scrollback (5,000 lines), never by growing the page. The view follows the cursor; once the
-    person has scrolled up it stays put and a **Jump to latest** button appears. **Keyboard:** Tab
+    person has scrolled up it stays put and a **Jump to latest** button appears. (Owner
+    2026-11-14) While a full-screen app (`claude`, `vim`, `less`: the alternate screen) runs, the
+    pane is pinned to the app's screen and does not scroll (that screen has no history, though
+    the shell's history is still rendered above it) and Jump to latest is hidden; the wheel goes
+    to the app — as mouse reports when it asked for them, otherwise as up/down arrow keys
+    (alternate scroll, as Ghostty and xterm do). **Keyboard:** Tab
     belongs to the shell (completion); Esc, then Tab (within 1.5 s) leaves the terminal for the
     next control and says "Left the terminal." (WCAG 2.1.2); the page says so beside the pane.
     **Open in new window** (`window.open`, `noopener,noreferrer`) opens
@@ -1217,7 +1225,10 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     also the document title) and a pane that fills the window. It is a second, independent shell
     over the same cookie, route and single-use grant as the tab; it counts against the sandbox's
     leg cap (4409 reads "The sandbox's terminal session limit was reached.").
-    (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) above the pane,
+    (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) in the
+    **Terminal** card of the **Computer** page, under the Computer state card, shown only where
+    the Terminal page exists (owner 2026-11-14: moved off the Terminal page, which only names
+    where it is chosen; it applies at once),
     remembered per browser and agent (`localStorage` key `aurora.terminal.shell.<agent id>`; a
     server-side preference would need a table for one enum). It applies to the next session — the
     open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the
