@@ -131,7 +131,7 @@ admin UI's Add dialog ("format documentation").
 - Contracts **C-590..C-609**: admin source CRUD, **check-now (one source) and check-all**,
   source detail (manifest summary, key fingerprint, addons with installed/available versions),
   plugins list provenance + update badges.
-- Decision **D-159** records: trust model (key in manifest, TOFU at registration, re-confirm on
+- Decision **D-250** (renumbered by the coordinator 2026-11-14: D-159 is taken) records: trust model (key in manifest, TOFU at registration, re-confirm on
   change), never-auto-activate for addon updates, the interval enum + default `1d`, limits.
 - `docs/03 §Planned changes` (`addon_sources` table), `docs/05` routes, `docs/09 §10` source row,
   `docs/14 §Admin` (Addon sources page), `docs/15 §Configuration` (the interval key), `docs/17`
