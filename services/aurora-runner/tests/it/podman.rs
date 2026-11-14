@@ -24,8 +24,10 @@ use uuid::Uuid;
 const PROBE_CA_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBnzCCAUSgAwIBAgIUM9r7jwTt+H50+gskkfbctBQg0sowCgYIKoZIzj0EAwIw\nGjEYMBYGA1UEAwwPQXVyb3JhIHByb2JlIENBMCAXDTI2MTEwNzEzMjMyMloYDzIx\nMjYxMDE0MTMyMzIyWjAaMRgwFgYDVQQDDA9BdXJvcmEgcHJvYmUgQ0EwWTATBgcq\nhkjOPQIBBggqhkjOPQMBBwNCAASdiPf1x/r5vS0uY0nK0X3wfuEftek+6V7nsozQ\nwCJKGRDKzjU59cfBr+an8uoDuPo0DJl0CkHxqrD643MFTD2Lo2YwZDAdBgNVHQ4E\nFgQUIYO3pRSPN1VCDAVE+sMSFUz/urIwHwYDVR0jBBgwFoAUIYO3pRSPN1VCDAVE\n+sMSFUz/urIwEgYDVR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAgQwCgYI\nKoZIzj0EAwIDSQAwRgIhAJYDTz1V0xJaySFLV71ajMjhmwEh3OGF1s9z5yaY8sM0\nAiEA8s1UeriAsGDKFM2OfjSCULwfCM5Q4Z8puur8GY2njI0=\n-----END CERTIFICATE-----\n";
 const BOOT_MARKER: &str = "aub_probe_marker_7f3a";
 
+/// (FIX-101) Skips without `AURORA_TEST_PODMAN`; with `CI=true` and the gate unset `require_or_skip`
+/// panics, so SEC-26's live hardening assertions cannot be skipped in CI.
 fn enabled() -> bool {
-    std::env::var("AURORA_TEST_PODMAN").is_ok_and(|v| v == "1")
+    aurora_testkit::require_or_skip("AURORA_TEST_PODMAN")
 }
 
 fn env_or(k: &str, d: &str) -> String {

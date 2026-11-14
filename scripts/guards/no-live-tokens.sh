@@ -9,6 +9,13 @@ cd "$ROOT"
 
 [ -d plugins/builtin ] || exit 0
 
+# (FIX-101) Not only plugins/builtin: the chart, the images, the scripts, the Playwright specs, the operator
+# documents and the workflows are shipped or read too. plugins/fixtures is test input built by tools and stays
+# out (it carries a base64 `Basic` header that is data, not a credential).
+SCAN_DIRS="plugins/builtin deploy images scripts web/e2e docs/operator .github"
+# A directory that vanished must not silently shrink the scan.
+for d in $SCAN_DIRS; do [ -d "$d" ] || { echo "no-live-tokens: FAIL: scan directory $d is missing" >&2; exit 1; }; done
+
 patterns=(
   'glpat-[A-Za-z0-9_-]{20,}'                         # GitLab personal/project/group access token
   'gl(oas|dt|rt|cbt|ptt|ft|imt|agent|soat)-[A-Za-z0-9_-]{20,}' # other GitLab token families
@@ -55,7 +62,7 @@ if [ -f scripts/guards/fixture-keys.allow ]; then
 fi
 
 for p in "${patterns[@]}"; do
-  if hits="$(grep -rInE --exclude='*.png' -e "$p" plugins/builtin 2>/dev/null)"; then
+  if hits="$(grep -rInE --exclude='*.png' --exclude=no-live-tokens.sh --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=target -e "$p" $SCAN_DIRS 2>/dev/null)"; then
     if [ "$p" = "$KEY_PATTERN" ] && [ "${#allowed[@]}" -gt 0 ]; then
       kept=""
       while IFS= read -r h; do
@@ -66,7 +73,7 @@ for p in "${patterns[@]}"; do
       [ -n "$kept" ] || continue
       hits="${kept%$'\n'}"
     fi
-    echo "possible live credential under plugins/builtin (pattern: $p):" >&2
+    echo "possible live credential under $SCAN_DIRS (pattern: $p):" >&2
     # Show the location only, never the value.
     echo "$hits" | cut -d: -f1,2 | sed 's/^/  /' >&2
     fail=1
@@ -76,4 +83,14 @@ if [ "$fail" -ne 0 ]; then
   echo "Scrub recorded HTTP: replace tokens with fixture values (see plugins/builtin/README.md)." >&2
   exit 1
 fi
-echo "no live-looking tokens under plugins/builtin"
+
+# Self-test (FIX-101): a planted token-shaped value in a scanned directory must be found by the same patterns.
+planted_dir="$(mktemp -d)"
+trap 'rm -rf "$planted_dir"' EXIT
+printf 'token: %s\n' "ghp_$(printf 'a%.0s' $(seq 36))" >"$planted_dir/planted.yaml"
+found=0
+for p in "${patterns[@]}"; do
+  grep -rInE -e "$p" "$planted_dir" >/dev/null 2>&1 && found=1
+done
+[ "$found" -eq 1 ] || { echo "no-live-tokens: FAIL: self-test: the patterns missed a planted GitHub token" >&2; exit 1; }
+echo "no live-looking tokens under $SCAN_DIRS"

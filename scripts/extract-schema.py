@@ -50,8 +50,31 @@ EXTRA_COL_RE = re.compile(
 )
 
 
+TYPE_RE = re.compile(r"^`?([a-z][a-z0-9]*(?:\[\])?)`?(?=\s|$|;|,)")
+
+
+def column_type(cell):
+    """(FIX-101) The declared type and nullability of one Type cell (or one `;`-separated part).
+
+    Type is the first word (``uuid``, ``text[]``, ``timestamptz`` …); nullable is True for ``null``, False for
+    ``not null`` or ``pk``, None when the cell says neither (the guard then compares the type only).
+    """
+    cell = cell.strip()
+    m = TYPE_RE.match(cell)
+    typ = m.group(1) if m else None
+    low = " " + cell.lower()
+    if " not null" in low or re.search(r"\bpk\b", low):
+        nullable = False
+    elif re.search(r"\bnull\b", low):
+        nullable = True
+    else:
+        nullable = None
+    return typ, nullable
+
+
 def parse_spec(text):
     tables = {}
+    columns = {}
     current = None  # table name whose column table is being read
     expect_header = False
     pending_heading = None  # heading seen, waiting for its column table
@@ -101,8 +124,25 @@ def parse_spec(text):
         names = [n.strip() for n in first.split(",")]
         # Some rows declare a second column inside the Type cell, e.g.
         # "| exit_code | int null; signal text null |".
+        extra = EXTRA_COL_RE.findall(cells[1]) if len(cells) > 1 else []
+        names_main = list(names)
+        names += extra
+        # (FIX-101) types: the first part of the Type cell types the listed names, each later `;` part
+        # `<name> <type> ...` types the extra column it declares.
+        col_types = {}
         if len(cells) > 1:
-            names += EXTRA_COL_RE.findall(cells[1])
+            parts = cells[1].split(";")
+            # `a, b | t1 null, t2 null …`: one comma-separated type per listed name; otherwise every
+            # listed name takes the whole first part.
+            per_name = [s.strip() for s in parts[0].split(",")]
+            for i, n in enumerate(names_main):
+                col_types[n.strip("`")] = column_type(
+                    per_name[i] if len(per_name) == len(names_main) else parts[0]
+                )
+            for part in parts[1:]:
+                words = part.strip().split(None, 1)
+                if len(words) == 2 and words[0] in extra:
+                    col_types[words[0]] = column_type(words[1])
         for name in names:
             name = name.strip("`")
             if not IDENT_RE.match(name):
@@ -116,10 +156,25 @@ def parse_spec(text):
                         f"duplicate column {name!r} in table {current!r}"
                     )
                 cols.append(name)
+                if name in col_types:
+                    typ, nullable = col_types[name]
+                    # "<type> not null" | "<type> null" | "<type>" (nullability not stated)
+                    columns.setdefault(current, {})[name] = (
+                        f"{typ} {'null' if nullable else 'not null'}"
+                        if nullable is not None
+                        else f"{typ}"
+                    )
     return {
         "tables": {
             name: sorted(cols) for name, cols in sorted(tables.items())
-        }
+        },
+        # (FIX-101) "<type> [not] null" per column (nullability omitted when 03 states neither); the schema
+        # guard compares type and nullability with the migrated catalog. Constraints, indexes, defaults,
+        # checks and foreign keys are NOT compared (docs/18 §Schema guard).
+        "columns": {
+            t: {c: v for c, v in sorted(cs.items())}
+            for t, cs in sorted(columns.items())
+        },
     }
 
 

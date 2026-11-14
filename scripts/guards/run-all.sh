@@ -30,6 +30,9 @@ if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; 
 echo "== limits-readers (FIX-116: every limits.rs constant has a reader and a docs/02 row)"
 bash scripts/guards/limits-readers.sh
 
+echo "== e2e-skip (FIX-101: a SKIPPED: line fails an e2e script in CI; gated suites use require_or_skip)"
+bash scripts/guards/e2e-skip.sh
+
 echo "== image-pins (FIX-103: every base image pinned by digest)"
 bash scripts/guards/image-pins.sh
 

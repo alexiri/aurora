@@ -110,7 +110,10 @@ for _ in $(seq 60); do
 done
 
 SOCK=$(podman info --format '{{.Host.RemoteSocket.Path}}')
-podman unshare --rootless-netns env \
+# (FIX-101) With CI=true a SKIPPED: line anywhere in the run fails it (scripts/e2e/lib-skip.sh).
+# shellcheck source=scripts/e2e/lib-skip.sh
+source scripts/e2e/lib-skip.sh
+run_logged "$(mktemp /tmp/aurora-e2e-hosted-log.XXXXXX)" podman unshare --rootless-netns env \
   AURORA_TEST_DATABASE_URL="postgres://aurora:aurora@$DB_BASE.5:5432/postgres" \
   AURORA_E2EH_SOCK="$SOCK" AURORA_E2EH_NETWORK="$SBX_NET" AURORA_E2EH_TOKEN="$TOKEN" \
   AURORA_E2EH_FP="$FP" AURORA_E2EH_IMAGE="$IMAGE" AURORA_E2EH_DBTARGET="$DB_BASE.6:5432" \

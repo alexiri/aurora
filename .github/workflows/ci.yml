@@ -185,7 +185,68 @@ jobs:
       - run: sqlx migrate run --source crates/aurora-db/migrations
       - name: Fixture packages (hook fixtures used by the suite)
         run: bash scripts/fixtures/build.sh
+      # FIX-101 (docs/18 TEST-021): the strict front doors (pinned nginx + haproxy between the gateway and
+      # the mock upstream) are CI's job; without FRONTDOOR=1 frontdoor.rs printed SKIPPED and passed. With
+      # CI=true the script now fails on any SKIPPED: line, so the doors cannot silently drop out again.
       - run: bash scripts/e2e/gateway.sh
+        env: { FRONTDOOR: "1", FRONTDOOR_HAPROXY: "1" }
+
+  # FIX-101: the env-gated suites the specifications cite as evidence, with their gates set. Under CI=true
+  # `aurora_testkit::require_or_skip` fails a gated test whose gate is unset (the nextest `ci` profile keeps
+  # them out of the shards, which have no Redis and no podman network). SEC-62: the Redis backend of the
+  # counters conformance suite (and FIX-087's documented-ACL case); SEC-26: the runner's live podman
+  # hardening assertions. Each step requires a non-zero passed count.
+  gated-suites:
+    runs-on: ubuntu-24.04
+    services:
+      postgres: *pg
+      redis:
+        image: docker.io/library/redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - name: Free runner disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - *sccache
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: rust-test, save-if: "false" }
+      - *sqlx-cache
+      - *sqlx-install
+      - run: sqlx migrate run --source crates/aurora-db/migrations
+      - name: Redis counters conformance (AURORA_TEST_REDIS)
+        env:
+          AURORA_TEST_REDIS: "1"
+          AURORA_TEST_REDIS_ADDR: redis://127.0.0.1:6379
+        run: |
+          cargo test -p aurora-counters --test it redis 2>&1 | tee redis.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' redis.log
+          grep -q 'redis_documented_acl_runs_the_scripts \.\.\. ok' redis.log
+      - name: Podman preflight (rootless, userns, netavark)
+        run: |
+          podman --version
+          podman info --format 'rootless={{.Host.Security.Rootless}} network={{.Host.NetworkBackend}} sock={{.Host.RemoteSocket.Path}}'
+      - name: Sandbox image and internal network for the runner's podman tests
+        run: |
+          bash scripts/images/build-sandbox-min.sh aurora-sandbox-min:dev
+          podman network create --internal --disable-dns --subnet 10.89.250.0/24 --gateway 10.89.250.1 aurora-sandbox
+      - name: Start rootless podman API socket
+        run: |
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
+          sock="$XDG_RUNTIME_DIR/podman/podman.sock"
+          setsid nohup podman system service --time=0 "unix://$sock" > podman-service.log 2>&1 &
+          for _ in $(seq 30); do [ -S "$sock" ] && break; sleep 1; done
+          [ -S "$sock" ] || { echo "podman socket $sock did not appear"; cat podman-service.log; exit 1; }
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+      - name: Runner podman hardening tests (AURORA_TEST_PODMAN, SEC-26)
+        env:
+          AURORA_TEST_PODMAN: "1"
+        run: |
+          cargo test -p aurora-runner --test it podman:: 2>&1 | tee podman.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' podman.log
 
   # Hosted suite on the runner's rootless podman (scripts/e2e/hosted.sh creates its own Postgres
   # container and networks, builds the sandbox image unless SKIP_IMAGE_BUILD=1, and runs the tests
@@ -214,7 +275,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: sandbox-image.tar
-          key: sandbox-image-${{ hashFiles('images/**', 'Cargo.lock', 'services/aurora-supervisor/**', 'crates/*/src/**') }}
+          # FIX-101: everything the image build reads — manifests, the toolchain file, the image scripts and
+          # the supervisor's own crates (a dependency change without a source change used to hit a stale image).
+          key: sandbox-image-${{ hashFiles('images/**', 'scripts/images/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '**/Cargo.toml', 'services/aurora-supervisor/**', 'crates/*/src/**') }}
       - name: Load cached sandbox image
         if: steps.sbx.outputs.cache-hit == 'true'
         run: podman load -i sandbox-image.tar
@@ -237,6 +300,10 @@ jobs:
         env:
           AURORA_TEST_PODMAN: "1"
           SKIP_IMAGE_BUILD: "1"
+          # FIX-101: with CI=true a SKIPPED: line fails the script. The one declared exception: the chromium
+          # scenarios (SEC-41, hosted.rs s8d and its sibling) need the full sandbox image, which this PR job
+          # does not build (~10 min with Chromium); they run in the nightly `hosted-full` job.
+          AURORA_E2E_ALLOW_SKIPPED: "AURORA_E2EH_FULL_IMAGE_TAG is not set"
         run: bash scripts/e2e/hosted.sh
 
   web:
@@ -255,6 +322,25 @@ jobs:
       - run: pnpm build
       - name: API client drift (openapi.json → schema.d.ts)
         run: pnpm gen:api && git diff --exit-code -- src/lib/api/schema.d.ts
+      # FIX-101 (docs/18: "Playwright flows … every PR"): the mocked project on every push; the real-stack
+      # specs (one shared stack) run nightly. `next dev` on 4100.
+      - name: Browser for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright, mocked project (every spec that installs its own page.route() mocks)
+        run: pnpm exec playwright test --project mocked
+      # FIX-098: the production-build project — `next build` + `next start` on port 4110 (never 4000), the
+      # only place the real Content-Security-Policy applies (terminal.prod.spec.ts).
+      - name: Playwright, production build (AURORA_E2E_PROD=1, port 4110)
+        env: { AURORA_E2E_PROD: "1", AURORA_E2E_WEB_PROD_PORT: "4110" }
+        run: pnpm e2e:prod
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-failure
+          path: |
+            web/test-results
+            web/playwright-report
+          if-no-files-found: ignore
 
   # No compile here: the schema_matches_spec test now runs inside the rust-test shards.
   # P3-VLT-2 (docs/21 §Phase 3 — HashiCorp Vault): the Vault store, `aurora-api secrets migrate`
@@ -318,7 +404,7 @@ jobs:
   # `services`; the per-image jobs import that scope, so every service image is a copy of one compile.
   images-builder:
     concurrency: { group: "images-builder-${{ github.ref }}", cancel-in-progress: false }
-    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, e2e-hosted, web, guards]
+    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -499,7 +585,7 @@ jobs:
 
   images-web:
     concurrency: { group: "images-web-${{ github.ref }}", cancel-in-progress: false }
-    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, e2e-hosted, web, guards]
+    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -529,7 +615,7 @@ jobs:
   # is used in CI (the CERN default is a local build default).
   images-sandbox:
     concurrency: { group: "images-sandbox-${{ github.ref }}", cancel-in-progress: false }
-    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, e2e-hosted, web, guards]
+    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

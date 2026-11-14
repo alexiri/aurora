@@ -41,10 +41,57 @@ def stage(src, dst, wasm=None):
     guide = os.path.join(dst, "docs/setup.md")
     if mode == "guide-html":
         open(guide, "w").write("# Setup\n\n<script>alert(1)</script>\n")
+    elif mode == "guide-not-utf8":
+        open(guide, "wb").write(b"# Setup\n\n\xff\xfe not UTF-8\n")
     elif not os.path.exists(guide):
         open(guide, "w").write("# Setup\n\nTest fixture package.\n")
     if wasm:
         shutil.copy(wasm, os.path.join(dst, "hooks.wasm"))
+    # FIX-101: synthetic hooks.wasm for the hooks_wasm_* rules (the package declares `hooks:` so the build
+    # includes hooks.wasm; these bytes replace the real component before signing).
+    if mode.startswith("wasm-"):
+        open(os.path.join(dst, "hooks.wasm"), "wb").write(synthetic_wasm(mode))
+
+
+def _leb(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
+
+
+def _name(s):
+    b = s.encode()
+    return _leb(len(b)) + b
+
+
+def _section(sid, body):
+    return bytes([sid]) + _leb(len(body)) + body
+
+
+def synthetic_wasm(mode):
+    """Smallest binaries that trip one hooks_component rule each (crates/aurora-registry/src/validate/hooks_component.rs)."""
+    if mode == "wasm-garbage":
+        return b"this is not a webassembly binary"
+    if mode == "wasm-core-module":
+        return b"\0asm\x01\x00\x00\x00"  # a valid, empty CORE module: not a component
+    header = b"\0asm\x0d\x00\x01\x00"  # component, layer 1
+    types = _section(7, _leb(1) + b"\x42\x00")  # (type (instance))
+    if mode == "wasm-import-forbidden":
+        # imports `wasi:filesystem/types@0.2.0` (an instance), which is outside the plugin world
+        imp = _section(10, _leb(1) + b"\x00" + _name("wasi:filesystem/types@0.2.0") + b"\x05\x00")
+        return header + types + imp
+    if mode == "wasm-export-unexpected":
+        # imports the allowed host interface and re-exports it under a name that is not the hooks world
+        imp = _section(10, _leb(1) + b"\x00" + _name("aurora:plugin/host@1.0.0") + b"\x05\x00")
+        exp = _section(11, _leb(1) + b"\x00" + _name("other:thing/extra@1.0.0") + b"\x05\x00\x00")
+        return header + types + imp + exp
+    sys.exit(f"unknown synthetic wasm {mode}")
 
 
 def rewrite(path, fn):
@@ -97,6 +144,22 @@ def mutate(path, mode):
             keep(dst, m, data)
             if m is None:
                 add(dst, "extra/payload.bin")
+    elif mode == "corrupt":
+        # FIX-101: a gzip stream cut short (archive_corrupt); handled below, not by a tar rewrite.
+        data = open(path, "rb").read()
+        open(path, "wb").write(data[: max(len(data) // 2, 20)])
+        return
+    elif mode == "entry-type":
+        def fn(dst, m, data):
+            keep(dst, m, data)
+            if m is None:
+                add(dst, "docs/pipe", typ=tarfile.FIFOTYPE)
+    elif mode == "manifest-not-utf8":
+        def fn(dst, m, data):
+            if m is not None and m.name == "plugin.yaml":
+                data = b"package:\n  id: \xff\xfe\n"
+                m.size = len(data)
+            keep(dst, m, data)
     elif mode == "duplicate":
         def fn(dst, m, data):
             keep(dst, m, data)

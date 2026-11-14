@@ -32,9 +32,19 @@ if bad:
 ' || fail "aurora-testkit (dev IdP, test sign-in helpers) must be a [dev-dependencies] entry only"
 
 # 2. The release image set does not build it.
-if grep -n -i -E 'aurora-testkit|dev-idp' images/services/Containerfile >/dev/null; then
-  fail "images/services/Containerfile must not build or ship the development IdP"
+# (FIX-101) every Containerfile under images/ (services, web, sandbox), not one file.
+containerfiles="$(find images -type f \( -name 'Containerfile*' -o -name '*.Containerfile' \) | sort)"
+[ -n "$containerfiles" ] || fail "no Containerfiles found under images/"
+dev_idp_scan() { grep -n -i -E 'aurora-testkit|dev-idp' "$@" 2>/dev/null; }
+# shellcheck disable=SC2086
+if hits="$(dev_idp_scan $containerfiles)"; then
+  fail "a Containerfile under images/ builds or ships the development IdP: $hits"
 fi
+# Self-test: a planted reference must be found by the same scan.
+planted="$(mktemp)"
+trap 'rm -f "$planted"' EXIT
+printf 'RUN cargo build -p aurora-testkit --bin aurora-dev-idp\n' >"$planted"
+dev_idp_scan "$planted" >/dev/null || fail "self-test: the scan missed a planted dev-idp build line"
 
 # 3. Chart defaults: off.
 grep -q -E '^devIdp:' deploy/helm/aurora/values.yaml || fail "devIdp block missing from values.yaml"

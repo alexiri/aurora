@@ -226,6 +226,26 @@ async fn mock_upstream_serves_json_and_records() {
     assert_eq!(received[0].url.path(), "/v1/ping");
 }
 
+#[test]
+fn skip_policy_runs_skips_or_fails_by_gate_and_ci() {
+    use aurora_testkit::gate_decision as d;
+    // Gate set: run, in CI or not.
+    assert_eq!(d("G", Some("1"), None), Ok(true));
+    assert_eq!(d("G", Some("1"), Some("true")), Ok(true));
+    // Gate unset (or empty, or 0) outside CI: skip.
+    assert_eq!(d("G", None, None), Ok(false));
+    assert_eq!(d("G", Some(""), Some("false")), Ok(false));
+    assert_eq!(d("G", Some("0"), None), Ok(false));
+    // Gate unset in CI: fail, naming the gate.
+    for v in [None, Some(""), Some("0")] {
+        let e = d("AURORA_TEST_REDIS", v, Some("true")).expect_err("must fail in CI");
+        assert!(
+            e.contains("AURORA_TEST_REDIS") && e.contains("CI=true"),
+            "{e}"
+        );
+    }
+}
+
 /// A name of the `aurora_test_<uuid v7 simple>` shape whose embedded creation time is `age_ms` old.
 #[allow(clippy::expect_used)]
 fn aged_db_name(age_ms: u64) -> String {

@@ -13,11 +13,11 @@ done when its tests exist, pass in CI, and the security invariants it touches
 | **Service** | one service in-process with real Postgres and mocks for its neighbours (API with fake runner/connector clients; gateway with mock upstreams and a stub hook host) | `aurora-testkit`, `wiremock` | every PR |
 | **Contract** | OpenAPI document vs handlers; JSON Schemas of every wire type vs checked-in schemas; dashboard client regenerated without drift | schema diff | every PR |
 | **Conformance** | harness adapters, connectors, plugin packages against their contracts | `tests/conformance/*` | every PR (fake implementations); env-gated for live ones |
-| **End-to-end: gateway** | real gateway + API + hook host + Postgres + fixture plugins + mock upstreams/OAuth providers, black-box over the proxy port; CI-only strict front doors (pinned nginx + haproxy containers between the gateway and the mock upstream, TEST-021 tier 2: `AURORA_E2E_FRONTDOOR`, skipped when unset) | `tests/e2e-gateway` | every PR |
-| **End-to-end: hosted** | real API, gateway, hook host, runner (podman backend), sandbox image with the `fake` harness, fake connector | `tests/e2e-hosted` | every PR on Linux CI with podman; nightly on Kubernetes (kind with a NetworkPolicy CNI) |
+| **End-to-end: gateway** | real gateway + API + hook host + Postgres + fixture plugins + mock upstreams/OAuth providers, black-box over the proxy port; CI-only strict front doors (pinned nginx + haproxy containers between the gateway and the mock upstream, TEST-021 tier 2: `AURORA_E2E_FRONTDOOR`; CI runs `gateway.sh` with `FRONTDOOR=1` and `FRONTDOOR_HAPROXY=1`, and with `CI=true` a `SKIPPED:` line fails the script, FIX-101) | `tests/e2e-gateway` | every PR |
+| **End-to-end: hosted** | real API, gateway, hook host, runner (podman backend), sandbox image with the `fake` harness, fake connector | `tests/e2e-hosted` | every PR on Linux CI with podman (the chromium scenarios, SEC-41, need the full sandbox image and run in the nightly `hosted-full` job; the PR job declares that one exception in `AURORA_E2E_ALLOW_SKIPPED`); channels (`scripts/e2e/channels.sh`, SEC-18/19/20) in the nightly `channels` job; nightly on Kubernetes (kind with a NetworkPolicy CNI) |
 | **Dashboard** | component tests; Playwright flows against the host-process stack (`scripts/e2e/m1.sh`, default) or the kind dev stack (`m1.sh --kind`; phase 1, OPS-017: kind replaces the compose stack) | vitest, Playwright | every PR |
 | **Live** | `claude-code` adapter against a configured LiteLLM/Anthropic endpoint through the gateway; Mattermost connector against a Mattermost container (phase 1) | env-gated | nightly |
-| **Performance** | gateway overhead and throughput; due-work poll cost with 1 000 agents | criterion, k6 | nightly |
+| **Performance** | gateway overhead and throughput; due-work poll cost with 1 000 agents | criterion, k6 | **manual, on an idle machine** (FIX-101: no workflow runs it; the owner's rule is that performance budgets are measured only while no lane builds or tests, and a shared CI runner never is that machine) |
 
 ## Required suites (non-exhaustive, by area)
 
@@ -928,10 +928,10 @@ runs) is what a push hands to CI.
 1. `fmt`, `clippy -D warnings`, `cargo deny` (licenses, advisories), pnpm lint
    and type-check.
 2. Unit + database + service + contract tests.
-3. Build images (multi-arch on main; amd64 on PRs).
+3. Build images (**amd64 only** today, on PRs and on main; multi-arch is not built — FIX-101 corrected the claim).
 4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on the host-process stack (phase 1, OPS-017: was compose; `m1.sh --kind` runs it against the kind dev stack).
 5. Architecture guards.
-6. Nightly: Kubernetes e2e on kind, live suites, performance. The kind run
+6. Nightly: Kubernetes e2e on kind, live suites, the full-image hosted scenarios and the channel e2e (no performance run: see the table — performance is manual, on an idle machine). The kind run
    (`scripts/e2e/kind.sh`) ends with two value-only `helm upgrade` legs
    (OPS-024: `web.replicas` 1 → 2 → 1 against the installed release), which prove
    the pre-upgrade hook path — hooks run under the previous release's policies,
@@ -944,6 +944,31 @@ runs) is what a push hands to CI.
 doctests run in `rust-build` (nextest skips them). `rust-lint`, `rust-deny`, `web` and `guards` are
 separate jobs. Actions are SHA-pinned and on Node 24; runners are pinned to `ubuntu-24.04`.
 `e2e-gateway` (`scripts/e2e/gateway.sh`) and `e2e-hosted` (`AURORA_TEST_PODMAN=1 scripts/e2e/hosted.sh`, rootless podman, sandbox image cached with `actions/cache`) are separate jobs after `rust-build`, parallel to the shards; both compile in-job via their scripts. If `e2e-hosted` cannot run on GitHub runners (user-namespace limits), it becomes a local and nightly gate. See `docs/ops/build-performance.md`.
+
+**Skip policy (FIX-101).** A suite the specifications cite as evidence must run in CI or fail there; it may
+not pass by skipping (REVIEW-5 pattern 2).
+- Rust suites that need a service (podman, Redis) name a gate variable and call
+  `aurora_testkit::require_or_skip("<GATE>")` first: gate set → run; gate unset and `CI` not `true` → print
+  `SKIPPED:` and return; gate unset and `CI=true` → **panic**. The nextest `ci` profile keeps those suites out of
+  the shards (`default-filter`), and the CI job `gated-suites` runs them with their gates: the pinned Redis
+  service (`AURORA_TEST_REDIS`, `AURORA_TEST_REDIS_ADDR`: the counters conformance suite and FIX-087's
+  documented-ACL case, SEC-62) and the runner's podman tests (`AURORA_TEST_PODMAN`, SEC-26), each requiring a
+  non-zero passed count. (The Vault suites still skip silently outside their own `vault` job; converting them is
+  left open.)
+- The e2e scripts (`gateway.sh`, `hosted.sh`, `channels.sh`) run through `scripts/e2e/lib-skip.sh`: with `CI=true`
+  a `SKIPPED:` line anywhere in the output fails the script, unless the job declares an exception in
+  `AURORA_E2E_ALLOW_SKIPPED` (a regex, commented in the workflow). `scripts/guards/e2e-skip.sh` self-tests it.
+- Playwright: the **mocked** project runs on every push in the `web` job, the **production-build** project
+  (`AURORA_E2E_PROD=1 pnpm e2e:prod`, port 4110, the only place the real CSP applies) in the same job; the
+  real-stack specs share one stack and run in the nightly `first-run` job and the kind scripts.
+- Schema guard (`crates/aurora-db/tests/it/schema_matches_spec.rs`): compares table and column **names**, and, for
+  every column `docs/03` types, the declared **type and nullability** with the migrated catalog (`udt_name`,
+  `is_nullable`). It does **not** compare constraints, indexes, defaults, checks, foreign keys or partitions; the
+  `KNOWN_TYPE_DRIFT` list may only shrink.
+- Permission matrix (`permission_matrix.rs`): a denial row answered 400/422 (validation before authorisation) is
+  INCONCLUSIVE and fails unless it is on the commented `ACCEPTED_INCONCLUSIVE` list in that file.
+- Plugin fixtures: every manifest/archive/hooks rule code has an invalid fixture in
+  `plugins/fixtures/expected-invalid.txt` (`bash scripts/fixtures/build.sh` prints the count; 57 passed at FIX-101).
 
 **Caching (VTL-001).** Every compiling CI job runs
 [mozilla-actions/sccache-action](https://github.com/mozilla-actions/sccache-action) (SHA-pinned)
