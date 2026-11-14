@@ -245,8 +245,8 @@ apps:
           - { label: Type, source: body, steps: [ { json: /event_type } ] }
     agent:
       instructions: |
-        Indico is connected. Send requests to https://<host> of the Indico server this connection is
-        registered for; Aurora adds the token. Never ask for one, never add ak, apikey, signature,
+        Indico is connected. Send requests to <address>, the address shown with the account (the
+        Indico server this connection is registered for); Aurora adds the token. Never ask for one, never add ak, apikey, signature,
         timestamp or cookieauth, and never send this connection's requests to another host.
         Official API: /export/categ/<ids>.json (from, to, type, location, room, detail),
         /export/categ/favorites.json, /export/event/<id>.json (detail=contributions|sessions),

@@ -80,9 +80,11 @@ pub struct ResolvedHost {
     pub unavailable_apps: HashSet<String>,
     /// Some active host entry of the snapshot covers this host, or it is a registered instance.
     pub known_app_host: bool,
-    /// The registered, active app instance whose host equals this host exactly and that no other
-    /// app's static claim shadows (D-74, `06` resolution step 2).
-    pub instance: Option<InstanceHostRow>,
+    /// The registered, active app instances whose host equals this host exactly and that no other
+    /// app's static claim shadows (D-74, `06` resolution step 2). (D-231) Several registrations may
+    /// share the host under disjoint base paths; the request's path picks one
+    /// ([`aurora_registry::instance::select`]).
+    pub instances: Vec<InstanceHostRow>,
     /// App ids whose active host entries cover this host (open-lane `app` targets).
     pub host_apps: Vec<String>,
     /// The workspace's published open-lane posture (RFE-003).
@@ -666,7 +668,7 @@ impl Resolver {
         let (mut conns, mut disabled_apps, mut unavailable_apps, mut known_app_host) =
             (Vec::new(), HashSet::new(), HashSet::new(), false);
         let mut host_apps: Vec<String> = Vec::new();
-        let mut instance: Option<InstanceHostRow> = None;
+        let mut instances: Vec<InstanceHostRow> = Vec::new();
         // Governed LLM hosts never serve app connections (SEC-37).
         if let Some(l) = registry
             .as_ref()
@@ -676,9 +678,11 @@ impl Resolver {
             // Registered app instances (D-74): exact host match only. A static claim of another
             // app on the same host shadows the instance (fail closed: nothing is injected for it).
             let visible = self.source.instances(k.org).await.map_err(fail)?;
-            let inst_hosts: HashMap<Uuid, String> =
-                visible.iter().map(|i| (i.id, i.host.clone())).collect();
-            instance = visible
+            let inst_hosts: HashMap<Uuid, (String, Option<String>)> = visible
+                .iter()
+                .map(|i| (i.id, (i.host.clone(), i.base_path.clone())))
+                .collect();
+            instances = visible
                 .into_iter()
                 .filter(|i| i.host.eq_ignore_ascii_case(&k.host))
                 .filter(|i| {
@@ -686,10 +690,11 @@ impl Resolver {
                         .app(&i.app_id)
                         .is_some_and(|a| a.instances.is_some())
                 })
-                .find(|i| !entries.iter().any(|e| e.app_id != i.app_id));
-            known_app_host = !entries.is_empty() || instance.is_some();
+                .filter(|i| !entries.iter().any(|e| e.app_id != i.app_id))
+                .collect();
+            known_app_host = !entries.is_empty() || !instances.is_empty();
             let mut app_ids: Vec<String> = entries.iter().map(|e| e.app_id.clone()).collect();
-            app_ids.extend(instance.iter().map(|i| i.app_id.clone()));
+            app_ids.extend(instances.iter().map(|i| i.app_id.clone()));
             app_ids.sort();
             app_ids.dedup();
             host_apps = app_ids.clone();
@@ -721,27 +726,30 @@ impl Resolver {
                     }
                     // A connection of a registered instance: only while that instance is active
                     // and visible, and with its host (the injection and refresh target).
-                    let host = match r.instance_id {
+                    let (host, base_path) = match r.instance_id {
                         Some(id) => match inst_hosts.get(&id) {
-                            Some(h) => Some(h.clone()),
+                            Some((h, b)) => (Some(h.clone()), b.clone()),
                             None => {
                                 disabled_apps.insert(r.app_id);
                                 continue;
                             }
                         },
                         // A default-host connection of an instance-bound app: `{instance}` is
-                        // the app's `default_host` (D-74, D-86).
-                        None => l
-                            .snapshot
-                            .app(&r.app_id)
-                            .and_then(|a| a.instances.as_ref())
-                            .and_then(|i| i.default_host.clone()),
+                        // the app's `default_host` (D-74, D-86), which has no base path (D-231).
+                        None => (
+                            l.snapshot
+                                .app(&r.app_id)
+                                .and_then(|a| a.instances.as_ref())
+                                .and_then(|i| i.default_host.clone()),
+                            None,
+                        ),
                     };
                     match ConnCand::from_row(r, k.org) {
                         Ok(c) => {
                             let app = l.snapshot.app(&c.app_id);
                             let mut c = c.with_app_restrictions(app);
                             c.instance_host = host;
+                            c.instance_base_path = base_path;
                             conns.push(Arc::new(c));
                         }
                         Err(e) => tracing::warn!(error = %e, "skipping unusable connection"),
@@ -770,7 +778,7 @@ impl Resolver {
             disabled_apps,
             unavailable_apps,
             known_app_host,
-            instance,
+            instances,
             host_apps,
             ws_open_lane,
         })

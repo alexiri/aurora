@@ -697,6 +697,8 @@ pub struct InstanceHostRow {
     pub id: Uuid,
     pub app_id: String,
     pub host: String,
+    /// (FIX-145, D-231) The path the app is served under on `host`; null = the host root.
+    pub base_path: Option<String>,
 }
 
 /// `active` instances visible to the organization (instance-wide and its own).
@@ -705,7 +707,7 @@ pub async fn visible_instances(
     org_id: Uuid,
 ) -> Result<Vec<InstanceHostRow>, DbError> {
     Ok(sqlx::query_as::<_, InstanceHostRow>(
-        "SELECT id, app_id, host FROM app_instances \
+        "SELECT id, app_id, host, base_path FROM app_instances \
          WHERE status = 'active' AND (org_id IS NULL OR org_id = $1) ORDER BY host, id",
     )
     .bind(org_id)

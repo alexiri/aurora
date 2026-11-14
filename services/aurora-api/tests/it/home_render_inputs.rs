@@ -50,6 +50,17 @@ apps:
       - match: { host: "api.acme.example" }
         inject:
           - bearer: "{credentials.api_token}"
+  - about: { id: desk, name: Desk, description: D, category: dev, web_hosts: [saas.desk.example] }
+    instances: { label: Desk instance, default_host: saas.desk.example }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    hosts:
+      - match: { host: "{instance}" }
+        inject:
+          - bearer: "{credentials.api_token}"
 "#;
 
 struct W {
@@ -240,6 +251,58 @@ async fn render_inputs_carry_apps_channels_peers_and_schedules() {
     assert!(!text.contains("secret other"));
     assert!(text.contains("- chat: Acme HQ (dedicated, @ada_bot)"));
     assert!(text.contains("- @bob: Bob (your side: ask; their side: allow)"));
+}
+
+/// (FIX-144, C-730) A self-hosted account carries where it lives: the registered instance's host,
+/// or the default host; a plain app's account has no `address`. The agent's text shows it.
+#[tokio::test]
+async fn render_inputs_tell_the_agent_where_a_self_hosted_account_lives() {
+    let w = world().await;
+    let inst = Uuid::now_v7();
+    // (FIX-145, D-231) The registration is served under `/jira`: the address carries it.
+    w.sql("INSERT INTO app_instances (id, org_id, package_id, app_id, host, base_path, label) VALUES ($1,$2,'acme','desk','its.cern.ch','/jira','CERN')", &[inst, w.org]).await;
+    let on_instance = Uuid::now_v7();
+    let on_default = Uuid::now_v7();
+    let plain = Uuid::now_v7();
+    for (id, app, label) in [
+        (on_instance, "desk", "alice"),
+        (on_default, "desk", "bob saas"),
+        (plain, "acme_app", "work"),
+    ] {
+        w.sql(&format!("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'{app}','acme','1.0.0','{label}','active','x')"), &[id, w.org, w.ws]).await;
+        w.sql(
+            "INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')",
+            &[Uuid::now_v7(), w.ws, w.agent, id],
+        )
+        .await;
+    }
+    w.sql(
+        "UPDATE app_connections SET instance_id = $2 WHERE id = $1",
+        &[on_instance, inst],
+    )
+    .await;
+    let ri = w.render_inputs().await;
+    let account = |id: Uuid| {
+        ri["apps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|a| a["accounts"].as_array().unwrap().clone())
+            .find(|a| a["id"] == json!(id))
+            .unwrap()
+    };
+    assert_eq!(account(on_instance)["address"], "https://its.cern.ch/jira");
+    assert_eq!(account(on_default)["address"], "https://saas.desk.example");
+    assert!(account(plain).get("address").is_none(), "{ri}");
+    let inputs: aurora_supervisor::instructions::RenderInputs = serde_json::from_value(ri).unwrap();
+    let text = aurora_supervisor::instructions::render(&inputs);
+    assert!(
+        text.contains(&format!(
+            "`{on_instance}`: alice — at https://its.cern.ch/jira\n"
+        )),
+        "{text}"
+    );
+    assert!(text.contains(&format!("`{plain}`: work\n")), "{text}");
 }
 
 #[tokio::test]

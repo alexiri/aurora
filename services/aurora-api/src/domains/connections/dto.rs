@@ -23,6 +23,10 @@ pub struct Injecting {
 pub struct InstanceRef {
     pub id: Uuid,
     pub host: String,
+    /// (C-731, D-231) The path the app is served under on `host`; `null` = the host root.
+    pub base_path: Option<String>,
+    /// `https://<host><base_path>`.
+    pub base_url: String,
     pub label: String,
 }
 
@@ -99,6 +103,12 @@ impl Connection {
         let instance = match (r.instance_id, r.instance_host.clone()) {
             (Some(id), Some(host)) => Some(InstanceRef {
                 id,
+                base_url: aurora_registry::instance::InstanceBase::new(
+                    &host,
+                    r.instance_base_path.as_deref(),
+                )
+                .base_url(),
+                base_path: r.instance_base_path.clone(),
                 host,
                 label: r.instance_label.clone().unwrap_or_default(),
             }),

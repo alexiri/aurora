@@ -81,6 +81,26 @@ pub fn method_override_refused() -> ApiError {
     )
 }
 
+/// 421 `host_mismatch`: a tenant- or instance-bound connection used on the wrong host, or (D-231)
+/// on its instance's host but outside the registration's base path (`expected_base_url` then names
+/// where to send the request).
+pub fn host_mismatch(expected_host: &str, base_path: Option<&str>) -> ApiError {
+    let (message, details) = match base_path {
+        Some(b) => {
+            let url = format!("https://{expected_host}{b}");
+            (
+                format!("This connection is bound to {url}; send the request there."),
+                json!({ "expected_host": expected_host, "expected_base_url": url }),
+            )
+        }
+        None => (
+            format!("This connection is bound to {expected_host}; send the request to that host."),
+            json!({ "expected_host": expected_host }),
+        ),
+    };
+    ApiError::new(StatusCode::MISDIRECTED_REQUEST, "host_mismatch", message).with_details(details)
+}
+
 pub fn ambiguous_path() -> ApiError {
     ApiError::new(
         StatusCode::BAD_REQUEST,

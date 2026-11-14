@@ -595,6 +595,7 @@ pub async fn move_instances(
            FROM app_instances o
            JOIN app_instances n ON n.app_id = $2 AND n.org_id IS NOT DISTINCT FROM o.org_id
                                AND n.host = o.host
+                               AND n.base_path IS NOT DISTINCT FROM o.base_path
           WHERE o.app_id = $1 AND c.instance_id = o.id",
     )
     .bind(old_app)
@@ -604,7 +605,8 @@ pub async fn move_instances(
     let merged = sqlx::query(
         "DELETE FROM app_instances o USING app_instances n
           WHERE o.app_id = $1 AND n.app_id = $2
-            AND n.org_id IS NOT DISTINCT FROM o.org_id AND n.host = o.host",
+            AND n.org_id IS NOT DISTINCT FROM o.org_id AND n.host = o.host
+            AND n.base_path IS NOT DISTINCT FROM o.base_path",
     )
     .bind(old_app)
     .bind(new_app)

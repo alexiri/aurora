@@ -333,13 +333,19 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
         }
     };
     let on_instance = lib.request_host == INSTANCE_HOST;
+    // (D-231) The registration's base path: the library path below is the app path, the upstream
+    // request goes to `<base_path><path>`.
+    let mut base_path: Option<String> = None;
     let (host, port) = if on_instance {
         let instance_host = match conn.instance_id {
             Some(id) => match repo::visible_instances(&f.pool, req.org_id).await {
                 Ok(v) => v
                     .into_iter()
                     .find(|i| i.id == id && i.app_id == conn.app_id)
-                    .map(|i| i.host),
+                    .map(|i| {
+                        base_path = i.base_path;
+                        i.host
+                    }),
                 Err(_) => {
                     return err(
                         StatusCode::SERVICE_UNAVAILABLE,
@@ -358,6 +364,7 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
             );
         };
         conn.instance_host = Some(h.clone());
+        conn.instance_base_path.clone_from(&base_path);
         split_port(&h, f.port)
     } else {
         (lib.request_host.to_ascii_lowercase(), f.port)
@@ -462,7 +469,10 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
             host: host.clone(),
             port,
             method: Method::GET,
-            path: p,
+            path: match &base_path {
+                Some(b) => format!("{b}{p}"),
+                None => p,
+            },
             query: q,
             headers,
             upgrade: None,

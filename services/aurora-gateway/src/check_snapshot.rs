@@ -109,6 +109,9 @@ struct Connection {
     /// exactly this host are served by the app's `{instance}` host entries, any other host is
     /// refused by the instance guard.
     instance_host: Option<String>,
+    /// (D-231) The registration's base path (`/wiki`): requests to `instance_host` are served by the
+    /// instance only under it, and the manifest is matched on the path below it (the app path).
+    instance_base_path: Option<String>,
     /// The app the instance belongs to; defaults to the snapshot's only instance-bound app.
     instance_app: Option<String>,
     #[serde(default)]
@@ -145,6 +148,9 @@ struct Expect {
     refused: Option<String>,
     /// With `refused: host_mismatch`: the host the connection is bound to.
     expected_host: Option<String>,
+    /// (D-231) With `refused: host_mismatch` on an instance with a base path: where the connection
+    /// is bound (`https://<host><base_path>`).
+    expected_base_url: Option<String>,
     /// (P2-DBL-2) Database statements: the class `aurora-sqlclass` gave the body
     /// (`read` | `write` | `ddl` | `admin` | `transaction`).
     class: Option<String>,
@@ -307,20 +313,34 @@ fn execute(
             if bound.next().is_some() { None } else { first }
         })
     });
+    // (D-231) The registration's base path: the instance serves only the paths under it, and the
+    // manifest is matched on the app path (the path below it).
+    let base = c.connection.instance_base_path.as_deref();
     let on_instance = instance_host
         .as_deref()
         .filter(|h| *h == host)
+        .filter(|_| aurora_registry::instance::covers(base, &path))
         .and(instance_app.as_deref())
         .filter(|app| {
             !l.entries_for_host(&host, port)
                 .iter()
                 .any(|e| e.app_id != *app)
         });
+    let inst_path = aurora_registry::instance::app_path(base, &path).to_owned();
     let found = on_instance
-        .and_then(|app| crate::apps::identify_instance_app(l, app, &path))
+        .and_then(|app| crate::apps::identify_instance_app(l, app, &inst_path))
         .or_else(|| identify_app(l, &host, port, &path));
     let Some(m) = found else {
         return Ok(json!({ "app": null, "tool": null }));
+    };
+    // The path every manifest decision below uses; the upstream URL keeps the full `path`.
+    let app_path = if m.instance { inst_path } else { path.clone() };
+    let mismatch = |expected: String| {
+        let mut r = json!({ "code": "host_mismatch", "expected_host": expected });
+        if let Some(b) = base {
+            r["expected_base_url"] = json!(format!("https://{expected}{b}"));
+        }
+        r
     };
     let mut refusal: Option<Value> = None;
     if instance_host.is_none() {
@@ -332,7 +352,7 @@ fn execute(
             .as_ref()
             .and_then(|i| i.default_host.as_deref());
         let on = on_instance.map(|_| uuid::Uuid::nil());
-        match instance_guard(None, dh, on, &host) {
+        match instance_guard(None, dh, None, on, &host, &path) {
             Ok(()) => {}
             Err(GuardError::Mismatch { expected }) => {
                 refusal = Some(json!({ "code": "host_mismatch", "expected_host": expected }));
@@ -344,10 +364,10 @@ fn execute(
     }
     if let Some(ih) = instance_host.as_deref() {
         let on = on_instance.map(|_| uuid::Uuid::nil());
-        match instance_guard(Some(uuid::Uuid::nil()), Some(ih), on, &host) {
+        match instance_guard(Some(uuid::Uuid::nil()), Some(ih), base, on, &host, &path) {
             Ok(()) => {}
             Err(GuardError::Mismatch { expected }) => {
-                refusal = Some(json!({ "code": "host_mismatch", "expected_host": expected }));
+                refusal = Some(mismatch(expected));
             }
             Err(GuardError::Unavailable) => {
                 refusal = Some(json!({ "code": "credential_unavailable" }));
@@ -364,7 +384,7 @@ fn execute(
         &m,
         &host,
         port,
-        &path,
+        &app_path,
         query.as_deref(),
         method.as_str(),
         body,
@@ -513,7 +533,8 @@ fn execute(
         &SummaryRequest {
             method: method.as_str(),
             host: &host,
-            path: &path,
+            // `{path.N}` counts from the app path (D-231).
+            path: &app_path,
             query: query.as_deref(),
             content_type: c
                 .request
@@ -668,11 +689,18 @@ fn token_lifecycle(
         conn.tenant_host.as_deref(),
         // (D-86) A connection without a registered instance resolves `{instance}` to the app's
         // `default_host`, as the gateway resolver does.
-        conn.instance_host.as_deref().or_else(|| {
-            app.instances
+        // (D-231) A registered instance resolves to its host and base path.
+        match conn.instance_host.as_deref() {
+            Some(h) => Some(aurora_registry::instance::InstanceBase::new(
+                h,
+                conn.instance_base_path.as_deref(),
+            )),
+            None => app
+                .instances
                 .as_ref()
                 .and_then(|i| i.default_host.as_deref())
-        }),
+                .map(|h| aurora_registry::instance::InstanceBase::new(h, None)),
+        },
     ) {
         // Fail closed before any request (e.g. no instance host to bind the token URL to).
         Err(_) => "unavailable".to_owned(),
@@ -790,6 +818,14 @@ fn compare(e: &Expect, o: &Value) -> Vec<String> {
                 f.push(format!(
                     "refused.expected_host: expected `{h}`, got {}",
                     o["refused"]["expected_host"]
+                ));
+            }
+            if let Some(u) = &e.expected_base_url
+                && o["refused"]["expected_base_url"].as_str() != Some(u)
+            {
+                f.push(format!(
+                    "refused.expected_base_url: expected `{u}`, got {}",
+                    o["refused"]["expected_base_url"]
                 ));
             }
         }

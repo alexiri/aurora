@@ -1,6 +1,6 @@
 package:
   id: gitlab
-  version: 1.2.0
+  version: 1.2.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -245,9 +245,9 @@ apps:
           - { label: Group or user, source: path, segment: 1 }
     agent:
       instructions: |
-        GitLab is connected. Use the REST API v4 on the host of the GitLab connection (gitlab.com,
-        or the self-managed instance it was registered for): https://<host>/api/v4, and git over
-        HTTPS (clone URLs of the form https://<host>/<group>/<project>.git). Aurora adds the
+        GitLab is connected. Use the REST API v4 at <address>/api/v4, where <address> is the address
+        shown with the account (gitlab.com, or the self-managed instance it was registered for), and
+        git over HTTPS (clone URLs of the form <address>/<group>/<project>.git). Aurora adds the
         credentials; never ask for or write a token, and never send a request for one GitLab
         connection to another host. Address a project by its numeric id or by its full path with
         slashes encoded as %2F, for example group%2Fsubgroup%2Fproject. Send request bodies as

@@ -45,12 +45,15 @@ pub struct OidcClients {
 
 impl OidcClients {
     pub fn new(cfg: &ApiConfig) -> Result<Self, String> {
-        let inner = reqwest::Client::builder()
-            // Following redirects would open SSRF paths (openidconnect guidance).
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|e| format!("oidc http client: {e}"))?;
+        let inner = aurora_secrets::tls::with_extra_roots(
+            reqwest::Client::builder()
+                // Following redirects would open SSRF paths (openidconnect guidance).
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(10)),
+            cfg.tls.extra_ca_bundle.as_deref(),
+        )?
+        .build()
+        .map_err(|e| format!("oidc http client: {e}"))?;
         let d = &cfg.auth.dev_idp;
         let rewrite = match (d.enabled, d.issuer.as_deref(), d.internal_url.as_deref()) {
             (true, Some(public), Some(internal)) => Some((

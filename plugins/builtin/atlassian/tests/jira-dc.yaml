@@ -140,3 +140,29 @@
   connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: GET, url: "https://jira.example.com/secure/ViewProfile.jspa" }
   expect: { unmatched: true }
+# (phase 5, D-231, FIX-145) Served under a path, as at CERN (https://its.cern.ch/jira): the request
+# uses the full URL, the tool is matched on the app path below the base path, and nothing is
+# injected on the host outside it.
+- name: "dc under a base path: get_myself is matched on the app path and injected under /jira"
+  connection: { instance_host: its.cern.ch, instance_base_path: /jira, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://its.cern.ch/jira/rest/api/2/myself" }
+  expect:
+    app: jira-dc
+    tool: get_myself
+    upstream: { url: "https://its.cern.ch/jira/rest/api/2/myself", headers: { authorization: "Bearer pat-fixture-1" } }
+- name: "dc under a base path: get_issue"
+  connection: { instance_host: its.cern.ch, instance_base_path: /jira, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://its.cern.ch/jira/rest/api/2/issue/DEMO-7" }
+  expect: { app: jira-dc, tool: get_issue }
+- name: "negative dc under a base path: the same request without the base path matches nothing"
+  connection: { instance_host: its.cern.ch, instance_base_path: /jira, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://its.cern.ch/rest/api/2/myself" }
+  expect: { unmatched: true }
+- name: "negative dc under a base path: a sibling path /jira2 matches nothing"
+  connection: { instance_host: its.cern.ch, instance_base_path: /jira, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://its.cern.ch/jira2/rest/api/2/myself" }
+  expect: { unmatched: true }
+- name: "negative dc under a base path: another host is refused naming the base URL"
+  connection: { instance_host: its.cern.ch, instance_base_path: /jira, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/myself" }
+  expect: { refused: host_mismatch, expected_host: its.cern.ch, expected_base_url: "https://its.cern.ch/jira" }

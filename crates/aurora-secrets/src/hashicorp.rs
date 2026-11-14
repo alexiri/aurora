@@ -15,7 +15,6 @@
 //!   `ReferenceNotPermitted` so a tenant cannot probe paths outside its scopes.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -106,13 +105,7 @@ fn read_env(name: &str, key: &str, store: &str) -> Result<Secret<String>> {
 fn load_pem(path: &str, key: &str, store: &str) -> Result<Vec<reqwest::Certificate>> {
     let bad =
         |why: &str| SecretError::InvalidConfig(format!("secret store '{store}': {key}: {why}"));
-    let bytes = std::fs::read(Path::new(path)).map_err(|_| bad("file is not readable"))?;
-    let certs = reqwest::Certificate::from_pem_bundle(&bytes)
-        .map_err(|_| bad("not a valid PEM certificate bundle"))?;
-    if certs.is_empty() {
-        return Err(bad("contains no certificate"));
-    }
-    Ok(certs)
+    crate::tls::load_pem_bundle(path).map_err(|e| bad(e.why()))
 }
 
 fn build_client(

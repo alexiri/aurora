@@ -82,19 +82,27 @@ pub struct HttpGateway {
 }
 
 impl HttpGateway {
-    pub fn new(base: &str, ring: &aurora_crypto::SecretRing) -> Result<Self, String> {
+    pub fn new(
+        base: &str,
+        ring: &aurora_crypto::SecretRing,
+        extra_ca_bundle: Option<&str>,
+    ) -> Result<Self, String> {
         Ok(Self {
             base: base.trim_end_matches('/').to_owned(),
             bearer: ring.active_bearer(),
             key_id: ring.active_id().to_owned(),
-            http: reqwest::Client::builder()
-                // The gateway's own cap is 20 s; a little more for the hop.
-                .timeout(
-                    aurora_core::limits::LIBRARY_FETCH_TIMEOUT + std::time::Duration::from_secs(5),
-                )
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|e| format!("library gateway client: {e}"))?,
+            http: aurora_secrets::tls::with_extra_roots(
+                reqwest::Client::builder()
+                    // The gateway's own cap is 20 s; a little more for the hop.
+                    .timeout(
+                        aurora_core::limits::LIBRARY_FETCH_TIMEOUT
+                            + std::time::Duration::from_secs(5),
+                    )
+                    .redirect(reqwest::redirect::Policy::none()),
+                extra_ca_bundle,
+            )?
+            .build()
+            .map_err(|e| format!("library gateway client: {e}"))?,
         })
     }
 }

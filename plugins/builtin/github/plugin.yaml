@@ -570,10 +570,10 @@ apps:
           - { label: Repository, source: path, segment: 2 }
     agent:
       instructions: |
-        GitHub Enterprise Server is connected. Use the REST API at https://<host>/api/v3 (for example
-        https://<host>/api/v3/repos/<owner>/<repo>/issues), GraphQL at https://<host>/api/graphql and
-        git over HTTPS (https://<host>/<owner>/<repo>.git), where <host> is the host of the GitHub
-        Enterprise Server connection. Aurora adds the credentials; never ask for or write a token, and
+        GitHub Enterprise Server is connected. Use the REST API at <address>/api/v3 (for example
+        <address>/api/v3/repos/<owner>/<repo>/issues), GraphQL at <address>/api/graphql and
+        git over HTTPS (<address>/<owner>/<repo>.git), where <address> is the address shown with the
+        account. Aurora adds the credentials; never ask for or write a token, and
         never send a request for this connection to another host. Send JSON request bodies so approvals
         can show what a change does. A connection made with a GitHub App installation reaches only the
         repositories the app is installed on and only the permissions it was granted; endpoints that

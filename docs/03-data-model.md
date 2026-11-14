@@ -393,12 +393,9 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | label | text not null | 1–120 characters |
 | status | text CHECK in (`active`,`disabled`) default `active` | `disabled` stops injection without deleting |
 | created_by | uuid null FK→users (set null) | |
-| unique | (org_id, app_id, host) nulls not distinct | a host is additionally unique across scopes that can see each other (instance-wide vs any org); enforced by the API in the creating transaction |
+| base_path | text null | (phase 5, FIX-145, D-231, C-731) the path the app is served under on `host` (`/jira` for `https://its.cern.ch/jira`); null = served at the host root. Stored normalized (trailing `/` dropped; `""` and `/` stored as null; case kept). Set at registration and never updated (immutable like `host`). Every `{instance}` URL of the registration resolves to `https://<host><base_path>`, and the gateway injects the registration's connections only under it (`09 §3.4 Instance-bound hosts`, SEC-59). CHECK `app_instances_base_path_ck` mirrors the API validation (`instance_base_path_invalid`): starts with `/`, 1–8 segments of 1–64 characters from `[A-Za-z0-9._~-]`, no `.` or `..` segment, no trailing `/`, ≤ 128 characters |
+| unique | (org_id, app_id, host, base_path) nulls not distinct | one app may be registered twice on one host in one scope under disjoint base paths. A host with overlapping base paths (either null, equal, or one a segment prefix of the other) is additionally refused across scopes that can see each other (instance-wide vs any org); enforced by the API in the creating transaction under the per-host lock (`instance_host_conflict`) — a unique key cannot express the prefix rule |
 | index | (host); (org_id) | |
-
-(Phase 5, FIX-145, D-231) `app_instances` gains `base_path` and its unique key widens: see
-`§Planned changes` › `app_instances` (base path). The rows move here with migration
-`20261201000140`.
 
 ---
 
@@ -1607,13 +1604,7 @@ Absent when the operator supplies the key through `push.vapid.private_key_env` (
 
 The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades). (P4-011B spec batch, D-266(c)) Sign-out, "sign out other sessions", an administrator's revocation and deactivation delete the session's `push_subscriptions` rows in the revoking transaction (the cascade only covers deleted session rows). The sealed secrets (`webpush.vapid`, `webpush.subscription`) are always in the `inline` store (D-266(b)). Migration `20261201000223_web_push.sql` (P4-011B-3) creates `webpush_vapid_keys`, `push_subscriptions` and `approval_push_claims` together; the partial unique index `webpush_vapid_keys (status) WHERE status = 'active'` enforces one active key.
 
-#### `app_instances` (base path; phase 5, FIX-145, D-231)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| base_path | text null | (C-731) the path the app is served under on `host` (`/jira` for `https://its.cern.ch/jira`); null = served at the host root. Stored normalized (trailing `/` dropped; `""` and `/` stored as null; case kept). Set at registration and never updated (immutable like `host`). Every `{instance}` URL of the registration resolves to `https://<host><base_path>`, and the gateway injects the registration's connections only under it (`09 §3.4 Instance-bound hosts`, SEC-59) | 5 (FIX-145, D-231) |
-| check | `base_path IS NULL OR (base_path ~ '^(/[A-Za-z0-9._~-]{1,64}){1,8}$' AND base_path !~ '(^\|/)\.\.?(/\|$)' AND char_length(base_path) <= 128)` | mirrors the API validation (`instance_base_path_invalid`): starts with `/`, 1–8 segments of 1–64 unreserved characters, no `.` or `..` segment, no trailing `/`, ≤ 128 characters; defence in depth for SEC-59 like the `host` CHECK | 5 (FIX-145, D-231) |
-| unique | (org_id, app_id, host, base_path) nulls not distinct (replaces (org_id, app_id, host)) | one app may be registered twice on one host in one scope under disjoint base paths. Overlap between registrations visible to each other (either base path null, equal, or one a segment prefix of the other) is refused by the API in the creating transaction under the per-host lock, as before (`instance_host_conflict`); a unique key cannot express the prefix rule | 5 (FIX-145, D-231) |
-
+#### `app_instances` (base path; phase 5, FIX-145, D-231) — now in `§app_instances`
 Migration `20261201000140_app_instance_base_path.sql` (block `000140..149`) adds the column null
 (existing rows keep `null`: they are served at the host root, today's behaviour). The `(host)`
 index still serves the conflict check and the gateway's instance lookup. The gateway role already

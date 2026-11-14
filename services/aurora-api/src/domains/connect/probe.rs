@@ -1,6 +1,7 @@
 //! Probe execution (09 §3.4), host/zone checks shared by hook and field flows.
 use super::env::Env;
 use aurora_policy::HostPattern;
+use aurora_registry::instance::{InstanceBase, app_path, covers};
 use aurora_registry::manifest::{Inject, Probe, ProbeMethod};
 use aurora_registry::snapshot::{AppEntry, HostEntry, Snapshot};
 use aurora_registry::template::{Ns, Part, Template};
@@ -36,6 +37,8 @@ pub struct Vars<'a> {
     /// The host `{instance}` stands for: the connection's registered instance, or the app's
     /// `default_host` (D-74).
     pub instance_host: Option<&'a str>,
+    /// (D-231) The registration's base path; `{instance}` in a URL is `<host><base_path>`.
+    pub instance_base_path: Option<&'a str>,
     /// `instance_host` is a *registered* instance (not the static `default_host`): its
     /// `{instance}` host entries apply to it.
     pub instance_registered: bool,
@@ -84,6 +87,11 @@ fn render(t: &Template, v: &Vars<'_>, encode: bool) -> Option<String> {
                             return None;
                         }
                         out.push_str(h);
+                        // In a URL the placeholder is the registration's address; elsewhere (a
+                        // header value) it stays the host.
+                        if encode && let Some(b) = v.instance_base_path {
+                            out.push_str(b);
+                        }
                         continue;
                     }
                     _ => return None,
@@ -110,29 +118,25 @@ pub fn render_url(t: &Template, tenant_host: Option<&str>) -> Option<String> {
             tenant_host,
             fields: &empty,
             instance_host: None,
+            instance_base_path: None,
             instance_registered: false,
         },
         true,
     )
 }
 
-/// Substitute `{instance}` in a fixed OAuth URL string (`https://{instance}/oauth/token`) with
-/// the connection's instance host. The result must be https and its host exactly that host
-/// (SEC-04/SEC-59: a token exchange never leaves the instance host).
-pub fn instance_url(raw: &str, instance_host: &str) -> Option<String> {
-    if !raw.contains(aurora_registry::manifest::INSTANCE_HOST) {
-        return Some(raw.to_owned());
-    }
-    if !dns_ok(instance_host) {
-        return None;
-    }
-    let url = raw.replacen(aurora_registry::manifest::INSTANCE_HOST, instance_host, 1);
+/// Substitute `{instance}` in a fixed OAuth URL string (`https://{instance}/oauth/token`) with the
+/// registration's address, through the one shared resolver (D-231). The result must be https and
+/// its host exactly the instance host, no port or userinfo (SEC-04/SEC-59: a token exchange never
+/// leaves the instance host).
+pub fn instance_url(raw: &str, instance: InstanceBase<'_>) -> Option<String> {
+    let url = instance.resolve(raw)?;
     let u = reqwest::Url::parse(&url).ok()?;
     (u.scheme() == "https"
         && u.port().is_none()
         && u.username().is_empty()
         && u.host_str()
-            .is_some_and(|h| h.eq_ignore_ascii_case(instance_host)))
+            .is_some_and(|h| h.eq_ignore_ascii_case(instance.host)))
     .then_some(url)
 }
 
@@ -166,26 +170,34 @@ fn host_entry<'a>(
     app: &AppEntry,
     host: &str,
     path: &str,
-    instance: Option<&str>,
+    instance: Option<InstanceBase<'_>>,
 ) -> Option<&'a HostEntry> {
-    let prefix_ok = |e: &&HostEntry| path.starts_with(e.path_prefix.as_deref().unwrap_or("/"));
+    // The `{instance}` entries are judged on the app path: the path below the base path (D-231).
+    let on_instance = instance
+        .filter(|i| i.host.eq_ignore_ascii_case(host) && covers(i.base_path, path))
+        .map(|i| app_path(i.base_path, path));
     let statics = snap
         .hosts
         .iter()
         .filter(|e| e.app_id == app.app_id)
-        .filter(|e| HostPattern::lenient(&e.host).matches(host, 443));
-    let instanced = instance
-        .filter(|i| i.eq_ignore_ascii_case(host))
-        .into_iter()
-        .flat_map(|_| snap.instance_entries(&app.app_id));
+        .filter(|e| HostPattern::lenient(&e.host).matches(host, 443))
+        .filter(|e| path.starts_with(e.path_prefix.as_deref().unwrap_or("/")));
+    let instanced = on_instance.into_iter().flat_map(|ap| {
+        snap.instance_entries(&app.app_id)
+            .filter(move |e| ap.starts_with(e.path_prefix.as_deref().unwrap_or("/")))
+    });
     statics
         .chain(instanced)
-        .filter(prefix_ok)
         .max_by_key(|e| e.path_prefix.as_deref().map_or(0, str::len))
 }
 
 /// Does `url` target https on one of the app's declared hosts (or the registered `instance`)?
-pub fn declared_host(snap: &Snapshot, app: &AppEntry, url: &str, instance: Option<&str>) -> bool {
+pub fn declared_host(
+    snap: &Snapshot,
+    app: &AppEntry,
+    url: &str,
+    instance: Option<InstanceBase<'_>>,
+) -> bool {
     reqwest::Url::parse(url).is_ok_and(|u| {
         u.scheme() == "https"
             && u.host_str().is_some_and(|h| {
@@ -219,7 +231,9 @@ pub async fn run(
         app,
         &host,
         parsed.path(),
-        v.instance_host.filter(|_| v.instance_registered),
+        v.instance_host
+            .filter(|_| v.instance_registered)
+            .map(|h| InstanceBase::new(h, v.instance_base_path)),
     )
     .ok_or(ProbeFail { status: None })?;
     if let Some(t) = &entry.tenant
