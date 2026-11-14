@@ -241,7 +241,9 @@ export function AgentPage() {
           {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "previews" && !byo ? <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
-          {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
+          {tab === "instructions" ? (
+            <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} terminal={!byo && terminalEnabled} />
+          ) : null}
           {tab === "access" && workspace.data ? (
             <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} />
           ) : null}

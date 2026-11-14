@@ -1077,7 +1077,9 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     `/v1/harnesses`, shown only when more than one is enabled; unavailable ones are disabled
     with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
     every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
-    `/v1/agents/{a}/models`), effort, proactive messaging mode.
+    `/v1/agents/{a}/models`), effort, proactive messaging mode. (FIX-138, owner 2026-11-14)
+    Below the form, a **Terminal** card with the terminal's **Shell** control (see Terminal),
+    only where the Terminal page exists (hosted agent, `terminal.enabled`).
   - **Access** — (phase 4, P4-GRANTS) for an app whose manifest is `custom_only` the grant
     form has no "Full access" option, shows "This app only supports custom access: choose
     the tools the agent may use" and starts with every tool on *block*; an app with
@@ -1219,7 +1221,9 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     also the document title) and a pane that fills the window. It is a second, independent shell
     over the same cookie, route and single-use grant as the tab; it counts against the sandbox's
     leg cap (4409 reads "The sandbox's terminal session limit was reached.").
-    (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) above the pane,
+    (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) in the
+    **Terminal** card of Behaviour › Instructions (owner 2026-11-14: moved off the Terminal
+    page, which only names where it is chosen; it applies at once, with no Save),
     remembered per browser and agent (`localStorage` key `aurora.terminal.shell.<agent id>`; a
     server-side preference would need a table for one enum). It applies to the next session — the
     open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the
