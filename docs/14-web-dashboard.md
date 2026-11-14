@@ -264,6 +264,63 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **AuroraMark** (`variant`: auto, which follows the theme, plus light, dark,
   mono-ink and mono-white).
 - **AuroraLogo** (`layout`: horizontal or stacked; follows the theme).
+- (phase 5, P5-CHAT-0, D-228) Primitives of the messaging client (**Agent chat**
+  below; boards on the "Agent page redesign" canvas, section "Chat as a messaging
+  client (P5-CHAT)"). Each is in `web/src/components/ui/` and in the Aurora design
+  system's component list; the lane named in brackets adds it, a later lane reuses it.
+  - **Toolbar**, **ToolbarButton**, **ToolbarSeparator** [P5-CHAT-2]: a
+    `role="toolbar"` row with roving focus (one Tab stop; Left/Right, Home and End
+    move; `aria-orientation="horizontal"`). A ToolbarButton is a 32 px square ghost
+    icon button (44 px below 768 px; a text label is allowed, as the phone's
+    **Reply**), radius 6 px, `ink-2` icon, `subtle` on hover and focus; with
+    `pressed` it is a toggle (`aria-pressed`, `accent-soft` fill, `accent-ink`
+    content). The separator is a 1 × 20 px `line` rule. Below 768 px a toolbar
+    that does not fit scrolls horizontally inside itself (never the page). Used by
+    the message actions, the formatting row and the `Aa` toggle.
+  - **Tooltip** and **Kbd** [P5-CHAT-2]: an in-house tooltip (no new dependency)
+    above its trigger, shown on pointer hover after 500 ms and at once on keyboard
+    focus, hidden by Esc, `role="tooltip"` linked by `aria-describedby`; `primary`
+    fill, `on-primary` text, 12/16, radius 6 px, `shadow-pop`. An optional
+    `shortcut` renders as `Kbd`. A tooltip never carries the control's only name.
+    **Kbd** is a key cap: JetBrains Mono 11 px, 1 px `line-strong` border (on a
+    tooltip: `muted`), radius 4 px, 0 × 4 px padding. The shortcut is written for
+    the platform (`Ctrl+B`; `⌘B` on macOS).
+  - **SuggestionList** [P5-CHAT-3, or P5-CHAT-4 part B if it lands first]: the
+    listbox of a combobox attached to an `input` or `textarea`
+    (`aria-controls`, `aria-activedescendant`; focus stays in the field). Up/Down
+    move, Enter (and Tab where the owner allows it) chooses, Esc closes; optional
+    caps group labels and a footer hint line of `Kbd`s. A pop-over surface
+    (`surface`, `line` border, radius 8 px, `shadow-pop`, 4 px padding); rows at
+    least 36 px (44 px below 768 px), the active row `subtle`. Used by the emoji
+    suggestions and the search box.
+  - **EmojiPicker** [P5-CHAT-3]: on `Popover` (P5-AGENT-2), 312 px wide: a search
+    field ("Search emoji"), category tabs (`role="tablist"`: Frequently used,
+    Smileys and people, Animals and nature, Food and drink, Activities, Travel and
+    places, Objects, Symbols, Flags), caps section labels, an 8-column grid of
+    34 px emoji buttons (44 px below 768 px) named by the emoji's name, and a
+    footer showing the hovered or focused emoji with its `:shortcode:`. Arrow keys
+    move in the grid; Enter inserts; Esc closes and returns focus to the trigger.
+    "Frequently used" is kept per browser (storage failures ignored).
+  - **DropZone** [P5-CHAT-3]: wraps a region; while files (not text) are dragged
+    over it, an overlay covers the region: a `surface` backdrop at 90 % opacity,
+    then a 2 px dashed `accent` frame inset 12 px (radius 14 px) holding a 48 px
+    `accent-soft` circle with `UploadIcon`, a title (16/600 Space Grotesk) and a
+    12 px `ink-2` line. `onFiles` receives the dropped files; leaving or Esc
+    removes the overlay.
+  - **FilterChip** [P5-CHAT-4 part B]: a removable pill, at least 28 px high
+    (44 px target below 768 px), `subtle` with a `line-strong` border: the key in
+    mono `muted` (`from:`), the value 600 `ink`, and a 24 px remove button named
+    "Remove filter <key> <value>".
+  - **HighlightedText** [P5-CHAT-4 part B]: renders a plain string and a list of
+    `[start, end)` UTF-16 ranges as text with `<mark>` (`accent-soft` fill,
+    `accent-ink` text, 600, radius 3 px). Ranges out of bounds, overlapping or
+    unsorted are dropped, never thrown; the string is never parsed as HTML or
+    Markdown.
+  - **Icons** (`ui/icons.tsx`, same 24 grid, 1.75 stroke): `ReplyIcon`,
+    `ArrowDownIcon` [P5-CHAT-2]; `BoldIcon`, `ItalicIcon`, `StrikethroughIcon`,
+    `HeadingIcon`, `CodeIcon`, `CodeBlockIcon`, `QuoteIcon`, `ListIcon`,
+    `ListOrderedIcon`, `ListTodoIcon`, `TableIcon`, `SmileIcon`, `UploadIcon`,
+    `ImageIcon`, `AlertCircleIcon` [P5-CHAT-3].
 
 **Screens.**
 - **Workspace Overview** (IA below):
@@ -377,7 +434,13 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     list/thread two-view behaviour of **Agent chat** is unchanged.
 - **Agent chat** (D-102, task P2-UI-5; mock-ups `Agent.html`, `AgentDark.html`,
   `AgentPhone.html`). The chat is a messaging layout. It is not a stack of
-  cards, banners and button rows.
+  cards, banners and button rows. (Phase 5, D-228: a messaging client in the
+  Mattermost mould — reply to a message, Markdown formatting, files, drafts,
+  permalinks, search — inside the **Agent page (phase 5)** panel. Design: the
+  "Agent page redesign" canvas, section "Chat as a messaging client (P5-CHAT)",
+  boards "P5-CHAT · Reply", "· Formatting", "· Files", "· Navigation",
+  "· Search" and "· Phone", each with a Dark tweak. Where a board and this
+  text disagree, this text wins.)
   - **Layout.** One `ChatPanel` card fills the rest of the viewport height
     (at least 560 px). The page itself does not scroll, down to a 1280×800
     window. For that, the Chat tab (only) uses a compact agent header: a
@@ -397,8 +460,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   - **Conversation list** (`ConversationList`, `ConversationRow`):
     - The pane has the heading "Conversations", a filter input and a
       segmented **Active / Archived** switch (`archived=false|true`). The
-      filter matches titles in the loaded list on the client; there is no
-      search API.
+      filter matches titles in the loaded list on the client. (Phase 5,
+      P5-CHAT-4, C-727: the filter becomes a search box, placeholder "Search",
+      that still filters titles as you type and searches message text on Enter;
+      see **Message search** below.)
     - A row is at least 56 px high. It shows a round 36 px kind tile (one
       icon and tint per `kind`: direct, group, schedule, webhook, watch, peer,
       api), the title (`title`, or a kind label such as "Direct chat"), the
@@ -448,11 +513,76 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       typed newline stays a line break. Inline code and code blocks sit on
       `surface` (dark: `canvas`) with a `line` border, and code blocks scroll
       horizontally inside themselves.
+    - (Phase 5, P5-CHAT-2, D-228, C-725; board "P5-CHAT · Reply".) **Quote
+      strip.** A message whose `turn.queued` payload has `reply_to` shows a strip
+      directly above its bubble, on the bubble's side, at most as wide as a
+      bubble: `canvas` fill, 1 px `line` border, radius 10 px, 6 × 10 px padding;
+      `ReplyIcon` (`muted`); a 12 px line with the author (`author_label`, 600
+      `ink`) and the original's time; then the `excerpt` at 13/20 `ink-2`,
+      clamped to two lines. The excerpt is rendered by the chat renderer
+      (FIX-137, D-227) in its **compact mode**, which has no interactive
+      content: links and footnote references are plain text, task-list boxes
+      are the characters ☐ and ☑, images are their alt text, block code is shown
+      as inline code. For a file (`attachment`) the excerpt is the file name (and
+      caption), after a `FileIcon`. The whole strip is one link to the
+      original's permalink (`?c=<conversation>&m=<seq>`): click or Enter jumps
+      to the original in place (**Jump and highlight**, below); a modified click
+      follows the link as any link does. Its accessible name starts "In reply to
+      <author>, <time>". A payload of `{ seq, redacted: true }` shows a static
+      strip instead: dashed `line-strong` border, `ReplyIcon`, "Original message
+      redacted" in `muted`; it is not a link.
+    - A queued follow-up that replies shows `ReplyIcon` and the author before
+      its text in the dashed **Queued follow-ups** row.
+    - (Phase 5, P5-CHAT-2; board "P5-CHAT · Navigation".) **Jump and
+      highlight.** Opening a permalink (`?c=<conversation>&m=<seq>`) or a quote
+      strip selects the conversation, loads older history pages until the
+      message is loaded (bounded by the history API's paging; reaching the
+      conversation's start without it shows the neutral notice "That message is
+      not available."; a redacted target shows the same notice), scrolls it to
+      the middle of the transcript, moves focus to it (`tabindex="-1"`) and
+      highlights it for 2 s: an `accent-soft` band behind the whole message row
+      (12 px wider than the column on each side, radius 8 px; an agent bubble
+      inside it turns `surface`), then fades over 300 ms (removed at once under
+      `prefers-reduced-motion`). A permalink to a conversation the person cannot
+      see shows the usual not-found state; nothing about the message leaks.
+    - (Phase 5, P5-CHAT-2; board "P5-CHAT · Navigation".) **Jump to latest.**
+      While the transcript is scrolled more than one screen above the bottom, a
+      pill floats 16 px above the composer, centred: 36 px high (44 px below
+      768 px), `surface`, 1 px `line` border, fully rounded, `shadow-pop`,
+      `ArrowDownIcon` and "Jump to latest" (13/600), followed by "· N new" in
+      `accent-ink` once N durable messages (person, door, agent text, agent
+      files) have arrived since the person scrolled up. Clicking it scrolls to
+      the bottom and hides it. While it shows, the transcript does not follow new
+      messages (the person is reading history); at the bottom it follows them as
+      before. The `role="log"` live region keeps announcing new messages either
+      way.
   - **Message actions.** Hovering or focusing a message shows a small toolbar
     (`surface`, `line` border) at the bubble's top corner. It holds Copy
     message and a "More message actions" menu with Redact…, which opens the
     existing redact dialog. On touch screens, tapping a message shows the
     toolbar.
+    (Phase 5, P5-CHAT-2, D-228, C-725; board "P5-CHAT · Reply":) the toolbar is
+    a `Toolbar` (`shadow-pop`, 2 px padding) 22 px above the bubble's outer top
+    corner, holding **Reply** (`ReplyIcon`, tooltip "Reply" + `R`), **Copy
+    message** (`CopyIcon`) and **More message actions** (`MoreIcon`), whose `Menu`
+    holds **Copy link** (`LinkIcon`), a separator, then **Redact…** in
+    `danger-ink`.
+    - Which messages have which actions: agent messages (`text`), person
+      messages and messages from other doors (`turn.queued`: schedule, webhook,
+      peer, API) have all four; a file the agent sent (`attachment`) has Reply
+      and More (its card keeps Download; there is nothing to copy). Tool groups,
+      approval cards, notices, turn errors, redacted rows, the typing row and a
+      message the API has not yet given a `seq` have no Reply and no Copy link.
+      Reply is shown only where the composer is (not on another member's
+      read-only direct conversation); Copy link is shown wherever the message
+      is; Redact keeps today's permission.
+    - Keyboard: a message is focusable and focusing it shows its toolbar; with a
+      message focused, `R` replies (a single-key shortcut that works only while
+      that message has focus, WCAG 2.1.4). Copy link writes
+      `<origin>/o/<org>/w/<ws>/agents/<handle>?c=<conversation id>&m=<seq>` to the
+      clipboard and confirms with "Link copied" in a polite live region.
+    - Below 768 px a tap shows the toolbar under the bubble with 44 px buttons,
+      Reply carrying its text label (board "P5-CHAT · Phone").
   - **Tool calls.**
     - A turn's consecutive tool and gateway calls fold into one
       `ToolCallGroup`: a `<details>` row reading "Used N tools · total
@@ -486,6 +616,36 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       the name, the size and a Remove button. An upload in progress shows its
       progress. A failed upload is a `danger` chip with the reason, for
       example "Upload failed: quota reached".
+    - (Phase 5, P5-CHAT-3, D-228(c), C-726; board "P5-CHAT · Files".) **Adding
+      files.** Three ways, all into the same chips: the Attach button (the
+      browser's file chooser, `multiple`, no `accept` or `capture`, so a phone
+      offers whatever it offers: photo library, camera, files; Aurora draws no
+      sheet of its own), **drop** anywhere on the thread pane (transcript and
+      composer: a `DropZone` with the title "Drop files to attach to this
+      message" and the line "Up to 10 files, 10 MB each", from
+      `ATTACH_IN_COUNT` and `ATTACH_IN_FILE_MAX`; while it shows, the composer
+      border is `accent`), and **paste** of files or images from the clipboard
+      in the text field (a pasted image without a name is called `Pasted image
+      <YYYY-MM-DD> <HH.MM>.<ext>` in the browser's local time; other files keep
+      their names). Several files at once in each case. There is no drop target
+      and no paste of files where there is no composer.
+    - Chips (40 px rows, wrapping): an image shows its thumbnail (a local object
+      URL, revoked when the chip goes); a file shows a `FileIcon` tile. Uploading:
+      the name, the percentage (tabular) and a `Meter` (`role="progressbar"`),
+      with "Cancel upload of <name>". Failed: `danger-soft` fill, `danger-ink`
+      border, `AlertCircleIcon` tile, the name and the reason in `danger-ink`
+      (`role="alert"`), and Remove; a file over 10 MB or past the tenth fails
+      at once without uploading ("Upload failed: larger than 10 MB", "Upload
+      failed: at most 10 files per message"); a network failure adds **Retry**.
+      Failed files are never sent; their chips stay after Send until removed.
+    - **Files-only message** (C-726). Send is enabled with at least one uploaded
+      file and no text; the placeholder with chips reads "Add a message, or
+      send the files on their own…". While any upload is in progress Send is
+      disabled and the hint line reads "Waiting for N upload(s)…". In the
+      transcript a files-only message has no bubble: its file cards (240 px
+      wide, `surface`, `line` border, the bubble's radius and tail corner) stack
+      on the sender's side under the meta line, with a quote strip above them
+      when the message replies.
   - **Live activity.** While a turn runs, a typing row (`role="status"`)
     shows the agent avatar and a `subtle` bubble holding three dots and the
     activity line, such as "Waiting for approval" or "Reading report.md".
@@ -519,8 +679,158 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - The placeholder is "Message <agent>…", or "Add a follow-up…" while a
       turn runs.
     - At 390 px the composer is a single row of Attach, text field, Stop and
-      Send, each 44 px.
+      Send, each 44 px. (Phase 5: two rows, see **Composer (phase 5)**.)
     - Icon-only buttons carry an `aria-label`.
+  - **Composer (phase 5)** (P5-CHAT-2 for the reply bar, P5-CHAT-3 for the rest;
+    D-228(b)–(d); boards "P5-CHAT · Reply", "P5-CHAT · Formatting", "P5-CHAT ·
+    Files", "P5-CHAT · Phone"). The box keeps its border and radius (border
+    `accent` while the text field has focus or files are dragged over the
+    pane). Inside it, top to bottom: the **reply bar**, the attachment chips,
+    the text field (or the preview), the **formatting row** when shown, then
+    the action row: Attach, the `Aa` toggle, the hint line, Stop (while a turn
+    runs) and Send.
+    - **Reply bar** (C-725). Choosing Reply on a message puts a bar at the top
+      of the box: `subtle` fill, radius 8 px, `ReplyIcon`, "Replying to
+      <author> · <time>" (12 px, the author 600 `ink`), the original's text
+      clamped to two lines (13/20 `ink-2`, the renderer's compact mode; for a
+      file its name), and a ToolbarButton "Cancel reply" (`XIcon`). Focus moves
+      to the text field. Esc in the text field (with no suggestion list open) or
+      ✕ cancels; Reply on another message replaces the target. Send carries
+      `reply_to: { seq }` (a new turn or a follow-up alike) and clears the bar. A
+      422 `reply_target_invalid`, or an `event.redacted` for the target while
+      the bar is open, turns the excerpt into "You can't reply to that message
+      any more" (`danger-ink`), keeps the text, and blocks Send until the bar is
+      cancelled.
+    - **Formatting row** (`Aa`). `Aa` is a ToolbarButton toggle named
+      "Formatting" (`aria-pressed`) that shows or hides the row; the choice is
+      kept per browser (as the theme, never sent to the API, storage failures
+      ignored); unset, the row shows from 768 px and is hidden below. The row is
+      a `line`-topped strip: the **Write / Preview** switch (segmented `Tabs`,
+      label "Message view") then a `Toolbar` named "Formatting" with, in
+      order: Bold, Italic, Strikethrough, Heading | Link, Code, Code block |
+      Quote, Bulleted list, Numbered list, Task list | Table, Emoji (the bars
+      are ToolbarSeparators). Each button's accessible name is the action and
+      its shortcut ("Bold (Ctrl+B)"), with `aria-keyshortcuts`, and its
+      tooltip shows the same with a `Kbd`.
+    - **What the buttons insert** (Markdown, D-228(b); undoable with the
+      browser's undo): with a selection they wrap it; without, they insert a
+      placeholder and select it. Bold `**text**`, Italic `_text_`,
+      Strikethrough `~~text~~`, Code `` `code` `` (a selection over several
+      lines becomes a code block), Link `[text](url)` (with a selection: the
+      selection becomes the text and `url` is selected), Code block a fenced
+      block on its own lines with the caret inside, Heading `### ` at the start
+      of the line, Quote `> `, Bulleted `- `, Numbered `1. ` (`2. `… on
+      following lines), Task `- [ ] ` at the start of each selected line,
+      Table a two-column template (`| Column 1 | Column 2 |`, the delimiter row
+      and one empty row), Emoji opens the `EmojiPicker`. Applying an inline
+      button to a selection already wrapped in the same markers removes them.
+    - **Shortcuts** (in the text field; ⌘ on macOS): Ctrl+B bold, Ctrl+I
+      italic, Ctrl+Shift+X strikethrough, Ctrl+K link, Ctrl+E code,
+      Ctrl+Shift+7 numbered list, Ctrl+Shift+8 bulleted list, Ctrl+Shift+.
+      quote. They work whether or not the row is shown.
+    - **Enter**: Enter sends; Shift+Enter inserts a new line; Ctrl/Cmd+Enter
+      always sends. Exceptions: while an IME composition is in progress Enter
+      belongs to the IME; while a suggestion list is open Enter chooses; when the
+      caret is inside an unclosed ```` ``` ```` fence Enter inserts a new line
+      and the hint line reads "Enter for a new line · Ctrl+Enter to send";
+      Shift+Enter on a list item continues the list (`- `, the next number,
+      `- [ ] `), and on an empty item removes its marker and ends the list.
+      The hint line stays hidden below 768 px.
+    - **Write / Preview.** Preview replaces the text field with the draft
+      rendered by the chat renderer (FIX-137, D-227, the person-message
+      line-break rule), at the text field's height (2–8 lines, then it scrolls
+      inside itself), with `tabindex="0"` and `role="tabpanel"`. In Preview the
+      formatting buttons are disabled and Send still works. Typing a shortcut
+      or choosing Write returns to the text field with the caret where it was.
+    - **Smart paste** (plain text only; HTML on the clipboard is ignored):
+      pasting a single `http`, `https` or `mailto` URL over selected text makes
+      `[selection](url)`; pasting tab-separated rows (at least two rows of at
+      least two cells with the same count, as a spreadsheet copies) makes a
+      Markdown table with the first row as the header, `|` escaped as `\|` in
+      cells; everything else is pasted as text.
+    - **Emoji.** Typing `:` and two letters at the start of a word (not after
+      a letter or digit, so `10:30` does not trigger; not inside code) opens a
+      `SuggestionList` of up to 8 emoji whose shortcode starts with, then
+      contains, the letters (the glyph, then the `:shortcode:` in mono with the
+      typed part 700); Enter or Tab replaces the typed `:xx` with the Unicode
+      character, Esc closes. The `EmojiPicker` from the row inserts at the caret
+      and returns focus to the text field. Both insert the character, never the
+      shortcode (the renderer shows shortcodes as emoji too, D-227).
+    - **Drafts.** Per conversation, the text, the reply target (seq, author,
+      time, excerpt) and the uploaded-but-unsent attachments (id, name, size,
+      type) are kept in browser storage under a key that includes the signed-in
+      user's id and the conversation id; restored when the person returns
+      (reload included), cleared on Send and on sign-out; storage failures are
+      ignored (the composer works without it). If the API refuses a restored
+      attachment as no longer pending (swept after `ATTACH_PENDING_TTL`), its
+      chip is removed, a neutral `Notice` says "N attached files expired.
+      Attach them again.", and the text is kept.
+    - **Stop and Send** are unchanged except as above: Send is enabled with text
+      or at least one uploaded file (C-726) and no upload in progress.
+    - **Below 768 px** (board "P5-CHAT · Phone"): the composer has two rows,
+      the text field (16 px text, so phones do not zoom) and under it Attach,
+      `Aa`, then Stop and Send at the end, every control 44 px. The formatting
+      row sits between them as a strip that scrolls horizontally inside itself
+      (Write / Preview stays at its start, 44 px high); the reply bar's ✕ is
+      44 px; the emoji picker and suggestion lists span the composer's width.
+      Nothing scrolls the page sideways at 390 px.
+  - **Message search** (phase 5, P5-CHAT-4 part B, D-229, C-727; board
+    "P5-CHAT · Search").
+    - The list pane's filter is a search box (`type="search"`, label "Search
+      conversations and messages", placeholder "Search", `SearchIcon`, a Clear
+      button once it holds text). Typing filters the loaded list by title, as
+      before, and opens a `SuggestionList` under the box: first "Search
+      messages for “<text>”" (Enter), then "Conversations" (titles that match,
+      which select the conversation), then "Narrow the search" (`from:` me,
+      agent or others; `in:` a conversation; `has:file`; `after:`, `before:`,
+      `on:` a date) and a footer line: `"exact phrase"`, `-word` to exclude,
+      `OR` between words. `/` (while focus is in the chat panel and not in a
+      text field) or Ctrl/Cmd+F (while focus is in the chat panel) focuses the
+      box; Esc clears it and returns to the conversation list.
+    - **Syntax to parameters** (the API gets parameters, never the raw syntax):
+      `from:me` / `from:agent` / `from:others` → `author`; `in:` opens a
+      suggestion list of conversation titles and the chosen one becomes
+      `conversation_id`; `has:file` → `has=file`; `after:D` and `before:D`
+      (`YYYY-MM-DD`, a day in the browser's time zone) → `after` / `before` as
+      RFC 3339 instants of that local midnight; `on:D` → both, for that one day;
+      the rest is `q`. A completed filter leaves the box and becomes a
+      `FilterChip` under it; Backspace in an empty box removes the last chip.
+      An unknown filter stays a word of `q`.
+    - **Scope**: a `Segmented` "Search in" under the chips, **This agent**
+      (default; sends `agent_id`) or **All agents** (the workspace; result rows
+      then name the agent).
+    - **Results** replace the conversation list while a search is active, and
+      the pane widens from 232 px to 320 px (the thread narrows; the rail is
+      unchanged). Above them: "N results" (`role="status"`; "N+ results" while
+      `next_cursor` is set) and a sort select, **Newest first** (`sort=recent`)
+      or **Best match** (`relevance`); when `index_complete` is false, a muted
+      line with `ClockIcon`: "Older messages are still being indexed". Each
+      result is a link row (radius 8 px, 8 px padding): the conversation's
+      28 px kind tile, its title (600) and the time (as conversation rows), an
+      "Archived" `Badge` when archived; the author's label (12 px `muted`;
+      "File" after it for an `attachment` hit); the `snippet` through
+      `HighlightedText` with `highlights` (13/19 `ink-2`, three lines). More
+      pages load as the list scrolls (`next_cursor`).
+    - **Opening a result** navigates to `?c=<conversation>&m=<seq>`, which jumps
+      to and highlights the message (**Jump and highlight**); the result stays
+      selected (`subtle`, `aria-current`) and the results stay until the search
+      is cleared.
+    - **States**: `Loading` in the pane while the first page loads; no results:
+      "No messages match “<text>”." with "Try fewer words, or search All
+      agents."; an error: the compact `ErrorState` with Retry; 422
+      `search_query_invalid` as a field error under the box (`too_long`:
+      "Searches are limited to 200 characters."; `too_many_terms`: "Use at most
+      12 words."; `empty` cannot be sent).
+    - **Below 768 px**: the box and chips head the list view; results replace
+      the list; opening a result switches to the thread view, whose Back button
+      returns to the results.
+  - **Accessibility (phase 5)**: the formatting row and message actions are
+    `toolbar`s with roving focus; `Aa` is a toggle button; Write / Preview is a
+    tab list; every suggestion list is a combobox listbox with
+    `aria-activedescendant`; quote strips are links named "In reply to …";
+    the highlighted message receives focus; drop is never the only way to
+    attach (Attach and paste do the same). axe finds nothing on the boards'
+    states in either theme, at 1280 px and 390 px.
   - **Empty conversation.** The middle of the transcript shows the agent's
     large avatar, "Start a conversation with <name>" and the agent's brief
     when it has one, and the composer has focus. There is no dashed
@@ -557,7 +867,9 @@ here, add it here and document it.
 | Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
-| Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. |
+| Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. (Phase 5, P5-CHAT: `QuoteStrip`, `ReplyBar`, `JumpToLatest`, the formatting row and drafts under `components/chat/composer/`, and `components/chat/search/`, built from the phase-5 primitives listed under **Components**.) |
+| Composer tools | `Toolbar` + `ToolbarButton`, `Tooltip` + `Kbd`, `SuggestionList`, `EmojiPicker`, `DropZone` | (phase 5, P5-CHAT) Any row of icon actions is a `Toolbar`; any shortcut is shown with `Kbd` in a `Tooltip`; any typed-ahead choice under a field is a `SuggestionList`; a file drop target is a `DropZone`. |
+| Search results | `FilterChip`, `HighlightedText` | (phase 5, P5-CHAT-4) Active filters as removable chips; server-highlighted plain-text snippets, never HTML. |
 
 ## Information architecture
 

@@ -94,7 +94,9 @@ Part A: new migration, `crates/aurora-db/src/repo/{transcript,search}.rs`, the t
 redaction/retention/delete paths, new `services/aurora-api/src/domains/conversations/search.rs` (+ route
 wiring), the backfill job, `web/openapi.json`, `schema.d.ts`, docs `03`/`05`/`10`/`17`. Part B:
 `components/chat/conversation-list.tsx` (after P5-AGENT-2 releases it), new `components/chat/search/**`,
-`lib/api/search.ts`, tests. Part C: new tool registry entries under the API's tool registry
+`lib/api/search.ts`, new `components/ui/{filter-chip,highlighted-text}.tsx` (and `suggestion-list.tsx` if
+P5-CHAT-3 has not added it yet), tests. The `14` "Message search" text (P5-CHAT-0) is normative for Part B,
+including the list pane widening to 320 px while results show and the date filters as local days. Part C: new tool registry entries under the API's tool registry
 (`domains/tools/**` or wherever `memory_search` lives), docs `12`/`10`/`17`. Part A not parallel with P5-CHAT-1 (same domain and migration range; run after
 it); Part B not parallel with P5-CHAT-2/3 (same panel).
 

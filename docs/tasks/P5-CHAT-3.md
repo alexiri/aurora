@@ -35,7 +35,9 @@ its shortcut; the suggestion list is a `listbox` tied to the textarea (`aria-act
 
 ## Owns
 `components/chat/composer.tsx` (whole file, after P5-CHAT-2), new `components/chat/composer/**`
-(formatting, paste, drafts, emoji), new primitives agreed in P5-CHAT-0 under `components/ui/`,
+(formatting, paste, drafts, emoji), the primitives `14 §Visual design` assigns to this lane under
+`components/ui/` (`SuggestionList`, `EmojiPicker`, `DropZone`, the formatting icons; it reuses P5-CHAT-2's
+`Toolbar`, `Tooltip` and `Kbd`),
 `web/package.json` + lockfile (emoji data, if a package), tests below.
 
 ## Acceptance criteria

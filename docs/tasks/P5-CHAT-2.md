@@ -32,8 +32,12 @@ this sits in), FIX-137 (renderer, used inside quote strips). After FIX-099 and F
 ## Owns
 `components/chat/{message-group,transcript-view,chat-thread}.tsx`, the reply-bar part of `composer.tsx`
 (P5-CHAT-3 takes the file after this lane), `lib/api/conversations.ts` (or wherever the send call lives),
-new `components/chat/{quote-strip,reply-bar,jump-to-latest}.tsx`, tests below. **Not** P5-AGENT-2's files
-(`chat-panel`, `conversation-list`, `approval-card`, `components/agents/**`). No `package.json` change.
+new `components/chat/{quote-strip,reply-bar,jump-to-latest}.tsx`, the shared primitives `14 §Visual design`
+assigns to this lane (P5-CHAT-0): new `components/ui/{toolbar,tooltip,kbd}.tsx` (the message toolbar moves onto
+`Toolbar`; Copy link lives in its More menu, above Redact…) and `ReplyIcon`/`ArrowDownIcon` in
+`components/ui/icons.tsx` (after P5-AGENT-2 releases it), tests below. **Not** P5-AGENT-2's files
+(`chat-panel`, `conversation-list`, `approval-card`, `components/agents/**`). No `package.json` change (the
+Tooltip is in-house, no Radix package).
 
 ## Acceptance criteria
 - [ ] Unit (`web/tests/`): reply bar set/cancel/Esc; quote strip normal/redacted/long excerpt; permalink
