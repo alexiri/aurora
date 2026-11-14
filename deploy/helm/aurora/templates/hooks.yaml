@@ -329,6 +329,13 @@ spec:
     matchLabels: {{- include "aurora.selector" (dict "root" . "component" "migrate") | nindent 6 }}
   policyTypes: [Ingress, Egress]
   egress:
+    {{- /* DNS too: on a first install the regular `allow-dns` policy does not exist yet, and a hook-rendered
+           policy that selects the pod is then the only one in force, so without this rule the Job cannot
+           resolve the database host (kind run, 2026-11-14). The rule is the allow-dns one. */}}
+    - to:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $np.dnsNamespaceSelector | nindent 14 }}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
     {{- include "aurora.dbEgress" . | nindent 4 }}
 {{- if .Values.postgres.enabled }}
 ---

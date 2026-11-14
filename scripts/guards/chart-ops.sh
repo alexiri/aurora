@@ -73,6 +73,14 @@ for d in docs:
         for rule in d["rules"]:
             if set(rule["verbs"]) & {"get", "patch"} and not rule.get("resourceNames"):
                 fail("hook Role %s: %s without resourceNames" % (d["metadata"]["name"], rule["verbs"]))
+# The migrate hook policy admits DNS itself: on a first install no regular allow-dns policy exists yet, so a
+# hook policy that selects the pod without a DNS rule leaves the Job unable to resolve the database host.
+for d in docs:
+    if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-migrate") \
+            and "helm.sh/hook" in (d["metadata"].get("annotations") or {}):
+        ports = {p["port"] for r in d["spec"].get("egress") or [] for p in r.get("ports") or []}
+        if 53 not in ports:
+            fail("hook policy %s has no DNS (53) egress: the migrate Job cannot resolve the database on a first install" % d["metadata"]["name"])
 # one ServiceAccount per hook Job
 sas = {}
 for d in docs:
