@@ -56,7 +56,8 @@ test.describe("agent Previews tab", () => {
     await table.getByRole("button", { name: "npm run dev" }).click();
     const lastStart = page.getByRole("dialog", { name: "Port 3000 — last start" });
     await expect(lastStart).toContainText("ready on 3000");
-    await lastStart.getByRole("button", { name: "Close" }).click();
+    // The dialog has its footer's Close button and, since FIX-149, the × in its title row.
+    await lastStart.getByLabel("Close").click();
 
     await page.getByRole("button", { name: "Add share" }).click();
     const dlg = page.getByRole("dialog", { name: "Share a port" });
