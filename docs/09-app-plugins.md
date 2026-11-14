@@ -170,6 +170,22 @@ metadata:                       # stored in clear, non-secret
     - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.zendesk.com" }
   probe: { … }                  # optional, names the account
 ```
+**Read only (FIX-133, D-240, C-740).** Independent of any method's `access_levels`, a connection's
+`access` (`read` | `write`) is Aurora's: for an app with a `tools.read`/`tools.write` split every
+connect method's window asks Read only / Read and write, and the gateway lets only `tools.read`
+items through a `read` connection (`07 §Read-only connections`). A method can additionally make its
+**credential** read-only where the vendor allows it (the `aurora_access` hook key, §8.2); the
+package's `docs/setup.md` says per method what the vendor enforces and what Aurora enforces.
+
+`scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
+parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
+permissions come from the app's registration, is the package's `oauth_app` method, with its own
+`oauth_clients` entry `github-app` on the same endpoints as the OAuth app, and an own
+`token: oauth2_refresh` for the 8-hour expiring user token with its rotating refresh token). A
+probe `metadata` pointer written `header:<name>` stores that response header (at most 500
+characters, nothing when absent) instead of a JSON field: the personal-token probe keeps a classic
+token's `X-OAuth-Scopes` as `token_scopes`, shown on the connection.
+
 `fields` on `oauth2` exist so a **first** connect with a templated `authorize_url`/`token_url`
 can take `connection.tenant_host` from the form. The host is validated (`tenant` zone, DNS
 name only: no IP literal, userinfo, port or path) **before** the authorize redirect or any

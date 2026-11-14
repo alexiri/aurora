@@ -87,7 +87,7 @@ apps:
       - id: github_app
         kind: hook
         label: GitHub App
-        description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams."
+        description: "An app installed on the repositories you choose; tokens last one hour and do not depend on one person's account. GitHub enforces the app's permissions and repositories. With Read only chosen, Aurora also asks GitHub for a read-only token (and can limit it to named repositories). Recommended for teams."
         recommended: true
         authorize: false
         token: { kind: hook, max_lifetime_secs: 3600 }
@@ -120,7 +120,7 @@ apps:
       - id: oauth
         kind: oauth2
         label: OAuth
-        description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered by an administrator."
+        description: "Sign in with GitHub and act as you, with the scopes you tick. GitHub has no read-only repository scope (repo allows writes), so GitHub does not stop writes here: choose Read only and Aurora blocks them. For GitHub enforcing read-only, use GitHub App sign-in. Needs an OAuth app registered by an administrator."
         client: github
         scopes:
           - { scope: "read:user", name: Read your profile, access: read }
@@ -350,7 +350,7 @@ apps:
       - id: github_app
         kind: hook
         label: GitHub App
-        description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams."
+        description: "An app installed on the repositories you choose; tokens last one hour and do not depend on one person's account. GitHub enforces the app's permissions and repositories. With Read only chosen, Aurora also asks GitHub for a read-only token (and can limit it to named repositories). Recommended for teams."
         recommended: true
         authorize: false
         token: { kind: hook, max_lifetime_secs: 3600 }
@@ -380,7 +380,7 @@ apps:
       - id: oauth
         kind: oauth2
         label: OAuth
-        description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered on the server by an administrator."
+        description: "Sign in with GitHub and act as you, with the scopes you tick. GitHub has no read-only repository scope (repo allows writes), so GitHub does not stop writes here: choose Read only and Aurora blocks them. Needs an OAuth app registered on the server by an administrator."
         client: github-ghes
         scopes:
           - { scope: "read:user", name: Read your profile, access: read }
