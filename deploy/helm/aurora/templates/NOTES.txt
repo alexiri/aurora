@@ -1,6 +1,13 @@
 Aurora {{ .Chart.AppVersion }} installed. Public URL: {{ .Values.externalUrl }}
 Upgrade order is enforced by the migrate hook (runs before any new api replica); roll api, hookhost, gateway, runner, web, connectors.
 Secrets: {{ include "aurora.secretName" . }} (generated once, never overwritten). Gateway CA: {{ include "aurora.caSecretName" . }}.
+
+`helm uninstall` leaves these in the namespace (hook-created, Helm does not delete them): the Secret {{ include "aurora.secretName" . }}
+(generated database passwords, relay token), the Secret {{ include "aurora.caSecretName" . }} (the gateway CA PRIVATE KEY) and the ConfigMap
+{{ include "aurora.fullname" . }}-config. Keep them to reinstall into this namespace with the old database volume; for a clean removal delete them:
+  kubectl -n {{ .Release.Namespace }} delete secret {{ include "aurora.secretName" . }} {{ include "aurora.caSecretName" . }}
+  kubectl -n {{ .Release.Namespace }} delete configmap {{ include "aurora.fullname" . }}-config
+(Secrets you supplied yourself are never touched by the chart.)
 {{- if and .Values.networkPolicy.enabled .Values.runner.enabled (not .Values.networkPolicy.kubeApiOpen) (not (include "aurora.kubeApiCidrs" . | fromJsonArray)) }}
 
 WARNING: the Kubernetes API server addresses are unknown (the `kubernetes` EndpointSlice in `default` could not be read), so
