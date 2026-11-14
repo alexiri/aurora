@@ -1958,6 +1958,13 @@ async fn private_notices_name_the_space_by_label_and_never_by_id() {
     );
     for (p, t) in posts.iter().zip(&texts) {
         assert!(p["target"]["user_ref"].is_string(), "notices are DMs: {p}");
+        // The link token is random base62 and may contain an id-like substring ("C1" did once,
+        // on CI): check the notice with the token removed.
+        let t: String = t
+            .split_whitespace()
+            .map(|w| if w.contains("token=") { "<link>" } else { w })
+            .collect::<Vec<_>>()
+            .join(" ");
         for id in [
             "endjsdy15pdw5x8bbfzwa74n3o",
             "<#space:",

@@ -507,7 +507,10 @@ jobs:
   images-api:
     if: github.event_name == 'push'
     environment: release
-    concurrency: { group: "images-api-${{ github.ref }}", cancel-in-progress: false }
+    # One group per image, as for images-services: a shared group keeps one pending slot, so with two
+    # pushes in flight the queued legs replaced (cancelled) each other — the api leg of run
+    # 43578568574 was cancelled a second after it started.
+    concurrency: { group: "images-api-${{ github.ref }}-${{ matrix.image }}", cancel-in-progress: false }
     needs: [images-builder]
     runs-on: ubuntu-24.04
     permissions:

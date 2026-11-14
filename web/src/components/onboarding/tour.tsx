@@ -129,7 +129,10 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
     return () => el.removeAttribute("data-tour-active");
   }, [stop, narrow]);
 
-  useEffect(() => {
+  // A layout effect, not a passive one: the listener is attached in the same commit that shows the card,
+  // so the dialog is never on screen without its keys (a passive effect could run after a key was
+  // already pressed — the FIX-067 test caught that on CI).
+  useLayoutEffect(() => {
     if (!stops) return;
     const last = stops.length - 1;
     function onKey(e: KeyboardEvent) {
