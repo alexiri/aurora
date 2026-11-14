@@ -7,7 +7,7 @@
 //! 1. images are never inline: `![alt](url)` → `[🖼 alt (host)](url)` (empty alt → `image`);
 //! 2. link schemes: only `http`, `https` and `mailto` stay links, any other becomes its label
 //!    as text; a link whose label looks like a URL or domain of another host gets ` (→ host)`;
-//! 3. raw HTML outside GitHub's allowlist is removed, keeping its text (attributes other than
+//! 3. raw HTML outside the allowlist (`13 §4.3`) is removed, keeping its text (attributes other than
 //!    the harmless ones are dropped from allowlisted tags);
 //! 4. typed neutral tokens (`<@user:…>`, `<@bot:…>`, `<#space:…>`, `<@here>`) never form.
 //!
@@ -27,7 +27,7 @@ pub fn markdown_fallbacks() -> u64 {
     FALLBACKS.load(Ordering::Relaxed)
 }
 
-/// The Markdown dialect of `13 §4.3`: CommonMark 0.31 + GFM + github.com additions.
+/// The Markdown dialect of `13 §4.3`: CommonMark 0.31 + GFM + the additions listed there.
 pub(crate) fn options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -37,7 +37,7 @@ pub(crate) fn options() -> Options {
         | Options::ENABLE_GFM
 }
 
-/// GitHub's raw-HTML allowlist (`docs/tasks/FIX-137.md`), plus `a` under the link rule.
+/// The raw-HTML allowlist of `13 §4.3` (`docs/tasks/FIX-137.md` item 3), plus `a` under the link rule.
 const HTML_ALLOWED: [&str; 41] = [
     "b",
     "i",

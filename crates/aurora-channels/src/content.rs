@@ -1,6 +1,6 @@
 //! Neutral content `{ text?, card? }` (docs/13 §4.3).
 //!
-//! Text is CommonMark 0.31 + GFM + github.com's additions + GitHub's raw-HTML allowlist
+//! Text is CommonMark 0.31 + GFM + the common code-forge additions + the raw-HTML allowlist of 13 §4.3
 //! (D-227, `13 §4.3`). Three constructors make the voice explicit:
 //! [`Content::untrusted`] turns model/user/plugin/connector text into inert
 //! data (SEC-18); [`Content::agent_markdown`] is an agent's own message body, which keeps
@@ -39,7 +39,7 @@ impl Content {
     /// to a thread and `send_message` text, **nothing else** (labels, names, card text, notices,
     /// approval summaries and other people's text stay [`Content::untrusted`]). The text keeps
     /// its Markdown byte for byte ([`sanitize::markdown_safe`]: no inline images, link schemes
-    /// `http`/`https`/`mailto`, raw HTML within GitHub's allowlist, typed neutral tokens inert);
+    /// `http`/`https`/`mailto`, raw HTML within the allowlist of 13 §4.3, typed neutral tokens inert);
     /// a standalone `@here` becomes the core's `<@here>` broadcast.
     pub fn agent_markdown(raw: &str) -> Self {
         Self {
