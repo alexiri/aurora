@@ -754,7 +754,7 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 | GET/POST `/v1/channel-integrations/{id}/user-links`; DELETE `/v1/user-links/{id}` | S/K | admin links; each item carries `method` (`verified_email` \| `sign_in_link` \| `admin`) |
 | GET/POST `/v1/agents/{agent}/presences`; DELETE `/v1/presences/{id}`; POST `/v1/presences/{id}/reattach` | S/K | |
 | GET `/v1/agents/{agent}/space-bindings`; DELETE `/v1/space-bindings/{id}`; PATCH `/v1/space-bindings/{id}` | S/K | owners only |
-| GET `/v1/me/channel-links`; DELETE `/v1/me/channel-links/{id}`; POST `/v1/channel-links/confirm` | S (confirm: SO) | sign-in link flow |
+| GET `/v1/me/channel-links`; DELETE `/v1/me/channel-links/{id}`; GET `/v1/channel-links/preview?token=`; POST `/v1/channel-links/confirm` | S (preview, confirm: SO) | sign-in link flow; the preview shows the chat account, confirm repeats its reference (FIX-112) |
 | GET/PUT `/v1/me/dm-defaults` | S | |
 | GET `/v1/agents/{agent}/reach`; POST `/v1/reach-grants/{id}/decision` | S/K | |
 

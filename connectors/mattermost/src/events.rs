@@ -109,6 +109,20 @@ impl WsEvent {
         })
     }
 
+    /// The ordering lane of the event: its channel (post events carry it in the post, membership
+    /// events in the broadcast or data); `""` for events that belong to no channel.
+    pub fn lane_key(&self) -> String {
+        if let Some(p) = self.post()
+            && !p.channel_id.is_empty()
+        {
+            return p.channel_id;
+        }
+        self.channel_id()
+            .or_else(|| self.str_field("channel_id"))
+            .unwrap_or("")
+            .to_owned()
+    }
+
     pub fn channel_id(&self) -> Option<&str> {
         self.broadcast
             .get("channel_id")

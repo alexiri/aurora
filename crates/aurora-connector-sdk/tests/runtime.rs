@@ -18,6 +18,7 @@ struct ProbeConn(Arc<Probe>);
 
 struct Probe {
     opened: Mutex<Vec<Uuid>>,
+    handles: Mutex<Vec<IntegrationHandle>>,
     sink: Mutex<Option<EventSink>>,
     exec_delay: Duration,
 }
@@ -26,6 +27,7 @@ impl Probe {
     fn new(exec_delay: Duration) -> Arc<Self> {
         Arc::new(Self {
             opened: Mutex::new(vec![]),
+            handles: Mutex::new(vec![]),
             sink: Mutex::new(None),
             exec_delay,
         })
@@ -66,7 +68,11 @@ impl Connector for ProbeConn {
         if let Ok(mut g) = self.0.sink.lock() {
             *g = Some(sink);
         }
-        Ok(IntegrationHandle::new(integration.id))
+        let handle = IntegrationHandle::new(integration.id);
+        if let Ok(mut g) = self.0.handles.lock() {
+            g.push(handle.clone());
+        }
+        Ok(handle)
     }
     async fn update_integration(
         &self,
@@ -389,6 +395,63 @@ async fn event_post_retried_until_acked() -> R {
         posts
             .iter()
             .all(|p| p["events"][0]["event_id"] == posts[0]["events"][0]["event_id"])
+    );
+    tx.send(true)?;
+    h.await??;
+    Ok(())
+}
+
+/// FIX-113: a replica the core cannot be reached from keeps no platform sockets past its lease:
+/// the integration handle is closed, and the integration is opened afresh when the core is back.
+#[tokio::test]
+async fn core_unreachable_past_the_lease_closes_the_integration() -> R {
+    let server = MockServer::start().await;
+    let (replica, integ) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    register_mock(replica).mount(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/connector/retire"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/connector/ops/claim"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ops": []})))
+        .mount(&server)
+        .await;
+    // One good config poll with a 1 s lease, then the core is unreachable.
+    Mock::given(method("GET"))
+        .and(path("/v1/connector/config"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "etag": "e1", "lease_secs": 1,
+            "integrations": [{
+                "id": integ, "org_id": Uuid::nil(), "tenant_ref": "t",
+                "tenant_label": "T", "credentials": {}, "status": "active"
+            }],
+            "presences": [], "space_bindings": []
+        })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/connector/config"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    let probe = Probe::new(Duration::ZERO);
+    let (tx, h) = spawn_run(&probe, cfg(&server.uri()));
+    assert!(wait_for(|| probe.handles.lock().map(|g| g.len()).unwrap_or(0) >= 1).await);
+    let handle = probe.handles.lock().map_err(|e| e.to_string())?[0].clone();
+    assert!(
+        !handle.is_closed(),
+        "inside the lease the integration stays open"
+    );
+    // Past the lease with the core still unreachable, the handle is closed.
+    let closed = tokio::time::timeout(Duration::from_secs(10), handle.closed()).await;
+    assert!(
+        closed.is_ok(),
+        "the handle must close once the lease lapses"
     );
     tx.send(true)?;
     h.await??;

@@ -22,7 +22,10 @@ use aurora_db::repo::channel_inbox::InboxRow;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-pub use speaker::{approval_code, approval_code_matches, send_link_prompt};
+pub use speaker::{
+    LINK_PROMPT_INTERVAL_SECS, approval_code, approval_code_matches, approval_code_prefix,
+    send_link_prompt,
+};
 
 /// The handlers this module contributes to [`crate::domains::connectors::inbox::handlers`].
 pub fn handlers() -> Vec<Arc<dyn InboxHandler>> {

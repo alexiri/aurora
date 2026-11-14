@@ -1177,6 +1177,50 @@ async fn mirror_shared_attribution_failure_and_doorless() {
     );
 }
 
+/// FIX-128: the shared bot's "Agent · via Bot" line stays in shared spaces and is left out of a
+/// 1:1 DM with the bot (where only one agent can answer).
+#[tokio::test]
+async fn shared_bot_reply_in_a_dm_has_no_via_line() {
+    let w = world_with(json!({"_capabilities": {"history": false}})).await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.bind_space(w.integ, "C1", a, "mentions", false).await;
+    // A 1:1 DM with the shared bot.
+    w.post(w.integ, "v1", dm("U1", "hello", "B1")).await;
+    assert_eq!(w.outcome("v1").await["result"], "turn_created");
+    w.finish("done", Some("hi there"), None).await;
+    // The same agent in the channel.
+    w.post(w.integ, "v2", chan("U1", "q", Some("T1"), true))
+        .await;
+    assert_eq!(w.outcome("v2").await["result"], "turn_created");
+    w.finish("done", Some("in channel"), None).await;
+    let posts = w.ops("message.post").await;
+    let answers: Vec<(&str, &str)> = posts
+        .iter()
+        .filter_map(|p| {
+            Some((
+                p["target"]["space_ref"].as_str()?,
+                p["content"]["text"].as_str()?,
+            ))
+        })
+        .collect();
+    let dm_answer = answers.iter().find(|(s, _)| *s == "D1").expect("DM answer");
+    assert!(dm_answer.1.contains("hi there"), "{dm_answer:?}");
+    assert!(
+        !dm_answer.1.contains("via"),
+        "no attribution in a 1:1 DM: {dm_answer:?}"
+    );
+    let chan_answer = answers
+        .iter()
+        .find(|(s, _)| *s == "C1")
+        .expect("channel answer");
+    assert!(
+        chan_answer.1.starts_with("rex · via Daneel"),
+        "a shared channel keeps the attribution: {chan_answer:?}"
+    );
+}
+
 #[tokio::test]
 async fn mirror_skips_web_and_api_turns_and_sends_files() {
     let w = world().await;
@@ -1631,4 +1675,297 @@ async fn commands_approve_and_deny_apply_the_access_law() {
         run("a6", "frobnicate", String::new(), "UM").await,
         "unknown_command"
     );
+}
+
+// ------------------------------------------------------------------ FIX-112 / FIX-128
+
+/// FIX-112 (CHAN-4): twenty messages from one unlinked member of a `listen=all` channel make one
+/// link request and at most one DM, not twenty of each.
+#[tokio::test]
+async fn unlinked_speaker_in_a_listen_all_channel_is_prompted_once() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    w.bind_space(w.integ, "C1", a, "all", false).await;
+    for i in 0..20 {
+        w.post(
+            w.integ,
+            &format!("f{i}"),
+            chan("U9", &format!("spam {i}"), None, false),
+        )
+        .await;
+    }
+    assert_eq!(
+        w.count("SELECT count(*) FROM link_requests WHERE platform_user_ref='U9'")
+            .await,
+        1
+    );
+    let prompts = w
+        .ops("message.post")
+        .await
+        .iter()
+        .filter(|p| {
+            p["content"]["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("/link/channel?token="))
+        })
+        .count();
+    assert_eq!(prompts, 1);
+    // The person who was prompted keeps a working token with the platform account recorded.
+    let (name,): (Option<String>,) = sqlx::query_as(
+        "SELECT platform_display_name FROM link_requests WHERE platform_user_ref='U9'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(name.as_deref(), Some("Ann"));
+    // After the window a new prompt (and token) goes out.
+    sqlx::query("UPDATE link_requests SET created_at = now() - interval '11 minutes'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.post(w.integ, "f-late", chan("U9", "again", None, false))
+        .await;
+    assert_eq!(
+        w.count("SELECT count(*) FROM link_requests WHERE platform_user_ref='U9'")
+            .await,
+        2
+    );
+}
+
+/// FIX-112 (CHAN-4): a refused person is told once per agent per window, however often they write.
+#[tokio::test]
+async fn refused_person_gets_one_notice_per_window() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    w.bind_space(w.integ, "C1", a, "all", false).await;
+    w.link(w.integ, "U5", w.outsider).await;
+    for i in 0..5 {
+        w.post(
+            w.integ,
+            &format!("r{i}"),
+            chan("U5", &format!("let me in {i}"), None, false),
+        )
+        .await;
+    }
+    let notices = w
+        .ops("message.post")
+        .await
+        .iter()
+        .filter(|p| {
+            p["content"]["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("can't talk to"))
+        })
+        .count();
+    assert_eq!(notices, 1);
+}
+
+/// FIX-112 (CHAN-6): `approve <code>` finds the newest of 201 pending approvals.
+#[tokio::test]
+async fn approve_by_code_finds_the_newest_of_many_pending_approvals() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "UM", w.member).await;
+    w.post(w.integ, "e1", dm("UM", "q", "BD1")).await;
+    let cid: Uuid = sqlx::query_scalar("SELECT id FROM conversations")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, gateway_instance_id, method, host, path, summary, status, deadline, created_at) SELECT gen_random_uuid(), $1,$2,$3,$4,$5,'POST','h.example','/p','{}','pending', now() + interval '1 hour', now() - make_interval(secs => 1000 - g) FROM generate_series(1, 200) g")
+        .bind(w.org).bind(w.ws).bind(a).bind(cid).bind(Uuid::now_v7())
+        .execute(w.h.pool()).await.unwrap();
+    let newest = Uuid::now_v7();
+    sqlx::query("INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, gateway_instance_id, method, host, path, summary, status, deadline) VALUES ($1,$2,$3,$4,$5,$6,'POST','h.example','/p','{}','pending', now() + interval '1 hour')")
+        .bind(newest).bind(w.org).bind(w.ws).bind(a).bind(cid).bind(Uuid::now_v7())
+        .execute(w.h.pool()).await.unwrap();
+    assert_eq!(
+        w.count("SELECT count(*) FROM approvals WHERE status='pending'")
+            .await,
+        201
+    );
+    w.send(
+        w.integ,
+        "ap",
+        "command.invoked",
+        cmd("approve", &inbox::approval_code(newest), "UM", "dm"),
+    )
+    .await;
+    w.run().await;
+    assert_eq!(w.outcome("ap").await["result"], "approved");
+    let st: String = sqlx::query_scalar("SELECT status FROM approvals WHERE id=$1")
+        .bind(newest)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(st, "approved");
+    // Garbage that is not a code matches nothing (and costs no scan).
+    w.send(
+        w.integ,
+        "ap2",
+        "command.invoked",
+        cmd("approve", "not a code!", "UM", "dm"),
+    )
+    .await;
+    w.run().await;
+    assert_eq!(w.outcome("ap2").await["result"], "approval_not_found");
+}
+
+/// FIX-112 (CHAN-7): a failed second `file.fetch` makes the event retry; the retry returns the
+/// first file's attachment instead of fetching (and orphaning) another.
+#[tokio::test]
+async fn retried_event_keeps_one_attachment_per_file() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    let mut p = dm("U1", "see files", "BD1");
+    p["files"] = json!([
+        {"ref": "F1", "name": "a.txt", "size": 5, "content_type": "text/plain"},
+        {"ref": "F2", "name": "b.txt", "size": 5, "content_type": "text/plain"}
+    ]);
+    w.send(w.integ, "e1", "message.posted", p).await;
+    let ok = |body: &[u8]| {
+        (
+            Some(body.to_vec()),
+            json!({"outcome": "ok", "data": {"upload_url_used": true}}),
+        )
+    };
+    // First pass: F1 is fetched; the connector never answers F2, and the worker dies waiting for
+    // it (the file.fetch wait is 30 s; the event is later retried).
+    let (timed_out, ()) = tokio::join!(
+        async {
+            tokio::time::timeout(Duration::from_secs(4), w.run())
+                .await
+                .is_err()
+        },
+        w.serve(1, |op| {
+            assert_eq!(op["payload"]["file_ref"], "F1");
+            ok(b"hello")
+        })
+    );
+    assert!(timed_out, "the event must still be waiting for F2");
+    assert_eq!(
+        w.count("SELECT count(*) FROM attachments WHERE filename = 'a.txt'")
+            .await,
+        1
+    );
+    // The retry: the event is released and processed again; only F2 is asked of the connector.
+    sqlx::query("UPDATE channel_inbox SET status='pending', lease_until=NULL, next_attempt_at=now() WHERE event_id='e1'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    tokio::join!(
+        w.run(),
+        w.serve(1, |op| {
+            assert_eq!(
+                op["payload"]["file_ref"], "F2",
+                "F1 must not be fetched again"
+            );
+            ok(b"world")
+        })
+    );
+    assert_eq!(w.outcome("e1").await["result"], "turn_created");
+    // (The fake connector's uploads are all named a.txt.) Two files, two attachments, both bound
+    // to the turn: the first file's attachment was reused, not orphaned by a second fetch.
+    let rows: Vec<(String, Option<Uuid>)> =
+        sqlx::query_as("SELECT status, turn_id FROM attachments")
+            .fetch_all(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 2, "one attachment per file: {rows:?}");
+    assert!(
+        rows.iter().all(|r| r.0 == "bound" && r.1.is_some()),
+        "{rows:?}"
+    );
+}
+
+/// FIX-112 (CHAN-9): `unbind` commits its audit row with the deactivation.
+#[tokio::test]
+async fn unbind_command_writes_an_audit_row() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    w.link(w.integ, "UO", w.owner).await;
+    w.bind_space(w.integ, "C1", a, "mentions", false).await;
+    w.send(
+        w.integ,
+        "u1",
+        "command.invoked",
+        cmd("unbind", "", "UO", "channel"),
+    )
+    .await;
+    w.run().await;
+    assert_eq!(w.outcome("u1").await["result"], "unbound");
+    let n: i64 = w
+        .count("SELECT count(*) FROM audit_log WHERE action='space_binding.delete'")
+        .await;
+    assert_eq!(n, 1);
+}
+
+/// FIX-128: an unlinked DM to the bot is answered in that same DM, with no `In …` prefix; a notice
+/// about a channel names the channel by its label. No notice carries a raw space id.
+#[tokio::test]
+async fn private_notices_name_the_space_by_label_and_never_by_id() {
+    let w = world_with(json!({"_capabilities": {"ephemeral": false}})).await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    for space in ["C1", "grp1id", "nolabelid"] {
+        w.bind_space(w.integ, space, a, "all", false).await;
+    }
+    // 1. Unlinked person writes to the bot in a DM.
+    let mut p = dm("U9", "hello", "B1");
+    p["space"] = json!({"ref": "endjsdy15pdw5x8bbfzwa74n3o__w4gfbzdfiffr3fzkjbiw4uk1ay", "kind": "dm", "label": ""});
+    w.post(w.integ, "d1", p).await;
+    // 2. Another unlinked person speaks in a channel.
+    w.post(w.integ, "d2", chan("U8", "hi all", None, false))
+        .await;
+    // 3. ...and in a group DM.
+    let mut g = chan("U7", "yo", None, true);
+    g["space"] = json!({"ref": "grp1id", "kind": "group_dm", "label": "ann, bob"});
+    w.post(w.integ, "d3", g).await;
+    // 4. ...and in a channel with no label.
+    let mut n = chan("U6", "psst", None, true);
+    n["space"] = json!({"ref": "nolabelid", "kind": "channel", "label": ""});
+    w.post(w.integ, "d4", n).await;
+    let posts = w.ops("message.post").await;
+    let texts: Vec<String> = posts
+        .iter()
+        .map(|p| p["content"]["text"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(posts.len(), 4, "{texts:?}");
+    assert!(
+        texts[0].starts_with("To work with agents here"),
+        "{}",
+        texts[0]
+    );
+    assert!(
+        texts[1].starts_with("In #general: To work with"),
+        "{}",
+        texts[1]
+    );
+    assert!(
+        texts[2].starts_with("In your group message with ann, bob: To work with"),
+        "{}",
+        texts[2]
+    );
+    assert!(
+        texts[3].starts_with("To work with agents here"),
+        "{}",
+        texts[3]
+    );
+    for (p, t) in posts.iter().zip(&texts) {
+        assert!(p["target"]["user_ref"].is_string(), "notices are DMs: {p}");
+        for id in [
+            "endjsdy15pdw5x8bbfzwa74n3o",
+            "<#space:",
+            "C1",
+            "grp1id",
+            "nolabelid",
+        ] {
+            assert!(!t.contains(id), "notice names a space id ({id}): {t}");
+        }
+    }
 }

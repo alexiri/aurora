@@ -4,7 +4,7 @@
 //! authorizes (§5.5); `approve`/`deny` need `can_approve` (phase 2, RFE-012) on the approval's workspace.
 
 use super::inbox::send::{self, Ctx};
-use super::inbox::{Retry, approval_code_matches, ignored, outcome};
+use super::inbox::{Retry, approval_code_matches, approval_code_prefix, ignored, outcome};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::connectors::inbox::InboxError;
@@ -98,7 +98,7 @@ impl Cmd<'_> {
             &mut conn,
             self.ctx,
             &self.sender,
-            &self.c.space.reference,
+            &self.c.space,
             self.thread(),
             &self.c.user_ref,
             text,
@@ -371,7 +371,35 @@ impl Cmd<'_> {
                 .await?;
             return Ok(outcome("unbind_forbidden"));
         }
-        space_bindings::deactivate(pool, b.id).await.retry()?;
+        // FIX-112: deactivating a binding commits with its audit row.
+        let mut tx = audit::begin(self.state).await.retry()?;
+        space_bindings::deactivate(&mut *tx, b.id).await.retry()?;
+        let agent = aurora_db::repo::agents::get(pool, b.agent_id)
+            .await
+            .retry()?;
+        let mut ev = AuditEvent::new(
+            AuditActor::system(self.ctx.integ.connector_id.clone()).with_source("channel"),
+            "space_binding.delete",
+            Outcome::Success,
+        )
+        .org(self.ctx.integ.org_id)
+        .target("space_binding", b.agent_id)
+        .metadata(json!({
+            "integration_id": self.ctx.id(),
+            "space_ref": self.c.space.reference,
+            "agent_id": b.agent_id,
+            "user_id": user,
+            "via": "channel"
+        }));
+        if let Some(a) = &agent {
+            ev = ev.workspace(a.workspace_id);
+        }
+        audit::insert_tx(&mut tx, &ev)
+            .await
+            .map_err(|e| InboxError::Retry(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| InboxError::Retry(e.to_string()))?;
         self.reply("Unbound. Re-binding needs an owner again.")
             .await?;
         Ok(outcome("unbound"))
@@ -391,11 +419,16 @@ impl Cmd<'_> {
                 .await?;
             return Ok(outcome("code_missing"));
         }
+        // FIX-112: the code is looked up in SQL (a pending approval of any age is found); a string
+        // that is not a code matches nothing.
+        let prefix = approval_code_prefix(code);
         let mut matches = Vec::new();
-        for a in approvals::list_pending_for(pool, user, None, None, 200)
-            .await
-            .retry()?
-        {
+        for a in match &prefix {
+            Some(p) => approvals::list_pending_by_code(pool, user, p, 50)
+                .await
+                .retry()?,
+            None => Vec::new(),
+        } {
             let Some(conv) = a.conversation_id else {
                 continue;
             };
@@ -407,11 +440,16 @@ impl Cmd<'_> {
                 matches.push(a);
             }
         }
-        if matches.is_empty() {
+        if matches.is_empty() && prefix.is_some() {
             // Phase 2, RFE-012: a plain member who can see the approval is told why nothing happened.
-            for a in approvals::list_pending_undecidable_for(pool, user, 200)
-                .await
-                .retry()?
+            for a in approvals::list_pending_undecidable_by_code(
+                pool,
+                user,
+                prefix.as_ref().map_or(&[][..], |p| &p[..]),
+                50,
+            )
+            .await
+            .retry()?
             {
                 let Some(conv) = a.conversation_id else {
                     continue;
@@ -480,9 +518,10 @@ async fn link_prompt(cmd: &Cmd<'_>, conn: &mut PgConnection) -> Result<(), Inbox
         cmd.ctx,
         conn,
         &cmd.sender,
-        &cmd.c.space.reference,
+        &cmd.c.space,
         cmd.thread(),
         &cmd.c.user_ref,
+        None,
         None,
         format!("link:{}", cmd.row.event_id),
     )

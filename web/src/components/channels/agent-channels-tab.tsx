@@ -6,6 +6,7 @@ import { DynamicForm } from "@/components/apps/dynamic-form";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
@@ -24,6 +25,7 @@ import {
   type Listen,
   type Presence,
   type PresenceMode,
+  type SpaceBinding,
 } from "@/lib/api/channels";
 import { dedicatedFields, formFields, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
 
@@ -138,6 +140,7 @@ function PresenceRow({ agentId, p, connector }: { agentId: string; p: Presence; 
   const detach = useDetachPresence(agentId);
   const fields = connector && p.mode === "dedicated" ? dedicatedFields(connector) : [];
   const [open, setOpen] = useState(false);
+  const [detaching, setDetaching] = useState(false);
   const [values, setValues] = useState<FieldValues>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   return (
@@ -163,10 +166,20 @@ function PresenceRow({ agentId, p, connector }: { agentId: string; p: Presence; 
         >
           Re-attach
         </Button>
-        <Button variant="outline" size="sm" disabled={detach.isPending} onClick={() => detach.mutate(p.id)}>
+        <Button variant="outline" size="sm" disabled={detach.isPending} onClick={() => setDetaching(true)}>
           Detach
         </Button>
       </div>
+      <ConfirmDialog
+        open={detaching}
+        onOpenChange={setDetaching}
+        title="Detach this agent from the chat integration?"
+        description={`The agent stops answering in ${p.tenant_label} (${p.mode} identity). Conversations stay; you can attach it again later.`}
+        confirmLabel="Detach"
+        danger
+        busy={detach.isPending}
+        onConfirm={() => detach.mutate(p.id, { onSettled: () => setDetaching(false) })}
+      />
       {open && fields.length ? (
         <form
           className="space-y-4 rounded-card border border-line bg-subtle p-3 sm:p-4"
@@ -224,6 +237,7 @@ function Bindings({ agentId }: { agentId: string }) {
   const q = useSpaceBindings(agentId);
   const patch = usePatchSpaceBinding(agentId);
   const del = useDeleteSpaceBinding(agentId);
+  const [removing, setRemoving] = useState<SpaceBinding | null>(null);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   return (
@@ -267,7 +281,7 @@ function Bindings({ agentId }: { agentId: string }) {
                 className="sm:ml-auto"
                 aria-label={`Remove binding ${b.space_label}`}
                 disabled={del.isPending}
-                onClick={() => del.mutate(b.id)}
+                onClick={() => setRemoving(b)}
               >
                 Remove
               </Button>
@@ -275,6 +289,20 @@ function Bindings({ agentId }: { agentId: string }) {
           ))}
         </ItemList>
       )}
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={(o) => {
+          if (!o) setRemoving(null);
+        }}
+        title="Remove this space binding?"
+        description={`The agent stops listening in ${removing?.space_label ?? "this space"}. Someone who owns the agent can bind it again.`}
+        confirmLabel="Remove binding"
+        danger
+        busy={del.isPending}
+        onConfirm={() => {
+          if (removing) del.mutate(removing.id, { onSettled: () => setRemoving(null) });
+        }}
+      />
       <MutationError error={patch.error ?? del.error} />
     </Section>
   );

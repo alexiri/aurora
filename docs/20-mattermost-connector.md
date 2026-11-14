@@ -60,6 +60,29 @@ integration config.
   with an active binding, fetch posts since `now − catchup_window` (default
   10 min, max 24 h) via `GET /api/v4/channels/{id}/posts?since=` and emit them
   as events; core deduplication makes replays harmless.
+- **Event ordering**: socket events of one channel are handled one after another
+  in the order they arrived (a queue per channel; channels run in parallel).
+  Handling an event awaits channel, user and file lookups, and without the queue a
+  post deleted within that latency reached the core as "deleted" (an unknown
+  message) followed by "posted" with the original text. Events that name no
+  channel share one queue.
+- **Platform URL** (`server_url` is supplied by the tenant): the connector connects
+  only to public addresses. A literal loopback, private (RFC 1918, ULA),
+  link-local (including the cloud metadata address), CGNAT, unspecified or
+  multicast address, `localhost`, and a name that resolves only to such addresses
+  are refused when the integration is validated and again when it is opened; the
+  operator whose Mattermost lives on a private network sets
+  `AURORA_MM_ALLOW_PRIVATE_NETWORKS=true`. What the target answers is never
+  echoed into validation errors (they say "mattermost answered <status>"; the
+  detail is in the connector's debug log). The REST client and the WebSocket both
+  trust the PEM bundle named by `AURORA_TLS_EXTRA_CA_BUNDLE` (the file mounted as
+  `tls.extra_ca_bundle`) in addition to their normal roots.
+- **Lease**: a replica that cannot reach the core for longer than the `lease_secs`
+  of its last configuration closes its integrations (sockets included) and opens
+  them again when the core answers: it assumes another replica owns them now.
+- A WebSocket authentication reply without an error code is a platform fault, not
+  a revoked token (`presence.removed` follows an explicit 401 only); a reaction in
+  another team's channel is ignored like a post is.
 - Events mapped:
 
 | Mattermost | Neutral event | Notes |
@@ -110,10 +133,23 @@ integration config.
   selected_option }`; the core verifies its own token and authorizes the
   clicker; (3) respond `200 {}` immediately (the card is updated by a later
   `message.update` op). Operators MUST restrict this port to the Mattermost
-  server's addresses (network policy / firewall).
-- `POST /mm/commands`: slash command; verify the per-command token; emit
+  server's addresses (network policy / firewall). The integration is the one
+  named in the signed context (`iid`); a bad or missing signature, an unknown
+  integration or a missing clicker is refused 403 and nothing reaches the core.
+  **The clicker's identity is the `user_id` the Mattermost server sends;
+  Aurora trusts the Mattermost server for it.** That is sound only because the
+  server makes this callback itself and the action context (token and
+  signature) is never delivered to Mattermost clients; the conformance suite
+  checks this against the supported server versions (a non-admin member's
+  fetch of an approval post carries no integration context).
+- `POST /mm/commands`: slash command; the integration is the one **whose
+  command token matches** the request's token among those serving the request's
+  team (never "the first integration in the team"); an unknown team, an
+  unknown token and a wrong token are all refused 403 alike. Emit
   `command.invoked` with `name` = first word and `args`; respond with an
-  ephemeral "working…" acknowledgement; replies come as ops.
+  ephemeral "working…" acknowledgement; replies come as ops. A team has one
+  command per trigger, so when several integrations serve a team the one with
+  the smallest id keeps `/aurora` and the others register `/aurora-<id suffix>`.
 - In DMs `!<command> args` and in channels `@bot <command> args` (for
   `help|agents|use|link|unlink|bind|unbind|approve|deny`) are also mapped to
   `command.invoked` when slash commands are not registered.

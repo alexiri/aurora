@@ -165,13 +165,49 @@ pub async fn delete_mine(s: &AppState, c: &SessionCaller, id: Uuid) -> Result<()
     Ok(())
 }
 
-/// `POST /channel-links/confirm` (C-36): unknown, used and expired tokens all answer 410.
+fn link_expired() -> ApiError {
+    ApiError::gone("link_expired", "This link has expired or was already used.")
+}
+
+/// `GET /channel-links/preview?token=` (FIX-112): which chat account the link binds, so the person
+/// confirms knowingly. Same 410 for unknown/used/expired tokens; the caller must be a member of the
+/// integration's organization (as for confirming), so the page never describes a chat account to
+/// someone who could not link it.
+pub async fn preview(
+    s: &AppState,
+    c: &SessionCaller,
+    token_text: &str,
+) -> Result<LinkPreview, ApiError> {
+    if !token_text.starts_with("aui_") || token_text.len() > 256 {
+        return Err(link_expired());
+    }
+    let lr = link_requests::get_by_hash(&s.pool, &token::hash(token_text))
+        .await?
+        .filter(|lr| !lr.used && !lr.expired)
+        .ok_or_else(link_expired)?;
+    let integ = integ_repo::get(&s.pool, lr.integration_id)
+        .await?
+        .ok_or_else(link_expired)?;
+    c.org(s, integ.org_id).await?;
+    Ok(LinkPreview {
+        integration_id: integ.id,
+        connector_id: integ.connector_id,
+        tenant_label: integ.tenant_label,
+        platform_user_ref: lr.platform_user_ref,
+        platform_display_name: lr.platform_display_name,
+        platform_email_hint: lr.platform_email_hint,
+        expires_at: lr.expires_at,
+    })
+}
+
+/// `POST /channel-links/confirm` (C-36): unknown, used and expired tokens all answer 410. The
+/// request repeats the platform user the page showed and is refused if it is not the token's.
 pub async fn confirm(
     s: &AppState,
     c: &SessionCaller,
     req: ConfirmLinkRequest,
 ) -> Result<UserLink, ApiError> {
-    let expired = || ApiError::gone("link_expired", "This link has expired or was already used.");
+    let expired = link_expired;
     if !req.token.starts_with("aui_") || req.token.len() > 256 {
         return Err(expired());
     }
@@ -187,6 +223,12 @@ pub async fn confirm(
         .ok_or_else(expired)?;
     // Only members of the integration's organization can link into it.
     c.org(s, integ.org_id).await?;
+    if req.platform_user_ref != lr.platform_user_ref {
+        return Err(ApiError::unprocessable(
+            "link_reference_mismatch",
+            "That is not the chat account this link was made for.",
+        ));
+    }
     let existing = repo::user_link_for(&mut *tx, lr.integration_id, &lr.platform_user_ref).await?;
     let link_id = match existing {
         Some(l) if l.user_id == c.user_id => l.id,

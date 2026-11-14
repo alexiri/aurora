@@ -273,6 +273,7 @@ pub async fn post_card(
             post_op_id: op_id,
             space_ref: &space_ref,
             thread_ref: &thread_ref,
+            addressee_ref: space_ref.strip_prefix(DM_PREFIX),
         },
     )
     .await?;

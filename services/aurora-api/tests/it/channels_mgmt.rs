@@ -1534,30 +1534,31 @@ async fn link_url(w: &W, integ: Uuid, platform: &str) -> String {
 async fn confirm_flow_expired_used_and_cross_user() {
     let w = W::new().await;
     let integ = w.integration(&w.fake, "T1").await;
-    let confirm = |who: &str, token: &str| {
+    let confirm = |who: &str, token: &str, platform: &str| {
         let who = who.to_owned();
         let token = token.to_owned();
+        let platform = platform.to_owned();
         let w = &w;
         async move {
             w.call(
                 &who,
                 Method::POST,
                 "/v1/channel-links/confirm",
-                Some(json!({"token": token})),
+                Some(json!({"token": token, "platform_user_ref": platform})),
             )
             .await
         }
     };
     let t1 = link_url(&w, integ, "U-1").await;
     // Not a member of the org: the token stays usable.
-    assert_eq!(confirm(&w.outsider, &t1).await.0, 404);
-    let (s, v) = confirm(&w.wsmember, &t1).await;
+    assert_eq!(confirm(&w.outsider, &t1, "U-1").await.0, 404);
+    let (s, v) = confirm(&w.wsmember, &t1, "U-1").await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["method"], "sign_in_link");
     assert_eq!(v["platform_user_ref"], "U-1");
     assert_eq!(v["user"]["id"], json!(w.users.wsmember));
     // Used.
-    let (s, v) = confirm(&w.wsmember, &t1).await;
+    let (s, v) = confirm(&w.wsmember, &t1, "U-1").await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
         (410, Some("link_expired")),
@@ -1569,40 +1570,122 @@ async fn confirm_flow_expired_used_and_cross_user() {
         .execute(w.h.pool())
         .await
         .unwrap();
-    let (s, v) = confirm(&w.wsmember, &t2).await;
+    let (s, v) = confirm(&w.wsmember, &t2, "U-2").await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
         (410, Some("link_expired")),
         "{v}"
     );
     // Unknown token.
-    assert_eq!(confirm(&w.wsmember, "aui_unknown").await.0, 410);
+    assert_eq!(confirm(&w.wsmember, "aui_unknown", "U-1").await.0, 410);
     // Cross-user: the platform user already belongs to another Aurora user.
     let t3 = link_url(&w, integ, "U-1").await;
-    let (s, v) = confirm(&w.plain, &t3).await;
+    let (s, v) = confirm(&w.plain, &t3, "U-1").await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
         (409, Some("already_linked")),
         "{v}"
     );
     // The same user confirming again is idempotent and consumes the token.
-    let (s, _) = confirm(&w.wsmember, &t3).await;
+    let (s, _) = confirm(&w.wsmember, &t3, "U-1").await;
     assert_eq!(s, 200);
-    assert_eq!(confirm(&w.wsmember, &t3).await.0, 410);
+    assert_eq!(confirm(&w.wsmember, &t3, "U-1").await.0, 410);
     // Session only.
     let (_, key) = w.h.api_key(w.users.wsmember, w.org, None, false).await;
-    let (s, _, v) =
-        w.h.send(
+    for (method, uri, body) in [
+        (
             Method::POST,
             "/v1/channel-links/confirm",
-            &[("authorization", bearer(&key).as_str())],
-            Some(json!({"token": "aui_x"})),
+            Some(json!({"token": "aui_x", "platform_user_ref": "U-1"})),
+        ),
+        (Method::GET, "/v1/channel-links/preview?token=aui_x", None),
+    ] {
+        let (s, _, v) =
+            w.h.send(
+                method,
+                uri,
+                &[("authorization", bearer(&key).as_str())],
+                body,
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (StatusCode::FORBIDDEN, Some("session_required")),
+            "{uri}"
+        );
+    }
+}
+
+/// FIX-112 (CHAN-1): the confirm page can show which chat account a link binds, and confirming
+/// repeats that account: a request naming another one is refused and leaves the token unused.
+#[tokio::test]
+async fn link_preview_shows_the_chat_account_and_confirm_must_repeat_it() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let tok = link_url(&w, integ, "U-77").await;
+    sqlx::query("UPDATE link_requests SET platform_display_name='Mallory Chat', platform_email_hint='m@evil.example'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let uri = format!("/v1/channel-links/preview?token={tok}");
+    let (s, v) = w.call(&w.wsmember, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["platform_user_ref"], "U-77");
+    assert_eq!(v["platform_display_name"], "Mallory Chat");
+    assert_eq!(v["platform_email_hint"], "m@evil.example");
+    assert_eq!(v["integration_id"], json!(integ));
+    assert_eq!(v["connector_id"], "fake");
+    // Not a member of the org: nothing is revealed.
+    assert_eq!(w.call(&w.outsider, Method::GET, &uri, None).await.0, 404);
+    // Unknown token.
+    let (s, v) = w
+        .call(
+            &w.wsmember,
+            Method::GET,
+            "/v1/channel-links/preview?token=aui_nope",
+            None,
         )
         .await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
-        (StatusCode::FORBIDDEN, Some("session_required"))
+        (410, Some("link_expired"))
     );
+    // A confirm that repeats another account is refused and consumes nothing.
+    for body in [
+        json!({"token": tok, "platform_user_ref": "U-1"}),
+        json!({"token": tok, "platform_user_ref": ""}),
+    ] {
+        let (s, v) = w
+            .call(
+                &w.wsmember,
+                Method::POST,
+                "/v1/channel-links/confirm",
+                Some(body),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("link_reference_mismatch")),
+            "{v}"
+        );
+    }
+    let linked: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM user_links WHERE platform_user_ref='U-77'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(linked, 0);
+    let (s, v) = w
+        .call(
+            &w.wsmember,
+            Method::POST,
+            "/v1/channel-links/confirm",
+            Some(json!({"token": tok, "platform_user_ref": "U-77"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // Used tokens no longer preview.
+    assert_eq!(w.call(&w.wsmember, Method::GET, &uri, None).await.0, 410);
 }
 
 // ------------------------------------------------------------------ DM defaults

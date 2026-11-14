@@ -99,14 +99,17 @@ pub async fn update_managed<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
-/// Managed connectors that are not `disabled` and whose type is one of `types`.
+/// Managed connectors a host serves (C-456): `active` and `awaiting_registration` ones whose type
+/// is one of `types`. A connector waiting for an admin's approval of a widened manifest
+/// (`pending_approval`) gets no assignment, so its decrypted settings are not handed out.
 pub async fn list_managed_enabled<'e, E: PgExecutor<'e>>(
     exec: E,
     types: &[String],
 ) -> Result<Vec<ConnectorRow>, DbError> {
     Ok(sqlx::query_as(&format!(
         "SELECT {COLS} FROM connectors
-         WHERE managed AND status <> 'disabled' AND type_id = ANY($1) ORDER BY id"
+         WHERE managed AND status IN ('active', 'awaiting_registration')
+           AND type_id = ANY($1) ORDER BY id"
     ))
     .bind(types)
     .fetch_all(exec)
@@ -185,7 +188,7 @@ pub async fn upsert_bootstrap<'e, E: PgExecutor<'e>>(
         "INSERT INTO connectors (id, token_hash, display_name, status)
          VALUES ($1,$2,$3,'awaiting_registration')
          ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash, updated_at = now()
-         WHERE connectors.token_hash <> EXCLUDED.token_hash",
+         WHERE connectors.token_hash <> EXCLUDED.token_hash AND NOT connectors.managed",
     )
     .bind(id)
     .bind(token_hash)

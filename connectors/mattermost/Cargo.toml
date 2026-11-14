@@ -47,3 +47,5 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
+tower = { workspace = true }
+http-body-util = { workspace = true }

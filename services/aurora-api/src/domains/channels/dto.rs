@@ -286,6 +286,30 @@ pub struct CreateUserLinkRequest {
 pub struct ConfirmLinkRequest {
     /// The `aui_…` token from the sign-in link.
     pub token: String,
+    /// The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is
+    /// refused (422 `link_reference_mismatch`) when it is not the token's chat account.
+    pub platform_user_ref: String,
+}
+
+/// `GET /channel-links/preview?token=`: the chat account a sign-in link would bind (docs/13 §5.9).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LinkPreview {
+    pub integration_id: Uuid,
+    pub connector_id: String,
+    pub tenant_label: String,
+    /// The platform's reference for the person (what the confirm request repeats).
+    pub platform_user_ref: String,
+    /// What the platform called the person when the link was requested, if known.
+    pub platform_display_name: Option<String>,
+    /// The email the platform asserted, if any (a hint, never an authorization).
+    pub platform_email_hint: Option<String>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct LinkPreviewParams {
+    /// The `aui_…` token from the sign-in link.
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]

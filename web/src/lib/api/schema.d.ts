@@ -1860,6 +1860,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channel-links/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The chat account a sign-in link token would bind (FIX-112). Session only. */
+        get: operations["previewChannelLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/connections/{id}": {
         parameters: {
             query?: never;
@@ -5151,6 +5168,11 @@ export interface components {
         /** @enum {string} */
         ConditionOp: "contains" | "not_contains" | "equals";
         ConfirmLinkRequest: {
+            /**
+             * @description The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is
+             *     refused (422 `link_reference_mismatch`) when it is not the token's chat account.
+             */
+            platform_user_ref: string;
             /** @description The `aui_…` token from the sign-in link. */
             token: string;
         };
@@ -6544,6 +6566,21 @@ export interface components {
         };
         /** @enum {string} */
         LinkPolicy: "ask" | "allow" | "blocked";
+        /** @description `GET /channel-links/preview?token=`: the chat account a sign-in link would bind (docs/13 §5.9). */
+        LinkPreview: {
+            connector_id: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            integration_id: string;
+            /** @description What the platform called the person when the link was requested, if known. */
+            platform_display_name?: string | null;
+            /** @description The email the platform asserted, if any (a hint, never an authorization). */
+            platform_email_hint?: string | null;
+            /** @description The platform's reference for the person (what the confirm request repeats). */
+            platform_user_ref: string;
+            tenant_label: string;
+        };
         LinkSelf: {
             /** Format: uuid */
             agent_id: string;
@@ -15443,6 +15480,52 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    previewChannelLink: {
+        parameters: {
+            query: {
+                /** @description The `aui_…` token from the sign-in link. */
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkPreview"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

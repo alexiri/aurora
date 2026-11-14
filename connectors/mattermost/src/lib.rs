@@ -7,10 +7,12 @@ pub mod callbacks;
 pub mod connector;
 pub mod events;
 pub mod integ;
+pub mod lanes;
 pub mod managed;
 pub mod ops;
 pub mod presence;
 pub mod render;
+pub mod tls;
 pub mod ws;
 
 pub use connector::{DEFAULT_CAPABILITIES, MattermostConnector};

@@ -110,7 +110,9 @@ async fn mirror(
         let shared = matches!(sender, Sender::Shared(_));
         let first =
             proactive || thread_links::finished_turns_via(&mut *conn, link.id, t.id).await? == 0;
-        let attribution = (shared && first).then(|| {
+        // FIX-128 (docs/13 §5.2): no "Agent · via Bot" line in a 1:1 DM with the bot, where one
+        // agent answers and the line only repeats what the conversation already says.
+        let attribution = (shared && first && link.kind != "direct").then(|| {
             format!(
                 "{} · via {}",
                 sanitize::label(&agent.name),

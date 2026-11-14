@@ -35,6 +35,8 @@ if [ "${1:-}" = "--mattermost" ]; then
   # shellcheck disable=SC1091
   set -a; . "$ROOT/target/mattermost/env"; set +a
   export CONFORMANCE_PLATFORM=mattermost
+  # The test Mattermost is on loopback; the connector refuses private server URLs otherwise.
+  export AURORA_MM_ALLOW_PRIVATE_NETWORKS=true
   export CONFORMANCE_CONNECTOR_BIN="$ROOT/target/debug/aurora-connector-mattermost"
   echo "conformance: mattermost mode: $CONFORMANCE_CONNECTOR_BIN against $AURORA_MM_URL"
   cargo test -p aurora-conformance-connector --test scenarios -- --test-threads=1 "$@"

@@ -35,6 +35,31 @@ pub const DEFAULT_CAPABILITIES: &[&str] = &[
 
 pub const MAX_FILE_BYTES: u64 = 52_428_800;
 
+/// The slash-command trigger of integration `id` among the integrations `peers` that serve the
+/// same Mattermost team (`peers` includes `id`). A team has one command per trigger, so two
+/// integrations sharing `/aurora` would overwrite each other's command and token: the one with the
+/// smallest id keeps `aurora`, the others get `aurora-<id prefix>`.
+pub fn command_trigger(id: Uuid, peers: &[Uuid]) -> String {
+    if peers.iter().all(|p| *p >= id) {
+        "aurora".to_owned()
+    } else {
+        format!("aurora-{}", &id.simple().to_string()[24..])
+    }
+}
+
+/// The bot's display name as Mattermost shows it: the bot record's `display_name`, or its username
+/// when the record is unavailable, empty or shorter than two characters (a single letter is not a
+/// name anyone can recognise).
+pub fn bot_display_name(bot_record: Option<&Value>, username: &str) -> String {
+    bot_record
+        .and_then(|b| b.get("display_name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|n| n.chars().count() >= 2)
+        .unwrap_or(username)
+        .to_owned()
+}
+
 /// State shared with the public callbacks.
 pub struct Shared {
     pub settings: Settings,
@@ -232,7 +257,8 @@ impl MattermostConnector {
         let bot_token =
             text(&v.credentials, "bot_token").ok_or_else(|| invalid("bot_token is required"))?;
         let admin_token = text(&v.credentials, "admin_token");
-        let mm = Mm::new(&server).map_err(|e| OpError::new(ErrorCode::Invalid, e))?;
+        let mm = Mm::with_policy(&server, &self.shared.settings.net)
+            .map_err(|e| OpError::new(ErrorCode::Invalid, e))?;
 
         // The bot identity (401 → credential_dead).
         let me = mm.get(&bot_token, "/users/me").await?;
@@ -305,12 +331,20 @@ impl MattermostConnector {
 
         // Apply the display name when the bot may be edited (best effort).
         let wanted = text(&v.config, "shared_bot_display_name");
-        let mut display = me
-            .get("first_name")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&bot_name)
-            .to_owned();
+        // The name Mattermost shows for the bot is the bot record's `display_name` (the user
+        // record's `first_name` is something else and was once a single letter).
+        let bot_record = {
+            let path = format!("/bots/{bot_id}");
+            match admin_token.as_deref().filter(|_| admin_ok) {
+                Some(a) => mm.get(a, &path).await.ok(),
+                None => None,
+            }
+        };
+        let bot_record = match bot_record {
+            Some(r) => Some(r),
+            None => mm.get(&bot_token, &format!("/bots/{bot_id}")).await.ok(),
+        };
+        let mut display = bot_display_name(bot_record.as_ref(), &bot_name);
         if let Some(w) = wanted {
             let tok = admin_token
                 .as_deref()
@@ -365,6 +399,13 @@ impl MattermostConnector {
             return;
         }
         let url = format!("{}/mm/commands", public.trim_end_matches('/'));
+        let peers: Vec<Uuid> = shared
+            .all()
+            .iter()
+            .filter(|i| i.team_id == integ.team_id)
+            .map(|i| i.id)
+            .collect();
+        let trigger = command_trigger(integ.id, &peers);
         let existing = integ
             .mm
             .get_q(
@@ -377,11 +418,11 @@ impl MattermostConnector {
             .and_then(|v| v.as_array().cloned())
             .and_then(|a| {
                 a.into_iter()
-                    .find(|c| c.get("trigger").and_then(Value::as_str) == Some("aurora"))
+                    .find(|c| c.get("trigger").and_then(Value::as_str) == Some(trigger.as_str()))
             });
         let body = json!({
             "team_id": integ.team_id,
-            "trigger": "aurora",
+            "trigger": trigger,
             "method": "P",
             "url": url,
             "display_name": "Aurora",
@@ -615,5 +656,27 @@ impl Connector for MattermostConnector {
 
     fn router(&self) -> Option<axum::Router> {
         Some(crate::callbacks::router(self.shared.clone()))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// FIX-128: the bot's name is the bot record's display name; a one-letter value (the `R` owners
+    /// saw in "Daneel · via R") or a missing record falls back to the username.
+    #[test]
+    fn bot_display_name_comes_from_the_bot_record() {
+        let rec = json!({"user_id": "x", "username": "daneel", "display_name": "R. Daneel Olivaw"});
+        assert_eq!(bot_display_name(Some(&rec), "daneel"), "R. Daneel Olivaw");
+        let padded = json!({"display_name": "  Daneel  "});
+        assert_eq!(bot_display_name(Some(&padded), "daneel"), "Daneel");
+        let short = json!({"display_name": "R"});
+        assert_eq!(bot_display_name(Some(&short), "daneel"), "daneel");
+        let empty = json!({"display_name": ""});
+        assert_eq!(bot_display_name(Some(&empty), "daneel"), "daneel");
+        assert_eq!(bot_display_name(Some(&json!({})), "daneel"), "daneel");
+        assert_eq!(bot_display_name(None, "daneel"), "daneel");
     }
 }
