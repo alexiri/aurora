@@ -1077,9 +1077,7 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     `/v1/harnesses`, shown only when more than one is enabled; unavailable ones are disabled
     with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
     every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
-    `/v1/agents/{a}/models`), effort, proactive messaging mode. (FIX-138, owner 2026-11-14)
-    Below the form, a **Terminal** card with the terminal's **Shell** control (see Terminal),
-    only where the Terminal page exists (hosted agent, `terminal.enabled`).
+    `/v1/agents/{a}/models`), effort, proactive messaging mode.
   - **Access** — (phase 4, P4-GRANTS) for an app whose manifest is `custom_only` the grant
     form has no "Full access" option, shows "This app only supports custom access: choose
     the tools the agent may use" and starts with every tool on *block*; an app with
@@ -1157,7 +1155,8 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     because…" shows "Preview in use". No horizontal scroll at 390 px (rows collapse to cards, the
     URL wraps), both themes, tokens and primitives only.
   - **Computer** — sandbox state, "awake because…" reasons, processes,
-    restart; (FIX-025, D-158, C-584) a **Last start attempt** section when the
+    restart; (FIX-138, owner 2026-11-14) a **Terminal** card with the terminal's **Shell**
+    control (see Terminal) where the Terminal page exists; (FIX-025, D-158, C-584) a **Last start attempt** section when the
     sandbox has one: when it started, the last phase and detail the runner
     reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`,
     `creating`, `booting`…), the elapsed time to the runner's last progress
@@ -1222,8 +1221,9 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     over the same cookie, route and single-use grant as the tab; it counts against the sandbox's
     leg cap (4409 reads "The sandbox's terminal session limit was reached.").
     (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) in the
-    **Terminal** card of Behaviour › Instructions (owner 2026-11-14: moved off the Terminal
-    page, which only names where it is chosen; it applies at once, with no Save),
+    **Terminal** card of the **Computer** page, under the Computer state card, shown only where
+    the Terminal page exists (owner 2026-11-14: moved off the Terminal page, which only names
+    where it is chosen; it applies at once),
     remembered per browser and agent (`localStorage` key `aurora.terminal.shell.<agent id>`; a
     server-side preference would need a table for one enum). It applies to the next session — the
     open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the

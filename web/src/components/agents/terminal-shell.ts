@@ -1,6 +1,6 @@
 /**
  * (FIX-138, D-246) The shell a new terminal session starts: bash (default) or zsh, remembered per browser and agent.
- * Chosen on the agent's Instructions page; read by the terminal pane (tab and standalone window) at each connect.
+ * Chosen on the agent's Computer page; read by the terminal pane (tab and standalone window) at each connect.
  */
 export type Shell = "bash" | "zsh";
 

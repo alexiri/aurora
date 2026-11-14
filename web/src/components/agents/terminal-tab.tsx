@@ -133,7 +133,7 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-ink-2">
-          A shell inside the agent&apos;s sandbox (bash or zsh, chosen under Behaviour › Instructions). Tab completes in the
+          A shell inside the agent&apos;s sandbox (bash or zsh, chosen on the Computer page). Tab completes in the
           shell; to leave the terminal with the keyboard, press Esc, then Tab.
         </p>
         <button
@@ -229,7 +229,7 @@ export function TerminalPane({
           ? { kind: "connecting" }
           : { kind: "reconnecting", attempt: attemptRef.current, max: wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS },
       );
-      // The shell is chosen on the Instructions page (D-246) and read at each connect, so a change applies to the next
+      // The shell is chosen on the Computer page (D-246) and read at each connect, so a change applies to the next
       // session only. bash is the server's default, so only zsh names itself (`?shell=` is an enumeration, 422 otherwise).
       ws = new WebSocket(`/v1/agents/${agentId}/terminal${readShell(agentId) === "zsh" ? "?shell=zsh" : ""}`);
       ws.binaryType = "arraybuffer";

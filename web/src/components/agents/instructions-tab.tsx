@@ -8,49 +8,14 @@ import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions, FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
-import { Segmented } from "@/components/ui/segmented";
 import { useHarnesses, usePatchAgent } from "@/lib/api/agents";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
 import type { Agent } from "@/lib/api/queries";
 
 import { AvatarField } from "./avatar-field";
-import { readShell, SHELL_OPTIONS, writeShell, type Shell } from "./terminal-shell";
 
-/**
- * (FIX-138, D-246) The terminal's shell, on the agent's settings page rather than above the pane (owner 2026-11-14).
- * Still remembered per browser and agent, so it applies at once (no Save) and to the next terminal session only.
- */
-function TerminalShellSection({ agentId }: { agentId: string }) {
-  // Lazy initial read: the Instructions page renders client-side only (inside the agent page's query), so no hydration mismatch.
-  const [shell, setShell] = useState<Shell>(() => readShell(agentId));
-  const [unsaved, setUnsaved] = useState(false);
-  return (
-    <Section
-      id="terminal-shell"
-      title="Terminal"
-      description="The shell a new terminal session starts. Remembered in this browser; an open terminal keeps its shell until you reconnect."
-      card
-    >
-      <Segmented<Shell>
-        label="Shell"
-        value={shell}
-        options={SHELL_OPTIONS}
-        onChange={(s) => {
-          setShell(s);
-          setUnsaved(!writeShell(agentId, s));
-        }}
-      />
-      {unsaved ? (
-        <p role="status" className="mt-2 text-xs text-muted">
-          This browser blocks storage, so the choice was not remembered; terminals start bash.
-        </p>
-      ) : null}
-    </Section>
-  );
-}
-
-export function InstructionsTab({ agent, wsId, terminal = false }: { agent: Agent; wsId: string; terminal?: boolean }) {
+export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string }) {
   const patch = usePatchAgent(wsId, agent.id);
   const [name, setName] = useState(agent.name);
   const [brief, setBrief] = useState(agent.brief);
@@ -190,8 +155,6 @@ export function InstructionsTab({ agent, wsId, terminal = false }: { agent: Agen
         ) : null}
       </FormActions>
       </Form>
-      {/* Only where the Terminal page exists: hosted agents on an instance with the terminal on. */}
-      {terminal && agent.kind === "hosted" ? <TerminalShellSection agentId={agent.id} /> : null}
       <ConfirmDialog
         open={confirmSwitch}
         onOpenChange={setConfirmSwitch}

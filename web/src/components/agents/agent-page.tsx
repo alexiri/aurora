@@ -238,12 +238,12 @@ export function AgentPage() {
             <AgentChannelsTab agentId={agent.id} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
           ) : null}
           {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
-          {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "computer" && !byo ? (
+            <ComputerTab agentId={agent.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
+          ) : null}
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "previews" && !byo ? <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
-          {tab === "instructions" ? (
-            <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} terminal={!byo && terminalEnabled} />
-          ) : null}
+          {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
           {tab === "access" && workspace.data ? (
             <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} />
           ) : null}

@@ -3,10 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { InstructionsTab } from "@/components/agents/instructions-tab";
+import { ComputerTab } from "@/components/agents/computer-tab";
 import { TerminalTab } from "@/components/agents/terminal-tab";
 
-// FIX-138 (D-246): the terminal's shell. The choice lives on the agent's Instructions page (owner 2026-11-14), remembered
+// FIX-138 (D-246): the terminal's shell. The choice lives on the agent's Computer page (owner 2026-11-14), remembered
 // per browser and agent. bash is the server's default, so the default socket URL carries no query; zsh names itself
 // with `?shell=zsh`; a change applies to the next session only (the open socket is not re-opened).
 
@@ -17,11 +17,22 @@ vi.mock("@wterm/react", () => ({
   useTerminal: () => ({ ref: { current: null }, write }),
   Terminal: () => <div data-testid="wterm-pane" />,
 }));
+const sandbox = {
+  agent_id: "agent-1", state: "running", image: null, keep_awake_reasons: [], failure_code: null, failure_message: null,
+  start_attempt: null, retryable: false, start_log: [], processes: [], ports: [], restart_to_update: false,
+};
 vi.mock("@/lib/api/conversations", () => ({
-  useSandbox: () => ({ data: { state: "running" } }),
-  useModels: () => ({ data: { items: [] }, isError: false }),
+  useSandbox: () => ({ data: sandbox, isPending: false, isError: false }),
+  useRestartSandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
+  useRetrySandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
+  useStartFailures: () => ({ data: { items: [] } }),
 }));
-vi.mock("@/components/agents/avatar-field", () => ({ AvatarField: () => null }));
+vi.mock("@/lib/api/queries", () => ({
+  useInstance: () => ({ data: undefined }),
+  useResolve: () => ({ data: undefined }),
+  useOrg: () => ({ data: undefined }),
+}));
+vi.mock("@/components/agents/previews-tab", () => ({ ShareDialog: () => null }));
 
 class UrlSocket {
   static OPEN = 1;
@@ -39,13 +50,6 @@ class UrlSocket {
   close() {}
 }
 
-const agent = (kind: "byo" | "hosted") => ({
-  id: "agent-1", org_id: "o1", workspace_id: "w1", handle: "daneel", name: "Daneel", kind,
-  is_default: false, harness: "claude-code", model_provider: null, model_endpoint_id: null, model_id: null,
-  effort: null, proactive_messaging: "ask", brief: "", effective_frozen: false,
-  created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-});
-
 function wrap(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
@@ -53,7 +57,6 @@ function wrap(ui: ReactNode) {
 
 beforeEach(() => {
   vi.stubGlobal("WebSocket", UrlSocket as unknown as typeof WebSocket);
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], default: "claude-code" }), { status: 200 })));
   UrlSocket.urls = [];
   window.localStorage.clear();
 });
@@ -78,9 +81,9 @@ describe("terminal pane reads the shell (FIX-138)", () => {
   });
 });
 
-describe("shell picker on the Instructions page (FIX-138, owner 2026-11-14)", () => {
-  it("defaults to bash and remembers a new choice without Save", () => {
-    wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" terminal />);
+describe("shell picker on the Computer page (FIX-138, owner 2026-11-14)", () => {
+  it("defaults to bash and remembers a new choice at once", () => {
+    wrap(<ComputerTab agentId="agent-1" terminal />);
     expect(screen.getByRole("radio", { name: "bash" })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: "zsh" }));
     expect(screen.getByRole("radio", { name: "zsh" })).toBeChecked();
@@ -89,15 +92,13 @@ describe("shell picker on the Instructions page (FIX-138, owner 2026-11-14)", ()
 
   it("shows the remembered choice", () => {
     window.localStorage.setItem("aurora.terminal.shell.agent-1", "zsh");
-    wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" terminal />);
+    wrap(<ComputerTab agentId="agent-1" terminal />);
     expect(screen.getByRole("radio", { name: "zsh" })).toBeChecked();
   });
 
-  it("is absent without the terminal, and for BYO agents", () => {
-    wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" />);
-    expect(screen.queryByRole("radiogroup", { name: "Shell" })).not.toBeInTheDocument();
-    cleanup();
-    wrap(<InstructionsTab agent={agent("byo")} wsId="w1" terminal />);
+  it("is absent when the instance has no terminal", () => {
+    wrap(<ComputerTab agentId="agent-1" />);
+    expect(screen.getByText("Processes")).toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "Shell" })).not.toBeInTheDocument();
   });
 });
