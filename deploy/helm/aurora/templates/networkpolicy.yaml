@@ -23,6 +23,25 @@ spec:
         - namespaceSelector:
             matchLabels: {{- toYaml $np.dnsNamespaceSelector | nindent 14 }}
       ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+{{- if $np.monitoringFrom }}
+---
+# (FIX-102, docs/15 §Observability) scraping: the operator's monitoring peers (networkPolicy.monitoringFrom,
+# raw NetworkPolicy `from` entries) reach every ops/metrics listener: api 4101 (its ops router shares the
+# public port; the edge never routes /metrics), gateway 4103, hookhost 4104, runner 4106, connector host 4192,
+# relay 4193. Only the listeners that exist answer; the API's internal 4111 and the sandbox-facing ports stay shut.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-monitoring, namespace: {{ $ns }}}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from: {{- toYaml $np.monitoringFrom | nindent 8 }}
+      ports:
+        {{- range (list 4101 4103 4104 4106 4192 4193) }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+{{- end }}
 ---
 # api: ingress from edge, web (SSR), runner, hookhost, connectors, gateway; 4111 internal from hookhost/gateway.
 apiVersion: networking.k8s.io/v1
@@ -191,18 +210,23 @@ spec:
     - to:
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
       ports: [{protocol: TCP, port: 4101}]
+    {{- /* (FIX-102) the API server addresses (kubeApiCidrs, else the `kubernetes` EndpointSlice read at
+           install/upgrade time); no silent 0.0.0.0/0 (networkPolicy.kubeApiOpen says it explicitly). With
+           nothing known the rule is omitted — an empty `to:` would mean "everywhere". */}}
+    {{- $runnerApi := include "aurora.kubeApiCidrs" . | fromJsonArray }}
+    {{- if or $runnerApi $np.kubeApiOpen }}
     - to:
-        {{- if .Values.networkPolicy.kubeApiCidrs }}
-        {{- range .Values.networkPolicy.kubeApiCidrs }}
+        {{- range $runnerApi }}
         - ipBlock: {cidr: {{ . }}}
         {{- end }}
-        {{- else }}
+        {{- if $np.kubeApiOpen }}
         - ipBlock: {cidr: 0.0.0.0/0}
         {{- end }}
       ports:
         {{- range (default (list 443 6443) $np.kubeApiPorts) }}
         - {protocol: TCP, port: {{ . }}}
         {{- end }}
+    {{- end }}
 {{- if $np.cilium.enabled }}
 ---
 # Cilium: the API server is the `kube-apiserver` entity, which no NetworkPolicy ipBlock matches
@@ -322,17 +346,8 @@ spec:
             - {port: {{ .port | quote }}, protocol: TCP}
 {{- end }}
 {{- end }}
----
-# migrate hook (pre-upgrade runs while the policies above exist): database egress only.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata: {name: {{ $full }}-migrate, namespace: {{ $ns }}}
-spec:
-  podSelector:
-    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "migrate") | nindent 6 }}
-  policyTypes: [Ingress, Egress]
-  egress:
-    {{- include "aurora.dbEgress" . | nindent 4 }}
+{{- /* (FIX-102) the migrate Job's policies are hook resources (hooks.yaml): on `helm upgrade` from a chart
+       that predates them the hooks run before any regular resource, under default-deny. */}}
 {{- if .Values.postgres.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -346,7 +361,6 @@ spec:
     - from:
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
         {{- include "aurora.peer" (dict "root" . "c" "gateway") | nindent 8 }}
-        {{- include "aurora.peer" (dict "root" . "c" "migrate") | nindent 8 }}
       ports: [{protocol: TCP, port: 5432}]
 {{- end }}
 ---

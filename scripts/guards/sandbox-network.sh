@@ -17,7 +17,12 @@ require_helm sandbox-network || exit 0
 check() {
   local label="$1"; shift
   # (FIX-106) allowSharedLogin: not about the gateway's database role.
-  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | python3 -I -c '
+  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | analyse "$label"
+}
+# analyse <label>: the rendered chart on stdin.
+analyse() {
+  local label="$1"
+  python3 -I -c '
 import sys, yaml
 label = sys.argv[1]
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
@@ -39,7 +44,23 @@ if sorted(allow["spec"]["policyTypes"]) != ["Egress"]:
 ports = sorted(p["port"] for r in allow["spec"]["egress"] for p in r.get("ports", []))
 if ports != [4102, 4105]:
     fail("sandboxes egress must be exactly gateway:4102 + runner:4105, got %s" % ports)
-print("sandbox-network: %s ok (egress 4102+4105 only)" % label)
+# (FIX-102) The other half: what the CORE namespace admits from the sandboxes namespace. Every ingress
+# rule whose peer is the sandboxes namespace may open gateway:4102 and runner:4105 and nothing else.
+sb_ns = sb_pol[0]["metadata"]["namespace"]
+admitted = []
+for d in policies:
+    if d in sb_pol:
+        continue
+    for rule in d["spec"].get("ingress") or []:
+        for peer in rule.get("from") or []:
+            sel = (peer.get("namespaceSelector") or {}).get("matchLabels") or {}
+            if sel.get("kubernetes.io/metadata.name") == sb_ns:
+                for p in rule.get("ports") or []:
+                    admitted.append((d["metadata"]["name"], p["port"]))
+got = sorted(p for _, p in admitted)
+if got != [4102, 4105]:
+    fail("the core namespace must admit exactly gateway:4102 + runner:4105 from the sandboxes namespace, got %s" % admitted)
+print("sandbox-network: %s ok (egress 4102+4105 only, core ingress from sandboxes 4102+4105 only)" % label)
 ' "$label"
 }
 
@@ -50,3 +71,12 @@ check "previews on" --set relay.enabled=true --set relay.domain=previews.guard.i
 # api (control plane) and serves the PTY inside the sandbox — no new sandbox egress.
 check "terminal on" --set terminal.enabled=true --set config.terminal.enabled=true
 check "terminal+previews on" --set terminal.enabled=true --set config.terminal.enabled=true --set relay.enabled=true --set relay.domain=previews.guard.invalid
+
+# (FIX-102) Mutation self-test: opening one more port (the api's 4101) from the sandboxes namespace in the
+# gateway policy must fail the guard.
+if helm template guard deploy/helm/aurora --set database.allowSharedLogin=true \
+    | sed '0,/ports: \[{protocol: TCP, port: 4102}\]/s//ports: [{protocol: TCP, port: 4102}, {protocol: TCP, port: 4101}]/' \
+    | analyse "self-test" >/dev/null 2>&1; then
+  fail "self-test: a core ingress opened to the sandboxes namespace on 4101 passed"
+fi
+echo "sandbox-network: self-test ok"

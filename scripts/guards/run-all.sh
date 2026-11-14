@@ -20,6 +20,9 @@ bash scripts/guards/edge-routes.sh
 echo "== hook-policies (OPS-024: pre-upgrade hooks admitted by hook-rendered policies)"
 bash scripts/guards/hook-policies.sh
 
+echo "== chart-ops (FIX-102: no v1 Endpoints, httpGet probes, ops-port peers, no silent 0.0.0.0/0, hook RBAC, PDB, half-enabled switches)"
+bash scripts/guards/chart-ops.sh
+
 echo "== helm-gateway-role (FIX-106: the gateway's least-privilege role is automatic, required, or explicitly waived)"
 source scripts/guards/lib.sh
 if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; fi

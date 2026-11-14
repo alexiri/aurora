@@ -51,8 +51,9 @@ Switching the org setting off has the same effect for that organization.
 
 ### The edge
 
-`relay.enabled` adds one wildcard host rule `*.<preview domain>` → `aurora-relay:4112` to the Ingress and HTTPRoute
-templates; the dashboard host rules, `/internal` and `/metrics` are unchanged. The edge in front of the cluster must
+`relay.enabled` adds one wildcard host rule `*.<preview domain>` → `aurora-relay:4112` to the Ingress and, with Gateway
+API, a **second `HTTPRoute`** (`<fullname>-previews`, `spec.hostnames: ["*.<preview domain>"]`; `HTTPRouteRule` has no
+hostnames of its own, so the wildcard cannot live inside the dashboard's route, FIX-102); the dashboard host rules, `/internal` and `/metrics` are unchanged. The edge in front of the cluster must
 **not buffer responses**, must pass **WebSocket upgrades** (nginx: map `Upgrade`/`Connection`, see the recipe in
 [terminal.md](terminal.md#the-edge-and-websockets)), use read/send timeouts of at least 600 s and accept request bodies
 up to `relay.request_body_max_bytes`. The relay trusts the edge's overwritten `X-Forwarded-Proto`/`-For` as the API does

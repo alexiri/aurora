@@ -87,5 +87,5 @@ metadata:
   name: {{ $full }}-runner-services
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-runner-services}
 subjects:
-  - {kind: ServiceAccount, name: {{ $full }}-runner}
+  - {kind: ServiceAccount, name: {{ $full }}-runner, namespace: {{ .Release.Namespace }}}
 {{- end }}
