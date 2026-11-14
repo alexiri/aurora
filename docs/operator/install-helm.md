@@ -699,7 +699,12 @@ external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the
    what you set (`ClusterIP`, or `LoadBalancer` with `loadBalancerSourceRanges`).
 6. **Bootstrap and first use.** `kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email <you>`
    (see [Post-install checks](#post-install-checks)), sign in, register a runner ([runners.md](runners.md)),
-   start a sandbox, send one chat turn, park it and wake it.
+   start a sandbox, send one chat turn, park it and wake it. A new instance's first administrator is sent
+   to **Admin → Setup** (`/admin/setup`, the setup wizard, `docs/14 §Onboarding`, C-533..C-536) until the placement is
+   saved. The page is read-only: it lists what is configured and what is still to do in five steps (roles, placement,
+   LLM, runners, optional), each check with one plain sentence and, where one exists, the Helm value that changes it.
+   Nothing on it shows a secret. People who join later see their own Welcome page and tour instead (per-user,
+   `/o/{org}/w/{ws}/welcome`); the account menu replays them.
 7. **Isolation.** From inside a sandbox Pod, confirm the SEC-02 and SEC-09 probes from the kind e2e
    (`tests/e2e-hosted/tests/k8s.rs`): no DNS, no route to the API, the database, hookhost or the cloud
    metadata address; only the two allowed ports answer. If `runtimeClass` is set (gVisor, Kata),
