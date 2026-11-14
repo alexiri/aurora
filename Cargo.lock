@@ -878,6 +878,7 @@ dependencies = [
  "aurora-config",
  "aurora-core",
  "aurora-crypto",
+ "aurora-testkit",
  "base64 0.22.1",
  "percent-encoding",
  "regex",
