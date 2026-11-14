@@ -80,6 +80,8 @@ pub async fn resolve(
         lk.closed = true;
     }
     let names = &names[..names.len().min(MAX_NAMES)];
+    // From here on a name the lookup was not asked about is a group to the renderer.
+    lk.resolved = Some(names.iter().cloned().collect());
     let mut todo: Vec<String> = Vec::new();
     {
         let c = lock(&cache.names);
@@ -93,6 +95,7 @@ pub async fn resolve(
     if todo.is_empty() {
         return;
     }
+    // (`resolve` with nothing to ask is cheap: the early return above leaves `lk.resolved` set.)
     // Users, in one request.
     let users: Vec<String> = match mm.post(bot, "/users/usernames", &json!(todo)).await {
         Ok(Value::Array(a)) => a

@@ -378,6 +378,9 @@ fn fragments() -> impl Strategy<Value = String> {
         "!<a href=\"https://e.example/p.png\">x</a>",
         "<code>@here</code>",
         "https://e.example/?d=SECRET",
+        "go www.e.example/?d=SECRET (www.e.example) ftp://e.example/x",
+        "<div>www.e.example/x ftp://e.example/y</div>",
+        "$www.e.example/m$ $$ftp://e.example/n$$",
         "|a|b|\n|-|-|\n|1|2|![x](https://e.example/?d=S)|",
         "|a|b|\n|-|-|\n|1|2|https://e.example/?d=S|",
         "see https://e.example/a_b.",
@@ -549,14 +552,26 @@ fn loose_joint(s: &str) -> bool {
     prose_runs(s).iter().any(|(t, _)| t.contains("]("))
 }
 
-/// A bare `http(s)://` outside code and links (D-270).
-fn bare_url_left(s: &str) -> bool {
-    prose_runs(s).iter().any(|(t, in_link)| {
-        !in_link && {
-            let l = t.to_ascii_lowercase();
-            l.contains("http://") || l.contains("https://")
-        }
+/// Whether `t` holds a URL the pinned server extracts for a preview (measured on Mattermost
+/// 11.7.15, `docs/20`): `http://`, `https://`, `ftp://` and `www.` after a non-name character.
+fn preview_url_in(t: &str) -> bool {
+    let l = t.to_ascii_lowercase();
+    if l.contains("http://") || l.contains("https://") || l.contains("ftp://") {
+        return true;
+    }
+    l.match_indices("www.").any(|(i, _)| {
+        l[i + 4..].starts_with(|c: char| c.is_ascii_alphanumeric())
+            && !l[..i].chars().next_back().is_some_and(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | '/' | ':')
+            })
     })
+}
+
+/// A bare URL (`http(s)://`, `ftp://`, `www.`) outside code and links (D-270).
+fn bare_url_left(s: &str) -> bool {
+    prose_runs(s)
+        .iter()
+        .any(|(t, in_link)| !in_link && preview_url_in(t))
 }
 
 /// A bare URL in the text of raw HTML (outside tags and outside an `<a>`), D-270.
@@ -576,8 +591,7 @@ fn html_bare_url_left(s: &str) -> bool {
         };
         while let Some(p) = tag_at(rest) {
             let text = &rest[..p];
-            let l = text.to_ascii_lowercase();
-            if !in_a && (l.contains("http://") || l.contains("https://")) {
+            if !in_a && preview_url_in(text) {
                 return true;
             }
             let tail = &rest[p..];
@@ -590,8 +604,7 @@ fn html_bare_url_left(s: &str) -> bool {
             }
             rest = &tail[end..];
         }
-        let l = rest.to_ascii_lowercase();
-        if !in_a && (l.contains("http://") || l.contains("https://")) {
+        if !in_a && preview_url_in(rest) {
             return true;
         }
     }
@@ -725,6 +738,30 @@ fn bare_urls_and_autolinks_become_labelled_links() {
             "<https://a.example/?a=1&b=2>",
             "[https://a.example/?a=1\\&b=2](https://a.example/?a=1&b=2)",
         ),
+        // Review 4, measured on Mattermost 11.7.15: the server also extracts `www.` and `ftp://`
+        // for a preview (an embed is made; `Www.`/`WWW.` are not, rewritten all the same).
+        (
+            "go www.evil.example/?d=SECRET now",
+            "go [www.evil.example/?d=SECRET](https://www.evil.example/?d=SECRET) now",
+        ),
+        (
+            "(www.a.example)",
+            "([www.a.example](https://www.a.example))",
+        ),
+        (
+            "<www.a.example/x>",
+            "<[www.a.example/x](https://www.a.example/x)>",
+        ),
+        ("WWW.A.EXAMPLE", "[WWW.A.EXAMPLE](https://WWW.A.EXAMPLE)"),
+        ("ftp://h.example/p.", "ftp:\\//h.example/p."),
+        (
+            "<div>www.evil.example/x</div>",
+            "<div><a href=\"https://www.evil.example/x\">www.evil.example/x</a></div>",
+        ),
+        (
+            "<div>ftp://h.example/p</div>",
+            "<div>ftp&#58;//h.example/p</div>",
+        ),
     ] {
         let out = md(src);
         assert_eq!(out, want, "{src}");
@@ -740,8 +777,9 @@ fn bare_urls_and_autolinks_become_labelled_links() {
         "[https://a.example](https://a.example)",
         "[r]: https://a.example/\n\n[x][r]",
         "<a@b.example>",
-        "www.example.org and example.org/path",
+        "example.org/path and awww.example.org and foo.www.example.org and x@www.example.com",
         "mailto:a@b.example",
+        "www and www. and www.-x",
     ] {
         assert_eq!(md(same), same, "{same:?}");
     }

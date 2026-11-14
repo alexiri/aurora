@@ -5,7 +5,7 @@
 //! which start with `![`). Nothing after the sanitizer may produce what the sanitizer refuses.
 
 use aurora_channels::Content;
-use aurora_connector_mattermost::render::{Lookups, render_text};
+use aurora_connector_mattermost::render::{Lookups, mention_refs, render_text};
 use aurora_core::sanitize::markdown_chunks;
 use proptest::prelude::*;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
@@ -73,14 +73,32 @@ fn live_pings(post: &str, groups: &[&str]) -> Vec<String> {
 }
 
 /// The posts of `raw` with, for each, how many `<@here>` the core produced (the allowed
-/// broadcasts), under the given lookups.
-fn posts_with(raw: &str, lk: &Lookups) -> Vec<(String, usize)> {
+/// broadcasts). The name lookup is modelled as the connector runs it: the names come from
+/// `mention_refs` (the converted text included), those that are in `groups` are groups, those in
+/// `known` are users, the rest are neither; `closed` is a lookup that failed.
+fn posts_with(raw: &str, groups: &[&str], known: &[&str], closed: bool) -> Vec<(String, usize)> {
     markdown_chunks(raw, 400)
         .into_iter()
         .map(|c| {
             let neutral = Content::agent_markdown(&c).text.unwrap_or_default();
             let allowed = neutral.matches("<@here>").count();
-            (render_text(&neutral, lk), allowed)
+            let names = mention_refs(&neutral).names;
+            let lk = Lookups {
+                groups: names
+                    .iter()
+                    .filter(|n| groups.contains(&n.as_str()))
+                    .cloned()
+                    .collect(),
+                known: names
+                    .iter()
+                    .filter(|n| known.contains(&n.as_str()))
+                    .cloned()
+                    .collect(),
+                closed,
+                resolved: Some(names.into_iter().collect()),
+                ..Lookups::default()
+            };
+            (render_text(&neutral, &lk), allowed)
         })
         .collect()
 }
@@ -258,6 +276,11 @@ fn fragments() -> impl Strategy<Value = String> {
         "[@channel](https://a.example) [x @all y][r]\n\n[r]: https://a.example/@here",
         "# @channel\n> @all\n- @here\n| @channel |",
         "@devs @Devs, **@DEVS** [@devs](https://a.example)",
+        // Review 4: a name the connector's own HTML conversion joins.
+        "ping @dev<span></span>s and @dev<sub>s</sub> and @de<b></b>vs",
+        "@chan<span></span>nel @al<i></i>l @he<code></code>re @d<kbd></kbd>evs",
+        "@dev<span></span>s.",
+        "@alic<span></span>e @bo<b></b>b",
         "<code>@channel</code> <kbd>@all</kbd> <pre>@here</pre>",
         "<div>@channel</div> <b>@all</b>",
         "x@channel foo@all.example @channelx @channel.foo",
@@ -270,6 +293,10 @@ fn fragments() -> impl Strategy<Value = String> {
         "|a|b|\n|-|-|\n|1|2|https://e.example/?d=S @channel [x](javascript:alert(1))|",
         "a | b\n--|--\n1 | 2 | ![x](u) | @all",
         "see https://e.example/?d=SECRET now",
+        "go www.e.example/?d=SECRET now (www.e.example)",
+        "ftp://e.example/x and <www.e.example/y>",
+        "<div>www.e.example/x</div> <b>ftp://e.example/y</b>",
+        "| a |\n|---|\n| www.e.example/t | extra www.e.example/z |",
         "<https://e.example/?d=SECRET>",
         "- https://e.example/1\n- <https://e.example/2>",
         "<div>https://e.example/?d=S</div>",
@@ -324,18 +351,14 @@ proptest! {
     fn no_ping_reaches_mattermost_but_the_cores_here(
         s in prop_oneof![fragments(), any::<String>()]
     ) {
-        let mut lk = Lookups::default();
-        lk.groups.insert("devs".into());
-        lk.known.insert("alice".into());
-        for (p, allowed_here) in posts_with(&s, &lk) {
+        for (p, allowed_here) in posts_with(&s, &["devs"], &["alice"], false) {
             let pings = live_pings(&p, &["devs"]);
             prop_assert!(
                 pings.iter().all(|n| n == "here") && pings.len() <= allowed_here,
                 "{s:?} -> {p:?}: {pings:?} (core made {allowed_here} <@here>)"
             );
         }
-        let closed = Lookups { closed: true, ..Lookups::default() };
-        for (p, allowed_here) in posts_with(&s, &closed) {
+        for (p, allowed_here) in posts_with(&s, &["devs"], &["alice"], true) {
             let pings = live_pings(&p, &["devs", "stranger", "bob"]);
             prop_assert!(
                 pings.iter().all(|n| n == "here") && pings.len() <= allowed_here,

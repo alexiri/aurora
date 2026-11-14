@@ -355,9 +355,10 @@ integration) are claimable by any live replica of the connector.
     4. **typed neutral tokens** (`<@user:…>`, `<#space:…>`, `<@here>`) never
        form (forged mentions and broadcasts);
     5. (D-270) **bare URLs and autolinks become labelled links**: a URL in
-       prose (`https://…`, `<https://…>`, outside code and outside a link) is
-       rewritten to `[url](url)` — the same text and click target, rule 2's
-       scheme allowlist applied. A platform's preview fetches a bare URL the
+       prose (`https://…`, `<https://…>`, `www.…`, outside code and outside a
+       link) is rewritten to `[url](url)` — the same text and click target
+       (`www.x` → `https://www.x`), rule 2's scheme allowlist applied (`ftp://`,
+       which the server also previews, is no link scheme: it is written `ftp:\//`). A platform's preview fetches a bare URL the
        moment the post is created, with no click (Mattermost's server does:
        `docs/20 §Rendering`), so a URL carrying data would leave unprompted.
        In HTML text the URL becomes `<a href>` (an entity colon where it does not

@@ -171,6 +171,21 @@ integration config.
   | Allowlisted HTML (Mattermost renders no HTML) | conversion | `b`/`strong` → `**`, `i`/`em` → `_`, `s`/`del` → `~~`, `code`/`kbd` → `` ` ``, `br` → hard break, `hr` → `---`, `details`/`summary` → bold summary line + content, `sub`/`sup`/`ins`/`mark`/`small`/`span`/`div`/`p` → their content, HTML lists/tables → Markdown lists/tables |
   | Link previews | the **server** fetches the first bare URL of a post (`EnableLinkPreviews`), unprompted | no per-post switch exists (post `props` `preview_removed`, `link_previews`, `disable_link_preview`, `previews_removed` change nothing; the REST API has none). Measured: only a **bare** URL or `<url>` is fetched (a listener received `GET /?d=… ` from `Mattermost-Bot/1.1` during post creation); `[label](url)` (also `[url](url)`) and code spans are never fetched. **Closed by D-270**: the core writes every bare URL and autolink of an agent's message as `[url](url)` (`13 §4.3` exception 5), the connector re-checks that none is left (the plain-text fallback writes `https:\//…`), so agent posts show no preview cards; the operator note about `EnableLinkPreviews` stays as defence in depth |
 
+  **Which URLs the server previews** (measured on 11.7.15 through the post's `metadata.embeds`,
+  `connectors/mattermost/tests/mentions_e2e.rs::agent_urls_are_never_previewed_by_the_server`):
+  `http://…` and `https://…` (any letter case), **`www.…`** (lower case; the server makes the
+  embed with `http://` in front) and **`ftp://…`**. Not previewed: `ftps://`, `sftp://`, `file://`,
+  `ws://`, `ssh://`, `mailto:`, `tel:`, `data:`, `javascript:`, a bare `example.org/path`, `//host/p`,
+  `http:host/p`, `Www.…`/`WWW.…`, an e-mail address, a `[label](url)` link, a code span. (The local
+  server could not be made to reach a `www.` host — its SSRF guard allows only the listed
+  loopback names — so the fetch itself was observed for the `http://127.0.0.1` form, and the embed
+  is the evidence for the others.) So the core rewrites a `www.` URL to `[www.x/…](https://www.x/…)`
+  and writes `ftp://` as `ftp:\//` (it is no link scheme, rule 2); the plain-text fallback breaks all
+  three (`https:\//`, `ftp:\//`, `www\.`). **Look-alike spellings of a ping word** do not notify (measured:
+  `@ｃhannel` full-width c, `@ᴄhannel` small-cap c, Cyrillic `@сhannel`, `@channeI` capital i,
+  `@c‍hannel` with a zero-width joiner, `@c­hannel` with a soft hyphen, `＠channel` full-width at,
+  `@ａll`, `@ｈere`, `@ℂhannel`), so nothing is normalised for them.
+
   **Mentions table** (phase 5, D-271) — measured on 11.7.15 with two channel members, Alice
   online and Bob offline, through each member's `mention_count`
   (`connectors/mattermost/tests/mentions_e2e.rs`, run by `scripts/conformance.sh --mattermost`):

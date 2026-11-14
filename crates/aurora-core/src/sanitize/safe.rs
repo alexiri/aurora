@@ -497,11 +497,21 @@ fn html_text(piece: &str, in_a: bool) -> String {
     }
     let mut out = String::with_capacity(piece.len());
     let mut at = 0;
-    for u in bare_url_ranges(&piece) {
+    for (u, kind) in bare_url_ranges(&piece) {
         out.push_str(&piece[at..u.start]);
         let url = &piece[u.clone()];
-        if safe_href(url) && !url.contains('&') {
-            out.push_str(&format!("<a href=\"{url}\">{url}</a>"));
+        let href = if kind == UrlKind::Www {
+            format!("https://{url}")
+        } else {
+            url.to_owned()
+        };
+        if kind != UrlKind::Ftp && safe_href(&href) && !url.contains('&') {
+            out.push_str(&format!("<a href=\"{href}\">{url}</a>"));
+        } else if kind == UrlKind::Www {
+            // (no colon to turn into an entity: the dot after `www` is the break)
+            out.push_str(&url[..3]);
+            out.push_str("&#46;");
+            out.push_str(&url[4..]);
         } else {
             let colon = url.find(':').unwrap_or(0);
             out.push_str(&url[..colon]);
@@ -604,27 +614,68 @@ fn href_of(tag: &str) -> Option<String> {
         .and_then(|(_, v)| v)
 }
 
-/// Byte ranges of the bare `http(s)://` URLs in `raw` (a run of prose): to the next whitespace or
-/// `<`, without the trailing punctuation and unbalanced closing brackets GFM leaves out.
-fn bare_url_ranges(raw: &str) -> Vec<Range<usize>> {
-    let low = raw.to_ascii_lowercase();
+/// What kind of URL a platform's preview extracts (measured on Mattermost 11.7.15: `http://`,
+/// `https://`, `ftp://` and `www.` — an embed is made for each; `docs/20 §Rendering`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UrlKind {
+    /// `http://…`, `https://…`
+    Web,
+    /// `www.…` (the server prepends `http://`)
+    Www,
+    /// `ftp://…` — not a link scheme (rule 2), but the server previews it
+    Ftp,
+}
+
+/// Whether `www.` at byte `i` of `raw` starts a URL: a name character follows and nothing of a
+/// name, a path or an address precedes it (`awww.x`, `foo.www.x`, `x@www.y`, `…/www.x` are not).
+fn www_at(raw: &str, i: usize) -> bool {
+    raw[i..]
+        .get(..4)
+        .is_some_and(|s| s.eq_ignore_ascii_case("www."))
+        && raw[i + 4..].starts_with(|c: char| c.is_ascii_alphanumeric())
+        && !raw[..i].chars().next_back().is_some_and(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | '/' | ':')
+        })
+}
+
+/// The URL kind starting at byte `i` of `raw` and the length of its scheme/prefix, if any.
+fn url_start(raw: &str, i: usize) -> Option<(UrlKind, usize)> {
+    let rest = raw.get(i..)?;
+    let starts = |p: &str| {
+        rest.get(..p.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(p))
+    };
+    if starts("https://") {
+        Some((UrlKind::Web, 8))
+    } else if starts("http://") {
+        Some((UrlKind::Web, 7))
+    } else if starts("ftp://") {
+        Some((UrlKind::Ftp, 6))
+    } else if www_at(raw, i) {
+        Some((UrlKind::Www, 4))
+    } else {
+        None
+    }
+}
+
+/// Byte ranges of the bare URLs in `raw` (a run of prose) with their kind: to the next whitespace,
+/// `<` or `>`, without the trailing punctuation and unbalanced closing brackets GFM leaves out.
+fn bare_url_ranges(raw: &str) -> Vec<(Range<usize>, UrlKind)> {
     let mut out = Vec::new();
-    let mut from = 0;
-    while let Some(p) = low[from..].find("http") {
-        let a = from + p;
-        let after = &low[a + 4..];
-        let scheme = if after.starts_with("s://") {
-            8
-        } else if after.starts_with("://") {
-            7
-        } else {
-            from = a + 4;
+    let mut a = 0;
+    while a < raw.len() {
+        if !raw.is_char_boundary(a) {
+            a += 1;
+            continue;
+        }
+        let Some((kind, scheme)) = url_start(raw, a) else {
+            a += 1;
             continue;
         };
         let body = a + scheme;
         let mut end = body
             + raw[body..]
-                .find(|c: char| c.is_whitespace() || c == '<')
+                .find(|c: char| c.is_whitespace() || c == '<' || c == '>')
                 .unwrap_or(raw.len() - body);
         loop {
             let u = &raw[a..end];
@@ -645,11 +696,23 @@ fn bare_url_ranges(raw: &str) -> Vec<Range<usize>> {
             }
         }
         if end > body {
-            out.push(a..end);
+            out.push((a..end, kind));
         }
-        from = end.max(a + 4);
+        a = end.max(a + 1);
     }
     out
+}
+
+/// Whether `text` holds a URL a platform's preview extracts (`http(s)://`, `ftp://`, `www.`):
+/// for a connector's re-check of text it has converted (D-270).
+pub fn has_preview_url(text: &str) -> bool {
+    !bare_url_ranges(text).is_empty()
+}
+
+/// `s` with every URL a platform's preview would extract written so it is none (`https:\//…`,
+/// `ftp:\//…`, `www\.…`; they still read as the address): for a connector's plain-text fallback.
+pub fn break_preview_urls(s: &str) -> String {
+    break_schemes(s, "\\")
 }
 
 /// A markdown escape `\X` (X ASCII punctuation) undone.
@@ -745,13 +808,26 @@ fn prose_edits(
         line_at += line.len();
     }
     if link_free {
-        for u in bare_url_ranges(raw) {
+        for (u, kind) in bare_url_ranges(raw) {
             let label = &raw[u.clone()];
-            edits.push((
-                start + u.start,
-                start + u.end,
-                labelled_link(label, &unescape_md(label)),
-            ));
+            match kind {
+                UrlKind::Web => edits.push((
+                    start + u.start,
+                    start + u.end,
+                    labelled_link(label, &unescape_md(label)),
+                )),
+                // `www.x` → a link to `https://www.x` (rule 2: a link scheme).
+                UrlKind::Www => edits.push((
+                    start + u.start,
+                    start + u.end,
+                    labelled_link(label, &format!("https://{}", unescape_md(label))),
+                )),
+                // `ftp://` is no link scheme, and the server previews it: the slash is escaped.
+                UrlKind::Ftp => {
+                    let at = start + u.start + 4;
+                    edits.push((at, at, "\\".to_owned()));
+                }
+            }
         }
     }
 }
@@ -1094,25 +1170,28 @@ fn data_fallback(block: &str) -> String {
 /// `ins` after the colon of every `http://` / `https://` in `s`, wherever it sits (also inside
 /// another URL: `https://web.archive.org/…/https://x`) — no platform reads the result as a URL.
 fn break_schemes(s: &str, ins: &str) -> String {
-    let low = s.to_ascii_lowercase();
     let mut out = String::with_capacity(s.len() + 8);
     let mut at = 0;
-    let mut from = 0;
-    while let Some(p) = low[from..].find("http") {
-        let a = from + p;
-        let after = &low[a + 4..];
-        let colon = if after.starts_with("s://") {
-            a + 5
-        } else if after.starts_with("://") {
-            a + 4
-        } else {
-            from = a + 4;
+    let mut i = 0;
+    while i < s.len() {
+        if !s.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
+        let Some((kind, scheme)) = url_start(s, i) else {
+            i += 1;
             continue;
         };
-        out.push_str(&s[at..=colon]);
+        // After the colon of a scheme; after `www` for a `www.` URL.
+        let cut = if kind == UrlKind::Www {
+            i + 3
+        } else {
+            i + scheme - 2
+        };
+        out.push_str(&s[at..cut]);
         out.push_str(ins);
-        at = colon + 1;
-        from = colon + 1;
+        at = cut;
+        i += scheme.max(1);
     }
     out.push_str(&s[at..]);
     out

@@ -352,10 +352,7 @@ pub fn is_safe(text: &str) -> bool {
 /// URLs (a link prompt must be clickable), so [`is_safe`] does not demand this. `true` too when
 /// a link in `text` is not honest.
 pub fn has_bare_url(text: &str) -> bool {
-    links_are_honest(text).is_none_or(|rest| {
-        let low = rest.to_ascii_lowercase();
-        low.contains("http://") || low.contains("https://")
-    })
+    links_are_honest(text).is_none_or(|rest| aurora_core::sanitize::has_preview_url(&rest))
 }
 
 /// Whether the byte at `i` of `m` is backslash-escaped.
@@ -1020,6 +1017,8 @@ mod tests {
             "<https://evil.example/?d=S>",
             "[x](https://a.example) and then https://evil.example/?d=S",
             "HTTP://EVIL.EXAMPLE/?d=S",
+            "see www.evil.example/?d=S",
+            "ftp://evil.example/p",
         ] {
             assert!(super::has_bare_url(bare), "{bare:?}");
             // (the core's own platform voice keeps its URLs: `is_safe` does not refuse them)
@@ -1030,7 +1029,7 @@ mod tests {
             "see [x](https://a.example/p?q=1) and [y][r]\n\n[r]: https://b.example/",
             "`https://a.example`",
             "```\nhttps://a.example\n```",
-            "no url here, only www.example.org",
+            "no url here, only example.org/path and x@www.example.com",
         ] {
             assert!(super::is_safe(ok), "{ok:?}");
             assert!(!super::has_bare_url(ok), "{ok:?}");

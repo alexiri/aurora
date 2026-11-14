@@ -76,6 +76,102 @@ async fn post_as_agent(e: &Env, ch: &str, cache: &NameCache, raw: &str) -> Vec<S
     posted
 }
 
+/// D-270 on the pinned server: a URL an agent writes — bare, `<url>`, `www.…`, `ftp://…`, in HTML text
+/// or in a table cell beyond the header — never makes the server build a link preview (an
+/// embed in the post's metadata; the server fetches the address when it does).
+#[tokio::test]
+async fn agent_urls_are_never_previewed_by_the_server() {
+    let Some(e) = env() else {
+        eprintln!("skipped: AURORA_MM_URL is not set (bash scripts/mattermost/setup.sh up)");
+        return;
+    };
+    let name = format!("previews-e2e-{}", std::process::id());
+    let ch =
+        e.mm.post(
+            &e.admin,
+            "/channels",
+            &json!({"team_id": e.team, "name": name, "display_name": "Previews e2e", "type": "O"}),
+        )
+        .await
+        .expect("channel");
+    let ch = ch["id"].as_str().expect("channel id").to_owned();
+    e.mm.post(
+        &e.admin,
+        &format!("/channels/{ch}/members"),
+        &json!({"user_id": e.bot_id}),
+    )
+    .await
+    .expect("member");
+    // Controls: the server previews these (it is what D-270 closes).
+    for raw in [
+        "http://127.0.0.1:9/a",
+        "www.example.org/a",
+        "ftp://example.org/a",
+    ] {
+        let id = post_one(&e, &ch, raw).await;
+        assert!(
+            until(async || !embeds(&e, &id).await.is_empty()).await,
+            "control {raw:?}: the server made no embed"
+        );
+    }
+    let cache = NameCache::default();
+    for raw in [
+        "see http://127.0.0.1:9/a?d=SECRET now",
+        "see https://example.org/a?d=SECRET now",
+        "<https://example.org/a?d=SECRET>",
+        "www.example.org/a?d=SECRET and (www.example.org/b)",
+        "WWW.example.org/a ftp://example.org/b",
+        "<div>https://example.org/a www.example.org/b ftp://example.org/c</div>",
+        "<b>www.example.org/a</b> <a href=\"https://example.org/b\">x</a>",
+        "|a|b|\n|-|-|\n|1|2|https://example.org/a www.example.org/b|",
+        "$https://example.org/a$ and $$www.example.org/b$$",
+        "[x](https://example.org/a) and [www.example.org/b](https://example.org/b)",
+    ] {
+        let posted = post_as_agent(&e, &ch, &cache, raw).await;
+        // The post just made is the newest of the channel.
+        let list =
+            e.mm.get_q(
+                &e.admin,
+                &format!("/channels/{ch}/posts"),
+                &[("per_page", "1")],
+            )
+            .await
+            .expect("posts");
+        let id = list["order"][0].as_str().expect("newest post").to_owned();
+        // Give the server its chance to make an embed, then look: none must come.
+        let sentinel = post_one(&e, &ch, "sentinel").await;
+        assert!(until(async || embeds(&e, &sentinel).await.is_empty()).await);
+        assert!(
+            embeds(&e, &id).await.is_empty(),
+            "{raw:?} posted as {posted:?} made a preview: {:?}",
+            embeds(&e, &id).await
+        );
+    }
+}
+
+async fn post_one(e: &Env, ch: &str, message: &str) -> String {
+    let v =
+        e.mm.post(
+            &e.bot,
+            "/posts",
+            &json!({"channel_id": ch, "message": message}),
+        )
+        .await
+        .expect("post");
+    v["id"].as_str().expect("post id").to_owned()
+}
+
+async fn embeds(e: &Env, id: &str) -> Vec<Value> {
+    let v =
+        e.mm.get_q(&e.admin, &format!("/posts/{id}"), &[])
+            .await
+            .expect("post");
+    v["metadata"]["embeds"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// Polls until `check` holds or the deadline passes; returns whether it held.
 async fn until(mut check: impl AsyncFnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -132,6 +228,13 @@ const FORMS: &[(&str, i64, i64)] = &[
         0,
     ),
     ("<div>@channel</div>", 0, 0),
+    // Names the connector's own HTML conversion joins (review 4): read from the converted text.
+    (
+        "@chan<span></span>nel @al<sub>l</sub> @he<sup>re</sup>",
+        0,
+        0,
+    ),
+    ("@al<span></span>ice", 1, 0),
     ("` @channel", 0, 0),
     // (b) @here: only a standalone lowercase one notifies, and only online people.
     ("@Here @HERE @hErE", 0, 0),

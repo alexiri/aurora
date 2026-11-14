@@ -401,18 +401,18 @@ impl Integ {
         }
         // D-271(c): which typed `@name`s are a user and which a group; a lookup that fails
         // leaves the rest to be treated as groups.
-        if !refs.names.is_empty() {
-            let d = self.snapshot();
-            crate::mentions::resolve(
-                &self.mm,
-                &d.bot_token,
-                d.admin_token.as_deref(),
-                &self.mention_names,
-                &refs.names,
-                &mut lk,
-            )
-            .await;
-        }
+        // (Always: it also records that a lookup ran, so a name it was not asked about — one a
+        // conversion joined — is treated as a group.)
+        let d = self.snapshot();
+        crate::mentions::resolve(
+            &self.mm,
+            &d.bot_token,
+            d.admin_token.as_deref(),
+            &self.mention_names,
+            &refs.names,
+            &mut lk,
+        )
+        .await;
         lk
     }
 

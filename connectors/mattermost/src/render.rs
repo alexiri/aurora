@@ -41,6 +41,10 @@ pub struct Lookups {
     /// The name lookup was unavailable (or too long to run): every `@name` that is not a known
     /// user is treated as a group — fail closed (D-271(c)).
     pub closed: bool,
+    /// The names the lookup was asked about (`Some` once a lookup ran; `None` for pure rendering,
+    /// where only the broadcast words, `groups` and `closed` defuse): a name in the final text
+    /// that is not in here was never looked up and is treated as a group (D-271(c), review 4).
+    pub resolved: Option<HashSet<String>>,
 }
 
 /// The mention name at the start of `rest` (which begins with `@`): username characters
@@ -140,7 +144,14 @@ pub fn mention_refs(neutral: &str) -> MentionRefs {
         }
         true
     });
+    // The connector converts before it renders (`<span></span>` between the letters of a name
+    // is gone afterwards: `@dev<span></span>s` is `@devs`): the names come from both texts.
     m.names = mention_names(neutral);
+    for n in mention_names(&crate::convert::convert(&neutral.replace(HERE, ""))) {
+        if !m.names.contains(&n) {
+            m.names.push(n);
+        }
+    }
     m
 }
 
@@ -197,13 +208,11 @@ pub fn render_text(neutral: &str, lk: &Lookups) -> String {
         tracing::warn!(
             "converted Mattermost text failed the safety re-check; posting it as plain text"
         );
-        // A URL stays readable but is no URL to the server's preview fetch (`https:\//…`, D-270).
-        static URL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-            regex::Regex::new(r"(?i)(https?):/").unwrap_or_else(|_| unreachable!())
-        });
+        // A URL stays readable but is no URL to the server's preview fetch (`https:\//…`,
+        // `ftp:\//…`, `www\.…`, D-270).
         let data =
             aurora_core::sanitize::markdown_as_data(&neutral_without_marker(neutral), usize::MAX);
-        defuse(&URL.replace_all(&data, "$1:\\/"), lk)
+        defuse(&aurora_core::sanitize::break_preview_urls(&data), lk)
     }
 }
 
@@ -215,11 +224,14 @@ fn neutral_without_marker(neutral: &str) -> String {
 /// Whether the mention `name` (lowercase) would notify more than one person: `channel`, `all`,
 /// `here`, a group, or — when the lookup was unavailable — any name that is not a known user.
 fn pings_many(name: &str, lk: &Lookups) -> bool {
+    let a_user =
+        || lk.known.contains(name) || lk.users.values().any(|u| u.eq_ignore_ascii_case(name));
     is_broadcast_word(name)
         || lk.groups.contains(name)
-        || (lk.closed
-            && !lk.known.contains(name)
-            && !lk.users.values().any(|u| u.eq_ignore_ascii_case(name)))
+        || (lk.closed && !a_user())
+        // A name the lookup never saw (it came out of a conversion the lookup could not
+        // foresee): fail closed.
+        || lk.resolved.as_ref().is_some_and(|r| !r.contains(name) && !a_user())
 }
 
 /// Defuses every mention that would notify more than one person (D-271): `@channel`, `@all`,
@@ -668,6 +680,48 @@ mod tests {
 
     fn lk_with_alice() -> Lookups {
         lk()
+    }
+
+    /// Review 4: the connector's own HTML conversion can join a name (`@dev<span></span>s` →
+    /// `@devs`): the names to look up come from the CONVERTED text, and a name in the final text
+    /// that was not looked up is treated as a group.
+    #[test]
+    fn names_are_read_from_the_converted_text_and_unlooked_up_names_are_groups() {
+        for src in [
+            "ping @dev<span></span>s",
+            "ping @dev<sub>s</sub>",
+            "ping @de<sup>vs</sup>",
+            "ping @d<mark>ev</mark>s",
+            "ping @dev<small></small>s",
+        ] {
+            let r = mention_refs(src);
+            assert!(r.names.contains(&"devs".to_owned()), "{src}: {:?}", r.names);
+        }
+        // The lookup answered for `devs` (a group) → defused; a name that was never looked up
+        // → defused too (a lookup that ran says nothing about a name it did not see).
+        let mut lk = Lookups {
+            resolved: Some(["alice".to_owned()].into_iter().collect()),
+            ..Lookups::default()
+        };
+        lk.known.insert("alice".into());
+        assert_eq!(defuse("@alice @devs", &lk), "@alice `@devs`");
+        lk.groups.insert("devs".into());
+        lk.resolved.as_mut().unwrap().insert("devs".into());
+        assert_eq!(
+            defuse("@alice @devs @other", &lk),
+            "@alice `@devs` `@other`"
+        );
+        // A lookup that found a name to be neither user nor group lets it pass.
+        lk.resolved.as_mut().unwrap().insert("other".into());
+        assert_eq!(defuse("@other", &lk), "@other");
+        // And end to end through `render_text`: the joined name is what the lookup was asked about.
+        let neutral = "ping @dev<span></span>s";
+        let mut lk = Lookups {
+            resolved: Some(mention_refs(neutral).names.into_iter().collect()),
+            ..Lookups::default()
+        };
+        lk.groups.insert("devs".into());
+        assert_eq!(render_text(neutral, &lk), "ping `@devs`");
     }
 
     #[test]
