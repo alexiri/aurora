@@ -65,7 +65,7 @@ for (const scheme of ["light", "dark"] as const) {
           }
           return route.fallback();
         });
-        await page.goto("/o/acme/w/main/apps/indico/connect");
+        await page.goto("/o/acme/w/main/credentials?tab=apps&connect=indico");
         await page.getByLabel("API token").fill("not-a-real-token");
         await page.getByRole("button", { name: "Connect", exact: true }).click();
         const panel = page.getByLabel("Give agents access");

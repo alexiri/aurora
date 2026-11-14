@@ -5,6 +5,8 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
+import { XIcon } from "./icons";
+
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogClose = DialogPrimitive.Close;
@@ -44,15 +46,29 @@ export function DialogContent({
         )}
         {...props}
       >
-        <DialogPrimitive.Title className="font-display text-lg font-semibold">{title}</DialogPrimitive.Title>
-        {description ? (
-          <DialogPrimitive.Description className="mt-1 text-sm text-ink-2">
-            {description}
-          </DialogPrimitive.Description>
-        ) : (
-          <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
-        )}
-        <div className="mt-4">{children}</div>
+        {/* (FIX-149, D-272) The title row stays at the top of the scroll area so the close icon is always reachable. */}
+        <div className="sticky top-0 z-10 -mx-6 -mt-6 flex items-start justify-between gap-3 bg-surface px-6 pb-3 pt-6">
+          <div className="min-w-0">
+            <DialogPrimitive.Title className="font-display text-lg font-semibold">{title}</DialogPrimitive.Title>
+            {description ? (
+              <DialogPrimitive.Description className="mt-1 text-sm text-ink-2">
+                {description}
+              </DialogPrimitive.Description>
+            ) : (
+              <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
+            )}
+          </div>
+          <DialogPrimitive.Close asChild>
+            <button
+              type="button"
+              aria-label="Close"
+              className="-mr-2 -mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink pointer-coarse:size-11"
+            >
+              <XIcon className="size-5" />
+            </button>
+          </DialogPrimitive.Close>
+        </div>
+        <div className="mt-1">{children}</div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );

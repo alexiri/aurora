@@ -414,7 +414,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "ws-agents", path: "/o/acme/w/main/agents" },
   { name: "ws-agent", path: "/o/acme/w/main/agents/daneel" },
   { name: "ws-approvals", path: "/o/acme/w/main/approvals" },
-  { name: "ws-app-connect", path: "/o/acme/w/main/apps/github/connect" },
+  { name: "ws-app-connect", path: "/o/acme/w/main/credentials?tab=apps&connect=github" },
   { name: "ws-credentials", path: "/o/acme/w/main/credentials" },
   { name: "ws-policy", path: "/o/acme/w/main/policy" },
   { name: "ws-skills", path: "/o/acme/w/main/skills" },

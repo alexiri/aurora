@@ -2,10 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConnectView } from "@/components/apps/connect-view";
+import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
+
+// The connect flow is a dialog now (D-272).
+const ConnectView = () => <ConnectDialog appId="desk" workspaceId="w1" orgId="o1" onClose={() => {}} />;
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main", app: "desk" }),

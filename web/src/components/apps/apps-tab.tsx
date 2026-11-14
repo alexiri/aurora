@@ -1,6 +1,5 @@
 "use client";
 
-import { useParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -10,17 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
-import {
-  appIsCustomOnly,
-  connectWindowPath,
-  openConnectWindow,
-  useApp,
-  useApps,
-  useConnectedListener,
-  type AppSummary,
-} from "@/lib/api/apps";
+import { appIsCustomOnly, useApp, useApps, useConnectChannel, type AppSummary } from "@/lib/api/apps";
 
+import { ConnectDialog } from "./connect-dialog";
 import { Markdown } from "./markdown";
+import { useUrlDialog } from "./use-url-dialog";
 
 export function AppDetailBody({ app, workspaceId }: { app: string; workspaceId: string }) {
   const detail = useApp(app, workspaceId);
@@ -122,23 +115,35 @@ function AppCard({
   );
 }
 
-export function AppsTab({ workspaceId, canOwn }: { workspaceId: string; canOwn: boolean }) {
-  const { org, ws } = useParams<{ org: string; ws: string }>();
+export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; orgId: string; canOwn: boolean }) {
   const apps = useApps(workspaceId);
   const qc = useQueryClient();
   const [open, setOpen] = useState<AppSummary | null>(null);
+  // The Connect dialog (D-272): opened by a card's button or the deep link `?tab=apps&connect=<app>`.
+  const [connecting, setConnecting] = useUrlDialog("connect");
   const refresh = useCallback(() => {
     void qc.invalidateQueries({ queryKey: ["apps"] });
     void qc.invalidateQueries({ queryKey: ["connections"] });
   }, [qc]);
-  useConnectedListener(refresh);
+  // Another dashboard tab finished a sign-in: refresh the lists (the waiting dialog handles its own result).
+  useConnectChannel(refresh);
 
   if (apps.isPending) return <Loading />;
   if (apps.isError) return <ErrorState error={apps.error} onRetry={() => apps.refetch()} />;
   const items = apps.data.items;
   if (items.length === 0) return <EmptyState title="No apps installed" />;
+  const target = connecting ? items.find((a) => a.app_id === connecting) : undefined;
   return (
     <>
+      {connecting && (!target || !target.available || !canOwn) ? (
+        <Notice tone="pending" role="status" className="mb-4">
+          {!target
+            ? `The app “${connecting}” is not installed in this workspace.`
+            : !canOwn
+              ? `Only a workspace owner can connect ${target.name}.`
+              : `${target.name} is not available to this workspace.`}
+        </Notice>
+      ) : null}
       <ul aria-label="Apps" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((a) => (
           <AppCard
@@ -146,10 +151,22 @@ export function AppsTab({ workspaceId, canOwn }: { workspaceId: string; canOwn: 
             app={a}
             canOwn={canOwn}
             onOpen={() => setOpen(a)}
-            onConnect={() => openConnectWindow(connectWindowPath(org, ws, a.app_id))}
+            onConnect={() => setConnecting(a.app_id)}
           />
         ))}
       </ul>
+      {target && target.available && canOwn ? (
+        <ConnectDialog
+          appId={target.app_id}
+          name={target.name}
+          workspaceId={workspaceId}
+          orgId={orgId}
+          onClose={() => {
+            setConnecting(null);
+            refresh();
+          }}
+        />
+      ) : null}
       <Dialog open={!!open} onOpenChange={(o) => (o ? null : setOpen(null))}>
         {open ? (
           <DialogContent title={open.name} description={`${open.package_id} ${open.package_version}`}>

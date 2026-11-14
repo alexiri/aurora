@@ -10,14 +10,14 @@ import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import {
   buildClientPatchFields,
   buildConnectFields,
-  parseConnectedMessage,
+  parseConnectMessage,
   parseJsonFile,
   toggleAllow,
   validateFields,
   type FormField,
 } from "@/lib/api/apps";
 
-vi.mock("next/navigation", () => ({ useParams: () => ({ org: "o1", ws: "w1" }) }));
+vi.mock("next/navigation", () => ({ useParams: () => ({ org: "o1", ws: "w1" }), useSearchParams: () => new URLSearchParams() }));
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -69,13 +69,21 @@ describe("dynamic form", () => {
   });
 });
 
-describe("postMessage origin check", () => {
-  const data = { type: "aurora:connected", connection_id: "c1" };
-  it("accepts same-origin only", () => {
-    expect(parseConnectedMessage({ origin: "http://a", data }, "http://a")).toBe("c1");
-    expect(parseConnectedMessage({ origin: "http://evil", data }, "http://a")).toBeNull();
-    expect(parseConnectedMessage({ origin: "http://a", data: { type: "other" } }, "http://a")).toBeNull();
-    expect(parseConnectedMessage({ origin: "http://a", data: null }, "http://a")).toBeNull();
+describe("connect channel messages (C-842)", () => {
+  it("accepts the callback page's two shapes and nothing else", () => {
+    expect(parseConnectMessage({ type: "aurora:connected", app_id: "a", connection_id: "c1", missing_scopes: ["x"] })).toEqual({
+      type: "connected", appId: "a", connectionId: "c1", missingScopes: ["x"],
+    });
+    expect(parseConnectMessage({ type: "aurora:connect-failed", app_id: "a", error: "oauth_exchange_failed" })).toEqual({
+      type: "failed", appId: "a", error: "oauth_exchange_failed",
+    });
+    expect(parseConnectMessage({ type: "aurora:connect-failed", error: "oauth_state_invalid" })).toEqual({
+      type: "failed", appId: null, error: "oauth_state_invalid",
+    });
+    expect(parseConnectMessage({ type: "aurora:connected", connection_id: "c1" })).toBeNull();
+    expect(parseConnectMessage({ type: "aurora:connect-ack", connection_id: "c1" })).toBeNull();
+    expect(parseConnectMessage({ type: "other" })).toBeNull();
+    expect(parseConnectMessage(null)).toBeNull();
   });
 });
 

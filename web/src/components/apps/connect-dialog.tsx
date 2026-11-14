@@ -1,34 +1,36 @@
 "use client";
 
-import { useParams, useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { ChoiceCards } from "@/components/ui/choice-cards";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
-import { PageHeader } from "@/components/ui/page-header";
 import { errorMessage } from "@/lib/api/errors";
 import {
+  ackConnect,
   buildConnectFields,
   connectApp,
-  CONNECT_MESSAGE,
   defaultValues,
+  navigateSignIn,
+  openSignInWindow,
   useApp,
   useAppGuide,
   useAppInstances,
   appIsCustomOnly,
+  useConnectChannel,
   useConnections,
   useOAuthClients,
   validateFields,
   type AppDetail,
+  type ConnectChannelMessage,
   type ConnectMethod,
   type FieldValues,
 } from "@/lib/api/apps";
-import { useResolve } from "@/lib/api/queries";
 
 import { GiveAccessPanel } from "@/components/credentials/give-access";
 import { ScopeGroups } from "@/components/grants/scope-groups";
@@ -51,16 +53,20 @@ function ConnectForm({
   workspaceId,
   orgId,
   keepMethod,
+  reconnect,
+  onClose,
 }: {
   app: AppDetail;
   workspaceId: string;
   orgId: string;
   /** A reconnect keeps the connection's method unless the person picks another (D-214). */
   keepMethod?: string | null;
+  /** The id of the connection being reconnected. */
+  reconnect?: string;
+  onClose: () => void;
 }) {
-  const search = useSearchParams();
+  const qc = useQueryClient();
   const first = initialMethod(app, keepMethod);
-  const reconnect = search.get("reconnect") ?? undefined;
   // Instance-bound apps (D-74): the SaaS default host, or an instance an admin registered. A
   // reconnect keeps the connection's instance, so the picker is not shown then.
   const instanceBound = !!app.instances && !reconnect;
@@ -83,8 +89,15 @@ function ConnectForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ missing: string[]; connectionId: string; scopes: string[] } | null>(null);
+  // `scopes` is unknown when the result came over the channel after an OAuth sign-in; the step looks it up.
+  const [done, setDone] = useState<{ missing: string[]; connectionId: string; scopes?: string[] } | null>(null);
   const [accessDone, setAccessDone] = useState(false);
+  // (C-842) OAuth: the provider's sign-in runs in a separate window while the dialog waits for its result.
+  const [phase, setPhase] = useState<"form" | "waiting">("form");
+  const [blocked, setBlocked] = useState(false);
+  const [flowNotice, setFlowNotice] = useState<{ tone: "pending" | "danger"; text: string } | null>(null);
+  const signIn = useRef<Window | null>(null);
+  const signInUrl = useRef<string | null>(null);
   const guide = useAppGuide(app.app_id);
   const clients = useOAuthClients({ kind: "workspace", id: workspaceId });
   // An OAuth client bound to an instance serves only that instance; the default host uses unbound ones.
@@ -106,13 +119,99 @@ function ConnectForm({
     setErrors({});
   }
 
-  async function submit(e: FormEvent) {
+  const refreshLists = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ["apps"] });
+    void qc.invalidateQueries({ queryKey: ["connections"] });
+  }, [qc]);
+
+  function closeSignIn() {
+    signIn.current?.close();
+    signIn.current = null;
+  }
+
+  // The dialog going away takes the sign-in window with it; nothing waits for a result any more.
+  useEffect(() => () => closeSignIn(), []);
+
+  // The callback page's result for the one flow this dialog is waiting for (C-842).
+  const onResult = useCallback(
+    (m: ConnectChannelMessage) => {
+      if (phase !== "waiting") return;
+      if (m.type === "connected") {
+        if (m.appId !== app.app_id) return;
+        ackConnect({ connectionId: m.connectionId });
+        signIn.current = null;
+        refreshLists();
+        setDone({ missing: m.missingScopes, connectionId: m.connectionId });
+        setPhase("form");
+      } else {
+        if (m.appId !== null && m.appId !== app.app_id) return;
+        ackConnect({ error: m.error });
+        signIn.current = null;
+        setPhase("form");
+        setFlowNotice({ tone: "danger", text: `The sign-in did not complete (${m.error}). Try again.` });
+      }
+    },
+    [phase, app.app_id, refreshLists],
+  );
+  useConnectChannel(onResult);
+
+  // A sign-in window closed without a result: back to the form.
+  useEffect(() => {
+    if (phase !== "waiting") return;
+    const timer = setInterval(() => {
+      if (signIn.current?.closed) {
+        signIn.current = null;
+        setPhase("form");
+        setFlowNotice({ tone: "pending", text: "Sign-in was cancelled." });
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [phase]);
+
+  function reopenSignIn() {
+    if (signIn.current && !signIn.current.closed) {
+      signIn.current.focus();
+      return;
+    }
+    const w = openSignInWindow();
+    if (!w || !signInUrl.current) {
+      w?.close();
+      setBlocked(true);
+      return;
+    }
+    navigateSignIn(w, signInUrl.current);
+    signIn.current = w;
+  }
+
+  function cancelSignIn() {
+    closeSignIn();
+    setPhase("form");
+    setFlowNotice(null);
+  }
+
+  function submit(e: FormEvent) {
     e.preventDefault();
     if (!method) return;
     const errs = validateFields(method.fields, values);
     if (instanceBound && !defaultHost && !instanceId) errs.__instance = "Choose an instance.";
     setErrors(errs);
     if (Object.keys(errs).length) return;
+    setFlowNotice(null);
+    setBlocked(false);
+    // The sign-in window is opened here, synchronously in the click, so popup blockers allow it (C-842).
+    let w: Window | null = null;
+    if (method.kind === "oauth2") {
+      w = openSignInWindow();
+      if (!w) {
+        setBlocked(true);
+        return;
+      }
+      signIn.current = w;
+    }
+    void send(method, w);
+  }
+
+  async function send(method: ConnectMethod, w: Window | null) {
     setBusy(true);
     setSubmitError(null);
     try {
@@ -133,18 +232,19 @@ function ConnectForm({
       });
       if (res.kind === "redirect") {
         const url = safeHref(res.url);
-        if (!url) throw new Error("The server returned an invalid redirect.");
+        if (!url || !w) throw new Error("The server returned an invalid redirect.");
         // The provider's page must not get a handle on the dashboard window (reverse tabnabbing, WEBC-3).
-        Reflect.set(window, "opener", null);
-        window.location.assign(url);
+        navigateSignIn(w, url);
+        signInUrl.current = url;
+        setPhase("waiting");
         return;
       }
-      if (window.opener) {
-        (window.opener as Window).postMessage({ type: CONNECT_MESSAGE, connection_id: res.connection.id, missing_scopes: res.missing_scopes }, window.location.origin);
-      }
-      // The window stays open for the "Give agents access" step (D-137); Skip or Done closes it.
+      closeSignIn();
+      refreshLists();
+      // The dialog stays open for the "Give agents access" step (D-137).
       setDone({ missing: res.missing_scopes, connectionId: res.connection.id, scopes: res.connection.scopes ?? [] });
     } catch (err) {
+      closeSignIn();
       setSubmitError(err);
     } finally {
       setBusy(false);
@@ -159,38 +259,46 @@ function ConnectForm({
 
   if (done)
     return (
-      <Card role="status" className="space-y-3 text-sm">
-        <p className="font-medium text-ink">
-          {app.name} is connected.{accessDone ? " You can close this window." : ""}
-        </p>
+      <div role="status" className="space-y-3 text-sm">
+        <p className="font-medium text-ink">{app.name} is connected.</p>
         {done.missing.length ? (
           <Notice tone="pending">Some requested scopes were not granted: {done.missing.join(", ")}.</Notice>
         ) : null}
         {!accessDone ? (
-          <GiveAccessPanel
-            subject={{
-              target: { kind: "connection", id: done.connectionId },
-              scope: { kind: "workspace", id: workspaceId },
-              orgId,
-              appId: app.app_id,
-              appWorkspaceId: workspaceId,
-              connectMethod: method?.id,
-              scopes: done.scopes,
-              customOnly: appIsCustomOnly(app),
-            }}
-            onDismiss={() => {
-              setAccessDone(true);
-              // A window opened by the Connections tab closes itself once the step is over.
-              if (window.opener && done.missing.length === 0) window.close();
-            }}
+          <ConnectedStep
+            app={app}
+            workspaceId={workspaceId}
+            orgId={orgId}
+            methodId={method?.id}
+            done={done}
+            // Nothing left to read once the step is over, unless scopes were refused: then the notice stays.
+            onDismiss={() => (done.missing.length === 0 ? onClose() : setAccessDone(true))}
           />
+        ) : (
+          <Button size="sm" variant="outline" onClick={onClose}>Done</Button>
+        )}
+      </div>
+    );
+
+  if (phase === "waiting")
+    return (
+      <div role="status" className="space-y-3 text-sm">
+        <p className="font-medium text-ink">Waiting for you to sign in to {app.name}…</p>
+        <p className="text-ink-2">Finish in the sign-in window. This dialog continues when you are done.</p>
+        {blocked ? (
+          <Notice tone="pending" role="alert">
+            Your browser blocked the sign-in window. Allow pop-ups for this site, then open it again.
+          </Notice>
         ) : null}
-        {accessDone ? <Button size="sm" variant="outline" onClick={() => window.close()}>Close window</Button> : null}
-      </Card>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={reopenSignIn}>Open the sign-in window again</Button>
+          <Button size="sm" variant="ghost" onClick={cancelSignIn}>Cancel</Button>
+        </div>
+      </div>
     );
 
   return (
-    <Form onSubmit={(e) => void submit(e)} className="max-w-xl rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label={`Connect ${app.name}`} noValidate>
+    <Form onSubmit={submit} aria-label={`Connect ${app.name}`} noValidate>
       {app.connect_note ? (
         <Notice>
           {app.connect_note.text}
@@ -335,54 +443,119 @@ function ConnectForm({
           ) : null}
         </>
       ) : null}
+      {flowNotice ? <Notice tone={flowNotice.tone} role="alert">{flowNotice.text}</Notice> : null}
+      {blocked ? (
+        <Notice tone="pending" role="alert">
+          Your browser blocked the sign-in window. Allow pop-ups for this site, then try again.
+        </Notice>
+      ) : null}
       {submitError ? <Notice tone="danger" role="alert">{errorMessage(submitError)}</Notice> : null}
       <FormActions>
         <Button type="submit" size="lg" disabled={busy || !method}>
-          {busy ? "Connecting…" : method?.kind === "oauth2" ? "Continue to sign in" : reconnect ? "Reconnect" : "Connect"}
+          {busy
+            ? "Connecting…"
+            : method?.kind === "oauth2"
+              ? blocked
+                ? "Try again"
+                : "Continue to sign in"
+              : reconnect
+                ? "Reconnect"
+                : "Connect"}
         </Button>
       </FormActions>
     </Form>
   );
 }
 
-/** A reconnect opens on the method the connection was made with; wait for it (a failed load falls back). */
-function ReconnectForm({ app, workspaceId, orgId, reconnect }: { app: AppDetail; workspaceId: string; orgId: string; reconnect: string }) {
+/**
+ * "Give agents access" after a connect (D-137). A result that came over the channel (OAuth) carries no scopes, so the
+ * connection is looked up in the refreshed list first.
+ */
+function ConnectedStep({
+  app,
+  workspaceId,
+  orgId,
+  methodId,
+  done,
+  onDismiss,
+}: {
+  app: AppDetail;
+  workspaceId: string;
+  orgId: string;
+  methodId?: string;
+  done: { connectionId: string; scopes?: string[] };
+  onDismiss: () => void;
+}) {
   const conns = useConnections({ kind: "workspace", id: workspaceId });
-  if (conns.isPending) return <Loading />;
-  const keep = conns.data?.items.find((c) => c.id === reconnect)?.connect_method ?? null;
-  return <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} keepMethod={keep} />;
-}
-
-function ConnectEntry({ app, workspaceId, orgId }: { app: AppDetail; workspaceId: string; orgId: string }) {
-  const reconnect = useSearchParams().get("reconnect");
-  return reconnect && app.connect.length > 1 ? (
-    <ReconnectForm app={app} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} />
-  ) : (
-    <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} />
+  const lookup = done.scopes === undefined;
+  const found = lookup ? conns.data?.items.find((c) => c.id === done.connectionId) : undefined;
+  const refetch = conns.refetch;
+  useEffect(() => {
+    if (lookup) void refetch();
+  }, [lookup, refetch]);
+  if (lookup && !found) return conns.isError ? <ErrorState error={conns.error} onRetry={() => void refetch()} /> : <Loading />;
+  return (
+    <GiveAccessPanel
+      subject={{
+        target: { kind: "connection", id: done.connectionId },
+        scope: { kind: "workspace", id: workspaceId },
+        orgId,
+        appId: app.app_id,
+        appWorkspaceId: workspaceId,
+        connectMethod: found?.connect_method ?? methodId,
+        scopes: done.scopes ?? found?.scopes ?? [],
+        customOnly: appIsCustomOnly(app),
+      }}
+      onDismiss={onDismiss}
+    />
   );
 }
 
-export function ConnectView() {
-  const { org, ws, app } = useParams<{ org: string; ws: string; app: string }>();
-  const resolved = useResolve(org, ws);
-  const wsId = resolved.data?.workspace?.id;
-  const detail = useApp(app, wsId);
-  if (resolved.isPending || (wsId && detail.isPending)) return <Loading />;
-  if (resolved.isError) return <ErrorState error={resolved.error} />;
-  if (!wsId) return <ErrorState error={{ code: "not_found" }} />;
-  if (detail.isError) return <ErrorState error={detail.error} onRetry={() => detail.refetch()} />;
-  if (!detail.data) return <Loading />;
+/** A reconnect opens on the method the connection was made with; wait for it (a failed load falls back). */
+function ReconnectForm({ app, workspaceId, orgId, reconnect, onClose }: { app: AppDetail; workspaceId: string; orgId: string; reconnect: string; onClose: () => void }) {
+  const conns = useConnections({ kind: "workspace", id: workspaceId });
+  if (conns.isPending) return <Loading />;
+  const keep = conns.data?.items.find((c) => c.id === reconnect)?.connect_method ?? null;
+  return <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} keepMethod={keep} reconnect={reconnect} onClose={onClose} />;
+}
+
+/**
+ * The Connect / Reconnect dialog (D-272): the whole flow (method, fields, scopes, submit, missing scopes, Give agents
+ * access) happens in a `Dialog` on the page, like Details. Closing it (×, Escape, scrim, Done) drops the form.
+ */
+export function ConnectDialog({
+  appId,
+  name,
+  workspaceId,
+  orgId,
+  reconnect,
+  onClose,
+}: {
+  appId: string;
+  /** The app's name when the caller already knows it (shown in the title while the detail loads). */
+  name?: string;
+  workspaceId: string;
+  orgId: string;
+  /** The id of the connection to reconnect. */
+  reconnect?: string;
+  onClose: () => void;
+}) {
+  const detail = useApp(appId, workspaceId);
+  const d = detail.data;
+  const title = `${reconnect ? "Reconnect" : "Connect"} ${d?.name ?? name ?? "app"}`;
+  let body;
+  if (detail.isPending) body = <Loading />;
+  else if (detail.isError) body = <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
+  else if (!d) body = <Loading />;
+  else if (!d.available) body = <ErrorState error={{ code: "app_unavailable" }} />;
+  else if (reconnect && d.connect.length > 1)
+    body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} onClose={onClose} />;
+  else body = <ConnectForm app={d} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} onClose={onClose} />;
   return (
-    <div className="max-w-xl">
-      <PageHeader
-        title={`Connect ${detail.data.name}`}
-        description="Give agents in this workspace access to this app through the gateway."
-      />
-      {detail.data.available ? (
-        <ConnectEntry app={detail.data} workspaceId={wsId} orgId={resolved.data!.org.id} />
-      ) : (
-        <ErrorState error={{ code: "app_unavailable" }} />
-      )}
-    </div>
+    <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
+      <DialogContent size="lg" title={title} description={d ? `${d.package_id} ${d.package_version}` : undefined}>
+        {body}
+      </DialogContent>
+    </Dialog>
   );
 }

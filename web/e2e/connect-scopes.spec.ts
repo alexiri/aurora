@@ -72,7 +72,7 @@ for (const scheme of ["light", "dark"] as const) {
           if (p === `/v1/connections/${CONN}/grants`) return json({ items: [] });
           return route.fallback();
         });
-        await page.goto("/o/acme/w/main/apps/indico/connect");
+        await page.goto("/o/acme/w/main/credentials?tab=apps&connect=indico");
         await page.getByLabel("Personal API token").fill("not-a-real-token");
         const scopes = page.getByRole("group", { name: "Which scopes did you give this token?" });
         await expect(scopes.getByText("Aurora checks each read scope")).toBeVisible();
