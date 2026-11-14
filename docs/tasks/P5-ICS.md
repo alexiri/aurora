@@ -1,4 +1,4 @@
-# P5-ICS: Calendar link (ICS) — read-only access to a calendar through its secret subscription link, no OAuth app needed (owner, 2026-11-14, phase 5, D-273)
+# P5-ICS: Calendar link (ICS) — read-only access to any calendar through its secret subscription link, no OAuth app needed (owner, 2026-11-14, phase 5, D-273, C-843, SEC-107)
 
 ## Why
 The owner (2026-11-14):
@@ -8,129 +8,153 @@ The owner (2026-11-14):
 > "This would be simpler than the full microsoft-365 app because it doesn't require an oauth client to be defined, which I can't get without full official permission from our microsoft admins."
 >
 > "We could in fact do the same thing for Google and other calendar providers! Maybe a generic ICS calendar app, then?"
+>
+> "Why do we have to hardcode each provider? Why not just have the user give us a name (`Private calendar`) and the full URL? Then the gateway could just swap the entire URL in the request … [otherwise] we need to add each possible URL source by hand, including self-hosted calendar servers, etc. It's just not scalable."
 
-Today `microsoft-365` and `google-workspace` both need an OAuth client registered by the organization's administrators. A published calendar link needs nobody's permission. The person publishes the calendar in their own calendar settings, then pastes the link once.
+Today `microsoft-365` and `google-workspace` both need an OAuth client registered by the organization's administrators. A published calendar link (Outlook *Publish a calendar*, Google *Secret address in iCal format*, iCloud public calendar, Proton, Fastmail, Nextcloud, an on-premises Exchange…) needs nobody's permission. It is just a URL that works like a password.
 
-## What it is
-A new built-in package **`ics-calendar`** with one app, **Calendar link (ICS)**, category `productivity`.
-- **Icon:** a neutral monogram/calendar tile per `plugins/builtin/ICONS.md` (D-99): it spans vendors, so no vendor's brand.
-- **Description:** "Read a calendar you publish as a private subscription link (Outlook, Google Calendar). Read-only; no admin-registered sign-in app needed."
+## The idea: the URL is the credential and the destination
+A new kind of connection credential, the **secret link**:
+- **What the person enters:** a **name** ("Private calendar") and the **full URL**.
+- **What the agent does:** it never sees the URL. It requests a synthetic address for the connection.
+- **What the gateway does:** it sends the request to exactly the stored URL, then returns the answer.
 
-### Providers in this build
-Each provider is one **connect method** (the "How do you want to connect?" cards, FIX-123), so each card and the setup guide can say exactly where that provider keeps the link.
+The agent controls nothing of the destination: no host, path, query or headers. The person fixed it at connect, so nothing can be steered elsewhere. That is why no provider list is needed. SEC-04 ("a credential is injected only on hosts its package declares") exists to stop a credential being sent where the *agent* chooses. It does not apply to a destination the person typed, which SEC-107 governs instead.
 
-| Method id | Card label | Host | Link the person pastes (`webcal://` accepted, normalized to `https://`) | Stored |
-|---|---|---|---|---|
-| `outlook` | Microsoft Outlook (work or school) | `outlook.office365.com` | `/owa/calendar/<mailbox>/<token>/<file>.ics` | credential `token`; metadata `mailbox`, `file` |
-| `outlook_com` | Outlook.com (personal) | `outlook.live.com` | `/owa/calendar/<mailbox>/<token>/<file>.ics` | same |
-| `google` | Google Calendar | `calendar.google.com` | `/calendar/ical/<calendar id>/private-<token>/basic.ics` | credential `token` (the part after `private-`); metadata `calendar_id` |
+This is the database lane's pattern (P2-DBL, D-80, D-89, C-231, C-233), applied to one HTTP `GET`. In that lane:
+- the agent talks to `<connection_id>.db.aurora.internal`;
+- the gateway connects to the stored server;
+- the workspace sync tells the supervisor which connections the agent may use, and the supervisor writes the agent a list.
 
-- **Link formats are from public knowledge, not verified yet.** Microsoft's page (support article "Share an Outlook calendar as view-only with others", read 2026-11-14) gives the steps but no link format, host, refresh delay or secrecy statement. Before writing the patterns, the lane verifies each format against a real published link: the owner provides a throwaway calendar link per provider, used locally and never committed.
-- **Unconfirmed variants are not guessed.** Where a variant can't be confirmed (another Outlook host, another final file name), it is refused with a message naming the expected shape.
+The mechanism is generic (`secret_link`), so a later package (private RSS/Atom feeds, other "secret URL" exports) reuses it with no core change. This brief ships only the calendar package.
 
-**Adding a provider later** is a package update, with no core change:
-- a `hosts[]` entry;
-- a method;
-- its pattern in the hook;
-- one tool;
-- a setup-guide section;
-- one line in the agent snippet;
-- fixtures.
+## Scope
 
-Candidates, each needing a verified link format: iCloud public calendars (`p<NN>-caldav.icloud.com/published/2/<token>`), Proton (secrets in the query string, served by the `query` mechanism), Fastmail. Self-hosted servers (Exchange on-premises OWA, Nextcloud) would use instance-bound hosts (D-74) and are out of scope here. **Arbitrary hosts are impossible by design:** a package injects only into hosts it declares (SEC-04).
+### 1. Package `ics-calendar` (built-in)
+- **App:** one app, **Calendar link (ICS)**, category `productivity`, neutral calendar/monogram icon (D-99; it spans vendors).
+- **Connect method:** one `fields` method:
+  - `name`: text, required, ≤ 60 characters, `store: metadata`; it becomes the connection label;
+  - `url`: `secret`, required, `store: credentials`.
+- **Manifest section `secret_link: { credential: url, expect_prefix: "BEGIN:VCALENDAR" }`.**
+- **Tool:** one read tool, `read_calendar`, `GET` on `*.link.aurora.internal` path `/`. No write tools.
+- **`docs/setup.md`:** where each common provider keeps its link. This is guidance only, with no code per provider:
+  - Outlook on the web / new Outlook: *Settings → Calendar → Shared calendars → Publish a calendar*, copy the **ICS** link;
+  - Google: *Settings → the calendar → Integrate calendar → Secret address in iCal format*;
+  - iCloud public calendar, Proton, Fastmail, Nextcloud, Exchange on-premises OWA.
 
-## Design (D-273)
-1. **The secret is the link's path, and the agent never sees it.**
-   - **What the agent requests:** a fixed placeholder path on the provider's host:
-     - `https://outlook.office365.com/owa/calendar/aurora/calendar.ics`;
-     - `https://outlook.live.com/owa/calendar/aurora/calendar.ics`;
-     - `https://calendar.google.com/calendar/ical/aurora/basic.ics`.
-   - **What the gateway does:** each host entry matches only that placeholder path (`path_prefix` as narrow as the linter allows). One `path_regex` inject rebuilds the real path, for example `^/owa/calendar/aurora/calendar\.ics$` → `/owa/calendar/{metadata.mailbox}/{credentials.token}/{metadata.file}`, and `^/calendar/ical/aurora/basic\.ics$` → `/calendar/ical/{metadata.calendar_id}/private-{credentials.token}/basic.ics`. Each reference is percent-encoded per segment, as the gateway already does (`mechanisms/template.rs`).
-   - **Why the mailbox and calendar id are metadata:** only the token grants access. The mailbox or calendar id can be the person's email address, which the ICS body repeats in `ORGANIZER`/`ATTENDEE` lines. As a credential it would trip FIX-104's echo check (`upstream_echoed_credential`) on every read.
-   - **Echo check on the token:** it stays on, and the token must not appear in the response.
-2. **Each connection is injected only on its own provider's host.**
-   - Every host entry carries a `tenant` guard on `connection.tenant_host` with a zone equal to that exact host, and the hook sets `tenant-host` at connect.
-   - So a request to another provider's placeholder is refused 421 `host_mismatch` (SEC-04(c)). A Google token never goes to Microsoft or the reverse.
-3. **Connect is a `hook` method per provider** (`authorize: false`, one `secret` field "Calendar link"). `connect.exchange` (§8.2, WIT `connected` record) does the work.
-   - **Parse and check:** it parses the pasted URL and checks the scheme (`https`/`webcal`), the exact host for the chosen method and the path pattern.
-   - **Fetch once:** it fetches the link once through its declared egress: the three hosts, 10 s, the first 256 KiB.
-   - **Validate:** it requires `BEGIN:VCALENDAR`.
-   - **Output:** `credentials {token}`, metadata, `tenant-host` and a label `"<X-WR-CALNAME or 'Calendar'> (<provider>)"` (sanitized, no part of the link).
-   - **Errors** are fixed codes with fixed copy, and never include the URL: `ics_link_not_recognized` (shape), `ics_link_wrong_provider`, `ics_link_not_found` (404/410: not published or unpublished), `ics_link_unreachable`, `ics_not_a_calendar`.
-   - **Busy-only calendars:** a calendar published "busy only" connects fine. The label gets no warning, but the setup guide explains it.
-4. **Read only by construction.** `tools.read` has one tool per method (`read_calendar_outlook`, `read_calendar_outlook_com`, `read_calendar_google`: `GET` on the placeholder path, `connect_methods: [<method>]`), and there are no write tools. `token: static`. Grants, approvals, Give agents access and the request log work as for any app.
-5. **The agent snippet** (≤ `AGENT_SNIPPET_MAX` 2,000 chars, written in the package) says:
-   - which placeholder URL belongs to which provider;
-   - that the connection label names the provider;
-   - to use `x-aurora-connection-id` when several calendar connections exist (gateway 409 `multiple_connections` lists them);
-   - to fetch to a file and expand recurrences with a pinned recipe:
-     ```
-     uv run --with icalendar==<pin> --with recurring-ical-events==<pin> python - <<'PY' …
-     ```
-     It prints events between two dates in the person's time zone, as `start–end | title | location`.
-   - that raw `VEVENT` reading is a fallback only for non-recurring events;
-   - that "Busy" entries without titles mean a busy-only publication;
-   - that 404 means the link was unpublished or reset, so the agent should ask the person to reconnect with the new link.
+  For each it says:
+  - the link is a password, so publish the least detail you need (busy only, titles and locations, or all details);
+  - revoking is *Unpublish*/*Reset* at the provider, then reconnect with the new link;
+  - changes arrive with the provider's own delay;
+  - an Outlook organization may have turned publishing off, in which case only `microsoft-365` with admin consent reaches the calendar;
+  - a server on a private network works only where the instance admin allows that range (`gateway.allowed_private`).
+- **Agent snippet** (≤ 2,000 chars):
+  - the calendars are listed in `~/.aurora/links.json` (`name`, `app`, `url`);
+  - `curl` the listed `url` to a file;
+  - expand recurrences with a pinned `uv run --with icalendar==<pin> --with recurring-ical-events==<pin> python - …` recipe that prints `start–end | title | location` between two dates in the person's time zone;
+  - "Busy" entries without titles mean a busy-only publication;
+  - `link_not_found` means the link was unpublished or reset, so ask the person to reconnect with the new link.
 
-   The lane pins versions that work on the sandbox's `python3`. It checks that PyPI is reachable from a default sandbox on the dev stack; if it is not, it stops and reports. The fallback is preinstalling the two libraries in `images/sandbox/Containerfile`, which is an ops-owned file, so that is the coordinator's call.
-6. **Setup guide** (`docs/setup.md`, one section per method):
-   - **Outlook (both):** Outlook on the web or new Outlook → Calendar → Settings → Calendar → Shared calendars → *Publish a calendar* → choose the calendar and how much to share → Publish → copy the **ICS** link (not the HTML one).
-   - **Google:** Settings → the calendar → Integrate calendar → *Secret address in iCal format*.
-   - **For each, say:**
-     - The link is a password. Anyone who has it can read the calendar at the level chosen.
-     - Choose the least detail that serves the person: busy only, titles and locations, or all details.
-     - How to revoke: Unpublish in Outlook (publishing again makes a new link); *Reset* in Google. Then reconnect in Aurora with the new link.
-     - Changes reach the link with the provider's delay. The lane measures what it can and states it, or says the provider doesn't document it.
-     - If the *Publish a calendar* section is missing, the organization turned publishing off. Then only the `microsoft-365` app (with admin consent) can reach the calendar.
+  The lane checks that PyPI is reachable from a default sandbox on the dev stack. If it is not, it stops and reports: preinstalling the two libraries in `images/sandbox/Containerfile` is the coordinator's call.
 
-## Security (existing invariants; no new SEC)
-- **Where the link lives:**
-  - It is a `secret` field: never logged, cleared from form state after submit.
-  - It is stored only as the credential `token` plus metadata.
-  - It is never shown again: the connection card shows the label, provider and host.
-- **Request log, approval summaries, traces (SEC-88) and gateway errors** carry the **placeholder** path, never the rewritten one. This must be proven by tests, not assumed.
-- **The echo check covers the token** (FIX-104, SEC-01).
-- **Injection** happens only on the declared host and placeholder path, within the connection's tenant host (SEC-04), and an agent-supplied path is overwritten, never merged (SEC-05).
-- **Probe:** the hook's fetch goes through the destination guard and its declared egress only.
+### 2. Core: the secret-link lane (C-843, SEC-107)
+**Registry (manifest contract).** An app may declare `secret_link { credential, expect_prefix? }`:
+- `credential` names a declared `secret: true` credential;
+- the app has no `hosts[]` entry;
+- its tools must be `GET` on host `*.link.aurora.internal`;
+- the linter accepts that host only with the section (`tool_host_uncovered` otherwise), as C-233 does for `*.db.aurora.internal`;
+- `aurora plugin test` fixtures may send `GET https://<uuid>.link.aurora.internal/` answered from a recorded upstream.
 
-## Core gaps to check first (stop and report, never extend the core silently)
-1. A `hook` method with `authorize: false` and form fields calls `connect.exchange` with `form(...)` on submit, and honours `tenant-host` and `label`.
-2. The `tenant` guard accepts an exact host as its zone, so each host entry needs no wildcard.
-3. A `path_regex` replacement may reference `metadata.*` and `credentials.*` together, and the linter accepts the narrow `path_prefix`.
-4. `exec.string_values()` (the echo needles, `decide.rs` ~1259) covers credentials only, not metadata. If it covers metadata, the Outlook/Google bodies trip it, so report.
-5. Outlook accepts `%40` for `@` in the mailbox segment (the template percent-encodes it), checked with the real link.
-6. `tools[].connect_methods` works with `hook` methods.
+**API connect.**
+- Validate the URL: `https` (a `webcal://` is normalized to `https://`), a DNS host (no userinfo, no IP literal unless covered by `allowed_private`), ≤ 2,048 characters.
+- Fetch it once **through the gateway's destination guard**: 10 s, the first 256 KiB, redirects as below.
+- Check `expect_prefix`.
+- Store `url` as the credential, and the URL's **host** as metadata `host` (shown on the connection card; not secret).
+- Errors are fixed codes and never echo the URL:
+  - `link_not_https`;
+  - `link_invalid`;
+  - `link_destination_refused` (guard or org egress policy);
+  - `link_not_found` (404 or 410);
+  - `link_unreachable` (timeout, DNS, TLS);
+  - `link_unexpected_content`.
+- Reconnect replaces the URL. The URL is never returned by any read endpoint.
 
-If any one fails, the fix is a small core change, and it goes to the coordinator with a proposed decision before any code.
+**Workspace sync and supervisor.**
+- The home sync's `render_inputs` gains `links: [{ name, app_id, connection_id }]`: one entry per active connection of an app with `secret_link` that the agent holds a grant on (the same set as `apps[].accounts`, as C-231 does for databases).
+- The supervisor writes `~/.aurora/links.json` (`0600`): `[{ name, app, url: "https://<connection_id>.link.aurora.internal/" }]`. It removes the file when the list is empty.
+- No secret is in the sandbox.
 
-## Ownership
-- **Owns:** `plugins/builtin/ics-calendar/**` (manifest, `docs/setup.md`, `assets/`, `hooks/` guest crate with its own `Cargo.lock`, `tests/*.yaml`).
-- **Built-in list:** the place the built-in packages are listed (the lane finds it: packaging, `check-builtin.sh`, any snapshot or catalogue test fixtures).
-- **Docs:** `docs/09` §10 / the built-in catalogue list only.
-- **Touches nothing else** unless a core gap above is decided.
+**Gateway.** A request to `<connection_id>.link.aurora.internal` (TLS leaf from the gateway CA, as for `*.db`):
+- **Before anything is fetched:**
+  - The connection must exist and be of a `secret_link` app.
+  - It must be granted to the calling agent. Policy, grants, approvals, Read-only (FIX-133) and the request log apply as to any tool request, with the tool taken from the manifest.
+  - Methods: `GET` and `HEAD` only (else 405). The agent's path and query are ignored.
+  - Forwarded agent headers are an allowlist: `Accept`, `If-None-Match`, `If-Modified-Since`, `Range`. Never cookies, `Authorization` or proxy headers.
+- **The upstream request:**
+  - It goes to the stored URL exactly: scheme, host, port, path, query.
+  - The **destination guard** applies on every request (resolved address; private ranges only under `allowed_private`; cloud metadata, link-local and Aurora's own addresses never).
+  - The **org egress policy** is also evaluated on the real host, so a host the org blocks stays blocked through a link.
+- **Redirects** are followed by the gateway: at most 3, `https` only, guard and policy on every hop. A `3xx` and its `Location` never reach the agent.
+- **The response:**
+  - It is streamed, capped at `SECRET_LINK_RESPONSE_MAX` (new limit, 20 MiB, in `limits.rs`).
+  - `Set-Cookie` and `Location` are dropped.
+  - Upstream 404/410 become 404 `link_not_found`; guard or policy refusals become 403 `link_destination_refused`.
+  - The echo check (FIX-104) uses the stored URL and its path-with-query, raw and percent-encoded, as needles; a match gives 502 `upstream_echoed_credential`.
+- **Logs and traces:** the request log, approval summaries, traces (SEC-88) and every error carry the synthetic host, the connection id and the real **host** only. The real path and query appear nowhere.
+
+**Dashboard.**
+- The `fields` form already renders `name` and the `secret` URL.
+- The connection card shows name, host, Read only and Edit, as for other connections. It never shows the URL.
+- No new screen.
+
+### 3. Docs
+- `09` §3.4: the `secret_link` section.
+- `06`: a **Secret-link lane** section next to the database lane.
+- `12`: `links.json` beside the pg files.
+- `17`: SEC-107 (written by the coordinator, below); keep it in step.
+- The built-in catalogue list.
+
+## Security (SEC-107, new; written into `17` with this brief)
+A secret-link credential is a destination fixed by the person:
+- the gateway sends a request only to the stored URL (`https`);
+- the agent controls no part of the destination and only allowlisted headers;
+- the destination guard and the org egress policy apply to the stored host and every redirect hop;
+- the URL never reaches the sandbox, a log, a trace, an approval, an error message or any API read after connect (its host is shown, nothing else).
 
 ## Acceptance criteria
-- [ ] `aurora plugin test plugins/builtin/ics-calendar` and `scripts/check-builtin.sh` pass. Fixtures:
-  - placeholder → real path for each provider, with `%40` in the mailbox;
-  - a request on another path of the host is not injected;
-  - a cross-provider request is 421 `host_mismatch`;
-  - an agent-supplied path segment is overwritten;
-  - a response containing the token is 502 `upstream_echoed_credential`;
-  - a response containing the mailbox/email is **not**.
-- [ ] Hook fixtures (`http_cassette`):
-  - each provider's valid link → expected credentials, metadata, tenant host and label;
-  - `webcal://` normalized;
-  - every error code: wrong host, wrong shape, 404, not a calendar;
-  - an egress-denied case.
-- [ ] Gateway or API IT on the dev stack: connect with a recorded link. A `GET` on the placeholder returns the ICS. The request log row, the trace spans and an approval-held summary show the placeholder path only (a canary token appears nowhere).
-- [ ] Live check by the lane against the owner's throwaway links (not committed): each provider connects, reads, and after unpublish/reset answers 404 with the agent-facing message. Results go in the report, not in fixtures.
-- [ ] Agent snippet ≤ 2,000 chars. The recurrence recipe, run in a default sandbox on a recorded Outlook ICS with a weekly series, an exception and a moved instance, lists the right instances in the person's time zone.
-- [ ] The dashboard shows three method cards with their descriptions. The Give agents access step offers only the method's read tool.
-- [ ] `cargo fmt --check`, clippy and the hook crate build; the registry linter. Web needs no change: if it seems to, report why.
+- [ ] **Registry:** the linter accepts the package. It refuses `secret_link` on a non-secret credential, a `secret_link` app with `hosts[]`, a non-`GET` tool, and `*.link.aurora.internal` without the section. Fixtures: placeholder `GET` → stored URL; `POST` → 405.
+- [ ] **API ITs:** connect success (label = name, metadata `host`). Every error code, including a private address refused without `allowed_private` and accepted with it, and `webcal://` normalized. Neither the URL nor its path appears in any response, log line or audit row (canary). Reconnect replaces the URL.
+- [ ] **Gateway ITs:**
+  - an ungranted agent → refused;
+  - a read-only connection works;
+  - `HEAD` works and `POST` → 405;
+  - the agent's path, query and a `Cookie`/`Authorization` header are not forwarded, and `If-None-Match` is;
+  - a redirect is followed (≤ 3) and never shown;
+  - a redirect to `http` or to a private address is refused;
+  - an org block rule on the real host blocks;
+  - a 404 → `link_not_found`;
+  - an echoed URL → 502;
+  - a body over the cap is cut with an error;
+  - the request log row and the spans contain the host but not a canary token in the path or query.
+- [ ] **Supervisor test:** `links.json` content, `0600`, removed when the list empties. A duplicated name keeps both entries; `connection_id` distinguishes them.
+- [ ] **End-to-end on the dev stack:** an agent lists `links.json`, reads a recorded ICS through the link and expands a weekly series with an exception and a moved instance correctly in the person's time zone.
+- [ ] **Live check by the lane** with the owner's throwaway links (Outlook, Google; never committed): connect, read, unpublish/reset → `link_not_found`. Results go in the report.
+- [ ] `cargo fmt --check`, clippy, the touched crates' tests; `pnpm -C web test` if any web file changes (none is expected).
 
-## Dependencies
-- Blocked by: — (D-273 written). The connect flow is the one FIX-149 turns into a dialog; this brief needs no change there.
-- Numbers: D-273. No contract, no migration, no SEC.
+## Ownership and sequencing
+- **Owns:**
+  - `plugins/builtin/ics-calendar/**`;
+  - `crates/aurora-registry` (model, linter, plugin test);
+  - `services/aurora-gateway` (new `link` module and its dispatch from the decision path);
+  - the API connect path for `secret_link` and the home-sync `links` input;
+  - `services/aurora-supervisor` (`links.json`);
+  - `crates/aurora-core/src/limits.rs` (one constant);
+  - the docs above.
+- The registry manifest and the gateway's per-app decision are `p5-apps` hot files (PHASE5-PLAN): run it in that lane after its queue, or when the Orchestrator frees those files.
+- No migration: the credential and metadata live in existing columns. If the home sync needs a schema change, report it first.
+
+## Numbers
+D-273 (rewritten for this design), C-843, SEC-107. No migration.
 
 ## Suggested agent/model and reason
-`rust-developer` (Sonnet): a WASM hook guest, manifest, fixtures and gateway ITs. The package directory is new and disjoint, so it can run in any free slot. It belongs with the apps work (`p5-apps` queue) unless a core gap needs the gateway, in which case it waits for that lane's slot.
+`rust-developer` (Sonnet). It spans the registry, gateway, API and supervisor, like P2-DBL-2. The security tests matter more than the package.

@@ -1299,6 +1299,22 @@ Rule: `07 §Park and resume` and `§Web Push`, `06 §Parking and grants` and §G
   - **Message checks.** Messages are not secret (ids and scope names). Receivers check the shape and `type`, and act only on the `app_id` they are waiting for. Every other dashboard tab just refreshes its apps/connections queries.
   - **Opening the sign-in window.** The dashboard opens the window synchronously on the click (`about:blank`). After `POST …/connect` answers `{kind:"redirect", url}`, it sets that window's `opener` to `null` and only then navigates it to `url`. The provider's page never holds a handle on the dashboard (WEBC-3).
   - **Deep link.** The connect deep link is `/o/<org>/w/<ws>/credentials?tab=apps&connect=<app_id>`, which the agent's `request_app_connection` notice (I-29) now emits. `/o/<org>/w/<ws>/apps/<app_id>/connect[?reconnect=<id>]` stays as a redirect to it, so links already sent in conversations still work; `reconnect` maps to `?tab=connections&reconnect=<id>`.
+- C-843 **Secret-link lane** (P5-ICS, D-273, SEC-107).
+  - **Manifest.** An app may declare `secret_link: { credential: <secret credential name>, expect_prefix?: string (≤ 64) }`. Such an app has no `hosts[]` entry, and its tools are `GET` on `*.link.aurora.internal` path `/`. The linter refuses a non-secret credential, `hosts[]` beside the section, a non-`GET` tool, and the host without the section (`tool_host_uncovered`). `aurora plugin test` accepts `GET https://<uuid>.link.aurora.internal/` with a recorded upstream.
+  - **Connect** (`POST …/apps/{app}/connect`, `fields`).
+    - The URL must be `https` (`webcal://` normalized), a DNS host without userinfo, and ≤ 2,048 characters.
+    - The API fetches it once through the gateway's destination guard and egress policy (10 s, first 256 KiB, redirects as below) and checks `expect_prefix`.
+    - It stores the URL as the credential and the URL's host as metadata `host`.
+    - Refusals are 422 with `code` ∈ `link_not_https`, `link_invalid`, `link_destination_refused`, `link_not_found`, `link_unreachable`, `link_unexpected_content`; no message contains the URL.
+    - No read endpoint ever returns the URL.
+  - **Home sync.** `render_inputs.links: [{ name: string, app_id: string, connection_id: uuid }]`: one entry per active connection of a `secret_link` app the agent holds a grant on (the set of `apps[].accounts`). The supervisor writes `~/.aurora/links.json` (`0600`, removed when empty): `[{ name, app, url: "https://<connection_id>.link.aurora.internal/" }]`.
+  - **Gateway.**
+    - Admission: `<connection_id>.link.aurora.internal` (gateway-CA leaf), `GET`/`HEAD` only (405 otherwise), after policy, grants, approvals and Read only.
+    - Forwarding: the request goes to the stored URL exactly. The agent's path and query are ignored, and only `Accept`, `If-None-Match`, `If-Modified-Since` and `Range` are forwarded.
+    - Redirects: ≤ 3, `https` only, guard and policy per hop, never returned.
+    - Response: streamed and capped at `SECRET_LINK_RESPONSE_MAX` (20 MiB); `Set-Cookie`/`Location` dropped.
+    - Errors: 404 `link_not_found`, 403 `link_destination_refused`, 502 `upstream_echoed_credential` (needles: the URL and its path-with-query, raw and percent-encoded).
+    - Request log rows and spans carry the connection id and the host, never the path or query.
 
 ## Shared schemas
 
