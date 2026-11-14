@@ -178,6 +178,14 @@ impl Snapshot {
     }
 }
 
+impl AppEntry {
+    /// (FIX-123, D-195) The `token` of a connection made with `method` (the method's own, else
+    /// the app's); `None` method = the app's.
+    pub fn token_for(&self, method: Option<&str>) -> Option<&Token> {
+        crate::manifest::token_for(&self.connect, self.token.as_ref(), method)
+    }
+}
+
 pub struct ActivePackage {
     pub manifest: Manifest,
     pub digest: String,

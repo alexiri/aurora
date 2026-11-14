@@ -328,6 +328,80 @@ impl Connect {
             Self::Hook(c) => &c.id,
         }
     }
+
+    /// (FIX-123, D-195, D-214) Short method name shown in the connect window's chooser.
+    pub fn label(&self) -> Option<&str> {
+        match self {
+            Self::Oauth2(c) => c.label.as_deref(),
+            Self::Fields(c) => c.label.as_deref(),
+            Self::Hook(c) => c.label.as_deref(),
+        }
+    }
+
+    /// One or two sentences: what the method is and when to use it.
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Oauth2(c) => c.description.as_deref(),
+            Self::Fields(c) => c.description.as_deref(),
+            Self::Hook(c) => c.description.as_deref(),
+        }
+    }
+
+    /// The method the connect window preselects (at most one per app).
+    pub fn recommended(&self) -> bool {
+        match self {
+            Self::Oauth2(c) => c.recommended,
+            Self::Fields(c) => c.recommended,
+            Self::Hook(c) => c.recommended,
+        }
+    }
+
+    /// The `token` of this method, overriding the app's for connections made with it.
+    pub fn token(&self) -> Option<&Token> {
+        match self {
+            Self::Oauth2(c) => c.token.as_ref(),
+            Self::Fields(c) => c.token.as_ref(),
+            Self::Hook(c) => c.token.as_ref(),
+        }
+    }
+
+    /// The form fields of the method (the credentials and metadata it produces, with `store`).
+    pub fn form_fields(&self) -> &[FormField] {
+        match self {
+            Self::Oauth2(c) => &c.fields,
+            Self::Fields(c) => &c.fields,
+            Self::Hook(c) => &c.fields,
+        }
+    }
+}
+
+/// (FIX-123) The `token` of connections made with `method`: the method's own when it declares
+/// one, else the app's. `None` (a connection with no recorded method) = the app's.
+pub fn token_for<'a>(
+    connect: &'a [Connect],
+    app_token: Option<&'a Token>,
+    method: Option<&str>,
+) -> Option<&'a Token> {
+    method
+        .and_then(|m| connect.iter().find(|c| c.id() == m))
+        .and_then(Connect::token)
+        .or(app_token)
+}
+
+impl App {
+    pub fn token_for(&self, method: Option<&str>) -> Option<&Token> {
+        token_for(&self.connect, self.token.as_ref(), method)
+    }
+}
+
+impl ToolItem {
+    /// (FIX-123) Does the tool apply to connections made with `method`? A tool without
+    /// `connect_methods` applies to every method; so does any tool to a connection that
+    /// records no method (unknown: nothing is hidden).
+    pub fn applies_to(&self, method: Option<&str>) -> bool {
+        self.connect_methods.is_empty()
+            || method.is_none_or(|m| self.connect_methods.iter().any(|x| x == m))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -366,6 +440,16 @@ pub struct AccessLevel {
 #[serde(deny_unknown_fields)]
 pub struct Oauth2Connect {
     pub id: String,
+    /// (FIX-123, D-214) Presentation in the connect window's method chooser, and the `token`
+    /// that overrides the app's for connections made with this method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recommended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<Token>,
     pub client: String,
     #[serde(default)]
     pub scopes: Vec<ScopeDecl>,
@@ -389,6 +473,14 @@ pub struct Oauth2Connect {
 #[serde(deny_unknown_fields)]
 pub struct FieldsConnect {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recommended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<Token>,
     pub fields: Vec<FormField>,
     pub probe: Option<Probe>,
 }
@@ -397,6 +489,14 @@ pub struct FieldsConnect {
 #[serde(deny_unknown_fields)]
 pub struct HookConnect {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recommended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<Token>,
     #[serde(default)]
     pub authorize: bool,
     #[serde(default)]
@@ -478,6 +578,10 @@ pub struct Probe {
     pub label: Option<String>,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn default_status() -> Vec<u16> {
@@ -687,6 +791,11 @@ pub struct ToolItem {
     pub path: String,
     #[serde(default)]
     pub methods: Vec<String>,
+    /// (FIX-123, D-214) Connect method ids this tool works with; empty = every method. The
+    /// brief's `tools[].methods` is spelled `connect_methods` here: `methods` is the HTTP
+    /// methods of the tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connect_methods: Vec<String>,
     pub graphql: Option<GraphqlKind>,
     pub git: Option<GitKind>,
     /// (phase 4, P4-GRANTS, Q8, D-124) 1–4 AND-ed parameter conditions (a classifier beside

@@ -350,6 +350,7 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | label | text not null | sanitized; auto-filled from probe metadata |
 | status | text CHECK in (`active`,`reauth_required`,`disabled`,`orphaned`) | |
 | status_reason | text null (≤ 300 chars) | open vocabulary; a plugin major upgrade sets `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (`09 §10`, ≤300 chars) |
+| connect_method | text null | (FIX-123, D-195, D-214) id of the manifest `connect[]` method that created or last reconnected the connection; the gateway's refresh/mint paths use that method's `token` (falling back to the app's), tools restricted by `connect_methods` apply by it. Null = unknown (rows older than the column, where the package had several methods): the app's `token`, no tool hidden. Backfilled by migration `000110` from the recorded package version's single method |
 | credentials_ref | text not null | SecretRef of the credential JSON (fields per manifest `credentials`) |
 | credential_keys | text[] null | (phase 3, RFE-022) **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows: the upgrade check derives the names from the manifest of the row's `app_version`, else fails closed). Used by the plugin major-upgrade check (`09 §10`). The gateway role's column-level `UPDATE` list includes it |
 | credentials_version | bigint not null default 1 | CAS authority for refresh/mint writes |

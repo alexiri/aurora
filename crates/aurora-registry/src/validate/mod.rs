@@ -20,8 +20,8 @@ use regex::Regex;
 
 use crate::Violation;
 use crate::manifest::{
-    App, Connect, FieldType, FormField, Hook, HostRule, INSTANCE_HOST, Inject, Manifest, Probe,
-    Source, Store, TokenKind, UrlOrTemplate,
+    App, Connect, FieldType, Finalize, FormField, Hook, HostRule, INSTANCE_HOST, Inject, Manifest,
+    Probe, Source, Store, TokenKind, Transform, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -226,6 +226,11 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
                     _ => None,
                 })
                 .chain(a.token.iter().filter_map(|t| t.client.as_deref()))
+                .chain(
+                    a.connect
+                        .iter()
+                        .filter_map(|c| c.token().and_then(|t| t.client.as_deref())),
+                )
         })
         .collect();
     for (i, c) in m.oauth_clients.iter().enumerate() {
@@ -471,14 +476,24 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             }
         }
     }
-    // token
-    if let Some(t) = &app.token {
+    // token: the app's, then each connect method's own (FIX-123, D-214)
+    let method_tokens = app
+        .connect
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| c.token().map(|t| (format!("/connect/{i}/token"), t)));
+    for (tp, t) in app
+        .token
+        .iter()
+        .map(|t| ("/token".to_owned(), t))
+        .chain(method_tokens)
+    {
         if let Some(c) = &t.client
             && !clients.contains(c.as_str())
         {
             cx.v(
                 "unknown_oauth_client",
-                "/token/client",
+                &format!("{tp}/client"),
                 format!("no oauth client `{c}`"),
             );
         }
@@ -489,11 +504,12 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             cx.tmpl(
                 v,
                 Place::TokenParams,
-                &format!("/token/extra_params/{k}"),
+                &format!("{tp}/extra_params/{k}"),
                 &[],
             );
         }
     }
+    method_rules(cx);
     // tools
     if let Some(t) = &app.tools {
         let mut ids = BTreeSet::new();
@@ -676,6 +692,146 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
         );
     }
 }
+
+/// Every template of a host rule that can read a credential.
+fn host_templates(h: &HostRule) -> Vec<&Template> {
+    let mut out: Vec<&Template> = Vec::new();
+    for i in &h.inject {
+        match i {
+            Inject::Bearer(t)
+            | Inject::Header { value: t, .. }
+            | Inject::Query { value: t, .. }
+            | Inject::PathTemplate { value: t, .. }
+            | Inject::PathRegex { replacement: t, .. } => out.push(t),
+            Inject::Basic { user, password } => out.extend([user, password]),
+            Inject::RemoveHeader(_) => {}
+        }
+    }
+    if let Some(r) = &h.rewrite_host {
+        out.push(&r.template);
+    }
+    if let Some(Finalize::AwsSigv4(a)) = &h.finalize {
+        out.extend([&a.region, &a.access_key, &a.secret_key]);
+        out.extend(a.session_token.iter());
+    }
+    if let Some(Transform::GitCommitTrailer(t)) = &h.transform {
+        out.push(&t.trailer);
+    }
+    out
+}
+
+/// Connect-method rules (FIX-123, D-195, D-214, 09 §3.4 `connect[]`): unique ids, presentation
+/// text, at most one `recommended`, `tools[].connect_methods` naming real methods, and (for an
+/// app with several methods) every credential its host templates read, unless optional, is one
+/// that each method produces.
+fn method_rules(cx: &mut Ctx<'_>) {
+    let app = cx.app;
+    let mut ids = BTreeSet::new();
+    let mut recommended = 0;
+    for (i, c) in app.connect.iter().enumerate() {
+        let p = format!("/connect/{i}");
+        if !ids.insert(c.id()) {
+            cx.v(
+                "duplicate_connect_method",
+                &format!("{p}/id"),
+                format!("connect method id `{}` appears twice", c.id()),
+            );
+        }
+        for (key, v, max) in [
+            ("label", c.label(), METHOD_LABEL_MAX),
+            ("description", c.description(), METHOD_DESCRIPTION_MAX),
+        ] {
+            if let Some(v) = v
+                && (v.trim().is_empty()
+                    || v.chars().count() > max
+                    || v.chars().any(char::is_control))
+            {
+                cx.v(
+                    "method_text_invalid",
+                    &format!("{p}/{key}"),
+                    format!("`{key}` must be 1 to {max} characters without control characters"),
+                );
+            }
+        }
+        if c.recommended() {
+            recommended += 1;
+        }
+    }
+    if recommended > 1 {
+        cx.v(
+            "recommended_multiple",
+            "/connect",
+            "at most one connect method may be `recommended`",
+        );
+    }
+    if let Some(t) = &app.tools {
+        for (gname, g) in [("read", &t.read), ("write", &t.write)] {
+            let Some(g) = g else { continue };
+            for (j, it) in g.items.iter().enumerate() {
+                for m in &it.connect_methods {
+                    if !ids.contains(m.as_str()) {
+                        cx.v(
+                            "tool_method_unknown",
+                            &format!("/tools/{gname}/items/{j}/connect_methods"),
+                            format!("tool `{}` names unknown connect method `{m}`", it.id),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    if app.connect.len() < 2 {
+        return;
+    }
+    let optional: BTreeSet<&str> = app
+        .credentials
+        .iter()
+        .filter(|c| c.optional)
+        .map(|c| c.name.as_str())
+        .collect();
+    let mut read: BTreeSet<&str> = BTreeSet::new();
+    for t in app.hosts.iter().flat_map(host_templates) {
+        read.extend(
+            t.references()
+                .filter(|r| r.ns == crate::template::Ns::Credentials)
+                .map(|r| r.name.as_str()),
+        );
+    }
+    for (i, c) in app.connect.iter().enumerate() {
+        // A hook method's credentials come from the hook, which the manifest cannot see.
+        let produced: BTreeSet<&str> = match c {
+            Connect::Hook(_) => continue,
+            Connect::Fields(f) => f
+                .fields
+                .iter()
+                .filter(|x| x.store == Store::Credentials)
+                .map(|x| x.name.as_str())
+                .collect(),
+            Connect::Oauth2(o) => o
+                .token_response
+                .keys()
+                .map(String::as_str)
+                .filter(|k| !["expires_in", "scope"].contains(k))
+                .collect(),
+        };
+        for r in read
+            .iter()
+            .filter(|r| !optional.contains(*r) && !produced.contains(*r))
+        {
+            cx.v(
+                "method_credential_unproduced",
+                &format!("/connect/{i}"),
+                format!(
+                    "connect method `{}` does not produce credential `{r}`, which host templates read (declare it `optional` or produce it)",
+                    c.id()
+                ),
+            );
+        }
+    }
+}
+
+const METHOD_LABEL_MAX: usize = 60;
+const METHOD_DESCRIPTION_MAX: usize = 400;
 
 fn probe(cx: &mut Ctx<'_>, pr: &Probe, p: &str, fields: &[&str], fields_connect: bool) {
     cx.tmpl(
