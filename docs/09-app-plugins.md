@@ -215,6 +215,39 @@ response cap. Failure → 422 `connect_probe_failed` with the upstream status.
   fields: []                    # optional form collected first and passed to the hook
 ```
 
+**Several methods of one app: one app per service** (FIX-123, D-195(a), D-214). Ways to
+authenticate to the same service are **methods of one app**, not separate apps (a GitHub App
+installation and an OAuth login are two methods of `github`; an assumed role and an access
+key pair are two methods of `aws-keys`). Every method (any `kind`) accepts, all optional:
+
+```yaml
+- id: github_app
+  kind: hook
+  label: GitHub App                 # ≤ 60 characters, the chooser's name for the method
+  description: "An app installed on the repositories you choose …"   # ≤ 400, one or two sentences:
+                                    # what it is, when to use it
+  recommended: true                 # the chooser preselects it and badges it "Recommended"; at most one
+  token: { kind: hook, max_lifetime_secs: 3600 }   # overrides the app's `token` for connections made with this method
+```
+
+- **`token` per method.** A connection made with a method that declares `token` uses it; one made
+  with a method that does not (and a connection with no recorded method, `app_connections.
+  connect_method` null) uses the app's `token` (default `static`). The gateway's refresh and mint
+  paths, and every other reader of the token kind, resolve it per connection:
+  `AppEntry::token_for(connect_method)`.
+- **`credentials` are the union** of what the methods produce; a credential a method does not
+  produce is declared `optional: true`. The linter (§6) checks that a required credential read by
+  host templates is produced by every `fields` and `oauth2` method (a `hook` method's output is
+  not visible to the manifest). The rule applies only to an app in which a method declares its own
+  `token`, so a package written before the key stays valid.
+- **`tools[].connect_methods: [method ids]`** (the brief's `tools[].methods`; `methods` is the
+  HTTP methods) restricts a tool to connections made with those methods: it is hidden from pickers
+  and ignored by classification for connections of other methods (a tool with no list applies to
+  every method; a connection with no recorded method hides nothing).
+- The connect window asks "How do you want to connect?" when an app has more than one method,
+  showing `label`, `description` and a **Recommended** badge; a reconnect keeps the connection's
+  method unless the person picks another.
+
 Server-owned values are never taken from client input: templates and hooks
 read them from **context variables** listed in `permissions.context`:
 
@@ -310,6 +343,9 @@ token:
   reauth_codes: [invalid_grant] # token endpoint errors meaning "user must reconnect"
 ```
 `hook` means `token.mint` produces fresh credential fields plus an expiry.
+A connect method may carry its own `token` (`connect[]`, FIX-123): it overrides this one for
+connections made with that method, so one app can offer an OAuth login (`oauth2_refresh`) and a
+minted installation token (`hook`) side by side.
 
 #### `tools` (permission catalogue)
 ```yaml
@@ -324,7 +360,8 @@ tools:
       - { id: create_issue, name: Create issue, host: api.github.com, path: /graphql, methods: [POST], graphql: mutation }
       - { id: push, name: Push code, host: github.com, path: "/*/*/**", methods: [GET, POST], git: push }
 ```
-`description` optional; tool ids are immutable; renaming = remove + add.
+`description` optional; `connect_methods` optional (a list of the app's `connect[]` ids, §3.4
+`connect[]`); tool ids are immutable; renaming = remove + add.
 
 **Which tool a request is.** A request is classified as the **first** catalogue tool that matches
 its host, method and path: `read` items are tried before `write` items, each in declaration order.
@@ -650,6 +687,14 @@ if any of:
   `library_no_credential`, `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
   unknown keys or non-conforming values), or `library` on an app without a credential that can
   authenticate requests to `request_host`;
+- (FIX-123, D-214) connect methods: a duplicate method id (`duplicate_connect_method`), a `label`
+  over 60 or a `description` over 400 characters, blank or with control characters
+  (`method_text_invalid`), more than one `recommended` (`recommended_multiple`), a
+  `tools[].connect_methods` entry that names no method (`tool_method_unknown`), a method `token` whose
+  `client` is not declared (`unknown_oauth_client`; a method `token` of `kind: hook` counts for
+  `permissions.hooks` like the app's), and, for an app whose methods use `token`, a required credential
+  that host templates read and a `fields` or `oauth2` method does not produce
+  (`method_credential_unproduced`);
 - `env` or stub paths violating the rules above.
 
 A host **conflict** with another active package is not a rejection: the package
@@ -676,6 +721,11 @@ and is subject to policy as such. A registered instance host (below) is claimed 
 way: TLS to the claimed port. **A wildcard in a host claim must leave a registrable domain
 to its right** (public-suffix check, as for zones, SEC-17): `*.herokuapp.com` and
 `*.github.io` are refused with `zone_too_broad`, `s3.*.amazonaws.com` is accepted.
+
+(FIX-123, D-195(a)) The built-in packages never conflict with each other: ways to authenticate to one
+service are connect methods of one app (`§3.4 connect[]`), so a fresh instance starts with one GitHub
+and one AWS app and no host-claim decision to make. A package that a present package supersedes
+(`§10`) is not offered to the admin as a conflict.
 
 (phase 2, D-74) A registered app instance host (`§3.4 Instance-bound hosts`) is
 a claim of its app. Registration refuses a host that conflicts with an existing
@@ -917,6 +967,24 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   `pending_approval` (reason `converts_grants`) like `breaks_connections`, never auto-activated.
   Activation that introduces `block_untooled` converts nothing (the evaluator applies it at
   once). A later version that drops either flag converts nothing back: custom grants stay custom.
+- (FIX-123, D-195(a), D-215) **Superseded apps.** A built-in app that became a **connect method of
+  another app** is listed in the API's table of superseded apps (`github-app` → `github`/`github_app`,
+  `github-app-ghes` → `github-ghes`/`github_app`, `aws-role` → `aws-keys`/`assume_role`). In the
+  **same transaction as the activation** of a version that contains the target app with that
+  method (approval of `github` 2.0.0 or `aws-keys` 2.0.0, §10 widening applies as usual: the new
+  hooks and egress need one instance-admin approval), the API: (1) moves every `app_connections` row
+  of the old app (any status, any scope) to the target app, package and version with
+  `connect_method` set; connection ids, `credentials_ref`, scopes, metadata and the connection's
+  grants and rules are untouched, and tool ids carry over unchanged because the merged apps keep
+  the old tool ids; (2) moves `app_instances` (a registration of the old GHES app merges into an
+  existing one of the same org and host, whose id the connections then reference),
+  `skill_libraries.app_id` and `org_app_availability` (an org that had the old app available gets
+  the target available); (3) deletes the `host_claim_decisions` between the old and the new
+  package (no longer meaningful); (4) disables the old package (`status_reason: superseded_by_<package>`)
+  when it is active, so its apps leave the snapshot; (5) writes one `plugin.supersede` audit row with
+  counts per app and a dry-run-equivalent count in the upgrade log. Idempotent: a run with nothing
+  to move changes nothing. History (`request_log`, `approvals`) keeps the old app id. A later
+  re-enable of the retired package is refused (`superseded`).
 - **Removing an app** (upgrade without it, or uninstall) with live connections
   is refused unless `force`; forced removal marks connections `orphaned`.
 - **New tools arrive blocked** in custom grants; removed tools make referencing

@@ -1,4 +1,5 @@
-//! `aws-role` hooks (docs/09 §8, D-95): assume an IAM role with `sts:AssumeRole`, signed with the
+//! `assume_role` connect-method hooks of the `aws-keys` package (docs/09 §8, D-95, FIX-123/D-216:
+//! the former `aws-role` package is now this method): assume an IAM role with `sts:AssumeRole`, signed with the
 //! operator's source access key (AWS Signature Version 4, implemented here with pure-Rust SHA-256),
 //! and hand the temporary session credentials to the gateway's `aws_sigv4` finalizer.
 //!
@@ -16,7 +17,7 @@
 use aurora_plugin_sdk::*;
 use sha2::{Digest, Sha256};
 
-const APP: &str = "aws-role";
+const APP: &str = "aws-keys";
 const STS_VERSION: &str = "2011-06-15";
 const MIN_DURATION: u64 = 900;
 const DEFAULT_DURATION: u64 = 3600;

@@ -72,6 +72,7 @@
     "app_connections": [
       "app_id",
       "app_version",
+      "connect_method",
       "connected_by",
       "credential_keys",
       "credentials_expires_at",
@@ -1254,6 +1255,7 @@
     "app_connections": {
       "app_id": "text not null",
       "app_version": "text not null",
+      "connect_method": "text null",
       "connected_by": "uuid null",
       "credential_keys": "text[] null",
       "credentials_expires_at": "timestamptz null",

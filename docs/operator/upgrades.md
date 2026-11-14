@@ -36,6 +36,18 @@ notes where the shipped artifacts do not follow them yet.
    already has organizations or a saved placement is not "pending": its behaviour is unchanged. A fresh
    instance stays closed to ordinary users until a placement is saved, even after an administrator has
    signed in.
+9. **One app per service: approve the new `github` and `aws-keys` once** (FIX-123, D-195(a), D-214..D-216).
+   The GitHub App and the assumed IAM role are now connect methods of `github` / `github-ghes` and
+   `aws-keys` (the packages `github-app` and `aws-role` are no longer shipped). The new versions (2.0.0)
+   add hooks and egress hosts the old packages already used, which is a permission widening: after the
+   upgrade each waits in *Admin, Plugins* for one instance-administrator approval (until then the old
+   packages keep working). Approving moves every connection of the old apps to the new app in the same
+   transaction (connection ids, stored credentials, grants and history are kept; GitHub Enterprise Server
+   instances, skill libraries and app availability follow), deletes the host-claim decisions between the
+   old pairs and disables the old package (`superseded_by_<package>`, one audit row `plugin.supersede`).
+   Rerunning changes nothing; nothing needs reconnecting. The migration `20261201000110_connection_connect_method.sql`
+   adds `app_connections.connect_method` and fills it where the package version had a single method; the
+   others read as unknown (the app's token, no tool hidden) until the connection is reconnected.
 
 ## Rules that make a rolling upgrade safe
 

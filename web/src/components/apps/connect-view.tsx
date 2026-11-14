@@ -7,6 +7,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ChoiceCards } from "@/components/ui/choice-cards";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -21,6 +22,7 @@ import {
   useAppGuide,
   useAppInstances,
   appIsCustomOnly,
+  useConnections,
   useOAuthClients,
   validateFields,
   type AppDetail,
@@ -34,8 +36,29 @@ import { GiveAccessPanel } from "@/components/credentials/give-access";
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "./markdown";
 
-function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId: string; orgId: string }) {
+/** The method the chooser preselects: the one a reconnect keeps, else the recommended one, else the first. */
+function initialMethod(app: AppDetail, keep?: string | null): ConnectMethod | undefined {
+  return (
+    (keep ? app.connect.find((m) => m.id === keep) : undefined) ?? app.connect.find((m) => m.recommended) ?? app.connect[0]
+  );
+}
+
+const KIND_LABEL: Record<string, string> = { oauth2: "Sign in", fields: "Access token or keys", hook: "Custom" };
+
+function ConnectForm({
+  app,
+  workspaceId,
+  orgId,
+  keepMethod,
+}: {
+  app: AppDetail;
+  workspaceId: string;
+  orgId: string;
+  /** A reconnect keeps the connection's method unless the person picks another (D-214). */
+  keepMethod?: string | null;
+}) {
   const search = useSearchParams();
+  const first = initialMethod(app, keepMethod);
   const reconnect = search.get("reconnect") ?? undefined;
   // Instance-bound apps (D-74): the SaaS default host, or an instance an admin registered. A
   // reconnect keeps the connection's instance, so the picker is not shown then.
@@ -44,11 +67,11 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
   const [instanceId, setInstanceId] = useState("");
   const choices = (instances.data?.items ?? []).filter((i) => i.app_id === app.app_id && i.status === "active");
   const defaultHost = app.instances?.default_host ?? null;
-  const [methodId, setMethodId] = useState(app.connect[0]?.id ?? "");
+  const [methodId, setMethodId] = useState(first?.id ?? "");
   const method: ConnectMethod | undefined = app.connect.find((m) => m.id === methodId);
-  const [values, setValues] = useState<FieldValues>(() => defaultValues(app.connect[0]?.fields ?? []));
-  const [scopes, setScopes] = useState<string[]>(app.connect[0]?.default_scopes ?? []);
-  const [access, setAccess] = useState(app.connect[0]?.access_levels[0]?.id ?? "");
+  const [values, setValues] = useState<FieldValues>(() => defaultValues(first?.fields ?? []));
+  const [scopes, setScopes] = useState<string[]>(first?.default_scopes ?? []);
+  const [access, setAccess] = useState(first?.access_levels[0]?.id ?? "");
   const [clientId, setClientId] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
@@ -208,13 +231,17 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
         </Notice>
       ) : null}
       {app.connect.length > 1 ? (
-        <Field id="cm-method" label="Connection method">
-          <select id="cm-method" className={inputClass} value={methodId} onChange={(e) => pick(e.target.value)}>
-            {app.connect.map((m) => (
-              <option key={m.id} value={m.id}>{m.id}</option>
-            ))}
-          </select>
-        </Field>
+        <ChoiceCards
+          legend="How do you want to connect?"
+          value={methodId}
+          onChange={pick}
+          options={app.connect.map((m) => ({
+            value: m.id,
+            label: m.label ?? KIND_LABEL[m.kind] ?? m.id,
+            description: m.description ?? undefined,
+            badge: m.recommended ? "Recommended" : undefined,
+          }))}
+        />
       ) : null}
       {method ? (
         <>
@@ -267,6 +294,23 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
   );
 }
 
+/** A reconnect opens on the method the connection was made with; wait for it (a failed load falls back). */
+function ReconnectForm({ app, workspaceId, orgId, reconnect }: { app: AppDetail; workspaceId: string; orgId: string; reconnect: string }) {
+  const conns = useConnections({ kind: "workspace", id: workspaceId });
+  if (conns.isPending) return <Loading />;
+  const keep = conns.data?.items.find((c) => c.id === reconnect)?.connect_method ?? null;
+  return <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} keepMethod={keep} />;
+}
+
+function ConnectEntry({ app, workspaceId, orgId }: { app: AppDetail; workspaceId: string; orgId: string }) {
+  const reconnect = useSearchParams().get("reconnect");
+  return reconnect && app.connect.length > 1 ? (
+    <ReconnectForm app={app} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} />
+  ) : (
+    <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} />
+  );
+}
+
 export function ConnectView() {
   const { org, ws, app } = useParams<{ org: string; ws: string; app: string }>();
   const resolved = useResolve(org, ws);
@@ -284,7 +328,7 @@ export function ConnectView() {
         description="Give agents in this workspace access to this app through the gateway."
       />
       {detail.data.available ? (
-        <ConnectForm app={detail.data} workspaceId={wsId} orgId={resolved.data!.org.id} />
+        <ConnectEntry app={detail.data} workspaceId={wsId} orgId={resolved.data!.org.id} />
       ) : (
         <ErrorState error={{ code: "app_unavailable" }} />
       )}

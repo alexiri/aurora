@@ -1,4 +1,5 @@
-//! `github-app` hooks (docs/09 §8, D-91): a GitHub App authenticates as itself with a short-lived
+//! `github_app` connect-method hooks of the `github` package (docs/09 §8, D-91, FIX-123/D-216: the
+//! former `github-app` package is now this method): a GitHub App authenticates as itself with a short-lived
 //! RS256 JWT signed with the app's private key, and exchanges it for an installation access token
 //! (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/
 //! generating-an-installation-access-token-for-a-github-app).
@@ -8,7 +9,7 @@
 //! * `token.mint` signs a new JWT and mints a fresh installation token whenever the stored one
 //!   expires.
 //!
-//! Two apps share this guest: `github-app` talks to `https://api.github.com`; `github-app-ghes`
+//! Two apps share this guest: `github` talks to `https://api.github.com`; `github-ghes`
 //! talks to `https://<ghes_host>/api/v3`, where `ghes_host` is a connect-form value that the hook
 //! host's egress policy pins to the connection's registered instance (a different host is denied).
 //! The SaaS app never reads `ghes_host`. The private key is never logged and never appears in an
@@ -21,8 +22,8 @@ use rsa::signature::{SignatureEncoding, Signer};
 use rsa::RsaPrivateKey;
 use sha2::Sha256;
 
-const APP_SAAS: &str = "github-app";
-const APP_GHES: &str = "github-app-ghes";
+const APP_SAAS: &str = "github";
+const APP_GHES: &str = "github-ghes";
 const SAAS_BASE: &str = "https://api.github.com";
 /// GitHub: `exp` is at most 10 minutes after the issue time; `iat` is set 60 s in the past to
 /// absorb clock drift, so `exp = now + 540` keeps the whole span within 600 s.

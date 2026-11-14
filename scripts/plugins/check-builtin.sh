@@ -30,7 +30,7 @@ else
   for d in plugins/builtin/*/; do dirs+=("${d%/}"); done
   dirs+=("${EXTRA[@]}")
 fi
-# Host-target unit tests of hook guest crates (e.g. the github-app JWT claims and request headers,
+# Host-target unit tests of hook guest crates (e.g. the github App-method JWT claims and request headers,
 # which recorded HTTP cannot assert): `cargo test --locked` in every plugins/builtin/*/hooks crate
 # that has tests. A failure fails the check.
 for d in "${dirs[@]}"; do

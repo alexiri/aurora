@@ -93,6 +93,10 @@ struct Connection {
     credentials: serde_json::Map<String, Value>,
     #[serde(default)]
     metadata: Value,
+    /// (FIX-123, D-214) The `connect[]` method the connection was made with: its own `token`
+    /// drives the token case, and tools restricted by `connect_methods` apply by it. Absent =
+    /// unknown (every tool applies, the app's `token`).
+    method: Option<String>,
     /// (P2-CAT-T) The registered OAuth client's fields (fake values) for the refresh request.
     #[serde(default)]
     oauth_client: serde_json::Map<String, Value>,
@@ -362,6 +366,7 @@ fn execute(
         body,
         c.request.body_truncated,
         &param_headers,
+        c.connection.method.as_deref(),
     );
     let mut obs = json!({ "app": m.app.app_id, "tool": tool.map(|t| t.id.as_str()) });
     // The instance guard refused: nothing is injected (compared against `expect.refused`).
@@ -559,8 +564,20 @@ fn database_case(
         if transaction {
             return None;
         }
-        crate::apps::identify_tool_in(a, false, host, 443, &path, None, method, &[], false, &[])
-            .map(|t| (a.app_id.as_str(), t.id.as_str()))
+        crate::apps::identify_tool_in(
+            a,
+            false,
+            host,
+            443,
+            &path,
+            None,
+            method,
+            &[],
+            false,
+            &[],
+            None,
+        )
+        .map(|t| (a.app_id.as_str(), t.id.as_str()))
     });
     Some(json!({
         "app": found.map_or(first.app_id.as_str(), |(a, _)| a),
@@ -589,8 +606,7 @@ fn token_lifecycle(
         return;
     };
     let Some(token) = app
-        .token
-        .as_ref()
+        .token_for(c.connection.method.as_deref())
         .filter(|k| k.kind == aurora_registry::manifest::TokenKind::Oauth2Refresh)
     else {
         failures.push(format!(

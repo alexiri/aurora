@@ -32,7 +32,7 @@ describe("AppIcon", () => {
   });
 
   it("shows vendor artwork unaltered: no filter, tint, rounding or overlay on the image", () => {
-    const { container } = render(<AppIcon appId="aws-role" name="AWS" hasDarkIcon />);
+    const { container } = render(<AppIcon appId="aws-keys" name="AWS" hasDarkIcon />);
     for (const img of imgs(container)) {
       expect(img.className).toContain("object-contain");
       expect(img.className).not.toMatch(/rounded|filter|invert|grayscale|opacity|brightness|blur|mix-blend|overflow/);

@@ -417,7 +417,14 @@ impl Ctx<'_> {
             .cloned()
             .collect();
         let row = self
-            .persist(caller, &g, &label, &Value::Object(metadata), &granted)
+            .persist(
+                caller,
+                &g,
+                &label,
+                &Value::Object(metadata),
+                &granted,
+                method.id(),
+            )
             .await?;
         Ok((row, missing))
     }
@@ -429,6 +436,7 @@ impl Ctx<'_> {
         label: &str,
         metadata: &Value,
         scopes: &[String],
+        method_id: &str,
     ) -> Result<ConnectionRow, ConnectErr> {
         let state = self.state;
         let id = self.reconnect.as_ref().map_or_else(ids::new_id, |r| r.id);
@@ -469,6 +477,7 @@ impl Ctx<'_> {
             connected_by: self.user,
             instance_id: self.instance.as_ref().map(|i| i.id),
             credential_keys: &keys,
+            connect_method: Some(method_id),
         };
         let old = match self.write(caller, &n).await {
             Ok(o) => o,

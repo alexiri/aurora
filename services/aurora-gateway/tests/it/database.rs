@@ -252,6 +252,7 @@ async fn start_with(
         metadata: json!({}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
     };
     // A database app is default-deny: only the classes a rule allows run.
     let mut ws = ScopePolicyRows {

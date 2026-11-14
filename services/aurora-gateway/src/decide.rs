@@ -825,6 +825,7 @@ impl PolicyHandler {
                 &body_prefix,
                 truncated,
                 &param_headers,
+                winner.as_ref().and_then(Cand::connect_method),
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
@@ -1089,7 +1090,9 @@ impl PolicyHandler {
             // 10. token freshness (after the decision): refresh / mint under the lock.
             let refreshed;
             let conn: &Arc<apps::ConnCand> = match (&self.tokens, &registry) {
-                (Some(t), Some(l)) if TokenManager::applies(m.app) => {
+                (Some(t), Some(l))
+                    if TokenManager::applies(m.app, conn.connect_method.as_deref()) =>
+                {
                     match t.ensure_fresh(l, conn, &cmap, false).await {
                         Ok(c) => {
                             refreshed = Arc::new(c);
@@ -1143,8 +1146,13 @@ impl PolicyHandler {
             }
             // 11-12. inject, route, transform, finalize.
             let vars = exec.vars();
-            let pre = (self.stale_retry_eligible(m, bodyless, upgrade.is_some()))
-                .then(|| (headers.clone(), query.clone()));
+            let pre = (self.stale_retry_eligible(
+                m,
+                conn.connect_method.as_deref(),
+                bodyless,
+                upgrade.is_some(),
+            ))
+            .then(|| (headers.clone(), query.clone()));
             let mut new_path = path.clone();
             let mut up_host = host.clone();
             let mut ok =
@@ -1207,8 +1215,7 @@ impl PolicyHandler {
                     entry: m.entry.clone(),
                     codes: m
                         .app
-                        .token
-                        .as_ref()
+                        .token_for(conn.connect_method.as_deref())
                         .map(|t| t.stale_codes.clone())
                         .unwrap_or_default(),
                     pkg_ctx: pkg_ctx.to_vec(),
@@ -1673,16 +1680,21 @@ impl RequestHandler for PolicyHandler {
 
 impl PolicyHandler {
     /// Body-less, non-upgrade app requests of a refreshing app may be resent once.
-    fn stale_retry_eligible(&self, m: &apps::AppMatch<'_>, bodyless: bool, upgrade: bool) -> bool {
+    fn stale_retry_eligible(
+        &self,
+        m: &apps::AppMatch<'_>,
+        connect_method: Option<&str>,
+        bodyless: bool,
+        upgrade: bool,
+    ) -> bool {
         self.tokens.is_some()
             && bodyless
             && !upgrade
             && m.entry.transform.is_none()
             && m.entry.intercept.is_none()
-            && TokenManager::applies(m.app)
+            && TokenManager::applies(m.app, connect_method)
             && m.app
-                .token
-                .as_ref()
+                .token_for(connect_method)
                 .is_some_and(|t| !t.stale_codes.is_empty())
     }
 
@@ -1885,6 +1897,7 @@ impl DbSession {
                 &body_prefix,
                 truncated,
                 &[],
+                self.conn.connect_method.as_deref(),
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());

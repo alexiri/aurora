@@ -1,33 +1,90 @@
 package:
   id: aws-keys
-  version: 1.1.0
+  version: 2.0.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
-  name: AWS (access keys)
-  description: Amazon S3 objects, read-only EC2 Describe calls, GetCallerIdentity and other EC2 API calls signed with an IAM access key pair (AWS Signature Version 4)
+  name: AWS
+  description: Amazon S3 objects, read-only EC2 Describe calls, GetCallerIdentity and other EC2 API calls signed (AWS Signature Version 4) with short-lived credentials from an assumed IAM role, or with an IAM access key pair
   homepage: https://aws.amazon.com
+permissions:
+  hooks: [connect.exchange, token.mint]
+  # Only the regional STS endpoint of the connection's region is ever called (sts.<region>.amazonaws.com,
+  # https://docs.aws.amazon.com/general/latest/gr/sts.html). The global sts.amazonaws.com endpoint and
+  # the China / isolated partitions are not used.
+  egress:
+    connect.exchange: ["sts.*.amazonaws.com"]
+    token.mint: ["sts.*.amazonaws.com"]
+  # The org external id is sent as the AssumeRole ExternalId; the org id names the role session.
+  context: [org_external_id, org_id]
 apps:
   - about:
       id: aws-keys
-      name: AWS (access keys)
-      description: Work with S3 buckets and objects and query EC2, signed with an IAM access key pair
+      name: AWS
+      description: Work with S3 buckets and objects and query EC2, through an assumed IAM role or with an IAM access key pair
       category: cloud
       api_docs: https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html
       web_hosts: [console.aws.amazon.com]
       connect_note:
-        text: "Use an IAM user or a temporary key pair with the narrowest policy you can. Requests are signed for the one region you enter; other regions need their own connection."
+        text: "Choose how to connect: assume an IAM role (recommended: Aurora gets short-lived credentials for a role whose trust policy requires this organization's external id) or give an IAM access key pair, which is used directly on every request. Either way, use the narrowest policy you can. Requests are signed for the one region you enter; other regions need their own connection."
         url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
-      label_hint: A name for these keys, such as the IAM user
+      label_hint: A name for this connection, such as the role's purpose or the IAM user
     credentials:
       - { name: access_key_id, secret: true }
       - { name: secret_access_key, secret: true }
       - { name: session_token, secret: true, optional: true }
+      # Only the role method stores the source key; the session credentials above are what it mints.
+      - { name: source_access_key_id, secret: true, optional: true }
+      - { name: source_secret_access_key, secret: true, optional: true }
     metadata:
       - { name: region }
+      - { name: role_arn }
+      - { name: session_duration }
     connect:
+      - id: assume_role
+        kind: hook
+        label: Assume a role
+        description: "Aurora gets short-lived credentials for an IAM role whose trust policy requires this organization's external id. The stored source key is only used to assume the role. Recommended."
+        recommended: true
+        authorize: false
+        # AssumeRole sessions last at most 12 hours (DurationSeconds 900..43200).
+        token: { kind: hook, max_lifetime_secs: 43200 }
+        fields:
+          - name: role_arn
+            label: Role ARN
+            type: text
+            store: metadata
+            required: true
+            placeholder: "arn:aws:iam::123456789012:role/aurora-agent"
+            help_url: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html#identifiers-arns
+          - name: region
+            label: Region
+            type: text
+            store: metadata
+            required: true
+            placeholder: "eu-west-1"
+            help_url: https://docs.aws.amazon.com/general/latest/gr/rande.html
+          - name: source_access_key_id
+            label: Source access key ID
+            type: secret
+            store: credentials
+            required: true
+            help_url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html
+          - name: source_secret_access_key
+            label: Source secret access key
+            type: secret
+            store: credentials
+            required: true
+          - name: session_duration
+            label: Session duration cap in seconds (optional)
+            type: text
+            store: metadata
+            placeholder: "3600"
+            help_url: https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
       - id: keys
         kind: fields
+        label: Access keys
+        description: "An IAM key pair used directly on every request. The simplest way to start, but the keys are long-lived: rotate them and give them the narrowest policy you can."
         fields:
           - name: access_key_id
             label: Access key ID
@@ -101,7 +158,7 @@ apps:
             methods: [POST]
             params: [ { source: form, name: Action, match: { prefix: Describe } } ]
           - id: sts_get_caller_identity
-            name: Show which AWS identity the keys belong to (GetCallerIdentity)
+            name: Show which AWS identity the connection belongs to (GetCallerIdentity)
             host: "sts.*.amazonaws.com"
             path: /
             methods: [POST]
@@ -132,9 +189,12 @@ apps:
         link: "https://console.aws.amazon.com/ec2/"
     agent:
       instructions: |
-        AWS is connected with an IAM access key pair for ONE region (the connection's region).
-        Send requests straight to the regional endpoints; Aurora signs them (Signature Version 4)
-        and never shows you a key, so do not use `aws configure` or an SDK credential chain.
+        AWS is connected for ONE region (the connection's region), either with an IAM access key
+        pair or through an IAM role that Aurora assumes itself. Send requests straight to the
+        regional endpoints; Aurora signs them (Signature Version 4, with short-lived session
+        credentials for a role) and never shows you a key or a token, so do not use `aws
+        configure`, `aws sts assume-role` or an SDK credential chain, and do not call AssumeRole
+        yourself. What you can do is limited by the policy of the keys or the role.
         S3: use path-style URLs, https://s3.<region>.amazonaws.com/<bucket>/<key>; virtual-hosted
         bucket URLs are not covered. EC2 uses the Query API on https://ec2.<region>.amazonaws.com/
         with the Action and Version parameters (for example

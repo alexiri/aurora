@@ -386,10 +386,12 @@ interface FormField { name: string; label: string; type: "text" | "secret" | "se
   options: { value: string; label: string; warning: string | null }[] | null;
   show_when: { field: string; equals: string } | null }
 interface ConnectMethod { id: string; kind: "oauth2" | "fields" | "hook";
+  label: string | null; description: string | null; recommended: boolean; /* FIX-123, D-214: the chooser */
   fields: FormField[]; scopes: { scope: string; name: string; access: "read" | "write" }[]; default_scopes: string[];
   access_levels: { id: string; label: string }[]; client_key: string | null; callback: "query" | "fragment" | null }
 interface Tool { id: string; name: string; description: string | null; group: "read" | "write"; wildcard: boolean;
-  host: string; path: string; methods: string[]; graphql: "query" | "mutation" | null; git: "push" | "fetch" | null }
+  host: string; path: string; methods: string[]; connect_methods: string[] /* FIX-123: [] = every connect method */;
+  graphql: "query" | "mutation" | null; git: "push" | "fetch" | null }
 interface AppSummary { app_id: string; package_id: string; package_version: string; name: string; description: string;
   category: string | null; available: boolean; connection_count: number; has_dark_icon: boolean }
 interface AppDetail extends AppSummary { api_docs: string | null; connect_note: { text: string; url: string | null } | null;
@@ -399,6 +401,7 @@ interface Connection { id: Uuid; org_id: Uuid; workspace_id: Uuid | null; scope:
   app_id: string; package_id: string; app_version: string; label: string;
   status: "active" | "reauth_required" | "disabled" | "orphaned"; status_reason: string | null;
   scopes: string[]; metadata: Record<string, string>; tenant_host: string | null; oauth_client_id: Uuid | null;
+  connect_method: string | null /* FIX-123, D-214: the connect[] method id; null = unknown */;
   credentials_expires_at: Timestamp | null; connected_by: { id: Uuid; display_name: string } | null;
   last_used_at: Timestamp | null; created_at: Timestamp; updated_at: Timestamp;
   injecting: { host: string; lost_to_app_id: string | null }[] }

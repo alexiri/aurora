@@ -208,6 +208,7 @@ fn conn(w: &World, app: &str, path: &str, tenant: Option<&str>) -> AppConnection
         metadata: json!({"sub": "tenant1", "region": "eu-west-1"}),
         tenant_host: tenant.map(str::to_owned),
         instance_id: None,
+        connect_method: None,
     }
 }
 
@@ -342,6 +343,7 @@ async fn start_with(
         metadata: json!({}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
     };
     let prov = Arc::new(Mutex::new(Provider {
         calls: 0,

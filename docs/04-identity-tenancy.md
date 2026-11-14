@@ -1224,7 +1224,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
 | Grants | `grant.put`, `grant.delete` (connection and secret grants) |
 | Policy | `policy.publish`, `policy.rollback` (org and workspace) |
-| Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `trusted_key.add\|remove`, `host_claim.decide` |
+| Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `plugin.supersede` (FIX-123: connections of a superseded app moved to its successor, counts only), `trusted_key.add\|remove`, `host_claim.decide` |
 | Approval decisions | `approval.decide`, `approval.batch_decide`, `action_approval.decide`, `reach.decide`, `agent_link.decide` (whatever the door: dashboard, API, channel click) |
 | Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
 | Previews (phase 4, P4-PRV-1) | `preview.share.create\|update\|delete`, `org.previews.update` (emitted as written; `11 §Port previews`) |

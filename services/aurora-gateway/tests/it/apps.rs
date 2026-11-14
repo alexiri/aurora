@@ -221,6 +221,7 @@ fn conn(w: &World, app: &str, path: &str, tenant: Option<&str>) -> AppConnection
         metadata: json!({"sub": "tenant1", "region": "eu-west-1"}),
         tenant_host: tenant.map(str::to_owned),
         instance_id: None,
+        connect_method: None,
     }
 }
 

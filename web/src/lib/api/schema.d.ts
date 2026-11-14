@@ -5229,10 +5229,19 @@ export interface components {
             callback?: string | null;
             client_key?: string | null;
             default_scopes: string[];
+            /** @description One or two sentences: what the method is and when to use it. */
+            description?: string | null;
             fields: components["schemas"]["FormField"][];
             id: string;
             /** @description `oauth2` | `fields` | `hook`. */
             kind: string;
+            /**
+             * @description (FIX-123, D-214) Short name for the connect window's "How do you want to connect?"
+             *     chooser; `null` = the window falls back to the kind.
+             */
+            label?: string | null;
+            /** @description The chooser preselects this method and badges it "Recommended" (at most one per app). */
+            recommended: boolean;
             scopes: components["schemas"]["ScopeInfo"][];
         };
         ConnectNote: {
@@ -5285,6 +5294,11 @@ export interface components {
         Connection: {
             app_id: string;
             app_version: string;
+            /**
+             * @description (FIX-123, D-214) The `connect[]` method id the connection was made with; `null` when
+             *     unknown (rows older than the column of an app with several methods).
+             */
+            connect_method?: string | null;
             connected_by?: null | components["schemas"]["ConnectedBy"];
             /** Format: date-time */
             created_at: string;
@@ -7456,6 +7470,11 @@ export interface components {
             items: {
                 app_id: string;
                 app_version: string;
+                /**
+                 * @description (FIX-123, D-214) The `connect[]` method id the connection was made with; `null` when
+                 *     unknown (rows older than the column of an app with several methods).
+                 */
+                connect_method?: string | null;
                 connected_by?: null | components["schemas"]["ConnectedBy"];
                 /** Format: date-time */
                 created_at: string;
@@ -9878,6 +9897,8 @@ export interface components {
             stale: boolean;
         };
         Tool: {
+            /** @description (FIX-123, D-214) Connect method ids the tool works with; empty = every method. */
+            connect_methods: string[];
             description?: string | null;
             /** @description `push` | `fetch`. */
             git?: string | null;

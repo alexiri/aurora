@@ -1,7 +1,7 @@
 //! Package lifecycle (09 §10): approve / reject / disable / enable / uninstall.
 
 use super::registry::{self, CompileFail};
-use super::{service, upgrade};
+use super::{service, supersede, upgrade};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_core::{ApiError, FieldError};
@@ -81,6 +81,7 @@ pub async fn act(
     let mut flipped = 0_i64;
     let mut flip_meta: Option<serde_json::Value> = None;
     let mut converted_events: Vec<AuditEvent> = Vec::new();
+    let mut supersede_event: Option<AuditEvent> = None;
     match action {
         Action::Reject => {
             if row.status != "pending_approval" {
@@ -120,6 +121,16 @@ pub async fn act(
             if row.status != from {
                 return Err(bad_state());
             }
+            if action == Action::Enable
+                && aurora_registry::upgrade::is_superseded_reason(row.status_reason.as_deref())
+            {
+                // (FIX-123, D-215) A retired package stays retired: its apps are connect methods
+                // of another app now.
+                return Err(ApiError::conflict(
+                    "superseded",
+                    "This package was superseded by another and cannot be enabled again.",
+                ));
+            }
             if action == Action::Enable && row.approved_at.is_none() {
                 // A package disabled before its first approval must go through the
                 // approval review (09 §10, 14 plugin approval flow), never `enable`.
@@ -153,6 +164,21 @@ pub async fn act(
             let done = upgrade::apply(&mut tx, &impact).await?;
             flipped = done.total;
             flip_meta = Some(done.metadata());
+            // (FIX-123, D-215) Apps this version took over as connect methods: move their
+            // connections and retire their package before the snapshot is compiled.
+            let manifest: Manifest = serde_json::from_value(row.manifest.clone())
+                .map_err(|e| ApiError::internal(format!("stored manifest unreadable: {e}")))?;
+            let sup = supersede::apply(&mut tx, &manifest, &row.version).await?;
+            if !sup.is_empty() {
+                supersede_event = Some(
+                    AuditEvent::new(actor.clone(), "plugin.supersede", Outcome::Success)
+                        .target("plugin_package", id)
+                        .metadata(json!({
+                            "package_id": row.package_id, "version": row.version,
+                            "result": sup.metadata(),
+                        })),
+                );
+            }
             // (FIX-084) A request held under the `full` grant that was just converted must not be
             // released on the strength of that approval.
             for c in &done.converted {
@@ -224,6 +250,7 @@ pub async fn act(
     .metadata(meta);
     let mut events = vec![ev];
     events.append(&mut converted_events);
+    events.extend(supersede_event);
     audit::commit_critical_many(tx, &events).await?;
     if activated {
         audit::record(

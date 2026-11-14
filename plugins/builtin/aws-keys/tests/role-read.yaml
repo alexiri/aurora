@@ -3,8 +3,9 @@
 # next to the SOURCE key (source_*), which only the hook reads. The runner signs with the current
 # clock, so the signature itself is checked by the gateway's SigV4 tests and by the hook's unit
 # tests; here we check routing, tool selection and that the session token is what is sent.
-- name: "s3_list_buckets: signed on the S3 host with the session token"
+- name: "assume role: s3_list_buckets: signed on the S3 host with the session token"
   connection: &conn
+    method: assume_role
     credentials:
       source_access_key_id: "AKIDFIXTURESRC0001"
       source_secret_access_key: "fixture-source-secret-1"
@@ -14,16 +15,16 @@
     metadata: { role_arn: "arn:aws:iam::123456789012:role/aurora-agent", region: eu-west-1, session_duration: "3600" }
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   expect:
-    app: aws-role
+    app: aws-keys
     tool: s3_list_buckets
     upstream:
       url: "https://s3.eu-west-1.amazonaws.com/"
       headers: { x-amz-security-token: "fixture-session-token-1" }
-- name: "negative s3_list_buckets: POST selects no read tool"
+- name: "assume role: negative s3_list_buckets: POST selects no read tool"
   connection: *conn
   request: { method: POST, url: "https://s3.eu-west-1.amazonaws.com/" }
-  expect: { app: aws-role }
-- name: "s3_list_objects: list a bucket"
+  expect: { app: aws-keys }
+- name: "assume role: s3_list_objects: list a bucket"
   connection: *conn
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/example-bucket?list-type=2&prefix=logs/" }
   expect:
@@ -31,11 +32,11 @@
     upstream:
       url: "https://s3.eu-west-1.amazonaws.com/example-bucket?list-type=2&prefix=logs/"
       headers: { x-amz-security-token: "fixture-session-token-1" }
-- name: "negative s3_list_objects: DELETE on the bucket selects no tool"
+- name: "assume role: negative s3_list_objects: DELETE on the bucket selects no tool"
   connection: *conn
   request: { method: DELETE, url: "https://s3.eu-west-1.amazonaws.com/example-bucket" }
-  expect: { app: aws-role }
-- name: "s3_get_object: GET"
+  expect: { app: aws-keys }
+- name: "assume role: s3_get_object: GET"
   connection: *conn
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/logs/2026/app.log" }
   expect:
@@ -43,19 +44,19 @@
     upstream:
       url: "https://s3.eu-west-1.amazonaws.com/example-bucket/logs/2026/app.log"
       headers: { x-amz-security-token: "fixture-session-token-1" }
-- name: "s3_get_object: HEAD"
+- name: "assume role: s3_get_object: HEAD"
   connection: *conn
   request: { method: HEAD, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/data.csv" }
   expect: { tool: s3_get_object }
-- name: "negative s3_get_object: PATCH selects no tool"
+- name: "assume role: negative s3_get_object: PATCH selects no tool"
   connection: *conn
   request: { method: PATCH, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/data.csv" }
-  expect: { app: aws-role }
-- name: "ec2 host is signed with the session credentials (a GET Describe is not a read tool; EC2 calls are write tools, see write.yaml)"
+  expect: { app: aws-keys }
+- name: "assume role: ec2 host is signed with the session credentials (a GET Describe is not a read tool; EC2 calls are write tools, see write.yaml)"
   connection: *conn
   request: { method: GET, url: "https://ec2.eu-west-1.amazonaws.com/?Action=DescribeInstances&Version=2016-11-15" }
   expect:
-    app: aws-role
+    app: aws-keys
     tool: ec2_call
     upstream:
       url: "https://ec2.eu-west-1.amazonaws.com/?Action=DescribeInstances&Version=2016-11-15"

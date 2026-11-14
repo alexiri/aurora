@@ -26,6 +26,7 @@ import {
   parseTimeout,
   setGroup,
   timeoutProblem,
+  toolsForMethod,
   type Decision,
   type GrantErrors,
   type Group,
@@ -98,7 +99,7 @@ function EditorLoader({
       agentId={agentId}
       connection={connection}
       grant={grant}
-      tools={app.data.tools}
+      tools={toolsForMethod(app.data.tools, connection.connect_method)}
       appName={app.data.name}
       restrictions={appRestrictions(restrictions, app.data)}
       onClose={onClose}
