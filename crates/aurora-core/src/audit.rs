@@ -65,6 +65,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "plugin.enable",
     "plugin.host_claim.decide",
     "plugin.reject",
+    // (FIX-123, D-215) Moves connections of a superseded app to the app that replaced it.
+    "plugin.supersede",
     "trusted_key.create",
     "trusted_key.revoke",
     // Approval decisions

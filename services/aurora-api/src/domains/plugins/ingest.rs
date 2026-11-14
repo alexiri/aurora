@@ -165,7 +165,14 @@ async fn decide(
         .into_iter()
         .map(|c| (m.package.id.clone(), c))
         .collect();
-    for (pkg, manifest) in active.iter().filter(|(p, _)| *p != m.package.id) {
+    // (FIX-123, D-215) A package this one supersedes never conflicts with it: its apps move here.
+    let retired = aurora_registry::upgrade::retired_by(&m.package.id);
+    let takes_over = !aurora_registry::upgrade::supersedes(m).is_empty();
+    for (pkg, manifest) in active
+        .iter()
+        .filter(|(p, _)| *p != m.package.id)
+        .filter(|(p, _)| !(takes_over && retired.contains(&p.as_str())))
+    {
         if let Ok(o) = serde_json::from_value::<Manifest>(manifest.clone()) {
             all.extend(claims::claims(&o).into_iter().map(|c| (pkg.clone(), c)));
         }
@@ -353,6 +360,21 @@ pub async fn ingest(
         }
         plugins::put_blob(&mut *tx, &digest, "archive", bytes).await?;
     }
+    let mut superseded: Option<AuditEvent> = None;
+    if auto && let Ok(m) = &parsed {
+        // (FIX-123, D-215) Apps this version took over as connect methods move with it, before the
+        // snapshot is compiled (the retired package's host claims must be gone by then). The
+        // security-critical audit row commits with the move.
+        let report = super::supersede::apply(&mut tx, m, &version).await?;
+        if !report.is_empty() {
+            superseded = Some(
+                AuditEvent::new(actor.clone(), "plugin.supersede", Outcome::Success)
+                    .target("plugin_package", new_id)
+                    .metadata(json!({"package_id": package_id, "version": version,
+                        "result": report.metadata()})),
+            );
+        }
+    }
     if auto {
         // Activate the snapshot in the same transaction as the package row: a window between
         // "package active" and "snapshot active" would let a `full` grant be written against the
@@ -361,7 +383,10 @@ pub async fn ingest(
             .await
             .map_err(registry::flatten)?;
     }
-    tx.commit().await.map_err(DbError::from)?;
+    match &superseded {
+        Some(ev) => audit::commit_critical(tx, ev).await?,
+        None => tx.commit().await.map_err(DbError::from)?,
+    }
 
     audit::record(
         state,
