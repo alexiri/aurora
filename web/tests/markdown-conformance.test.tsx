@@ -56,26 +56,22 @@ export function normalise(html: string): string {
 const render = (md: string) => normalise(renderToStaticMarkup(<Markdown source={md} />));
 
 function run(name: string, examples: Example[], prefix: string) {
+  // One test per example: a single test looping over all 652 took ~8 s idle and outran the 20 s
+  // test timeout when the host was loaded; each example is now bounded on its own.
   describe(name, () => {
-    const failing: string[] = [];
-    const stale: string[] = [];
-    it(`matches the reference HTML (${examples.length} examples)`, () => {
-      for (const ex of examples) {
-        const key = `${prefix}${ex.example}`;
-        let got: string;
-        try {
-          got = render(ex.markdown);
-        } catch (e) {
-          got = `THROW ${String(e)}`;
-        }
-        const ok = got === normalise(ex.html);
-        if (!ok && !(key in EXPECTED)) failing.push(`${key} [${ex.section}] ${JSON.stringify(ex.markdown)}\n  want ${normalise(ex.html)}\n  got  ${got}`);
-        if (ok && key in EXPECTED) stale.push(key);
+    it.each(examples.map((ex) => [`${prefix}${ex.example}`, ex] as const))("%s matches the reference HTML", (key, ex) => {
+      let got: string;
+      try {
+        got = render(ex.markdown);
+      } catch (e) {
+        got = `THROW ${String(e)}`;
       }
+      const ok = got === normalise(ex.html);
+      const failing = !ok && !(key in EXPECTED) ? `${key} [${ex.section}] ${JSON.stringify(ex.markdown)}\n  want ${normalise(ex.html)}\n  got  ${got}` : "";
       // `MD_CONF_DUMP=/path pnpm exec vitest run tests/markdown-conformance.test.tsx` lists the differences to triage.
-      if (process.env.MD_CONF_DUMP) appendFileSync(process.env.MD_CONF_DUMP, failing.join("\n") + "\n");
-      expect(failing.join("\n")).toBe("");
-      expect(stale, "listed as an expected difference but now passes — remove it from EXPECTED").toEqual([]);
+      if (process.env.MD_CONF_DUMP && failing) appendFileSync(process.env.MD_CONF_DUMP, failing + "\n");
+      expect(failing).toBe("");
+      expect(ok && key in EXPECTED, `${key} is listed as an expected difference but now passes — remove it from EXPECTED`).toBe(false);
     });
   });
 }
