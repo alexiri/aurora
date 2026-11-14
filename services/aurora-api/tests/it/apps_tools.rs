@@ -393,7 +393,7 @@ async fn request_app_connection_notifies_with_link_and_refuses_unknown_or_unavai
     let n = w.notices("app_connection_requested").await;
     assert_eq!(n.len(), 1, "{n:?}");
     let expected = format!(
-        "{}/o/{org_slug}/w/{ws_slug}/apps/acme_app/connect",
+        "{}/o/{org_slug}/w/{ws_slug}/credentials?tab=apps&connect=acme_app",
         w.h.state.config.external_url.trim_end_matches('/')
     );
     assert_eq!(n[0]["connect_url"], expected);

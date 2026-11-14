@@ -247,7 +247,7 @@ impl PlatformTool for RequestAppConnection {
             .fetch_one(&ctx.agent.pool)
             .await?;
         let link = format!(
-            "{}/o/{}/w/{}/apps/{}/connect",
+            "{}/o/{}/w/{}/credentials?tab=apps&connect={}",
             ctx.state.config.external_url.trim_end_matches('/'),
             org_slug,
             ws.slug,

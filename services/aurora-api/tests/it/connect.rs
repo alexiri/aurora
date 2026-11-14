@@ -478,9 +478,22 @@ async fn oauth_happy_path_pkce_cookie_and_state_checks() {
     assert_eq!(n, 0);
 
     let (pg, cleared) = w.page(&w.owner, Some(&ck), &cb).await;
+    // (FIX-149, C-842) The result goes over the same-origin channel with the app id; nothing refers
+    // to `window.opener`, and the window closes only on the dialog's ack.
+    assert!(pg.contains("BroadcastChannel(\"aurora-connect\")"), "{pg}");
     assert!(
-        pg.contains("aurora:connected") && pg.contains("window.close()"),
+        pg.contains("type:\"aurora:connected\"")
+            && pg.contains("app_id:\"acme_app\"")
+            && pg.contains("connection_id:\""),
         "{pg}"
+    );
+    assert!(!pg.contains("opener"), "{pg}");
+    let (before_ack, after_ack) = pg.split_once("aurora:connect-ack").expect("ack handler");
+    assert!(!before_ack.contains("window.close"), "{pg}");
+    assert!(after_ack.contains("window.close()"), "{pg}");
+    assert!(
+        pg.contains("tab=connections"),
+        "link to the Connections tab: {pg}"
     );
     assert!(cleared);
     let (scopes, label, uid): (Vec<String>, String, Uuid) =
@@ -642,6 +655,52 @@ async fn expired_state_and_fragment_bridge() {
         .page(&w.owner, Some(&ck), &format!("{cb}&error=access_denied"))
         .await;
     assert!(pg.contains("error=oauth_exchange_failed"));
+    // (FIX-149, C-842) The failure page reports on the channel too, for the flow's app.
+    assert!(pg.contains("type:\"aurora:connect-failed\""), "{pg}");
+    assert!(pg.contains("app_id:\"acme_app\""), "{pg}");
+    assert!(pg.contains("error:\"oauth_exchange_failed\""), "{pg}");
+    assert!(!pg.contains("opener"), "{pg}");
+    // A flow that is not this user's reveals no app id.
+    let (pg, _) = w.page(&w.member, Some(&ck), &cb).await;
+    assert!(pg.contains("error=oauth_state_invalid"), "{pg}");
+    assert!(!pg.contains("acme_app"), "{pg}");
+}
+
+/// (FIX-149, C-842) Both callback scripts carry the response's CSP nonce.
+#[tokio::test]
+async fn callback_scripts_carry_the_response_nonce() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    let (url, ck) = w.start_oauth().await;
+    let loc = w.oauth.approve(&url).await;
+    let cb = local(&loc);
+    for uri in [cb.clone(), format!("{cb}&error=access_denied")] {
+        let req = Request::builder()
+            .uri(&uri)
+            .header("cookie", format!("{}; {ck}", w.owner))
+            .body(Body::empty())
+            .unwrap();
+        let res = w.h.app.clone().oneshot(req).await.unwrap();
+        let csp = res
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let pg = String::from_utf8(body.to_vec()).unwrap();
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .and_then(|r| r.split('\'').next())
+            .expect("nonce in the CSP");
+        assert!(
+            pg.contains(&format!("<script nonce=\"{nonce}\">")),
+            "{csp} {pg}"
+        );
+        assert_eq!(pg.matches("<script").count(), 1, "{pg}");
+    }
 }
 
 #[tokio::test]

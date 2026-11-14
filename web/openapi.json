@@ -15515,7 +15515,7 @@
         "tags": [
           "connections"
         ],
-        "summary": "OAuth callback: HTML page posting `aurora:connected` to the opener, or `error=<code>`.",
+        "summary": "OAuth callback: HTML page posting `aurora:connected` on the `aurora-connect` BroadcastChannel, or\n`aurora:connect-failed` and `error=<code>` (C-842).",
         "operationId": "oauthCallback",
         "responses": {
           "200": {
@@ -30781,7 +30781,7 @@
               "string",
               "null"
             ],
-            "description": "(C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root."
+            "description": "(C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root."
           },
           "base_url": {
             "type": "string",
@@ -33434,7 +33434,7 @@
               "string",
               "null"
             ],
-            "description": "(C-731, D-231) Only if the app is served under a path: `/jira` for\n`https://its.cern.ch/jira`. Normalized (`/jira/` = `/jira`, `\"\"` and `/` = none); cannot be\nchanged later."
+            "description": "(C-731, D-231) Only if the app is served under a path: `/wiki` for\n`https://its.cern.ch/wiki`. Normalized (`/wiki/` = `/wiki`, `\"\"` and `/` = none); cannot be\nchanged later."
           },
           "host": {
             "type": "string",
@@ -39217,7 +39217,7 @@
                     "string",
                     "null"
                   ],
-                  "description": "(C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root."
+                  "description": "(C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root."
                 },
                 "base_url": {
                   "type": "string",

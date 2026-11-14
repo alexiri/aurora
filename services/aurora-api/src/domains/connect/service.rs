@@ -84,8 +84,60 @@ pub struct Started {
 }
 
 pub enum Done {
-    Connected(Uuid, Vec<String>),
+    Connected(Uuid, Vec<String>, Landing),
     Redirect { url: String, cookie: String },
+}
+
+/// (FIX-149, C-842) What the callback page needs to tell the waiting dialog which flow finished
+/// (`app_id`, already known to the flow) and where to send the person if no dialog answers
+/// (the Connections tab of the flow's scope).
+pub struct Landing {
+    pub app_id: String,
+    pub connections_path: Option<String>,
+}
+
+/// A failed callback: the fixed error code, plus the landing once the flow was opened and bound
+/// to this user (an unbound or tampered flow reveals nothing, not even the app id).
+pub struct Failure {
+    pub code: &'static str,
+    pub landing: Option<Landing>,
+}
+
+impl From<&'static str> for Failure {
+    fn from(code: &'static str) -> Self {
+        Self {
+            code,
+            landing: None,
+        }
+    }
+}
+
+async fn landing(state: &AppState, flow: &Flow) -> Landing {
+    let slugs: Option<(String, Option<String>)> = match flow.workspace_id {
+        Some(ws) => sqlx::query_as(
+            "SELECT o.slug, w.slug FROM workspaces w JOIN organizations o ON o.id = w.org_id WHERE w.id = $1",
+        )
+        .bind(ws)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten(),
+        None => sqlx::query_scalar::<_, String>("SELECT slug FROM organizations WHERE id = $1")
+            .bind(flow.org_id)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|o| (o, None)),
+    };
+    let connections_path = slugs.map(|(org, ws)| match ws {
+        Some(ws) => format!("/o/{org}/w/{ws}/credentials?tab=connections"),
+        None => format!("/o/{org}/credentials?tab=connections"),
+    });
+    Landing {
+        app_id: flow.app_id.clone(),
+        connections_path,
+    }
 }
 
 struct Target {
@@ -1057,23 +1109,34 @@ pub async fn callback(
     caller: &Caller,
     q: &HashMap<String, String>,
     cookie: Option<&str>,
-) -> Result<Done, &'static str> {
+) -> Result<Done, Failure> {
     const BAD: &str = "oauth_state_invalid";
     let (param, cookie) = q.get("state").map(String::as_str).zip(cookie).ok_or(BAD)?;
     let pf = Flow::open(state, param).ok_or(BAD)?;
     let flow = Flow::open(state, cookie).ok_or(BAD)?;
     if pf.nonce != flow.nonce || flow.user_id != caller.user_id {
-        return Err(BAD);
+        return Err(BAD.into());
     }
     if q.contains_key("error") {
-        return Err("oauth_exchange_failed");
+        return Err(Failure {
+            code: "oauth_exchange_failed",
+            landing: Some(landing(state, &flow).await),
+        });
     }
-    run_callback(state, caller, q, flow).await.map_err(|e| {
-        if let ConnectErr::Api(a) = &e {
-            tracing::warn!(code = a.code(), "connect callback failed");
+    let land = landing(state, &flow).await;
+    match run_callback(state, caller, q, flow).await {
+        Ok(Done::Connected(id, missing, _)) => Ok(Done::Connected(id, missing, land)),
+        Ok(other) => Ok(other),
+        Err(e) => {
+            if let ConnectErr::Api(a) = &e {
+                tracing::warn!(code = a.code(), "connect callback failed");
+            }
+            Err(Failure {
+                code: e.code(),
+                landing: Some(land),
+            })
         }
-        e.code()
-    })
+    }
 }
 
 async fn run_callback(
@@ -1192,7 +1255,14 @@ async fn run_callback(
         Connect::Fields(_) => return Err(ConnectErr::Exchange),
     };
     let (row, missing) = ctx.finalize(caller, method, kind, g).await?;
-    Ok(Done::Connected(row.id, missing))
+    Ok(Done::Connected(
+        row.id,
+        missing,
+        Landing {
+            app_id: flow.app_id.clone(),
+            connections_path: None,
+        },
+    ))
 }
 
 /// Resolve an OAuth endpoint: fixed URLs as-is; templates render with the tenant host and must
