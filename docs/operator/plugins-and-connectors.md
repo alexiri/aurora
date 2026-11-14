@@ -194,11 +194,14 @@ personal access token of a system administrator: with it Aurora can reply privat
 and register `/aurora`; without it, replies to individuals arrive as direct messages.
 Agent messages keep their formatting in Mattermost (bold, code, tables, lists, quotes, code
 blocks); footnotes, alerts, math and raw HTML are converted to the nearest Mattermost form
-([docs/20 §Rendering](../20-mattermost-connector.md)). Mattermost may fetch a preview of the
-first link in a post (System Console → Site Configuration → Posts → *Enable Link Previews*);
-Aurora cannot turn that off per post, so an administrator who does not want previews of
-whatever an agent links to turns the setting off. Math renders only when an administrator
-enables *Enable Latex Rendering* / *Enable Inline Latex Rendering* (Site Configuration → Posts).
+([docs/20 §Rendering](../20-mattermost-connector.md)). Mattermost's **server** fetches the first
+bare URL of a post by itself, with no click (System Console → Site Configuration → Posts →
+*Enable Link Previews*; checked on 11.7.15: a `GET` from `Mattermost-Bot/1.1` arrives while the
+post is created). Aurora cannot turn that off per post, so an administrator who does not want
+the server to fetch whatever address an agent writes into a message (a prompt-injected agent
+could put data in the query string) turns the setting off. Links written as `[label](url)` are
+never fetched. Math renders when *Enable Latex Rendering* / *Enable Inline Latex Rendering*
+(Site Configuration → Posts) are on; both were on by default on the 11.7.15 server we checked.
 The Mattermost server must be reachable from the connector host; a server on a private
 network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
 ([docs/20](../20-mattermost-connector.md)), and one behind a private CA needs the CA bundle

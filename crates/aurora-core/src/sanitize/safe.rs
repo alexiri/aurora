@@ -152,9 +152,11 @@ fn break_image_openers(s: &str) -> String {
 }
 
 /// Math is opaque to the Markdown parser but not to a platform with LaTeX off, where `$…$` is
-/// prose: no image opener and no `](` link joint survives in it.
+/// prose: no image opener and no `](` link joint survives in it. A space does it without
+/// changing the math (LaTeX ignores it; a backslash would be a LaTeX error on Mattermost with
+/// inline LaTeX on — checked on 11.7.15, FIX-142 step 4).
 fn tame_math(s: &str) -> String {
-    break_image_openers(s).replace("](", "]\\(")
+    s.replace("![", "! [").replace("](", "] (")
 }
 
 fn scheme_of(url: &str) -> Option<&str> {

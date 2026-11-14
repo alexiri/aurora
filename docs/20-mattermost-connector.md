@@ -135,32 +135,40 @@ integration config.
   through byte for byte; the rest is converted as below; nothing is dropped.
   Implemented by `connectors/mattermost/src/convert.rs` (a pulldown-cmark offset
   pass that edits only the ranges below, in `render_text` before the mention and
-  broadcast pass). **Verification status (FIX-142 step 4):** the conversions and
-  the byte-for-byte pass-through are tested (`convert::tests`, `render::tests`,
-  conformance `s18`); that Mattermost 11.7.15 *renders* each "native" row
-  (the pinned `mattermost-preview` image of `scripts/mattermost/setup.sh`) is **not
-  yet confirmed in a browser** — the lane that built this had neither the image nor the
-  disk/CPU headroom to run the dev server. Until it is, the "native" cells are what
-  Mattermost's formatting documentation states; the task-list row's fallback
-  (`☐` / `☑`) is specified but not implemented, to be added only if a rendered post
-  shows the checkboxes missing.
+  broadcast pass). **Verified (FIX-142 step 4, 2026-11-14)** against Mattermost 11.7.15
+  (the pinned `mattermost-preview` image of `scripts/mattermost/setup.sh`): one post per
+  construct was created through `render_text`, read back through the REST API (the stored
+  message equals the converted text byte for byte), and its **rendered DOM** read in a headless
+  browser logged in as the admin. Every row below is confirmed as stated. Notes from that run:
+  the task list renders as real disabled checkboxes (`<input type="checkbox">`), so the
+  `☐` / `☑` fallback is **not needed and not implemented**; display math as a ```` ```latex ````
+  block renders with KaTeX on this server (`EnableLatex` and `EnableInlineLatex` are `true`
+  by default in 11.7.15); `mermaid` shows as a plain code block; an alert shows as a quote
+  with the emoji and a bold label; Mattermost joins an ordered list that follows a bullet
+  list after a blank line into the bullet list (its own behaviour, not converted).
 
   | Construct | Mattermost | Conversion |
   |---|---|---|
   | Headings, emphasis, strong, strikethrough, inline code, block quotes, rules, nested/ordered lists, hard breaks, autolinks, emoji shortcodes | native | — |
   | Tables (alignment, inline formatting in cells) | native | — (a table longer than one post: the core splits it by rows, header row repeated in each post, `13 §5.2`) |
   | Fenced code with a language | native, highlighted | — |
-  | Task lists | native (`- [ ]` / `- [x]`, passed through); unconfirmed on the dev server | if the check below shows they do not render as checkboxes: `☐` / `☑` list items |
+  | Task lists | native (`- [ ]` / `- [x]`, passed through; renders checkboxes — verified) | — |
   | Footnotes | conversion | `[1]` at the reference, a "Notes" list at the end of the message |
   | Alerts (`> [!NOTE]` …) | conversion | block quote starting with `ℹ️ **Note**` / `💡 **Tip**` / `❗ **Important**` / `⚠️ **Warning**` / `🛑 **Caution**` |
   | Math `$$…$$`, ```` ```math ````, inline `$…$` | conversion (```` ```latex ```` blocks render when the server enables LaTeX) | ```` ```latex ```` block (renders when enabled, readable code otherwise); inline `$…$` left as is (renders when inline LaTeX is enabled) |
   | Mermaid | conversion | ```` ```mermaid ```` code block |
   | Allowlisted HTML (Mattermost renders no HTML) | conversion | `b`/`strong` → `**`, `i`/`em` → `_`, `s`/`del` → `~~`, `code`/`kbd` → `` ` ``, `br` → hard break, `hr` → `---`, `details`/`summary` → bold summary line + content, `sub`/`sup`/`ins`/`mark`/`small`/`span`/`div`/`p` → their content, HTML lists/tables → Markdown lists/tables |
-  | Link previews | the server may fetch the first URL of a post (`EnableLinkPreviews`) | the REST API has no per-post switch we know of (not checked against the dev server), so agent posts are not suppressed; `docs/operator/plugins-and-connectors.md` (Mattermost) says an admin can turn previews off |
+  | Link previews | the **server** fetches the first bare URL of a post (`EnableLinkPreviews`), unprompted | no per-post switch exists (post `props` `preview_removed`, `link_previews`, `disable_link_preview`, `previews_removed` change nothing; the REST API has none). Measured: only a **bare** URL or `<url>` is fetched (a listener received `GET /?d=… ` from `Mattermost-Bot/1.1` during post creation); `[label](url)` (also `[url](url)`) and code spans are never fetched. Agent posts are **not** changed (bare URLs and autolinks are native and pass through): `docs/operator/plugins-and-connectors.md` tells an admin to turn previews off. Open decision for the owner: converting bare URLs to `[url](url)` would close this zero-click fetch (same class as D-227 rule 1) at the price of an autolink that is no longer byte-for-byte |
 
-  LaTeX is off by default in Mattermost (`EnableLatex`, `EnableInlineLatex`); the dev
-  server's `MM_*` overrides set neither, so ```` ```latex ```` blocks and `$…$` show as
-  readable code/text there and render once an admin enables them.
+  LaTeX is enabled in 11.7.15 by default (`EnableLatex`, `EnableInlineLatex`); an admin can
+  turn it off, and ```` ```latex ```` blocks and `$…$` then show as readable code/text. Math is
+  never an image carrier: the core writes a space into `![` and `](` inside math (`$! [x] (u)$`),
+  which LaTeX ignores.
+  **Mattermost-only image forms** (verified): `![x](url =10x10)`, `![x](https://h/a b)` and a
+  reference definition directly after a paragraph line followed by `![x][r]` are images to
+  Mattermost although CommonMark reads them as text; the core therefore breaks every `![`
+  outside code (`!\[`), and `render_text` re-checks its converted output and posts escaped plain
+  text if an image, a link outside http/https/mailto or an image opener is found.
 - Posts carry `props.aurora_op = <op_marker>`; when `maybe_sent` is true, the
   connector searches the last 50 posts of the target thread/channel for that
   prop before posting.
