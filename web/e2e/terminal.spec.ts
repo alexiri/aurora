@@ -46,15 +46,16 @@ test.describe("agent Terminal tab", () => {
       return route.fallback();
     });
     await page.goto("/o/acme/w/main/agents/daneel");
-    const tabs = page.getByRole("tablist", { name: "Agent" });
-    await expect(tabs.getByRole("tab", { name: "Terminal" })).toHaveCount(0);
+    // (D-200) A BYO agent has no Terminal page: not in any tablist of the page.
+    await expect(page.getByRole("tablist", { name: "Agent sections" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Terminal" })).toHaveCount(0);
   });
 
   test("renders the pane, sends the layout resize and shows PTY output", async ({ page }) => {
     const pty: MockPty = { output: enc("daneel:/workspace$ "), resizes: [] };
     await mockWithTerminal(page, pty);
     await openTab(page);
-    await expect(page.getByRole("tablist", { name: "Agent" }).getByRole("tab", { name: "Terminal" })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Computer pages" }).getByRole("tab", { name: "Terminal" })).toBeVisible();
     // The pane (real wterm, DOM renderer) shows the PTY's greeting as selectable text.
     const pane = page.getByRole("group", { name: "Agent terminal" });
     await expect(pane).toBeVisible();

@@ -1,16 +1,19 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
+import { useRef, useState } from "react";
 
 import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { MoreIcon } from "@/components/ui/icons";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useSandbox } from "@/lib/api/conversations";
-import { cn } from "@/lib/utils";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useTabParam } from "@/lib/use-tab-param";
 
@@ -18,7 +21,7 @@ import { AccessTab } from "./access-tab";
 import { ChatTab } from "./chat-tab";
 import { ComputerTab } from "./computer-tab";
 import { ConnectTab } from "./connect-tab";
-import { DeleteZone } from "./delete-zone";
+import { DeleteAgentDialog } from "./delete-zone";
 import { MemoryTab } from "@/components/memory/memory-tab";
 import { SkillsTab } from "@/components/skills/skills-tab";
 import { AgentChannelsTab } from "@/components/channels/agent-channels-tab";
@@ -28,28 +31,21 @@ import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
+import { AGENT_PAGE_IDS, availableSections, resolvePage, SECTION_OF, type AgentPageId, type SectionId } from "./sections";
+import { sandboxLook } from "./status-rail/status-data";
 import { TerminalTab } from "./terminal-tab";
 import { useInstance, useOrg } from "@/lib/api/queries";
-
-type AgentTab = "chat" | "instructions" | "access" | "connect" | "computer" | "previews" | "terminal" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels";
-const AGENT_TABS: readonly AgentTab[] = ["chat", "instructions", "access", "connect", "computer", "previews", "terminal", "memory", "skills", "schedules", "webhooks", "peers", "channels"];
 
 /** Sandbox state of a hosted agent (existing sandbox endpoint); hidden while unknown or on error. */
 function SandboxPill({ agentId }: { agentId: string }) {
   const q = useSandbox(agentId);
   if (!q.data) return null;
-  const s = q.data.state;
-  const tone = s === "running" ? "accent" : s === "failed" ? "danger" : s === "starting" || s === "stopping" ? "pending" : "neutral";
   // (FIX-025, D-158) A failed start is never shown as "starting" forever: the pill says failed and
   // carries the reason as the title (tooltip); the Computer tab holds the full detail.
-  const title =
-    s === "failed" && (q.data.failure_message || q.data.failure_code)
-      ? `${q.data.failure_message ?? ""}${q.data.failure_code ? ` (${q.data.failure_code})` : ""}`.trim()
-      : undefined;
-  const label = s === "starting" ? "Sandbox starting" : `Sandbox ${s}`;
+  const look = sandboxLook(q.data);
   return (
-    <StatusDot tone={tone} title={title}>
-      {label}
+    <StatusDot tone={look.tone} title={look.title}>
+      {look.label}
     </StatusDot>
   );
 }
@@ -71,12 +67,17 @@ export function AgentPage() {
   // `terminal.enabled` is on. `can_use` is the tab's own authority (the API re-checks it on
   // every open; a caller without it gets 403/404 there and this tab's notices say so).
   const terminalEnabled = instance.data?.features.terminal === true;
-  // A deep link to a conversation (`?c=<id>`, D-102) opens the Chat tab. `?tab=` selects a tab (C-506: the chat error links use `?tab=access` and `?tab=instructions`); an unknown or
-  // unavailable value (a BYO agent has no Chat) falls back to Instructions.
-  const [requestedTab, setTab] = useTabParam<AgentTab>(AGENT_TABS, "instructions", {
+  // A deep link to a conversation (`?c=<id>`, D-102) opens the Chat page. `?tab=` selects a page by its id (C-506: the
+  // chat error links use `?tab=access` and `?tab=instructions`); an unknown or unavailable value falls back to the
+  // agent's default page (Chat for a hosted agent, Instructions for a BYO one, D-200).
+  const [requestedTab, setTab] = useTabParam<AgentPageId>(AGENT_PAGE_IDS, "chat", {
     initial: (p) => (p.has("c") ? "chat" : null),
     drop: (t) => (t === "chat" ? [] : ["c"]),
   });
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  // The page last open in each section, so a section's switcher button returns to it.
+  const lastPage = useRef<Partial<Record<SectionId, AgentPageId>>>({});
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -85,109 +86,154 @@ export function AgentPage() {
   if (!agent) return <ErrorState error={{ code: "not_found" }} />;
 
   const byo = agent.kind === "byo";
-  const tabs = [
-    ...(byo ? [] : [{ id: "chat" as const, label: "Chat" }]),
-    { id: "instructions" as const, label: "Instructions" },
-    ...(byo
-      ? []
-      : [
-          { id: "memory" as const, label: "Memory" },
-          { id: "skills" as const, label: "Skills" },
-          { id: "schedules" as const, label: "Schedules" },
-          { id: "webhooks" as const, label: "Webhooks" },
-          { id: "peers" as const, label: "Peers" },
-          { id: "channels" as const, label: "Channels" },
-          ...(previewsEnabled ? [{ id: "previews" as const, label: "Previews" }] : []),
-          ...(terminalEnabled ? [{ id: "terminal" as const, label: "Terminal" }] : []),
-        ]),
-    { id: "access" as const, label: "Access" },
-    ...(byo
-      ? [{ id: "connect" as const, label: "Computer: Connect" }]
-      : [{ id: "computer" as const, label: "Computer" }]),
-  ];
-
-  const tab: AgentTab = tabs.some((t) => t.id === requestedTab) ? requestedTab : "instructions";
-  // The Chat tab is a fixed-height panel that must fit a 1280×800 window with its composer pinned, so
-  // it gets the compact header (one title line, Freeze in the overflow menu). Other tabs keep the full one.
-  const compact = tab === "chat" && !byo;
+  const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled };
+  const sections = availableSections(availability);
+  const tab = resolvePage(requestedTab, availability);
+  const sectionId = SECTION_OF[tab];
+  const section = sections.find((s) => s.id === sectionId)!;
+  const choosePage = (p: AgentPageId) => {
+    lastPage.current[SECTION_OF[p]] = p;
+    setTab(p);
+  };
+  const goSection = (id: string) => {
+    const next = sections.find((s) => s.id === id);
+    if (!next) return;
+    const remembered = lastPage.current[next.id];
+    choosePage(remembered && next.pages.some((p) => p.id === remembered) ? remembered : next.pages[0]!.id);
+  };
+  const base = `/o/${org}/w/${ws}`;
+  const canOwn = workspace.data?.my_role === "owner";
   const freezeProps = workspace.data
     ? {
         agentId: agent.id,
         name: agent.name,
         orgId: workspace.data.org_id,
         frozen: agent.frozen,
-        canOwn: workspace.data.my_role === "owner",
+        canOwn,
       }
     : null;
-  // A frozen agent shows its banner (full width) under the header; the menu only offers Freeze.
-  const menuFreeze = compact && freezeProps && freezeProps.canOwn && !agent.frozen;
+  // Agent actions (D-200): Freeze (with its confirm dialog) and Delete agent…, for `can_own`. A frozen agent's banner
+  // (with Unfreeze) stays under the header; the menu then only offers Delete.
+  const deleteItem = (
+    <MenuItem className="text-danger-ink data-[highlighted]:bg-danger-soft" onSelect={() => setDeleteOpen(true)}>
+      Delete agent…
+    </MenuItem>
+  );
+  const freezeInMenu = !!freezeProps && canOwn && !agent.frozen;
+  const deleteOnlyMenu = !!freezeProps && canOwn && !!agent.frozen;
+  const chatPage = tab === "chat" && !byo;
 
   return (
     // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
-    <div className={cn("min-w-0 space-y-4", compact && "space-y-2")}>
+    <div className="min-w-0 space-y-2">
       <PageHeader
-        compact={compact}
-        breadcrumb={[{ label: "Agents", href: `/o/${org}/w/${ws}/agents` }, { label: agent.name }]}
+        compact
+        breadcrumb={[{ label: "Agents", href: `${base}/agents` }, { label: agent.name }]}
         title={
           <span className="flex min-w-0 items-center gap-3">
-            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={compact ? 32 : 44} />
+            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={40} />
             <span className="min-w-0 truncate">{agent.name}</span>
           </span>
         }
         description={
           <span className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-muted">@{agent.handle}</span>
-            <Badge>{agent.kind}</Badge>
-            {agent.is_default ? <Badge tone="accent">Default</Badge> : null}
+            {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
+            {byo ? <Badge>{agent.kind}</Badge> : null}
+            {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
             {byo ? null : <SandboxPill agentId={agent.id} />}
           </span>
         }
-        actions={menuFreeze ? <AgentFreeze {...freezeProps} inMenu /> : undefined}
+        actions={
+          <>
+            {chatPage ? (
+              <Button type="button" variant="outline" size="sm" className="min-h-11 md:hidden" onClick={() => setStatusOpen(true)}>
+                Status
+              </Button>
+            ) : null}
+            <Tabs
+              items={sections.map((s) => ({ value: s.id, label: s.label }))}
+              value={sectionId}
+              onValueChange={goSection}
+              label="Agent sections"
+              idBase="agent-section"
+              overflow="menu"
+            />
+            {freezeInMenu && freezeProps ? <AgentFreeze {...freezeProps} inMenu menuExtra={deleteItem} /> : null}
+            {deleteOnlyMenu ? (
+              <Menu modal={false}>
+                <MenuTrigger asChild>
+                  <Button variant="ghost" size="sm" aria-label="Agent actions" className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+                    <MoreIcon width={20} height={20} />
+                  </Button>
+                </MenuTrigger>
+                <MenuContent align="end">{deleteItem}</MenuContent>
+              </Menu>
+            ) : null}
+          </>
+        }
         className="mb-2"
       />
-      {freezeProps && !menuFreeze ? <AgentFreeze {...freezeProps} /> : null}
-      <Tabs
-        items={tabs.map((t) => ({ value: t.id, label: t.label }))}
-        value={tab}
-        onValueChange={(v) => setTab(v as AgentTab)}
-        variant="underline"
-        overflow="menu"
-        label="Agent"
-        idBase="agent"
-      />
-      <div role="tabpanel" id={tabPanelId("agent", tab)} aria-labelledby={tabId("agent", tab)} className="pt-2">
-        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url, brief: agent.brief, frozen: agent.frozen !== null }} /> : null}
-        {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
-        {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
-        {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={workspace.data?.my_role === "owner"} /> : null}
-        {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} wsId={workspace.data?.id} canOwn={workspace.data?.my_role === "owner"} /> : null}
-        {tab === "peers" && !byo ? <PeersTab agentId={agent.id} /> : null}
-        {tab === "channels" && !byo && workspace.data ? (
-          <AgentChannelsTab agentId={agent.id} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
+      {/* The banner of a frozen agent, full width under the header (and the non-owner's read-only copy of it). */}
+      {freezeProps && !freezeInMenu ? <AgentFreeze {...freezeProps} /> : null}
+      {freezeProps && canOwn ? (
+        <DeleteAgentDialog
+          agentId={agent.id}
+          handle={agent.handle}
+          wsId={wsId!}
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          onDeleted={() => router.replace(`${base}/agents`)}
+        />
+      ) : null}
+      <div role="tabpanel" id={tabPanelId("agent-section", sectionId)} aria-labelledby={tabId("agent-section", sectionId)} className="space-y-3">
+        {section.pages.length > 1 ? (
+          <Tabs
+            items={section.pages.map((p) => ({ value: p.id, label: p.label }))}
+            value={tab}
+            onValueChange={(v) => choosePage(v as AgentPageId)}
+            label={`${section.label} pages`}
+            idBase="agent"
+          />
         ) : null}
-        {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
-        {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
-        {tab === "terminal" && !byo && terminalEnabled ? (
-          <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} />
-        ) : null}
-        {tab === "previews" && !byo ? (
-          <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} />
-        ) : null}
-        {tab === "instructions" ? (
-          <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} />
-        ) : null}
-        {tab === "access" && workspace.data ? (
-          <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} hosted={!byo} base={`/o/${org}/w/${ws}`} />
-        ) : null}
-        {tab === "access" && workspace.isPending ? <Loading /> : null}
-        {tab === "connect" && byo ? (
-          <ConnectTab agent={agent} wsId={wsId} canOwn={workspace.data?.my_role === "owner"} />
-        ) : null}
-        {tab === "instructions" ? (
-          <div className="pt-6">
-            <DeleteZone agentId={agent.id} handle={agent.handle} wsId={wsId!} onDeleted={() => router.replace(`/o/${org}/w/${ws}/agents`)} />
-          </div>
-        ) : null}
+        <div
+          {...(section.pages.length > 1 ? { role: "tabpanel", id: tabPanelId("agent", tab), "aria-labelledby": tabId("agent", tab) } : {})}
+          className="pt-1"
+        >
+          {tab === "chat" && !byo ? (
+            <ChatTab
+              agentId={agent.id}
+              wsId={wsId!}
+              base={base}
+              orgId={workspace.data?.org_id}
+              agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url, brief: agent.brief, frozen: agent.frozen !== null }}
+              agentKind={agent.kind}
+              isDefault={agent.is_default}
+              terminalAvailable={terminalEnabled}
+              onNavigate={choosePage}
+              statusSheetOpen={statusOpen}
+              onStatusSheetOpenChange={setStatusOpen}
+            />
+          ) : null}
+          {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
+          {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
+          {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
+          {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
+          {tab === "peers" && !byo ? <PeersTab agentId={agent.id} /> : null}
+          {tab === "channels" && !byo && workspace.data ? (
+            <AgentChannelsTab agentId={agent.id} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
+          ) : null}
+          {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
+          {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "previews" && !byo ? <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
+          {tab === "access" && workspace.data ? (
+            <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} />
+          ) : null}
+          {tab === "access" && workspace.isPending ? <Loading /> : null}
+          {tab === "connect" && byo ? <ConnectTab agent={agent} wsId={wsId} canOwn={canOwn} /> : null}
+        </div>
       </div>
     </div>
   );

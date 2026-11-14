@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/components/agents/chat-tab", () => ({ ChatTab: () => <div data-testid="chat-tab" /> }));
 vi.mock("@/components/agents/instructions-tab", () => ({ InstructionsTab: () => <div data-testid="instructions-tab" /> }));
-vi.mock("@/components/agents/delete-zone", () => ({ DeleteZone: () => null }));
+vi.mock("@/components/agents/delete-zone", () => ({ DeleteAgentDialog: () => null }));
 
 import { AgentPage } from "@/components/agents/agent-page";
 import { ComputerTab } from "@/components/agents/computer-tab";

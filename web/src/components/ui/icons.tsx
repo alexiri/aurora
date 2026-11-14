@@ -60,6 +60,7 @@ export const LinkIcon = make(<><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.
 export const CheckIcon = make(<><path d="M5 12l5 5 9-10"/></>);
 export const WrenchIcon = make(<><path d="M14.5 6.5a4 4 0 005 5L20 12l-8 8a2.1 2.1 0 01-3-3l8-8z"/><path d="M14.5 6.5l3 3"/></>);
 export const ChevronDownIcon = make(<><path d="M6 9l6 6 6-6"/></>);
+export const ChevronLeftIcon = make(<><path d="M15 6l-6 6 6 6"/></>);
 export const DownloadIcon = make(<><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></>);
 export const FileIcon = make(<><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></>);
 export const EyeIcon = make(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></>);
