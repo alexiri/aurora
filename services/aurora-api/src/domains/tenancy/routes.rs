@@ -547,23 +547,12 @@ async fn delete_workspace(
     if req.confirm != w.slug {
         return Err(service::confirmation_mismatch());
     }
-    let mut del = service::WorkspaceDeletion::prepare(&s, ws).await?;
-    let done = async {
-        let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
-        del.run(&mut tx, a.org_id, ws).await?;
-        let ev = event(&c, "workspace.delete")
-            .org(a.org_id)
-            .workspace(ws)
-            .target("workspace", ws)
-            .metadata(json!({"slug": w.slug}));
-        audit::commit_critical(tx, &ev).await
-    }
-    .await;
-    if let Err(e) = done {
-        del.rollback(&s).await;
-        return Err(e);
-    }
-    del.committed(&s).await;
+    let ev = event(&c, "workspace.delete")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("workspace", ws)
+        .metadata(json!({"slug": w.slug}));
+    service::delete_workspace(&s, a.org_id, ws, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -320,6 +320,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/orgs/{org}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One organization's operator row (instance administrators; counts, no content). */
+        get: operations["adminGetOrg"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete any organization with everything in it (instance administrators; recent re-auth,
+         *     typed slug). Runs the owner delete's services; allowed while frozen; shows no content.
+         */
+        delete: operations["adminDeleteOrg"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/orgs/{org}/freeze": {
         parameters: {
             query?: never;
@@ -351,6 +372,23 @@ export interface paths {
         put?: never;
         /** Lift an organization freeze (instance administrators). */
         post: operations["adminUnfreezeOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org}/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One organization's workspaces (instance administrators; metadata only). */
+        get: operations["adminListOrgWorkspaces"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -761,6 +799,26 @@ export interface paths {
         head?: never;
         /** Grant/revoke instance-admin, disable/enable a user. */
         patch: operations["adminPatchUser"];
+        trace?: never;
+    };
+    "/v1/admin/workspaces/{ws}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the
+         *     owner delete's services; shows no content.
+         */
+        delete: operations["adminDeleteWorkspace"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/agent-links/{id}/policy": {
@@ -4626,13 +4684,24 @@ export interface components {
         };
         /** @description One organization in the instance-admin list (operator view: no org data). */
         AdminOrg: {
+            /** Format: int64 */
+            agent_count: number;
             /** Format: date-time */
             created_at: string;
             frozen?: null | components["schemas"]["Frozen"];
             /** Format: uuid */
             id: string;
+            /**
+             * Format: int64
+             * @description Active members.
+             */
+            member_count: number;
             name: string;
+            /** @description (C-733) No active owner. */
+            ownerless: boolean;
             slug: string;
+            /** Format: int64 */
+            workspace_count: number;
         };
         /** @description Attachment bytes of one org in the instance breakdown. */
         AdminOrgStorage: {
@@ -4703,6 +4772,18 @@ export interface components {
             instance_admin_idp_value?: string | null;
             /** Format: date-time */
             last_login_at?: string | null;
+        };
+        /** @description One workspace of an organization in the instance-admin view: metadata only (C-733). */
+        AdminWorkspace: {
+            /** Format: int64 */
+            agent_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            personal: boolean;
+            slug: string;
         };
         Agent: {
             /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
@@ -7370,13 +7451,24 @@ export interface components {
         };
         Page_AdminOrg: {
             items: {
+                /** Format: int64 */
+                agent_count: number;
                 /** Format: date-time */
                 created_at: string;
                 frozen?: null | components["schemas"]["Frozen"];
                 /** Format: uuid */
                 id: string;
+                /**
+                 * Format: int64
+                 * @description Active members.
+                 */
+                member_count: number;
                 name: string;
+                /** @description (C-733) No active owner. */
+                ownerless: boolean;
                 slug: string;
+                /** Format: int64 */
+                workspace_count: number;
             }[];
             next_cursor?: string | null;
         };
@@ -7393,6 +7485,20 @@ export interface components {
                 /** Format: date-time */
                 last_login_at?: string | null;
             })[];
+            next_cursor?: string | null;
+        };
+        Page_AdminWorkspace: {
+            items: {
+                /** Format: int64 */
+                agent_count: number;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                name: string;
+                personal: boolean;
+                slug: string;
+            }[];
             next_cursor?: string | null;
         };
         Page_Agent: {
@@ -11656,6 +11762,145 @@ export interface operations {
             };
         };
     };
+    adminGetOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrg"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminFreezeOrg: {
         parameters: {
             query?: never;
@@ -11742,6 +11987,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListOrgWorkspaces: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AdminWorkspace"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
@@ -13376,6 +13681,89 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

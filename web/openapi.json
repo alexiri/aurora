@@ -1866,6 +1866,193 @@
         ]
       }
     },
+    "/v1/admin/orgs/{org}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "One organization's operator row (instance administrators; counts, no content).",
+        "operationId": "adminGetOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOrg"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete any organization with everything in it (instance administrators; recent re-auth,\ntyped slug). Runs the owner delete's services; allowed while frozen; shows no content.",
+        "operationId": "adminDeleteOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/orgs/{org}/freeze": {
       "post": {
         "tags": [
@@ -1990,6 +2177,103 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/orgs/{org}/workspaces": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "One organization's workspaces (instance administrators; metadata only).",
+        "operationId": "adminListOrgWorkspaces",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AdminWorkspace"
                 }
               }
             }
@@ -4233,6 +4517,117 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/workspaces/{ws}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the\nowner delete's services; shows no content.",
+        "operationId": "adminDeleteWorkspace",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -29898,9 +30293,17 @@
           "id",
           "slug",
           "name",
-          "created_at"
+          "created_at",
+          "ownerless",
+          "member_count",
+          "workspace_count",
+          "agent_count"
         ],
         "properties": {
+          "agent_count": {
+            "type": "integer",
+            "format": "int64"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -29919,11 +30322,24 @@
             "type": "string",
             "format": "uuid"
           },
+          "member_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active members."
+          },
           "name": {
             "type": "string"
           },
+          "ownerless": {
+            "type": "boolean",
+            "description": "(C-733) No active owner."
+          },
           "slug": {
             "type": "string"
+          },
+          "workspace_count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -30105,6 +30521,41 @@
             }
           }
         ]
+      },
+      "AdminWorkspace": {
+        "type": "object",
+        "description": "One workspace of an organization in the instance-admin view: metadata only (C-733).",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "personal",
+          "agent_count",
+          "created_at"
+        ],
+        "properties": {
+          "agent_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "personal": {
+            "type": "boolean"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
       },
       "Agent": {
         "type": "object",
@@ -38734,9 +39185,17 @@
                 "id",
                 "slug",
                 "name",
-                "created_at"
+                "created_at",
+                "ownerless",
+                "member_count",
+                "workspace_count",
+                "agent_count"
               ],
               "properties": {
+                "agent_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -38755,11 +39214,24 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "member_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Active members."
+                },
                 "name": {
                   "type": "string"
                 },
+                "ownerless": {
+                  "type": "boolean",
+                  "description": "(C-733) No active owner."
+                },
                 "slug": {
                   "type": "string"
+                },
+                "workspace_count": {
+                  "type": "integer",
+                  "format": "int64"
                 }
               }
             }
@@ -38823,6 +39295,58 @@
                   }
                 }
               ]
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_AdminWorkspace": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One workspace of an organization in the instance-admin view: metadata only (C-733).",
+              "required": [
+                "id",
+                "slug",
+                "name",
+                "personal",
+                "agent_count",
+                "created_at"
+              ],
+              "properties": {
+                "agent_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "personal": {
+                  "type": "boolean"
+                },
+                "slug": {
+                  "type": "string"
+                }
+              }
             }
           },
           "next_cursor": {

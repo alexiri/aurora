@@ -60,6 +60,31 @@ pub struct AdminOrg {
     pub name: String,
     pub frozen: Option<Frozen>,
     pub created_at: DateTime<Utc>,
+    /// (C-733) No active owner.
+    pub ownerless: bool,
+    /// Active members.
+    pub member_count: i64,
+    pub workspace_count: i64,
+    pub agent_count: i64,
+}
+
+/// One workspace of an organization in the instance-admin view: metadata only (C-733).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminWorkspace {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub personal: bool,
+    pub agent_count: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListAdminWorkspacesQuery {
+    /// Page size, 1..=200 (default 50).
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, utoipa::IntoParams)]

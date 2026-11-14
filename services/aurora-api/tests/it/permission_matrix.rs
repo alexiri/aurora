@@ -366,6 +366,11 @@ const ROWS: &[Row] = &[
     // ---- instance admin ----
     // (phase 2, RFE-006) operator kill-switch for organizations.
     r("GET", "/v1/admin/orgs", G::Inst, false),
+    // (phase 5, P5-ADMDEL, C-733) metadata and deletes; the deletes need a recent re-auth.
+    r("GET", "/v1/admin/orgs/{org}", G::Inst, false),
+    r("GET", "/v1/admin/orgs/{org}/workspaces", G::Inst, false),
+    r("DELETE", "/v1/admin/orgs/{org}", G::Inst, false),
+    r("DELETE", "/v1/admin/workspaces/{ws}", G::Inst, false),
     r("POST", "/v1/admin/orgs/{org}/freeze", G::Inst, false),
     r("POST", "/v1/admin/orgs/{org}/unfreeze", G::Inst, false),
     r("GET", "/v1/admin/host-claims", G::Inst, false),
@@ -1260,7 +1265,13 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"app_id": "x", "host": "x.example.test", "label": "x"})
         }
         // wrong confirmation text: an authorized caller gets a validation error, nothing is deleted
-        ("DELETE", "/v1/orgs/{org}" | "/v1/workspaces/{ws}") => json!({"confirm": "not-the-slug"}),
+        (
+            "DELETE",
+            "/v1/orgs/{org}"
+            | "/v1/workspaces/{ws}"
+            | "/v1/admin/orgs/{org}"
+            | "/v1/admin/workspaces/{ws}",
+        ) => json!({"confirm": "not-the-slug"}),
         (
             "POST",
             "/v1/orgs/{org}/freeze"

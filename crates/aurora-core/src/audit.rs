@@ -127,6 +127,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "org.update",
     "retention.update",
     "workspace.delete",
+    // (P5-ADMDEL, D-234) an instance admin deletes an organization or a workspace
+    "admin.org.delete",
+    "admin.workspace.delete",
     // Channels
     "channel_integration.autolink_disable",
     "channel_integration.autolink_enable",
