@@ -28,8 +28,17 @@ impl Drop for Tmp {
     }
 }
 
+/// Runtime path first (nextest sets `NEXTEST_BIN_EXE_aurora` when CI runs the shards from an
+/// archive built elsewhere, where the compile-time path does not exist), compile-time path for
+/// plain `cargo test` — as `tests/plugin.rs`.
+fn aurora_bin() -> std::path::PathBuf {
+    std::env::var_os("NEXTEST_BIN_EXE_aurora")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_BIN_EXE_aurora")))
+}
+
 fn aurora(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_aurora"))
+    Command::new(aurora_bin())
         .args(args)
         .env("AURORA_CONFIG_DIR", dir)
         .env_remove("AURORA_URL")
