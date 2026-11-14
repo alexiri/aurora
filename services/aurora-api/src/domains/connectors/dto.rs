@@ -254,7 +254,7 @@ pub struct ConnectorInfo {
 /// Where a connector type stands for an org admin who wants to use it (C-712).
 #[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
-pub enum SetupState {
+pub enum ConnectorSetupState {
     Active,
     NotAdded,
     WaitingForHost,
@@ -267,7 +267,7 @@ pub struct ConnectorAvailability {
     pub type_id: String,
     pub name: String,
     pub icon_url: Option<String>,
-    pub setup_state: SetupState,
+    pub setup_state: ConnectorSetupState,
     /// The connector's id when one exists.
     pub connector_id: Option<String>,
 }

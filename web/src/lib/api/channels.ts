@@ -55,6 +55,15 @@ export function useCreateIntegration(orgId: string) {
   });
 }
 
+/** Check credentials and list the choices a field takes from the platform (C-711); stores nothing. */
+export function useProbeIntegration(orgId: string) {
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (body: S["ProbeIntegrationRequest"]) =>
+      unwrap(api.POST("/v1/orgs/{org}/channel-integrations:probe", { params: { path: { org: orgId } }, body })),
+  });
+}
+
 export function usePatchIntegration(orgId: string) {
   const qc = useQueryClient();
   return useMutation({

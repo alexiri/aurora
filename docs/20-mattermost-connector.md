@@ -48,7 +48,9 @@ Mattermost uses to reach Aurora" with the help "Leave empty unless Mattermost re
 another name", and it, `catchup_window_secs` and `token_check_secs` are `advanced: true`.
 
 `credentials.validate` with `mode: "probe"` (C-710): `GET /api/v4/users/me` (bot token) then
-`GET /api/v4/users/me/teams` → `choices.team = [{ value: <team id>, label: <display name> }]`,
+`GET /api/v4/users/me/teams` → `choices.team = [{ value: <team URL name>, label: <display name> }]` (create resolves a name or an
+id; the dashboard builds the "Open a DM with @bot" link `https://<server>/<name>/messages/@<bot>`
+from the value),
 `tenant_label` "@<bot> on <host>"; `warnings` carries "no admin token: replies to individuals
 arrive as DMs, and `/aurora` is not registered" when no `admin_token` is given, and the check of
 the admin token when one is. Probe never registers the slash command, edits the bot profile or

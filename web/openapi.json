@@ -32695,7 +32695,7 @@
             "type": "string"
           },
           "setup_state": {
-            "$ref": "#/components/schemas/SetupState"
+            "$ref": "#/components/schemas/ConnectorSetupState"
           },
           "type_id": {
             "type": "string"
@@ -32828,6 +32828,17 @@
             "format": "date-time"
           }
         }
+      },
+      "ConnectorSetupState": {
+        "type": "string",
+        "description": "Where a connector type stands for an org admin who wants to use it (C-712).",
+        "enum": [
+          "active",
+          "not_added",
+          "waiting_for_host",
+          "disabled",
+          "needs_approval"
+        ]
       },
       "ConnectorStatus": {
         "type": "string",

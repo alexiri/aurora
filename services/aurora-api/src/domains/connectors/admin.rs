@@ -274,10 +274,10 @@ pub async fn availability(s: &AppState) -> Result<ConnectorAvailabilityList, Api
     let (_, types) = managed::live_catalogue(s).await?;
     let rows = connectors::list(&s.pool).await?;
     let state_of = |r: &ConnectorRow| match r.status.as_str() {
-        "active" => SetupState::Active,
-        "disabled" => SetupState::Disabled,
-        "pending_approval" => SetupState::NeedsApproval,
-        _ => SetupState::WaitingForHost,
+        "active" => ConnectorSetupState::Active,
+        "disabled" => ConnectorSetupState::Disabled,
+        "pending_approval" => ConnectorSetupState::NeedsApproval,
+        _ => ConnectorSetupState::WaitingForHost,
     };
     let icon =
         |r: &ConnectorRow| (r.status == "active").then(|| format!("/v1/connectors/{}/icon", r.id));
@@ -290,7 +290,7 @@ pub async fn availability(s: &AppState) -> Result<ConnectorAvailabilityList, Api
             type_id: t.type_id.clone(),
             name: t.manifest.about.name.clone(),
             icon_url: row.and_then(icon),
-            setup_state: row.map_or(SetupState::NotAdded, state_of),
+            setup_state: row.map_or(ConnectorSetupState::NotAdded, state_of),
             connector_id: row.map(|r| r.id.clone()),
         });
     }

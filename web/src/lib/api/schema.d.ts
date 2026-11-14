@@ -5477,7 +5477,7 @@ export interface components {
             connector_id?: string | null;
             icon_url?: string | null;
             name: string;
-            setup_state: components["schemas"]["SetupState"];
+            setup_state: components["schemas"]["ConnectorSetupState"];
             type_id: string;
         };
         ConnectorAvailabilityList: {
@@ -5515,6 +5515,11 @@ export interface components {
             /** Format: date-time */
             updated_at?: string | null;
         };
+        /**
+         * @description Where a connector type stands for an org admin who wants to use it (C-712).
+         * @enum {string}
+         */
+        ConnectorSetupState: "active" | "not_added" | "waiting_for_host" | "disabled" | "needs_approval";
         /** @enum {string} */
         ConnectorStatus: "awaiting_registration" | "pending_approval" | "active" | "disabled";
         /** @description Returned once on rotation. */

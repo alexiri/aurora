@@ -263,12 +263,17 @@ impl MattermostConnector {
             .unwrap_or_default()
             .iter()
             .filter_map(|t| {
-                let value = t.get("id").and_then(Value::as_str)?.to_owned();
+                // The team's URL name is the value: create resolves a name or an id, and the
+                // dashboard builds `https://<server>/<name>/messages/@<bot>` from it.
+                let value = t
+                    .get("name")
+                    .or_else(|| t.get("id"))
+                    .and_then(Value::as_str)?
+                    .to_owned();
                 let label = t
                     .get("display_name")
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty())
-                    .or_else(|| t.get("name").and_then(Value::as_str))
                     .unwrap_or(&value)
                     .chars()
                     .take(200)
@@ -838,8 +843,8 @@ mod tests {
         assert_eq!(
             v["choices"]["team"],
             json!([
-                {"value": "t1", "label": "alpha"},
-                {"value": "t2", "label": "Zeta"}
+                {"value": "alpha", "label": "alpha"},
+                {"value": "zeta", "label": "Zeta"}
             ])
         );
         assert_eq!(v["tenant_ref"], "");

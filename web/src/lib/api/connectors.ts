@@ -25,13 +25,48 @@ export type CreateConnectorRequest = S["CreateConnectorRequest"];
  * An `instance_setup` field (C-450): the form-field schema plus `url`, `number` (`min`/`max`),
  * `generated_secret` and a static `default`. The generated type lists the base schema only.
  */
-export type SetupField = FormField & { help?: string | null; default?: unknown; min?: number | null; max?: number | null };
+export type SetupField = FormField & {
+  help?: string | null;
+  default?: unknown;
+  min?: number | null;
+  max?: number | null;
+  /** (C-715) A hint: the dashboard collapses the field under "Advanced". */
+  advanced?: boolean;
+  /** (C-710/C-715) `"from_validate"`: the options come from the probe (`POST …:probe`). */
+  choices?: string;
+};
+
+/**
+ * (D-219) A connector type whose instance settings are all optional or generated can be added with
+ * one button: nothing has to be typed.
+ */
+export function isOneClick(type: Pick<ConnectorType, "instance_setup">): boolean {
+  return setupFields(type.instance_setup).every((f) => !f.required || f.type === "generated_secret");
+}
+
+export type ConnectorAvailability = S["ConnectorAvailability"];
+export type ConnectorSetupState = S["ConnectorSetupState"];
 
 export const connectorKeys = {
   admin: ["admin", "connectors"] as const,
   info: ["connectors"] as const,
   types: ["admin", "connector-types"] as const,
+  availability: ["connector-availability"] as const,
 };
+
+/** Per announced connector type: how far from usable, and who to ask (C-712). */
+export function useConnectorAvailability() {
+  return useQuery({
+    queryKey: connectorKeys.availability,
+    queryFn: () => unwrap(api.GET("/v1/connector-availability")),
+    retry,
+  });
+}
+
+/** Does this integration form need the probe (C-710): a field takes its choices from it. */
+export function needsProbe(fields: FormField[]): boolean {
+  return (fields as SetupField[]).some((f) => f.choices === "from_validate");
+}
 
 export function setupFields(section: unknown): SetupField[] {
   return formFields(section) as SetupField[];
@@ -58,6 +93,8 @@ export function useCreateManagedConnector() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: connectorKeys.admin });
       void qc.invalidateQueries({ queryKey: connectorKeys.types });
+      void qc.invalidateQueries({ queryKey: connectorKeys.availability });
+      void qc.invalidateQueries({ queryKey: connectorKeys.info });
     },
     // A stale digest means the type changed: reload it so Review shows the new manifest.
     onError: () => qc.invalidateQueries({ queryKey: connectorKeys.types }),

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, type ReactNode } from "react";
 
+import { ConnectorAvailableCallout } from "@/components/connectors/available-callout";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
@@ -277,6 +278,7 @@ export function SetupView() {
       {setup.isPending ? <Loading /> : null}
       {setup.isError ? <ErrorState error={setup.error} onRetry={() => setup.refetch()} /> : null}
       <OwnerlessBanner />
+      <ConnectorAvailableCallout />
       {setup.data ? (
         <>
           {!setup.data.placement_saved ? (
