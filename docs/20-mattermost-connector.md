@@ -128,9 +128,20 @@ integration config.
   (`13 §4.6`). Mentions:
   `<@user:ID>` → `@username` (lookup), `<#space:ID>` → `~channel-name`,
   `<@here>` → `@here` (only from the core: platform voice, or a standalone
-  `@here` in an agent's message body, `13 §4.3`). **Defuse** `@channel`, `@all`,
-  `@here` occurring in text by wrapping them in inline code — inside formatted
-  text too; code spans and fenced blocks are never altered.
+  `@here` in an agent's message body, `13 §4.3`). **Defuse** (phase 5, D-271)
+  every ping that notifies more than one person — `@channel`, `@all`, `@here`
+  (the core's `<@here>` aside) and **group mentions** — in every spelling the
+  server reads as one (mentions table below), inside formatted text too, by
+  wrapping the word in inline code; code spans, fenced blocks, indented code and
+  HTML code are never altered and never notify. One user's `@username` passes.
+  Implemented by `render::defuse` (a parser-based pass) and `mentions::resolve`
+  (which `@name`s are users and which are groups: `POST /users/usernames`, then
+  `GET /groups?q=` — cached a minute; a server without the groups feature answers
+  `501` = no groups, cached ten minutes; any other failure, or more than 25 names
+  in a message, sets `Lookups::closed` and **every `@name` that is not a known
+  user is defused like a group** — fail closed). Where a backtick cannot be
+  inserted — a link destination (`@` → `%40`), after a backslash, next to or
+  among stray backticks — a zero-width space is written after the `@`.
 - (phase 5, FIX-142, D-227(c)) **Conversion table.** Native constructs pass
   through byte for byte; the rest is converted as below; nothing is dropped.
   Implemented by `connectors/mattermost/src/convert.rs` (a pulldown-cmark offset
@@ -158,7 +169,30 @@ integration config.
   | Math `$$…$$`, ```` ```math ````, inline `$…$` | conversion (```` ```latex ```` blocks render when the server enables LaTeX) | ```` ```latex ```` block (renders when enabled, readable code otherwise); inline `$…$` left as is (renders when inline LaTeX is enabled) |
   | Mermaid | conversion | ```` ```mermaid ```` code block |
   | Allowlisted HTML (Mattermost renders no HTML) | conversion | `b`/`strong` → `**`, `i`/`em` → `_`, `s`/`del` → `~~`, `code`/`kbd` → `` ` ``, `br` → hard break, `hr` → `---`, `details`/`summary` → bold summary line + content, `sub`/`sup`/`ins`/`mark`/`small`/`span`/`div`/`p` → their content, HTML lists/tables → Markdown lists/tables |
-  | Link previews | the **server** fetches the first bare URL of a post (`EnableLinkPreviews`), unprompted | no per-post switch exists (post `props` `preview_removed`, `link_previews`, `disable_link_preview`, `previews_removed` change nothing; the REST API has none). Measured: only a **bare** URL or `<url>` is fetched (a listener received `GET /?d=… ` from `Mattermost-Bot/1.1` during post creation); `[label](url)` (also `[url](url)`) and code spans are never fetched. Agent posts are **not** changed (bare URLs and autolinks are native and pass through): `docs/operator/plugins-and-connectors.md` tells an admin to turn previews off. Open decision for the owner: converting bare URLs to `[url](url)` would close this zero-click fetch (same class as D-227 rule 1) at the price of an autolink that is no longer byte-for-byte |
+  | Link previews | the **server** fetches the first bare URL of a post (`EnableLinkPreviews`), unprompted | no per-post switch exists (post `props` `preview_removed`, `link_previews`, `disable_link_preview`, `previews_removed` change nothing; the REST API has none). Measured: only a **bare** URL or `<url>` is fetched (a listener received `GET /?d=… ` from `Mattermost-Bot/1.1` during post creation); `[label](url)` (also `[url](url)`) and code spans are never fetched. **Closed by D-270**: the core writes every bare URL and autolink of an agent's message as `[url](url)` (`13 §4.3` exception 5), the connector re-checks that none is left (the plain-text fallback writes `https:\//…`), so agent posts show no preview cards; the operator note about `EnableLinkPreviews` stays as defence in depth |
+
+  **Mentions table** (phase 5, D-271) — measured on 11.7.15 with two channel members, Alice
+  online and Bob offline, through each member's `mention_count`
+  (`connectors/mattermost/tests/mentions_e2e.rs`, run by `scripts/conformance.sh --mattermost`):
+
+  | What the agent wrote | Notifies on the server? | What Aurora posts |
+  |---|---|---|
+  | `@channel`, `@all` — any letter case (`@Channel`, `@ALL`, `@cHaNnEl`) | everyone in the channel | the word in inline code |
+  | the same followed by `. , : ! ? ; ) - _ ’ … — –` or `..`, `.-` | yes | in code, the punctuation after it |
+  | the same after `( [ " ' * _ ~ # > - . / & = + $ % ^ \| { < :` or `\` | yes | in code (after a backslash: `@` + zero-width space) |
+  | the same inside `**…**`, `_…_`, `~~…~~`, headings, quotes, list items, table cells, link labels, raw text of a destination | yes | in code (destination: `%40`) |
+  | `@channelx`, `@channel.foo`, `@channel-foo`, `@channel_foo`, `@channel1`, `x@channel`, `1@all`, `@@channel`, `foo@all.example.com` | no — a longer name, or after an ASCII letter/digit | unchanged |
+  | `＠channel`, `@ channel`, `@​channel`, `%40channel`, `&#64;channel` | no | unchanged |
+  | `@here` (any case, any punctuation as above) | online members only | the core's `<@here>` only for the exact lowercase standalone spelling outside code and link labels (`@here`); every other spelling in code |
+  | `@name` of a group (custom / LDAP) | every member | in code (resolved through the API; unresolved → treated as a group when the lookup failed) |
+  | `@alice`, `@Alice.`, `**@alice**`, `[@alice](url)` | Alice | unchanged (D-226(b)) |
+  | anything inside `` `…` ``, ```` ``` ````, indented code, `<code>`/`<pre>`/`<kbd>` | no (the server strips code) | unchanged (HTML code becomes a code span) |
+  | `<code>@channel</code>` as raw text | yes — the server does not know HTML | converted to a code span first |
+
+  Custom groups need a Mattermost licence: the unlicensed dev image answers `501`, so no real
+  group can be created there; the group path is proven by unit tests with a mocked groups API
+  (`mentions::tests`, `render::tests::group_mentions_…`) and, on a licensed server, by the same
+  e2e (it creates a group and posts its mention).
 
   LaTeX is enabled in 11.7.15 by default (`EnableLatex`, `EnableInlineLatex`); an admin can
   turn it off, and ```` ```latex ```` blocks and `$…$` then show as readable code/text. Math is
