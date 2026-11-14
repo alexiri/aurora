@@ -8,6 +8,54 @@ through an install step by step. The chart is checked with `helm lint` and
 `helm template` on every change; keys are consumed by `templates/`, so a key
 that is not in this table does not exist.
 
+## Where does a key go? (read this first)
+
+**The rule:**
+- **Top level** holds everything **Kubernetes** has to know about: images, replicas, Secrets, volumes, ingress, network policies. It also holds every feature that adds a workload, a listener, an edge route or a network flow.
+- **`config:`** holds the **application's own settings**. They are copied verbatim into `aurora.toml` and change nothing in the Kubernetes objects. The key names are the TOML names from [15 §Configuration reference](15-deployment-operations.md#configuration-reference-keys-and-defaults), in snake_case.
+
+**Ask yourself whether turning it on needs something new in the cluster.** If yes, it is a top-level switch. If it only changes how Aurora behaves, it goes under `config:`.
+
+**Features with a top-level switch.** Set only the top-level key, and the chart writes the matching `config` key for you. Don't set the `config` side yourself. For the three on/off switches (`terminal`, `relay`/previews, `scim`), turning it on only in `config`, or giving the two sides different values, fails the render with a message. For the others, your `config` entry is overridden by the chart's (§The config block).
+
+| Set this (top level) | Not this | Because it also renders |
+|---|---|---|
+| `terminal.enabled` | `config.terminal.enabled` | the runner's stream listener :4108 and the NetworkPolicy flows to it |
+| `relay.enabled` | `config.previews.enabled` | the preview relay workload, its Service and flows |
+| `scim.enabled` | `config.scim.enabled` | the `/scim/v2` edge route |
+| `vault.*` | `config.secrets.stores` (the Vault entry) | service-account tokens and Vault wiring for api and gateway |
+| `counters.*` | `config.ratelimit.counters` | the Redis connection and NetworkPolicy peers |
+| `externalUrl` | `config.server.external_url` | ingress hosts, gateway TLS names, every service's public origin |
+| `plugins.*` | `config.plugins.dir` | the package volume |
+
+The limits and tuning of those features stay under `config:`, for example `config.terminal.awake_cap_secs` and `config.previews.*` caps. The full list of keys the chart injects is §The config block below.
+
+**Everything else is under `config:`**, including e-mail, sign-in (`auth.*`, OIDC providers), LLM endpoints, governance, approvals, retention, `gateway.allowed_private` and hosted defaults.
+
+**Secrets are never values.** A password goes in a Kubernetes Secret, referenced through an environment variable (`api.extraEnv`) whose name the key's row gives. Examples: `AURORA_SMTP_PASSWORD`, or `client_secret_env` for OIDC. From phase 5 (SET-*), it can also be entered in the dashboard.
+
+**A typical install:**
+
+```yaml
+externalUrl: https://aurora.example.org
+
+terminal:
+  enabled: true            # top level: it adds a listener and network flows
+
+config:
+  email:                   # application setting: aurora.toml [email]
+    smtp_url: "smtp://mail.example.org:587?tls=required"   # STARTTLS required; see the e-mail row
+    from: aurora-noreply@example.org
+    # smtp_username: aurora   # only with AURORA_SMTP_PASSWORD in api.extraEnv (from a Secret)
+  terminal:
+    awake_cap_secs: 3600   # a terminal limit: under config, while the switch stays top level
+
+api:
+  extraEnv: []             # e.g. AURORA_SMTP_PASSWORD from a Secret, when the server needs a login
+```
+
+From phase 5 (SET-1), setting a `config` key also **locks** it in the dashboard (§Instance settings and Helm locks). Leave a key out to let admins change it in Admin › Settings.
+
 **Reading the tables.** "Value" is the YAML type (and the allowed values where
 one is constrained — the chart fails the render on a wrong enum, and the
 service refuses to start naming the key on a wrong value that reaches
