@@ -218,3 +218,13 @@ Phases 3 and 4 start once phases 1 and 2 are done.
 
 Multi-arch (arm64) images, OPS-022 (owner, 2026-11-07: no arm deployment planned; images are
 amd64 only until then). Dependabot, OPS-021, and the Slack connector (owner, 2026-11-08, D-78).
+
+## Phase 6 — Proposed (not started)
+
+Owner, 2026-11-14: ideas prepared ahead of time, not to be started yet. **Nested organizations**
+(an org tree: department → group → section, tighten-only inheritance of governance, policy,
+retention, availability and limits; `docs/tasks/P6-ORGTREE.md`) and **usage limits and load
+knobs** (quotas per user/agent/workspace/org, limit profiles, sandbox awake-time budgets, automation
+caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`). Both
+are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run when the owner
+starts phase 6. See `21 §Phase 6`.
