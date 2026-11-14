@@ -1300,3 +1300,100 @@ async fn s15_validate_probe_returns_choices_and_changes_nothing() -> R {
     c.0.finish().await?;
     Ok(())
 }
+
+// ------------- 16/17. public callbacks refuse strangers (FIX-139, FIX-113)
+
+/// Posts a card with one button in U1's DM with the bot; returns `(message_ref, token)`.
+async fn button_card(c: &Ctx) -> anyhow::Result<(String, String)> {
+    let dm =
+        c.0.driver
+            .post_message(msg("U1", None, "run the report"))
+            .await?;
+    let space = c.message_event(&dm.message_ref).await?.space.reference;
+    let token = "v1.eyJraW5kIjoiYXBwcm92YWwuZGVjaWRlIn0.Rk9SR0VELVRFU1Q=";
+    let card = Card::new(vec![
+        Block::header("Approval needed"),
+        Block::buttons(vec![ButtonItem::new(
+            "Approve",
+            ButtonStyle::Primary,
+            token.into(),
+        )])?,
+    ])?;
+    let (_, r) = c
+        .post(space_target(&space, None), &Content::card(card))
+        .await?;
+    let res: MessagePostResult = serde_json::from_value(ok_data(&r))?;
+    Ok((res.message_ref, token.to_owned()))
+}
+
+/// Every forged call to a public callback is refused with 403 and nothing of it reaches the core:
+/// a bad signature, an unknown integration, no clicker, no context; a slash command with a wrong
+/// token, an unknown team or no token. A genuine click still works afterwards.
+#[tokio::test]
+async fn s16_forged_callbacks_are_refused_and_never_reach_the_core() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    if !c.0.driver.quirks().public_callbacks {
+        c.0.finish().await?;
+        return Ok(());
+    }
+    let (message_ref, token) = button_card(&c).await?;
+    let events_before = c.0.core.events().len();
+    for f in [
+        Forgery::ActionBadSignature,
+        Forgery::ActionUnknownIntegration,
+        Forgery::ActionNoClicker,
+        Forgery::ActionNoContext,
+        Forgery::CommandWrongToken,
+        Forgery::CommandUnknownTeam,
+        Forgery::CommandNoToken,
+    ] {
+        let status = c.0.driver.forge_callback(f, &message_ref, &token).await?;
+        assert_eq!(status, 403, "{f:?} was not refused");
+    }
+    // The refusals are synchronous (the callback answers before it would emit), so by now any
+    // leak would be in the core's inbox or on its way: a genuine click proves the path is alive
+    // and, being the next event after it, shows nothing else slipped in before it.
+    let ack =
+        c.0.driver
+            .click(Click {
+                clicker: "U1".into(),
+                token: token.clone(),
+                value: None,
+                space_ref: None,
+                message_ref: Some(message_ref.clone()),
+            })
+            .await?;
+    assert_eq!(ack, Ack::Accepted);
+    c.event_of(EventKind::ActionInvoked).await?;
+    let new: Vec<_> = c.0.core.events().into_iter().skip(events_before).collect();
+    assert_eq!(
+        new.iter()
+            .filter(|e| matches!(e.kind, EventKind::ActionInvoked | EventKind::CommandInvoked))
+            .count(),
+        1,
+        "a forged callback reached the core: {new:?}"
+    );
+    c.0.finish().await?;
+    Ok(())
+}
+
+/// The clicker's identity rests on the platform server making the callback itself and never
+/// delivering the action context (token and signature) to clients (docs/20 §Public callbacks):
+/// a non-admin member fetching the post through the ordinary client API must not see it.
+#[tokio::test]
+async fn s17_members_never_see_the_action_context() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let (message_ref, token) = button_card(&c).await?;
+    // `None`: the driver cannot tell (the fake platform has no client API).
+    let seen =
+        c.0.driver
+            .member_sees_action_context(&message_ref, "U1", &token)
+            .await?;
+    assert_ne!(
+        seen,
+        Some(true),
+        "a non-admin member's fetch carries the action context"
+    );
+    c.0.finish().await?;
+    Ok(())
+}

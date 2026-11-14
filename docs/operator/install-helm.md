@@ -360,6 +360,11 @@ connectors, [below](#connectors-optional), do not need it).
   API Service, `test_types` comes from `connectorHost.testTypes`. `connector_host.listen`
   (`0.0.0.0:4110`) and `connector_host.ops_port` (`4192`) keep their defaults.
   Every replica runs every enabled managed connector.
+- **Private CA.** A chat server behind a certificate from a private CA needs no value of its own:
+  set `extraCaBundle` (a ConfigMap or Secret holding a PEM bundle, mounted in every workload) and the
+  chart also sets `AURORA_TLS_EXTRA_CA_BUNDLE` to that file on the connector host and on every
+  `connectors[]` workload, so the Mattermost REST client and WebSocket trust it besides the system
+  roots. Without `extraCaBundle` the variable is not set.
 - **`connectorHost.testTypes`** (default `false`) also announces the `fake` test type and mounts a
   test control API on the ops port. The host warns at start. Development and end-to-end tests only;
   `deploy/kind/values-e2e.yaml` sets it.
