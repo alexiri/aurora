@@ -26,7 +26,7 @@ Every lane spec names its lane name, its task ids and their briefs (`docs/tasks/
 - Web touched: `pnpm -C web typecheck` + the related vitest files (`pnpm -C web exec vitest run <files>`).
 
 **Batch gate — every ~5 tasks, at the end of your chain, and before your final report:**
-- The full suites of every crate touched since the last batch gate: for `aurora-api` the full it-suite (`cargo nextest run -p aurora-api` or `cargo test -p aurora-api --test it -- --test-threads=8`; build the fixtures first with `bash scripts/fixtures/build.sh`), `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `bash scripts/guards/run-all.sh`, web `lint`/`test`/`build` if web changed, and `scripts/e2e/*.sh` the batch's changes require (e.g. `gateway.sh` for proxying).
+- The full suites of every crate touched since the last batch gate — **lib/unit tests too** (`cargo test -p <crate> --lib`; a lane once ran only the api it-suite and left a red api lib test on master): for `aurora-api` the full it-suite (`cargo nextest run -p aurora-api` or `cargo test -p aurora-api --test it -- --test-threads=8`; build the fixtures first with `bash scripts/fixtures/build.sh`), `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `bash scripts/guards/run-all.sh`, web `lint`/`test`/`build` if web changed, and `scripts/e2e/*.sh` the batch's changes require (e.g. `gateway.sh` for proxying).
 - A batch-gate failure is fixed in its own commit (`<ID>: …` of the task that caused it) before continuing. Say in each per-task report which gate level ran.
 
 ## Host discipline (shared 16-core box, up to 3 lanes)
