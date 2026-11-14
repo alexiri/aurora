@@ -5,6 +5,7 @@
 pub mod bus;
 pub mod dto;
 pub mod lifecycle;
+pub mod reply;
 mod routes;
 pub mod service;
 mod zip;

@@ -226,9 +226,12 @@ pub async fn redact(
     }
     let mut done = Vec::new();
     let mut types = Vec::new();
+    let mut quoting: Vec<i64> = Vec::new();
     for e in events.iter().filter(|e| e.redacted_at.is_none()) {
         let payload = marker(&e.payload, &label, reason.as_deref());
         lifecycle::write_redaction(&mut tx, conversation, e.seq, &payload, Some(c.user_id)).await?;
+        // C-725: messages quoting this event now show a redacted quote, in this transaction.
+        quoting.extend(transcript::redact_quotes_of(&mut tx, conversation, e.seq).await?);
         if e.ty == "turn.queued"
             && let Some(t) = e.turn_id
         {
@@ -267,7 +270,8 @@ pub async fn redact(
         audit::insert_tx(&mut tx, &ev).await?;
     }
     tx.commit().await.map_err(db)?;
-    for seq in &done {
+    quoting.retain(|s| !done.contains(s));
+    for seq in done.iter().chain(quoting.iter()) {
         state
             .conversation_bus
             .publish_redacted(&state.pool, conversation, *seq)

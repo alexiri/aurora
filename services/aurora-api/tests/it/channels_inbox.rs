@@ -1157,6 +1157,7 @@ async fn mirror_shared_attribution_failure_and_doorless() {
             text: "daily",
             source_event_id: None,
             attachment_ids: &[],
+            reply_to_seq: None,
         },
     )
     .await
@@ -1251,6 +1252,7 @@ async fn mirror_skips_web_and_api_turns_and_sends_files() {
                 text: "from web",
                 source_event_id: None,
                 attachment_ids: &[],
+                reply_to_seq: None,
             },
         )
         .await

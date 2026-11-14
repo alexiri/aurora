@@ -273,7 +273,7 @@ index exists.
   shows `promoted` and its new turn's id in `Followup.promoted_turn_id`, phase 3, D-107) — plus the header `Idempotent-Replayed:
   true`. A replay after the turn finished, failed or was aborted returns that state;
   it never re-runs it.
-- **Mismatch**: a replay whose `text` or set of `attachment_ids` differs from the
+- **Mismatch**: a replay whose `text`, set of `attachment_ids` or `reply_to.seq` differs from the
   stored turn's → 422 `idempotency_key_reused` (`details.turn_id` or, for a stored
   follow-up, `details.followup_id`; phase 3, D-107), nothing created.
 - **Concurrency**: simultaneous requests with one key race on the unique index; the
@@ -780,7 +780,7 @@ use"). Error codes added: `ssh_disabled` (404), `ssh_not_supported` (422), `ssh_
 | GET `/v1/conversations/{id}/export` | S/K | (phase 2, RFE-010) JSON `aurora.conversation.v1` (`attachments=zip` → zip); 422 `export_too_large` |
 | GET `/v1/conversations/{id}/events?after_seq=&limit=` | S/K | durable history |
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
-| POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
+| POST `/v1/conversations/{id}/messages` | S/K | `{ text?, attachment_ids?, reply_to?: { seq } }` → `{ turn }` or `{ followup }`; (phase 5, P5-CHAT-1, C-725/C-726) `text` may be empty or absent when `attachment_ids` is non-empty (both empty: 400 `validation_error` on `/text`); `reply_to.seq` quotes an earlier `text`, `turn.queued` or `attachment` event of this conversation — anything else (unknown or another conversation's seq → `not_found`, another type → `not_replyable`, a redacted event → `redacted`) is 422 `reply_target_invalid` with `details.reason`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
 | POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded; (phase 5 (D-138, moved from phase 4), P4-S3) with the `s3` blob backend also 503 `blob_store_unavailable` (`retry-after: 5`) and 503 `blob_store_busy`; downloads (`GET /v1/attachments/{id}/content`) add 503 `blob_store_unavailable`, 503 `blob_backend_not_configured` and 502 `blob_store_corrupt`, never 404/410 for a store failure (`10 §Attachments`) |
 | GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |

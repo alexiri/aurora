@@ -389,6 +389,7 @@ async fn start_turn(
             text: &text,
             source_event_id: Some(&source),
             attachment_ids: &[],
+            reply_to_seq: None,
         },
     )
     .await?;
@@ -462,6 +463,7 @@ async fn message_in_task(
             text: &body,
             source_event_id: None,
             attachment_ids: &[],
+            reply_to_seq: None,
         },
     )
     .await?
@@ -585,6 +587,7 @@ async fn post_report(
             text: &text,
             source_event_id: None,
             attachment_ids: &[],
+            reply_to_seq: None,
         },
     )
     .await?;

@@ -108,6 +108,7 @@ async fn start_run(
             text: &text,
             source_event_id: None,
             attachment_ids: &[],
+            reply_to_seq: None,
         },
     )
     .await?;

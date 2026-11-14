@@ -211,6 +211,33 @@ blocking tool to the background if it declares `background_tool`).
 turns become `aborted` immediately; dispatched/running ones get
 `turn.abort` and end `aborted` on the terminal event (or by stall recovery).
 
+### Quote-reply and files-only messages (phase 5, P5-CHAT-1, D-228, C-725, C-726)
+
+A message may quote one earlier durable event of **the same conversation**: a `text` (agent message),
+a `turn.queued` (a person's or another door's message) or an `attachment` (a file the agent sent).
+The API validates the target under the conversation lock when it inserts the turn or follow-up
+(`reply_target_invalid`: `not_found` for an unknown seq or another conversation's, `not_replyable`
+for any other event type, `redacted`), stores `turns.reply_to_seq`, and composes the `turn.queued`
+`reply_to` payload (author label, kind, time and an excerpt: the target's text, or for an
+attachment its file name and caption, `sanitize::block` clamped to 280 characters on a word
+boundary with "…"; a files-only `turn.queued` target quotes its file names).
+
+- **Redaction cascade.** Redacting the target (`POST …/events/{seq}/redact`, `POST /v1/turns/{id}/redact`)
+  rewrites every referencing `turn.queued` payload's `reply_to` to `{ seq, redacted: true }` in the
+  redaction's transaction and tells open streams (`event.redacted`) about the rewritten events.
+  Retention removes whole conversations (`§Archive, delete, redaction, retention, export`), so no
+  quote outlives its target there.
+- **Delivery.** The API prepends the quote to the text it hands the agent (`TurnInput.text`, a steered
+  `turn.message`, and the turn a follow-up is promoted into), never to the stored `text`:
+  `> In reply to <author_label>'s message (<at>):`, the excerpt with every line prefixed `> `, one blank
+  line, then the person's text. A target redacted (or gone) by delivery time gives
+  `> In reply to a message that was redacted.` instead — the excerpt is read from the target at
+  delivery, so a redacted message's text never reaches the agent afterwards. One pure function
+  (`conversations::reply::compose_delivered_text`) builds every delivered text.
+- **Files only.** A message may carry attachments and no text: the stored `text` is `""`, the delivered
+  text is `(sent N file(s))`, and door copies and notifications that would quote the text show the
+  file names. Without attachments an empty text is still `400`.
+
 ### Failure semantics
 
 
@@ -241,7 +268,7 @@ generically.
 
 | Type                                                         | Durable | Payload                                                                             |
 | ------------------------------------------------------------ | ------- | ----------------------------------------------------------------------------------- |
-| `turn.queued`                                                | yes     | `{ turn_id, door, speaker_label, text, attachments: [id] }`                         |
+| `turn.queued`                                                | yes     | `{ turn_id, door, speaker_label, text, attachments: [id], reply_to? }` (`reply_to`: `{ seq, author_label, author_kind: "agent"\|"person"\|"other", at, excerpt }` or, once the target is redacted, `{ seq, redacted: true }`; §Quote-reply) |
 | `turn.started`                                               | yes     | `{ turn_id }`                                                                       |
 | `text.delta`                                                 | **no**  | `{ turn_id, message_id, delta, reply_to? }`                                         |
 | `thinking.delta`                                             | **no**  | `{ turn_id, delta }`                                                                |

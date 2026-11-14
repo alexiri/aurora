@@ -786,6 +786,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | speaker_label | text not null | sanitized, denormalized |
 | text | text not null | ≤ `TURN_TEXT_MAX` |
 | source_event_id | text null | partial unique (conversation_id, source_event_id); (phase 3, RFE-018) value convention, no schema change: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`); promoted turns keep null (`10 §Turns`) |
+| reply_to_seq | bigint null | (phase 5, P5-CHAT-1, D-228, C-725) the `transcript_events.seq` of the earlier `text`, `turn.queued` or `attachment` event of the same conversation this message quotes; no FK (events are not keyed rows a turn may point at), validated at insert under the conversation lock; copied onto the turn a follow-up is promoted into. Partial index `turns_reply_to_idx (conversation_id, reply_to_seq) WHERE reply_to_seq IS NOT NULL` finds the quoting turns for the redaction cascade. Migration `20261201000171_turn_reply_to.sql` |
 | abort_requested_at | timestamptz null | |
 | send_now_requested_at | timestamptz null | |
 | error_code | text null | open vocabulary |

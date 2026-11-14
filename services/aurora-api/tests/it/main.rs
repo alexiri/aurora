@@ -25,6 +25,7 @@ mod channels_cards;
 mod channels_inbox;
 mod channels_messaging;
 mod channels_mgmt;
+mod chat_reply;
 mod cli;
 mod common;
 mod connect;
