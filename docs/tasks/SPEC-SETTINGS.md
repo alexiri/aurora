@@ -101,8 +101,10 @@ the runner's reported limits.
   says on Admin › Governance that policy is set per organization and workspace (no instance rule scope,
   Q-FB-4).
 
-## Still open for the owner (during the spec)
-The classification table above — in particular sandbox sizes / `max_sandboxes` and OIDC providers moving.
+## Owner answers (2026-11-14, D-235)
+- **Sandbox resource sizes and `max_sandboxes` stay in Helm** (shown read-only in the dashboard) — move them to the "Stays in Helm" table.
+- **OIDC providers move to the app** (Admin › Sign-in) as proposed: client secrets sealed in the secret store, Helm-defined providers locked ("managed by Helm"), `auth.instance_admins` stays in Helm as the break-glass list.
+- The rest of the classification table stands as proposed.
 
 ## Suggested agent/model and reason
 Opus main session (architecture + spec reconciliation); implementation by Sonnet lanes per SET brief.

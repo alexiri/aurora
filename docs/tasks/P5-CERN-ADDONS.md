@@ -78,6 +78,7 @@ Simpler fallback if the lane proves too heavy for phase 5: a single declarative 
 executed **in the sandbox** (agent-side binary, no secrets needed for anonymous binds), with the
 host allow-listed in the manifest so the gateway still sees and logs egress. Trade-off documented
 in the brief for the owner to pick at implementation start. **Default: the gateway lane.**
+**Owner, 2026-11-14 (D-235(d)): the gateway lane.**
 
 ### Tools (permission catalogue)
 
