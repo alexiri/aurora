@@ -1,9 +1,24 @@
 # Phase 4 exit verification (AUDIT-004) — run lane (`audit-run`)
 
-**DRAFT — steps 1–4 done; 8, 7, 10 pending (updated as the lane proceeds).**
+**DRAFT / PARTIAL HANDOFF (worker stopped at its context budget).** Done: steps 1, 2, 3, 4, 7, 8 and the install part of step 10.
+**Remaining for the continuing worker (step 10, on the existing cluster `aurora-audit4`, release `aurora`, ns `aurora`, UI/API
+`http://localhost:4154`, admin `audit4-admin@example.test` already pre-provisioned and signed in through the dev IdP):**
+(a) the SCIM provisioning guide (`docs/operator/scim-provisioning.md`: `helm upgrade --set scim.enabled=true`, org Directory sync
+switch + token, protocol probes, rotation, metrics), (b) the port-previews operations section (`docs/15`; relay is already enabled,
+`relay.domain=previews.auditfour.example.test`) and the terminal guide (`docs/operator/terminal.md`; `terminal.enabled=true` already), (c) `helm upgrade`
+(`--set web.replicas=2`) and `helm uninstall` per `install-helm.md`, (d) then delete everything (kind cluster, images, see Leftovers) and
+finish this file (verdict, deviations, final leftovers). The values file and kind config used are `phase4-logs/step10-values.yaml` and
+`step10-kind-config.yaml`; images were built with the doc's loop (`REG=localhost/aurora-audit4 TAG=local`) and `kind load image-archive`,
+then removed from the host store (the node keeps them).
 
 **Audited commit:** `1f77f68f38d39c1322ef2b2ecccbdce6c85a9ff3` (master HEAD at lane start; branch `alexiri/audit-run`).
 Static lane (`audit-static`, steps 5, 6, 9, 11) is in `phase4-exit-static.md`; the coordinator folds it in.
+
+**Provisional verdict (run lane, steps 1–4, 7, 8 + install part of 10):** every build, lint, test, web, Vault, kind and e2e command is
+green (0 test failures: 2400 nextest, 705 vitest, 538 + 5 Playwright, all e2e suites) **except `upgrade.sh`** (F-1: 35/3 from the
+phase-3 base, 32/4 from the phase-0 base — a restart-after-upgrade delay of up to 90 s that the script does not wait for; passes 38/0 with a
+100 s wait). Step 10's SCIM/previews/terminal guides and the upgrade/uninstall legs are still open. Not final until the coordinator
+folds in `phase4-exit-static.md`.
 
 ## Environment
 
@@ -90,8 +105,43 @@ passed names, format `crate::binary$path`, parsed from nextest's libtest-json-pl
 Step 3: the `secrets migrate` round trip is the 13 `secrets_migrate` tests (inline → Vault → inline, racing migrators, CAS);
 the manual walk of `docs/operator/vault.md` §4 was not repeated this phase.
 
+Step 10 (install from scratch, `docs/operator/install-helm.md`, cluster `aurora-audit4`) — in progress:
+
+| # | Command | Exit | Result | Duration |
+|---|---------|------|--------|----------|
+| 10 | doc's image loop: `podman build` api, gateway, hookhost, runner, connector-host, relay, web, sandbox, dev-idp (`REG=localhost/aurora-audit4 TAG=local`) | 0 each | all 9 builds exit 0 (layer cache warm from kind.sh) | 6m41s |
+| 10 | `kind create cluster --name aurora-audit4` (ingress-ready node, host port 4154) + `deploy/kind/ingress-nginx.yaml` + `kind load image-archive` ×9 | 0 | ingress-nginx rolled out | ~3m |
+| 10 | `helm lint` / `helm template` / `kubeconform` (values: `step10-values.yaml`: relay + terminal + dev IdP + bundled Postgres) | 0 / 0 / 0 | 0 charts failed; 2125 lines; **55/55 valid** | seconds |
+| 10 | `helm install … --wait --timeout 8m`, attempt 1 (previews domain `previews.audit4.example.test`) | **1** | `migrate` hook CrashLoop → `--wait` timed out at 8m58s: `previews.domain: must be a lower-case DNS name of at least two labels…` — see F-2 | 8m58s |
+| 10 | same after `helm uninstall` + Postgres cleanup lines of the doc + `kubectl delete ns aurora` (failed hook Job/Secret remained), domain `previews.auditfour.example.test` | 0 | all 9 Deployments Ready, 3 hook Jobs done | 1m09s |
+| 10 | post-install checks | 0 | `/v1/instance` 200 (dev provider listed, `setup_errors: []`); `/healthz`, `/metrics`, `/internal/v1/status` 404 through the ingress (as the doc says); `/` 200; `bootstrap-admin` through `kubectl exec … /usr/local/bin/aurora-api` printed the doc's message; dev-IdP sign-in → `is_instance_admin: true`; `GET /v1/admin/runners`: runner `backend: kubernetes`, capabilities incl. `terminal` | |
+
 ## Open findings (run lane)
 
 | # | Severity | Finding | Evidence | Candidate fix |
 |---|----------|---------|----------|---------------|
 | F-1 | medium (exit-criterion command fails as run) | `UPGRADE_STRICT=1 UPGRADE_BASE=a2d921ff… bash scripts/e2e/upgrade.sh` exits 1, deterministic over 3 runs (35/3); with the phase-0 base 32/4. Everything up to the restart is green (migrations 38→67, old supervisor + new runner/api turn, data readable, TLS). After `POST /v1/agents/{id}/restart` (202) the sandbox **keeps its boot and its old container/image**. Cause (from the code): the old runner replica cannot retire (the script stops the API first: `retire failed: transport: error sending request`), `sandboxes.owner_replica_id` still points at it, `claim_stops` only claims `owner_replica_id = <this replica>`, and `take_over` waits until the old replica's `last_seen_at` is older than `REPLICA_ONLINE_THRESHOLD` (90 s). With a 100 s sleep before the restart POST the same run passes 38/0. So after an upgrade (or any runner crash) restart/park/stop of its sandboxes is deferred up to 90 s, and `upgrade.sh` assumes it is immediate (it passed that way in phase 3: AUDIT-003 36/0 on the phase-0 base) | `8-upgrade-p3*.log` summary lines in the table above; `crates/aurora-db/src/repo/sandboxes.rs` `take_over`/`claim_stops`; `crates/aurora-core/src/limits.rs:175` | Decide: either `upgrade.sh` polls (≥ 100 s deadline) for the new boot, or the runner retires its replica when the API is unreachable at shutdown / the new replica of the same runner id takes over at once; document the ≤ 90 s window in `docs/15 §Upgrades` |
+| F-2 | low | The previews domain validator (`crates/aurora-config/src/validate.rs:2756 valid_preview_domain`) requires every label to start **and end** with a lower-case letter (2–63 chars): `previews.audit4.example.test` (label `audit4` ends in a digit) and e.g. `previews2.example.org` are refused, which DNS allows. Two consequences: the message does not name the rule, and `helm lint`/`helm template` accept the value, so the failure only shows as a `migrate` hook crash-loop and an `--wait` timeout of the full 8 min (a failed install also leaves the hook Job/Secrets behind: `helm uninstall` + the doc's two `kubectl delete` lines are not enough, the namespace had to go) | `helm install` attempt 1 above; `kubectl logs job/aurora-migrate` | Allow digits in labels (RFC 1123: only the first character must be a letter/digit and the last not `-`), say the rule in the message, and have the chart `fail` on an invalid `relay.domain` at template time |
+
+## Deviations
+
+1. **CI:** not consulted by this lane (`gh run list` is the coordinator's); every command above ran locally on the audited commit (owner-accepted).
+2. **Performance:** `scripts/perf/*` not run — run by the coordinator.
+3. **Step 2 runner:** nextest (as AUDIT-004 specifies) instead of `cargo test`; doctests are therefore not in the 2400 (a `cargo test --doc` run was not done).
+4. **Step 3:** the `docs/operator/vault.md` §4 operator walk-through was not repeated; the 13 `secrets_migrate` tests are the round trip.
+5. **Step 4:** the eight named Playwright specs were run as part of the whole `mocked` project (538 passed) plus the `production` project (5), the `ci.yml` form; the real-stack specs `first-run`, `no-default-model` and `onboarding-journeys` passed in step 8's kind part.
+6. **Step 7:** `kind.sh --fresh` / `--release-images` as written skip the previews scenario `k6`; a third run with `AURORA_E2E_PREVIEWS_DOMAIN` covers it (dev images, not release images).
+7. **SCIM conformance client:** not exercised by this lane — no conformance client built; IdP replay suites are the evidence (static lane).
+8. **Step 10:** partial, see the head of this file.
+9. **Shared podman store:** `deploy/dev/kind-dev.sh up` rebuilds `localhost/aurora-dev/aurora-*:dev` — the same image names the owner's `aurora-dev` cluster uses — from the audited commit (the owner's running cluster has its own loaded copies and was not touched).
+
+## Fixes made
+
+None. `scripts/e2e/upgrade.sh` was edited temporarily (a `sleep 100` before the restart, for the F-1 diagnosis) and restored with `git checkout`; no source change in the commit.
+
+## Leftovers
+
+- kind cluster `aurora-audit4` (installed release, for the continuing worker) — delete with `KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name aurora-audit4` when step 10 is done.
+- Host podman images from scripts: `localhost/aurora-dev/aurora-*:dev` (see Deviation 9), build cache layers/volumes of `kind.sh`/`kind-dev.sh`/`upgrade.sh` runs (`localhost/aurora-upg-*` images were not listed as leftovers when checked, the audit4 and `aurora-e2e` images were removed).
+- The lane's `target/` was deleted; `/home` has 70 GB free (lowest seen 51 GB, during step 10).
+- Raw logs were kept outside the repo (scratchpad); only summaries are in `phase4-logs/`.
