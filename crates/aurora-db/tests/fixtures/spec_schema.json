@@ -2116,6 +2116,7 @@
       "check_requested_at": "timestamptz null",
       "connection_id": "uuid null",
       "created_by_user_id": "uuid null",
+      "head_epoch": "integer not null",
       "id": "uuid not null",
       "label": "text not null",
       "last_error": "text null",
@@ -2130,6 +2131,11 @@
       "refresh_lease_until": "timestamptz null",
       "repo": "text not null",
       "status": "text not null"
+    },
+    "skill_library_heads": {
+      "commit_sha": "text",
+      "library_id": "uuid",
+      "seen_at": "timestamptz not null"
     },
     "skill_library_updates": {
       "bytes": "integer not null",
