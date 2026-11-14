@@ -107,6 +107,9 @@ pub struct ConnectMethod {
     pub client_key: Option<String>,
     /// `query` | `fragment` (OAuth only).
     pub callback: Option<String>,
+    /// (FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration
+    /// ("Which scopes did you give this token?"); the others are asked without a prefill.
+    pub probe_scopes: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -122,6 +125,8 @@ pub struct Tool {
     pub methods: Vec<String>,
     /// (FIX-123, D-214) Connect method ids the tool works with; empty = every method.
     pub connect_methods: Vec<String>,
+    /// (FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement.
+    pub scopes: Vec<String>,
     /// `query` | `mutation`.
     pub graphql: Option<String>,
     /// `push` | `fetch`.

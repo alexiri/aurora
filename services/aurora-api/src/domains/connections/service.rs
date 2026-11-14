@@ -185,6 +185,38 @@ pub async fn patch(
             ));
         }
     };
+    let scopes: Option<&[String]> = match &req.scopes {
+        None => None,
+        Some(s) => {
+            let snap = registry::active_typed(state).await?;
+            let declared: Vec<&str> = snap
+                .as_ref()
+                .and_then(|sn| sn.app(&row.app_id))
+                .and_then(|a| {
+                    a.connect
+                        .iter()
+                        .find(|c| Some(c.id()) == row.connect_method.as_deref())
+                })
+                .filter(|c| matches!(c, aurora_registry::manifest::Connect::Fields(_)))
+                .map(|c| {
+                    c.declared_scopes()
+                        .iter()
+                        .map(|d| d.scope.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if declared.is_empty() || s.iter().any(|x| !declared.contains(&x.as_str())) {
+                return Err(ApiError::invalid_request(
+                    "Invalid scopes.",
+                    vec![FieldError::new(
+                        "/scopes",
+                        "only the declared scopes of a token connection can be edited",
+                    )],
+                ));
+            }
+            Some(s.as_slice())
+        }
+    };
     let label = req.label.as_deref().map(str::trim);
     let action = match req.status.as_deref() {
         Some("disabled") if row.status != "disabled" => "connection.disable",
@@ -192,7 +224,7 @@ pub async fn patch(
         _ => "connection.update",
     };
     let mut tx = crate::audit::begin(state).await?;
-    repo::update(&mut *tx, row.id, label, status, access).await?;
+    repo::update(&mut *tx, row.id, label, status, access, scopes).await?;
     if status == Some("disabled") {
         // (FIX-084) A held request that would use this credential must not be released.
         approvals::abandon_pending_depending_on(
@@ -212,7 +244,8 @@ pub async fn patch(
         caller,
         action,
         &updated,
-        serde_json::json!({"from_status": row.status, "from_access": row.access, "to_access": access}),
+        serde_json::json!({"from_status": row.status, "from_access": row.access, "to_access": access,
+            "scopes_edited": scopes.is_some()}),
     );
     crate::audit::commit_critical(tx, &ev).await?;
     Ok(updated)

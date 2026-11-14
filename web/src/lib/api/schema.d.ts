@@ -5325,6 +5325,11 @@ export interface components {
              *     chooser; `null` = the window falls back to the kind.
              */
             label?: string | null;
+            /**
+             * @description (FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration
+             *     ("Which scopes did you give this token?"); the others are asked without a prefill.
+             */
+            probe_scopes: string[];
             /** @description The chooser preselects this method and badges it "Recommended" (at most one per app). */
             recommended: boolean;
             scopes: components["schemas"]["ScopeInfo"][];
@@ -5362,6 +5367,12 @@ export interface components {
             reconnect_connection_id?: string | null;
             /** @description `organization` | `workspace`. */
             scope: string;
+            /**
+             * @description (FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token
+             *     has ("Which scopes did you give this token?"). Absent = prefilled by the method's read
+             *     probes. Each must be one of the method's scopes.
+             */
+            scopes?: string[] | null;
             /** Format: uuid */
             workspace_id?: string | null;
         };
@@ -8338,6 +8349,12 @@ export interface components {
             /** @description (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it. */
             access?: string | null;
             label?: string | null;
+            /**
+             * @description (FIX-136, D-241) Replace the scopes the connection has: only for a connection made with a
+             *     `fields` method that declares scopes (a pasted token's scopes are declared by the person, an
+             *     OAuth connection's are what the provider granted), each one of that method's scopes.
+             */
+            scopes?: string[] | null;
             /** @description `active` | `disabled`. */
             status?: string | null;
         };
@@ -10085,6 +10102,8 @@ export interface components {
             methods: string[];
             name: string;
             path: string;
+            /** @description (FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement. */
+            scopes: string[];
             wildcard: boolean;
         };
         TraceEntry: {

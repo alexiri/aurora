@@ -15,7 +15,9 @@ use aurora_db::DbError;
 use aurora_db::repo::app_instances::{self, InstanceRow};
 use aurora_db::repo::connections::{self as repo, ConnectionRow, NewConnection};
 use aurora_db::repo::{credentials, derived_rules, gateway};
-use aurora_registry::manifest::{BodyFormat, ClientAuth, Connect, Oauth2Connect, UrlOrTemplate};
+use aurora_registry::manifest::{
+    BodyFormat, ClientAuth, Connect, FieldsConnect, Oauth2Connect, UrlOrTemplate,
+};
 use aurora_registry::snapshot::{AppEntry, OauthClientEntry, PackageEntry, Snapshot};
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
 use chrono::{DateTime, Utc};
@@ -295,6 +297,36 @@ enum Kind {
 }
 
 impl Ctx<'_> {
+    /// (FIX-136) The declared read scopes whose probe a pasted token passes (write scopes are never
+    /// probed; a probe that fails or errors just leaves its scope off).
+    async fn probe_declared_scopes(&self, f: &FieldsConnect, g: &Gathered) -> Vec<String> {
+        let mut out = Vec::new();
+        for s in &f.scopes {
+            let Some(p) = f.probe_scopes.get(&s.scope) else {
+                continue;
+            };
+            let r = probe::run(
+                &self.state.connect,
+                self.snap,
+                self.app,
+                p,
+                &Vars {
+                    credentials: &g.credentials,
+                    metadata: &g.metadata,
+                    tenant_host: g.tenant_host.as_deref(),
+                    fields: &g.fields,
+                    instance_host: self.instance_host(),
+                    instance_registered: self.instance.is_some(),
+                },
+            )
+            .await;
+            if r.is_ok() {
+                out.push(s.scope.clone());
+            }
+        }
+        out
+    }
+
     /// (FIX-133, D-240) The access the connection will have: the chosen one, else a reconnect's
     /// current one, else `write`.
     fn effective_access(&self) -> &str {
@@ -735,9 +767,28 @@ pub async fn start(
     match method {
         Connect::Fields(f) => {
             let p = fields::parse(&f.fields, &req.fields)?;
-            let (row, missing) = ctx
-                .finalize(caller, method, Kind::Fields, from_fields(p))
-                .await?;
+            let mut g = from_fields(p);
+            // (FIX-136, D-241) The scopes the pasted token has: declared by the person, else
+            // prefilled by the method's read probes. Stored as the connection's `scopes`; the
+            // gateway trusts them only to refuse a tool the token cannot serve.
+            if !f.scopes.is_empty() {
+                g.granted = Some(match &req.scopes {
+                    Some(s) => {
+                        if let Some(bad) =
+                            s.iter().find(|x| !f.scopes.iter().any(|d| &d.scope == *x))
+                        {
+                            return Err(invalid(
+                                "/scopes",
+                                &format!("`{bad}` is not a scope of this connect method"),
+                            )
+                            .into());
+                        }
+                        s.clone()
+                    }
+                    None => ctx.probe_declared_scopes(f, &g).await,
+                });
+            }
+            let (row, missing) = ctx.finalize(caller, method, Kind::Fields, g).await?;
             Ok(connected(row, missing, &snap))
         }
         Connect::Oauth2(o) => start_oauth(&ctx, o, &req).await,

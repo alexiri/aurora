@@ -49,6 +49,12 @@ apps:
         fields:
           - { name: api_token, label: T, type: secret, required: true }
           - { name: tls_verification, label: TLS, type: select, store: metadata, options: [ { value: verify, label: V }, { value: "off", label: Off } ] }
+        scopes:
+          - { scope: "read:a", name: Read A, access: read }
+          - { scope: "read:b", name: Read B, access: read }
+          - { scope: "write:a", name: Write A, access: write }
+        probe_scopes:
+          "read:a": { url: "https://api.acme.example/me" }
         probe: { url: "https://api.acme.example/me", label: /email, metadata: { org: /org/name, token_scopes: "header:x-oauth-scopes" } }
       - id: oauth
         kind: oauth2
@@ -489,6 +495,87 @@ async fn oauth_happy_path_pkce_cookie_and_state_checks() {
     assert!(uid != Uuid::nil());
     let req = &w.oauth.token_requests()[0];
     assert!(req.contains_key("code_verifier") && req["client_id"] == "cid");
+}
+
+/// (FIX-136, D-241) A pasted token's scopes: prefilled by the method's read probes, or declared by
+/// the person (each one of the method's scopes), stored as the connection's `scopes`, editable with
+/// `PATCH` (only a declared-scope token connection; each one of the method's scopes).
+#[tokio::test]
+async fn a_token_connections_scopes_are_probed_declared_and_editable() {
+    let w = world(None).await;
+    let connect = |scopes: Option<Value>, token: &str| {
+        let mut b = w.connect_body("api_key");
+        b["fields"] = json!({"api_token": token});
+        if let Some(s) = scopes {
+            b["scopes"] = s;
+        }
+        b
+    };
+    let post = |b: Value| {
+        let w = &w;
+        async move {
+            w.call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+                .await
+        }
+    };
+    // No declaration: the read probe (`read:a`) passes for a good token, so only it is ticked; the
+    // write scope is never probed.
+    let (s, _, v) = post(connect(None, "t1")).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["scopes"], json!(["read:a"]));
+    // A token the probe refuses has none ticked.
+    let (s, _, v) = post(connect(None, "bad")).await;
+    assert_eq!(s, 422, "the main probe fails for a bad token: {v}");
+    // Declared by the person.
+    let (s, _, v) = post(connect(Some(json!(["read:b", "write:a"])), "t2")).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["scopes"], json!(["read:b", "write:a"]));
+    let id = v["connection"]["id"].as_str().unwrap().to_owned();
+    // A scope the method does not declare is a 400.
+    let (s, _, v) = post(connect(Some(json!(["nope"])), "t3")).await;
+    assert_eq!(s, 400, "{v}");
+    // Editable afterwards, within the method's scopes.
+    let path = format!("/v1/connections/{id}");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"scopes": ["read:a"]})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["scopes"], json!(["read:a"]));
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"scopes": ["nope"]})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+    // An OAuth connection's scopes are what the provider granted: not editable.
+    w.oauth_client().await;
+    w.oauth.set_extra(json!({"scope": "read"}));
+    let (url, ck) = w.start_oauth().await;
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    let oid: Uuid =
+        sqlx::query_scalar("SELECT id FROM app_connections WHERE connect_method = 'oauth'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &format!("/v1/connections/{oid}"),
+            Some(json!({"scopes": ["read"]})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
 }
 
 /// (FIX-133) A scope-less OAuth method (GitHub App user authorization: permissions live on the app,

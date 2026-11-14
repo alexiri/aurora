@@ -198,4 +198,8 @@ pub struct PatchConnectionRequest {
     pub status: Option<String>,
     /// (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it.
     pub access: Option<String>,
+    /// (FIX-136, D-241) Replace the scopes the connection has: only for a connection made with a
+    /// `fields` method that declares scopes (a pasted token's scopes are declared by the person, an
+    /// OAuth connection's are what the provider granted), each one of that method's scopes.
+    pub scopes: Option<Vec<String>>,
 }

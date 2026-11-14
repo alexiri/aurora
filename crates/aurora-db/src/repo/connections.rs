@@ -107,10 +107,12 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     label: Option<&str>,
     status: Option<&str>,
     access: Option<&str>,
+    scopes: Option<&[String]>,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
         "UPDATE app_connections SET label = COALESCE($2, label), \
          status = COALESCE($3, status), access = COALESCE($4, access), \
+         scopes = COALESCE($5, scopes), \
          status_reason = CASE WHEN $3 IS NULL THEN status_reason \
                               WHEN $3 = 'disabled' THEN 'disabled_by_user' ELSE NULL END, \
          reauth_required_at = CASE WHEN $3 = 'active' THEN NULL ELSE reauth_required_at END, \
@@ -120,6 +122,7 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     .bind(label)
     .bind(status)
     .bind(access)
+    .bind(scopes)
     .execute(exec)
     .await?
     .rows_affected()
