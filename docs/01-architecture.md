@@ -14,7 +14,7 @@
 | **Connector** (per platform) | `aurora-connector-<id>` | Chat platform transport, translation, provisioning | platform callbacks only (e.g. 4110) | none | its chat platform only |
 | **Connector host** (phase 4, P4-MCON) | `aurora-connector-host` | Runs the built-in connector types as **managed connectors** added from the dashboard (`13 §3.1`); speaks the connector contract on their behalf | 4110 platform callbacks (`/connectors/<id>/…` via the edge); 4192 health/metrics | none | edge (platform callbacks) |
 | **Preview relay** (phase 4, P4-PRV-2; **only when `previews.enabled`**) | `aurora-relay` | Browser-facing HTTP/WebSocket reverse proxy for preview hostnames: authenticates the browser (`04 §Preview access`), resolves hostnames through the API, opens byte streams to a sandbox port through the runner (`16 §W17`, `§W18`) | 4112 (edge-routed wildcard host); 4193 health/metrics | none (in-memory caches only) | edge (wildcard preview host) |
-| **SSH terminator** (phase 4) | `aurora-terminator` | Certificate-authenticated SSH into sandboxes | 2222 | none | users |
+| **SSH terminator** (phase 5, D-138) | `aurora-terminator` | Certificate-authenticated SSH into sandboxes | 2222 | none | users |
 | **PostgreSQL** | — | System of record, queue, event bus | 5432 | yes | API, gateway |
 | **Migrations job** | `aurora-api migrate` | Forward-only schema migrations before API starts | — | — | — |
 | **CLI** | `aurora` | Login, BYO `run`, management, plugin tooling | — | `~/.config/aurora` | — |
@@ -44,7 +44,7 @@ backend). Trust boundary 4 (gateway ↔ database) gains one grant: the counter t
 │           │  │  │       (wasm hooks)         │       └──────────────────────────────────┘
 │           │  │  └──── connectors ◄─► chat platforms (outbound sockets, own callbacks)
 │           │  └─────── runner ◄── supervisor (WebSocket, per sandbox)
-│           └────────── SSH terminator (phase 4)
+│           └────────── SSH terminator (phase 5)
 └──────────────────────────────────────────────┘
                               COMPUTE PLANE: sandbox (container/pod) + durable home
                                  supervisor ─► harness ─► loopback proxy ─► gateway only

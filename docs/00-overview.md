@@ -124,7 +124,7 @@ logged. The first 12 characters (prefix + 8) are stored separately for display.
 | `auo_` | Organization API key | once |
 | `aur_` | Runner anchor token | once (operator) |
 | `aun_` | Connector anchor token | once (instance admin) |
-| `aut_` | SSH terminator anchor token (phase 4) | once (operator) |
+| `aut_` | SSH terminator anchor token (phase 5, D-138) | once (operator) |
 | `auh_` | Connector host anchor token (phase 4, P4-MCON) | never (generated into a Secret by the chart; `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN`) |
 | `aud_` | SCIM directory token, per organization (phase 4, P4-GRP-2; accepted only on `/scim/v2`) | once (org owner) |
 | `auw_` | Webhook capability token (in URL path) | once |
