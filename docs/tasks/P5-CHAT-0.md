@@ -32,7 +32,11 @@ P5-CHAT-2 and P5-CHAT-3 build from boards and spec, as P5-AGENT-2 does.
    transcript.
 4. **Navigation** (1280×800): scrolled up with the "Jump to latest · 3 new" pill; a message highlighted after
    opening its permalink.
-5. **Phone** (390×844): reply bar, formatting row as a horizontally scrolling strip above the keyboard area,
+5. **Search** (1280×800, P5-CHAT-4, D-229): the list pane's filter as a search box with "Search messages
+   for …" as the first row; results with conversation, author, time and highlighted snippet; filter chips
+   (`from:`, `in:`, `after:`/`before:`/`on:`, `has:file`); the This agent / All agents switch; the "still
+   being indexed" line; a result opened in the thread with the message highlighted.
+6. **Phone** (390×844): reply bar, formatting row as a horizontally scrolling strip above the keyboard area,
    attach sheet (Files, Photo library, Camera — whatever the browser's file input offers), 44 px targets.
 Make the boards interactive where cheap (Reply fills the reply bar; the formatting toggle; Write/Preview), as
 the chosen boards are. Both themes checked.
@@ -55,6 +59,8 @@ the chosen boards are. Both themes checked.
   (survive reload; cleared on send; storage failures ignored).
 - Transcript: "Jump to latest" pill with the number of new messages while scrolled up; permalink
   `?c=<conversation>&m=<seq>` scrolls to and highlights the message (older history loaded as needed).
+- Search (P5-CHAT-4, C-727): the list pane's search box, syntax and chips, result rows, scope switch,
+  indexing line, opening a result; replaces the "there is no search API" sentence.
 - 390 px: every control 44 px, no horizontal page scroll; axe expectations.
 Add the primitives this needs to the shared set (e.g. `Toolbar`/`ToggleButton`, `EmojiPicker`,
 `DropZone`) in `14 §Visual design` and the design-system artifact's component list.
@@ -64,7 +70,7 @@ The canvas artifact (new boards and notes only; chosen boards untouched), `docs/
 (Agent chat, Visual design primitives), the Aurora design-system artifact if a primitive is added.
 
 ## Acceptance criteria
-- [ ] Five boards on the canvas in both themes, interactive where listed; chosen boards unchanged.
+- [ ] Six boards on the canvas in both themes, interactive where listed; chosen boards unchanged.
 - [ ] `14` text as above, consistent with C-725/C-726 and D-227; owner has looked at the boards.
 - [ ] P5-CHAT-2/3 briefs updated if the boards changed anything they say.
 
