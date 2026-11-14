@@ -172,7 +172,7 @@ pub async fn say(
 
 /// What a private notice sent as a DM says about the space it concerns (docs/13 §4.5), or
 /// `None` when the DM already *is* that space (FIX-128). Only ever the space's human label: a raw
-/// space id (`<#space:ID>`, a Mattermost DM's `user1__user2` name) is meaningless to people.
+/// space id (`<#space:ID>`, a platform's internal DM channel name) is meaningless to people.
 pub fn notice_prefix(space: &Space) -> Option<String> {
     let label: String = sanitize::label(&space.label)
         .chars()
