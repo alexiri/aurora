@@ -107,7 +107,7 @@ Invariant: every org has ≥1 active `owner` (enforced by the service; the last
 owner cannot be demoted or removed).
 
 ### `org_member_removals`
-(FIX-108, D-183) The removal marker: an admin removed this user from this org, so OIDC JIT provisioning does not restore the membership. Written by the admin removal, deleted by the next `org_members` insert for the pair (invitation acceptance, admin add, claim, SCIM).
+(FIX-108, D-183) The removal marker: an admin removed this user from this org, so OIDC JIT provisioning does not restore the membership. Written by the admin removal, deleted in the same statement by the next `org_members` insert for the pair (invitation acceptance, admin add, role-claim sync, SCIM pending placement; FIX-140 closed the gap for role-claim sync). Only JIT consults it: an IdP role claim is the provider's explicit grant and is not blocked by it.
 | Column | Type | Notes |
 |---|---|---|
 | org_id | uuid FK→organizations (cascade) | pk part |

@@ -446,6 +446,48 @@ async fn sec78_removal_drops_only_claim_sourced_rows_and_manual_roles_stay() {
     );
 }
 
+/// FIX-140 item 2 (FIX-108 marker): a membership created by role-claim sync clears the admin
+/// removal marker, like every other `org_members` insert (docs/04 §JIT step 4, docs/03). Only
+/// JIT consults the marker; an IdP claim is the provider's explicit grant.
+#[tokio::test]
+async fn fix140_a_claim_created_membership_clears_the_removal_marker() {
+    let idp = MockIdp::start().await;
+    set_roles(&idp, E, "s1", json!(["aurora-users", "it-ai-team"]));
+    let h = h(&idp, SignupMode::InviteOnly, false).await;
+    sign_in(&h).await.unwrap();
+    let uid = user_id(&h, E).await;
+    let it: Uuid = sqlx::query_scalar("SELECT id FROM organizations WHERE slug = 'it'")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    // A second owner keeps `it` ownable when the claim goes away.
+    let other_owner = h.user("o2@example.com", false).await;
+    h.member(it, other_owner, "owner", "active").await;
+    // The claim goes: the claim-only membership is dropped; an admin had removed the person
+    // before (the marker), which JIT would respect.
+    set_roles(&idp, E, "s1", json!(["aurora-users"]));
+    sign_in(&h).await.unwrap();
+    assert_eq!(org_role(&h, "it", E).await, None);
+    sqlx::query("INSERT INTO org_member_removals (org_id, user_id) VALUES ($1, $2)")
+        .bind(it)
+        .bind(uid)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    // The claim comes back: the membership is created again and the marker is gone.
+    set_roles(&idp, E, "s1", json!(["aurora-users", "it-ai-team"]));
+    sign_in(&h).await.unwrap();
+    assert_eq!(org_role(&h, "it", E).await.as_deref(), Some("owner"));
+    assert_eq!(
+        count(
+            &h,
+            &format!("SELECT count(*) FROM org_member_removals WHERE org_id = '{it}' AND user_id = '{uid}'")
+        )
+        .await,
+        0
+    );
+}
+
 #[tokio::test]
 async fn sec78_a_claim_raises_a_manual_role_and_losing_it_restores_the_manual_one() {
     let idp = MockIdp::start().await;
