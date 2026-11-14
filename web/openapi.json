@@ -2685,6 +2685,52 @@
         ]
       }
     },
+    "/v1/admin/storage/refresh": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Recompute the instance storage snapshot now (FIX-126; instance administrators; the strict\n`export` rate class).",
+        "operationId": "refreshAdminStorage",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStorage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/trusted-keys": {
       "get": {
         "tags": [
@@ -15553,6 +15599,77 @@
         ]
       }
     },
+    "/v1/orgs/{org}/storage/refresh": {
+      "post": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Recompute the organization's storage snapshot now (FIX-126; org `owner`/`admin`; the strict\n`export` rate class).",
+        "operationId": "refreshOrgStorage",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgStorage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/unfreeze": {
       "post": {
         "tags": [
@@ -22868,7 +22985,8 @@
           "attachment_files",
           "purged_files",
           "orgs",
-          "tables"
+          "tables",
+          "computed_at"
         ],
         "properties": {
           "attachment_bytes": {
@@ -22888,6 +23006,11 @@
           "blob_count": {
             "type": "integer",
             "format": "int64"
+          },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When these figures were computed (FIX-126); the page offers a refresh."
           },
           "orgs": {
             "type": "array",
@@ -30943,7 +31066,8 @@
           "notice",
           "files",
           "purged_files",
-          "by_workspace"
+          "by_workspace",
+          "computed_at"
         ],
         "properties": {
           "attachments_days": {
@@ -30968,6 +31092,11 @@
               "$ref": "#/components/schemas/WorkspaceStorage"
             }
           },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the file counts and the breakdown were computed (FIX-126)."
+          },
           "files": {
             "type": "integer",
             "format": "int64",
@@ -30975,7 +31104,7 @@
           },
           "notice": {
             "type": "string",
-            "description": "`clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %)."
+            "description": "`clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %); from the live counter."
           },
           "org_id": {
             "type": "string",
@@ -30997,7 +31126,7 @@
           "used_bytes": {
             "type": "integer",
             "format": "int64",
-            "description": "Counter of non-purged attachment bytes."
+            "description": "Counter of non-purged attachment bytes (live, never cached)."
           }
         }
       },

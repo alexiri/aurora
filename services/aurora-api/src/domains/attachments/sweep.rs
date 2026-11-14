@@ -269,6 +269,10 @@ pub async fn run_with(
     if let Err(e) = gauges(pool).await {
         tracing::warn!(error = %e.message(), "storage gauges not refreshed");
     }
+    // (FIX-126) The Storage pages' snapshots follow the reconciled counters.
+    if let Err(e) = super::storage::refresh_all(pool, cfg).await {
+        tracing::warn!(error = %e.message(), "storage snapshots not refreshed");
+    }
     Ok(r)
 }
 

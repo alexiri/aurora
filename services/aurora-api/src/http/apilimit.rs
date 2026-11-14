@@ -87,8 +87,10 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["admin", "plugins"] if post => return Some(Class::Upload),
         ["agents", _, "effective"] if is_get => return Some(Class::Simulate),
         ["conversations", _, "export"] if is_get => return Some(Class::Export),
-        ["admin", "storage"] if is_get => return Some(Class::Export),
-        ["orgs", _, "storage"] if is_get => return Some(Class::Export),
+        // (FIX-126) The Storage pages are cached snapshots read in the `general` bucket; only
+        // the deliberate Refresh buttons are `export`-class.
+        ["admin", "storage", "refresh"] if post => return Some(Class::Export),
+        ["orgs", _, "storage", "refresh"] if post => return Some(Class::Export),
         _ => {}
     }
     if post && last == "simulate" && rest.len() >= 2 && rest[rest.len() - 2] == "policy" {

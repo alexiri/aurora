@@ -858,6 +858,14 @@ Transactional counter of an org's attachment bytes (phase 2, RFE-015; `10 §Atta
 | org_id | uuid pk FK→organizations (cascade) | |
 | attachment_bytes | bigint not null default 0 | sum of `size_bytes` of the org's rows that hold bytes (`updated_at` is implicit, `§Conventions`) |
 
+### `storage_snapshots`
+(FIX-126) The cached numbers behind the Storage pages, shared by every API replica. Rewritten by the daily attachment sweep, by a read that finds the snapshot missing or older than `STORAGE_SNAPSHOT_MAX_AGE`, and by the Refresh routes; one writer at a time (advisory lock). The live org counter (`org_storage_usage`) is never cached: quota notices stay exact.
+| Column | Type | Notes |
+|---|---|---|
+| scope | text pk | `instance`, or an organization id (text) |
+| payload | jsonb not null | the figures of the page (instance breakdown, or the org's file counts and per-workspace breakdown) |
+| computed_at | timestamptz not null default now() | when the figures were computed; returned by the routes |
+
 ### `blobs`
 Phase 0 blob backend (`postgres`).
 | Column | Type | Notes |
