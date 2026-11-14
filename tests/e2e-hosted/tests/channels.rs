@@ -235,9 +235,10 @@ async fn s1_dm_answer_and_gateway_approval_from_card() {
     f.dm("U1", "[[say: hello from daneel]]").await;
     w.turn_done(1, 120).await;
     let m = f.wait_text(DM, "hello from daneel", 30).await;
+    // FIX-128: a 1:1 DM with the shared bot carries no "Agent · via Bot" line.
     assert!(
-        m["text"].as_str().unwrap().contains("Daneel"),
-        "shared-bot attribution on the first post: {m}"
+        !m["text"].as_str().unwrap().contains("via"),
+        "no attribution line in a 1:1 DM: {m}"
     );
 
     // A request held by the gateway shows up as a card in the same thread.
