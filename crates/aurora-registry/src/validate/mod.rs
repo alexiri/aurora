@@ -780,7 +780,9 @@ fn method_rules(cx: &mut Ctx<'_>) {
             }
         }
     }
-    if app.connect.len() < 2 {
+    // Only an app that uses the per-method `token` is held to the union rule: a package written
+    // before it (several methods, one shared token) stays valid (the key is additive).
+    if app.connect.len() < 2 || !app.connect.iter().any(|c| c.token().is_some()) {
         return;
     }
     let optional: BTreeSet<&str> = app
@@ -814,7 +816,18 @@ fn method_rules(cx: &mut Ctx<'_>) {
                 .filter(|k| !["expires_in", "scope"].contains(k))
                 .collect(),
         };
-        for r in read
+        // What this method's own token templates read counts too.
+        let mut needs = read.clone();
+        if let Some(t) = c.token() {
+            for tpl in t.extra_params.values() {
+                needs.extend(
+                    tpl.references()
+                        .filter(|r| r.ns == crate::template::Ns::Credentials)
+                        .map(|r| r.name.as_str()),
+                );
+            }
+        }
+        for r in needs
             .iter()
             .filter(|r| !optional.contains(*r) && !produced.contains(*r))
         {

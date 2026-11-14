@@ -191,6 +191,7 @@ async fn start(pool: sqlx::PgPool) -> Env {
         metadata: json!({}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
     };
     let mut ws = ScopePolicyRows {
         default_action: "block".into(),

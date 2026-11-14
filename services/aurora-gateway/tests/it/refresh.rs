@@ -168,6 +168,7 @@ async fn fixture(kind: &str, token_url: &str, refresh: &str) -> Fx {
         metadata: json!({}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
     };
     Fx {
         db,

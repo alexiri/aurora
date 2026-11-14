@@ -72,6 +72,7 @@
     "app_connections": [
       "app_id",
       "app_version",
+      "connect_method",
       "connected_by",
       "credential_keys",
       "credentials_expires_at",

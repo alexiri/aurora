@@ -37,6 +37,9 @@ pub struct ConnCand {
     /// The registered app instance this connection is bound to (D-74): it is injected only on
     /// that instance's exact host.
     pub instance_id: Option<Uuid>,
+    /// (FIX-123, D-214) The `connect[]` method the connection was made with (`None` = unknown):
+    /// its own `token` drives refresh/mint, and tools restricted by `connect_methods` apply by it.
+    pub connect_method: Option<String>,
     /// What `{instance}` stands for: the host of `instance_id` (set by the resolver from the org's
     /// active instances), or, for a default-host connection of an instance-bound app, the app's
     /// `default_host` (D-86).
@@ -71,6 +74,7 @@ impl ConnCand {
             metadata: r.metadata,
             tenant_host: r.tenant_host,
             instance_id: r.instance_id,
+            connect_method: r.connect_method,
             instance_host: None,
             reauth_required: r.status == "reauth_required",
             custom_only: false,
@@ -109,6 +113,13 @@ pub enum Cand {
 }
 
 impl Cand {
+    /// (FIX-123) The connect method of an app connection (`None` for a secret or an unknown one).
+    pub fn connect_method(&self) -> Option<&str> {
+        match self {
+            Self::Secret(_) => None,
+            Self::App(c) => c.connect_method.as_deref(),
+        }
+    }
     pub fn id(&self) -> Uuid {
         match self {
             Self::Secret(s) => s.id,
@@ -304,6 +315,7 @@ pub fn identify_tool<'a>(
     body_prefix: &[u8],
     truncated: bool,
     headers: &[(&str, &str)],
+    connect_method: Option<&str>,
 ) -> Option<&'a ToolItem> {
     identify_tool_in(
         m.app,
@@ -316,6 +328,7 @@ pub fn identify_tool<'a>(
         body_prefix,
         truncated,
         headers,
+        connect_method,
     )
 }
 
@@ -334,6 +347,7 @@ pub fn identify_tool_in<'a>(
     body_prefix: &[u8],
     truncated: bool,
     headers: &[(&str, &str)],
+    connect_method: Option<&str>,
 ) -> Option<&'a ToolItem> {
     let gql = graphql::classify(body_prefix, truncated);
     let git = aurora_policy::git::classify(path, query);
@@ -344,7 +358,9 @@ pub fn identify_tool_in<'a>(
         truncated,
     };
     tools(app).find(|t| {
-        serves(app, instance, t, host, port, path, method)
+        // (FIX-123, D-214) A tool restricted to other connect methods is not this connection's.
+        t.applies_to(connect_method)
+            && serves(app, instance, t, host, port, path, method)
             // (P4-GRANTS, Q8, D-124, SEC-68) fail closed: any doubt means "not this tool" and
             // classification continues down the catalogue.
             && t.params

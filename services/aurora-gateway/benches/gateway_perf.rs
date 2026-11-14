@@ -167,6 +167,7 @@ fn conn(w: &World, n: usize) -> AppConnectionRow {
         metadata: json!({"sub": "tenant1"}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
     }
 }
 

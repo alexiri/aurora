@@ -93,6 +93,13 @@ pub struct ConnectMethod {
     pub id: String,
     /// `oauth2` | `fields` | `hook`.
     pub kind: String,
+    /// (FIX-123, D-214) Short name for the connect window's "How do you want to connect?"
+    /// chooser; `null` = the window falls back to the kind.
+    pub label: Option<String>,
+    /// One or two sentences: what the method is and when to use it.
+    pub description: Option<String>,
+    /// The chooser preselects this method and badges it "Recommended" (at most one per app).
+    pub recommended: bool,
     pub fields: Vec<FormField>,
     pub scopes: Vec<ScopeInfo>,
     pub default_scopes: Vec<String>,
@@ -113,6 +120,8 @@ pub struct Tool {
     pub host: String,
     pub path: String,
     pub methods: Vec<String>,
+    /// (FIX-123, D-214) Connect method ids the tool works with; empty = every method.
+    pub connect_methods: Vec<String>,
     /// `query` | `mutation`.
     pub graphql: Option<String>,
     /// `push` | `fetch`.

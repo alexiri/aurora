@@ -113,10 +113,13 @@ impl TokenManager {
         self
     }
 
-    /// Does this app refresh tokens at all?
-    pub fn applies(app: &aurora_registry::snapshot::AppEntry) -> bool {
-        app.token
-            .as_ref()
+    /// Does a connection of this app made with `connect_method` refresh tokens at all? The
+    /// method's own `token` wins over the app's (FIX-123, D-214).
+    pub fn applies(
+        app: &aurora_registry::snapshot::AppEntry,
+        connect_method: Option<&str>,
+    ) -> bool {
+        app.token_for(connect_method)
             .is_some_and(|t| t.kind != TokenKind::Static)
     }
 
@@ -133,7 +136,11 @@ impl TokenManager {
         let Some(app) = snap.app(&conn.app_id) else {
             return Err(RefreshError::Unavailable);
         };
-        let Some(token) = app.token.clone().filter(|t| t.kind != TokenKind::Static) else {
+        let Some(token) = app
+            .token_for(conn.connect_method.as_deref())
+            .cloned()
+            .filter(|t| t.kind != TokenKind::Static)
+        else {
             return Ok(conn.clone());
         };
         if !force && !expiring(conn.expires_at, self.margin) {

@@ -25281,6 +25281,7 @@
         "required": [
           "id",
           "kind",
+          "recommended",
           "fields",
           "scopes",
           "default_scopes",
@@ -25312,6 +25313,13 @@
               "type": "string"
             }
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One or two sentences: what the method is and when to use it."
+          },
           "fields": {
             "type": "array",
             "items": {
@@ -25324,6 +25332,17 @@
           "kind": {
             "type": "string",
             "description": "`oauth2` | `fields` | `hook`."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-123, D-214) Short name for the connect window's \"How do you want to connect?\"\nchooser; `null` = the window falls back to the kind."
+          },
+          "recommended": {
+            "type": "boolean",
+            "description": "The chooser preselects this method and badges it \"Recommended\" (at most one per app)."
           },
           "scopes": {
             "type": "array",
@@ -25508,6 +25527,13 @@
           },
           "app_version": {
             "type": "string"
+          },
+          "connect_method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-123, D-214) The `connect[]` method id the connection was made with; `null` when\nunknown (rows older than the column of an app with several methods)."
           },
           "connected_by": {
             "oneOf": [
@@ -32617,6 +32643,13 @@
                 },
                 "app_version": {
                   "type": "string"
+                },
+                "connect_method": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(FIX-123, D-214) The `connect[]` method id the connection was made with; `null` when\nunknown (rows older than the column of an app with several methods)."
                 },
                 "connected_by": {
                   "oneOf": [
@@ -40814,9 +40847,17 @@
           "wildcard",
           "host",
           "path",
-          "methods"
+          "methods",
+          "connect_methods"
         ],
         "properties": {
+          "connect_methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(FIX-123, D-214) Connect method ids the tool works with; empty = every method."
+          },
           "description": {
             "type": [
               "string",

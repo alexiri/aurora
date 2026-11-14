@@ -525,6 +525,47 @@ async fn reconnect_updates_in_place_and_clears_reauth() {
     assert_eq!((n, ver), (1, 2));
 }
 
+/// (FIX-123, D-195(a), D-214) A connection records the connect method that created it, the DTO
+/// shows it, and a reconnect writes the method of that reconnect (a row of unknown method, as
+/// before the column, gets it recorded).
+#[tokio::test]
+async fn a_connection_records_its_connect_method_and_a_reconnect_rewrites_it() {
+    let w = world(None).await;
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t1"});
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["connect_method"], "api_key");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT connect_method FROM app_connections WHERE id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(stored.as_deref(), Some("api_key"));
+    // A row from before the column (unknown method) is filled in by the next reconnect.
+    sqlx::query("UPDATE app_connections SET connect_method = NULL WHERE id = $1")
+        .bind(id)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    b["fields"] = json!({"api_token": "t2"});
+    b["reconnect_connection_id"] = json!(id);
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["connect_method"], "api_key");
+}
+
 #[tokio::test]
 async fn connect_records_credential_key_names_and_a_reconnect_clears_a_major_upgrade_flip() {
     let w = world(None).await;

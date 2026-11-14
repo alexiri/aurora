@@ -238,7 +238,8 @@ key pair are two methods of `aws-keys`). Every method (any `kind`) accepts, all 
 - **`credentials` are the union** of what the methods produce; a credential a method does not
   produce is declared `optional: true`. The linter (§6) checks that a required credential read by
   host templates is produced by every `fields` and `oauth2` method (a `hook` method's output is
-  not visible to the manifest).
+  not visible to the manifest). The rule applies only to an app in which a method declares its own
+  `token`, so a package written before the key stays valid.
 - **`tools[].connect_methods: [method ids]`** (the brief's `tools[].methods`; `methods` is the
   HTTP methods) restricts a tool to connections made with those methods: it is hidden from pickers
   and ignored by classification for connections of other methods (a tool with no list applies to
@@ -691,7 +692,7 @@ if any of:
   (`method_text_invalid`), more than one `recommended` (`recommended_multiple`), a
   `tools[].connect_methods` entry that names no method (`tool_method_unknown`), a method `token` whose
   `client` is not declared (`unknown_oauth_client`; a method `token` of `kind: hook` counts for
-  `permissions.hooks` like the app's), and, for an app with several methods, a required credential
+  `permissions.hooks` like the app's), and, for an app whose methods use `token`, a required credential
   that host templates read and a `fields` or `oauth2` method does not produce
   (`method_credential_unproduced`);
 - `env` or stub paths violating the rules above.

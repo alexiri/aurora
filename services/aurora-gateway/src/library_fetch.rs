@@ -399,7 +399,7 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
     put("org_id", req.org_id.to_string());
     put("instance_url", f.external_url.clone());
     let cap = req.max_bytes.min(RESPONSE_CAP);
-    let refresh = TokenManager::applies(app);
+    let refresh = TokenManager::applies(app, conn.connect_method.as_deref());
     let mut force = false;
     for attempt in 0..2 {
         // 4. token freshness, credentials, inject.

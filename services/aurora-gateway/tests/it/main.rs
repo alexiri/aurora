@@ -4,6 +4,7 @@ mod ask_tool_hold;
 mod byo;
 mod check_snapshot;
 mod common;
+mod connect_methods;
 mod credentials;
 mod database;
 mod database_tls;

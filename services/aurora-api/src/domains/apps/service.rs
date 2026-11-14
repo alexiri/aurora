@@ -143,6 +143,9 @@ fn method(c: &Connect) -> ConnectMethod {
     let empty = |id: &str, kind: &str, fields: Vec<FormField>| ConnectMethod {
         id: id.to_owned(),
         kind: kind.to_owned(),
+        label: c.label().map(str::to_owned),
+        description: c.description().map(str::to_owned),
+        recommended: c.recommended(),
         fields,
         scopes: Vec::new(),
         default_scopes: Vec::new(),
@@ -204,6 +207,7 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 },
                 path: "/*".to_owned(),
                 methods: methods.into_iter().map(str::to_owned).collect(),
+                connect_methods: Vec::new(),
                 graphql: None,
                 git: None,
             });
@@ -218,6 +222,7 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 host: i.host.clone(),
                 path: i.path.clone(),
                 methods: i.methods.clone(),
+                connect_methods: i.connect_methods.clone(),
                 graphql: i.graphql.as_ref().map(s),
                 git: i.git.as_ref().map(s),
             });

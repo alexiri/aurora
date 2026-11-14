@@ -214,6 +214,7 @@ async fn start(pool: sqlx::PgPool) -> Env {
         metadata: json!({}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
     };
     let conn_id = conn.id;
     let mut ws = ScopePolicyRows {

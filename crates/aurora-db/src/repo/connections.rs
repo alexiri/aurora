@@ -22,6 +22,8 @@ pub struct ConnectionRow {
     pub metadata: serde_json::Value,
     pub tenant_host: Option<String>,
     pub oauth_client_id: Option<Uuid>,
+    /// (FIX-123, D-214) The manifest `connect[]` method that created or last reconnected it.
+    pub connect_method: Option<String>,
     /// The registered self-hosted instance (D-74); null for `default_host` and other apps.
     pub instance_id: Option<Uuid>,
     pub instance_host: Option<String>,
@@ -36,7 +38,7 @@ pub struct ConnectionRow {
 
 const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.app_id, c.package_id, c.app_version, \
     c.label, c.status, c.status_reason, c.scopes, c.requested_scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
-    c.instance_id, ai.host AS instance_host, ai.label AS instance_label, \
+    c.connect_method, c.instance_id, ai.host AS instance_host, ai.label AS instance_label, \
     c.credentials_expires_at, c.connected_by, u.display_name AS connected_by_name, c.last_used_at, \
     c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
     LEFT JOIN app_instances ai ON ai.id = c.instance_id";
@@ -197,14 +199,17 @@ pub struct NewConnection<'a> {
     pub instance_id: Option<Uuid>,
     /// Names (never values) of the fields in the sealed credential JSON (RFE-022).
     pub credential_keys: &'a [String],
+    /// (FIX-123, D-214) The `connect[]` method id; a reconnect replaces it (the person may pick
+    /// another method).
+    pub connect_method: Option<&'a str>,
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, \
          label, status, credentials_ref, credentials_expires_at, scopes, metadata, tenant_host, \
-         oauth_client_id, connected_by, requested_scopes, instance_id, credential_keys) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
+         oauth_client_id, connected_by, requested_scopes, instance_id, credential_keys, connect_method) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
     )
     .bind(n.id)
     .bind(n.org_id)
@@ -223,6 +228,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     .bind(n.requested_scopes)
     .bind(n.instance_id)
     .bind(n.credential_keys)
+    .bind(n.connect_method)
     .execute(exec)
     .await?;
     Ok(())
@@ -252,7 +258,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
         "UPDATE app_connections SET credentials_ref = $3, credentials_version = credentials_version + 1, \
          credentials_expires_at = $4, scopes = $5, metadata = $6, tenant_host = $7, oauth_client_id = $8, \
          package_id = $9, app_version = $10, connected_by = $11, requested_scopes = $12, \
-         credential_keys = $14, \
+         credential_keys = $14, connect_method = $15, \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
          reauth_required_at = NULL, updated_at = now() \
@@ -272,6 +278,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     .bind(n.requested_scopes)
     .bind(n.instance_id)
     .bind(n.credential_keys)
+    .bind(n.connect_method)
     .execute(exec)
     .await?
     .rows_affected()
