@@ -250,6 +250,93 @@ async fn the_shared_bootstrap_token_works_until_a_bound_token_exists_and_a_revok
     assert_eq!(s, 404);
 }
 
+/// The chart's path: `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` is applied at start by name (hash
+/// only, idempotent); a rotated token of the same name revokes the old one; the bound token is
+/// limited to its types and ends the shared token's validity.
+#[tokio::test]
+async fn bootstrap_applies_bound_tokens_by_name_and_a_rotation_revokes_the_old_one() {
+    use aurora_core::token::{self, TokenPrefix};
+    let shared = token::generate(TokenPrefix::ConnectorHost).expose().clone();
+    let t1 = token::generate(TokenPrefix::ConnectorHost).expose().clone();
+    let t2 = token::generate(TokenPrefix::ConnectorHost).expose().clone();
+    let apply = |tok: String| {
+        let shared = shared.clone();
+        async move {
+            let h = Harness::with_config(move |c| {
+                c.bootstrap_connector_host_token = Some(aurora_config::Redacted::new(shared));
+                c.bootstrap_connector_host_tokens = vec![(
+                    "connector-host".to_owned(),
+                    aurora_config::Redacted::new(tok),
+                    vec!["alpha".to_owned()],
+                )];
+            })
+            .await;
+            h
+        }
+    };
+    let h = apply(t1.clone()).await;
+    for _ in 0..2 {
+        aurora_api::domains::connectors::bootstrap_host_token(&h.state)
+            .await
+            .unwrap();
+    }
+    let live = |h: &Harness| {
+        let pool = h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM connector_host_tokens WHERE type_ids IS NOT NULL AND revoked_at IS NULL",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(live(&h).await, 1);
+    let get = |tok: &str| {
+        let b = bearer(tok);
+        let h = &h;
+        async move {
+            h.send(
+                Method::GET,
+                "/v1/connector-host/assignments?wait=0",
+                &[("authorization", &b)],
+                None,
+            )
+            .await
+            .0
+            .as_u16()
+        }
+    };
+    assert_eq!(get(&t1).await, 200);
+    assert_eq!(
+        get(&shared).await,
+        401,
+        "the shared token ends with the first bound one"
+    );
+    // Rotation: same name, new token.
+    sqlx::query("UPDATE connector_host_tokens SET name = name")
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let h2 = apply(t2.clone()).await;
+    // A second harness has its own database: replay the rotation on the first one instead.
+    drop(h2);
+    let mut conn = h.pool().acquire().await.unwrap();
+    aurora_db::repo::connector_hosts::upsert_bound_token(
+        &mut conn,
+        &token::hash(&t2),
+        "auh_",
+        "connector-host",
+        &["alpha".to_owned()],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    assert_eq!(live(&h).await, 1);
+    assert_eq!(get(&t1).await, 401);
+    assert_eq!(get(&t2).await, 200);
+}
+
 #[tokio::test]
 async fn issuing_validates_audits_and_needs_an_instance_admin() {
     let m = M::new().await;

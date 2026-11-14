@@ -238,6 +238,11 @@ fn read_env_secrets(
             "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN",
             errors,
         ),
+        bootstrap_connector_host_tokens: read_secret(
+            env,
+            "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS",
+            errors,
+        ),
         bootstrap_relay_token: read_secret(env, "AURORA_BOOTSTRAP_RELAY_TOKEN", errors),
         relay_token: read_secret(env, "AURORA_RELAY_TOKEN", errors),
         oidc_client_secrets: BTreeMap::new(),

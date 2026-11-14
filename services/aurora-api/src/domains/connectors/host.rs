@@ -90,6 +90,25 @@ pub async fn bootstrap_host_token(s: &AppState) -> Result<(), aurora_db::DbError
         connector_hosts::upsert_token(&s.pool, &token::hash(t.expose())).await?;
         tracing::info!("bootstrap connector host token applied");
     }
+    // (FIX-120) Per-host tokens bound to connector types; applying one ends the shared token's
+    // validity (`15 §Upgrades`).
+    if !s.config.bootstrap_connector_host_tokens.is_empty() {
+        let mut conn = s.pool.acquire().await?;
+        for (name, tok, types) in &s.config.bootstrap_connector_host_tokens {
+            connector_hosts::upsert_bound_token(
+                &mut conn,
+                &token::hash(tok.expose()),
+                &token::display_prefix(tok.expose()),
+                name,
+                types,
+            )
+            .await?;
+        }
+        tracing::info!(
+            count = s.config.bootstrap_connector_host_tokens.len(),
+            "bootstrap connector host tokens applied"
+        );
+    }
     Ok(())
 }
 

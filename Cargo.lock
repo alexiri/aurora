@@ -362,6 +362,7 @@ dependencies = [
  "aurora-crypto",
  "base64 0.22.1",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "toml",
  "uuid",

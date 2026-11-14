@@ -71,6 +71,40 @@ pub async fn bound_tokens_exist<'e, E: PgExecutor<'e>>(exec: E) -> Result<bool, 
     .await?)
 }
 
+/// Bootstrap upsert of a bound token by name (`AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS`, FIX-120):
+/// a live token of the same name with another hash (a rotation) is revoked first; the same hash
+/// only refreshes its bound types. Idempotent; a revoked row of the same hash stays revoked.
+pub async fn upsert_bound_token(
+    conn: &mut sqlx::PgConnection,
+    token_hash: &[u8],
+    prefix: &str,
+    name: &str,
+    type_ids: &[String],
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE connector_host_tokens SET revoked_at = now()
+         WHERE name = $1 AND revoked_at IS NULL AND token_hash <> $2",
+    )
+    .bind(name)
+    .bind(token_hash)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO connector_host_tokens (id, token_hash, prefix, name, type_ids)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (token_hash) DO UPDATE SET name = EXCLUDED.name, type_ids = EXCLUDED.type_ids
+         WHERE connector_host_tokens.revoked_at IS NULL",
+    )
+    .bind(Uuid::now_v7())
+    .bind(token_hash)
+    .bind(prefix)
+    .bind(name)
+    .bind(type_ids)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Records a use, at most once a minute per token (a churn column).
 pub async fn touch_token<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<(), DbError> {
     sqlx::query(

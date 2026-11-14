@@ -100,6 +100,39 @@ export function useConnectors() {
   });
 }
 
+export type HostToken = S["HostTokenInfo"];
+
+export const hostTokenKeys = ["admin", "connector-host-tokens"] as const;
+
+/** Connector-host tokens (C-690): the shared bootstrap token and every per-host token. */
+export function useHostTokens() {
+  return useQuery({
+    queryKey: hostTokenKeys,
+    queryFn: () => unwrap(api.GET("/v1/admin/connector-host-tokens")),
+    retry,
+  });
+}
+
+/** Issue a token bound to connector types (C-691); the value is only in the mutation result. */
+export function useIssueHostToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (body: S["IssueHostTokenRequest"]) =>
+      unwrap(api.POST("/v1/admin/connector-host-tokens", { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: hostTokenKeys }),
+  });
+}
+
+export function useRevokeHostToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api.DELETE("/v1/admin/connector-host-tokens/{id}", { params: { path: { id } } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: hostTokenKeys }),
+  });
+}
+
 export function useAdminConnectors() {
   return useQuery({
     queryKey: connectorKeys.admin,

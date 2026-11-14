@@ -116,6 +116,45 @@ async function openAdd(routes: Record<string, Handler>) {
   return calls;
 }
 
+describe("Connector host tokens (FIX-120)", () => {
+  const row = (o: Record<string, unknown>) => ({
+    id: "t1", name: "mm", prefix: "auh_abcd", type_ids: ["mattermost"], state: "active",
+    created_at: T, last_used_at: null, revoked_at: null, ...o,
+  });
+
+  it("lists bound types and token state, issues a token once and revokes", async () => {
+    let items = [row({ id: "s", name: null, prefix: null, type_ids: null, state: "refused" }), row({})];
+    const calls = mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [] }),
+      "GET /v1/admin/connector-host-tokens": () => json(200, { items }),
+      "POST /v1/admin/connector-host-tokens": () => json(201, { ...row({ id: "t2", name: "mm2" }), token: "auh_once" }),
+      "DELETE /v1/admin/connector-host-tokens/t1": () => {
+        items = items.filter((i) => i.id !== "t1");
+        return json(204, null);
+      },
+    });
+    vi.stubGlobal("confirm", () => true);
+    wrap(<ConnectorsAdminView />);
+    expect(await screen.findByText("Shared bootstrap token")).toBeInTheDocument();
+    expect(screen.getByText("refused")).toBeInTheDocument();
+    expect(screen.getByText("mattermost")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "mm2" } });
+    fireEvent.change(screen.getByLabelText("Connector types"), { target: { value: "mattermost, fake" } });
+    fireEvent.click(screen.getByRole("button", { name: "Issue token" }));
+    expect(await screen.findByText("auh_once")).toBeInTheDocument();
+    expect(calls.find((c) => c.key === "POST /v1/admin/connector-host-tokens")?.body).toEqual({
+      name: "mm2",
+      type_ids: ["mattermost", "fake"],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    await waitFor(() => expect(screen.queryByText("auh_once")).toBeNull());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Revoke" })[0]);
+    await waitFor(() => expect(calls.some((c) => c.key === "DELETE /v1/admin/connector-host-tokens/t1")).toBe(true));
+  });
+});
+
 describe("Add connector flow", () => {
   it("says the connector host is not running and keeps the self-hosted path", async () => {
     await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([], false)) });

@@ -67,7 +67,8 @@ refuses to start on any error, naming the key.
 | `AURORA_BOOTSTRAP_RUNNER_TOKEN` (optional) | api | on startup, upsert runner `default` with this token's hash (Helm bootstrap) |
 | `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` (optional) | api | `id:aun_…,id2:aun_…` — upsert connector ids (still require manifest approval unless `plugins.allow_unsigned` dev mode auto-approves) |
 | `AURORA_CONNECTOR_HOST_TOKEN` | connector-host | (phase 4, P4-MCON) `auh_…` |
-| `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (optional) | api | (phase 4, P4-MCON) on startup, upsert this `auh_…` token's hash into `connector_host_tokens` (Helm bootstrap; no admin route mints it) |
+| `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (optional) | api | (phase 4, P4-MCON) on startup, upsert this `auh_…` token's hash into `connector_host_tokens` as the shared, unbound token (kept for the upgrade path, `§Upgrades`) |
+| `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` (optional) | api | (FIX-120, D-189) JSON `[{"name","token":"auh_…","types":["mattermost"]}]`: per-host tokens bound to connector types, upserted by name at start (hash only; a changed token under the same name revokes the old one). Strictly validated: names unique, `types` non-empty, `auh_` prefix. The chart writes it from `connectorHost.perHostToken` |
 | OIDC client secrets | api | referenced from config (`client_secret_env = "…"`) |
 | `AURORA_SMTP_PASSWORD` (or `AURORA_SMTP_PASSWORD_FILE`) | api | (FIX-116) the mailer's password, paired with `email.smtp_username`; `email.smtp_url` carries no credentials (the file is rendered into a ConfigMap), startup refuses userinfo there and in `gateway.egress_proxy`. In the chart: `api.extraEnv` with a `secretKeyRef` |
 

@@ -257,6 +257,12 @@ connectorHost:
   resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
   # Also announce the `fake` test type (development and e2e only; the host warns at start).
   testTypes: false
+  # FIX-120 (D-189): give this Deployment its own `auh_` token, bound to the connector types it runs,
+  # instead of the instance-wide shared token. Applying it makes the api refuse the shared token
+  # (docs/15 §Upgrades); `false` keeps the shared token (not recommended). With a Secret you supply
+  # yourself (`secrets.existing`) add the keys AURORA_CONNECTOR_HOST_TOKEN_BOUND and
+  # AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS (docs/23), or set this to false.
+  perHostToken: true
   nodeSelector: {}
   tolerations: []
   extraEnv: []

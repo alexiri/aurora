@@ -176,6 +176,8 @@ pub struct ApiConfig {
     pub bootstrap_connector_tokens: Vec<(String, Redacted<String>)>,
     /// (P4-MCON) `auh_…`: the connector host anchor token, upserted at start.
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
+    /// (FIX-120) `(name, auh_… token, bound connector types)`.
+    pub bootstrap_connector_host_tokens: Vec<(String, Redacted<String>, Vec<String>)>,
     /// (P4-PRV-2, D-146) `aul_…`: the relay's anchor token, upserted at start.
     pub bootstrap_relay_token: Option<Redacted<String>>,
     pub auth: AuthSection,
@@ -458,6 +460,8 @@ impl RawConfig {
         }
         let bootstrap_connector_tokens =
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
+        let bootstrap_connector_host_tokens =
+            bootstrap_host_tokens(&mut c, &s.bootstrap_connector_host_tokens);
         let (signup_mode, org_creation) =
             check_auth(&mut c, &self.auth, s, external_url.as_deref());
         check_email(&mut c, &self.email, s.smtp_password.is_some());
@@ -624,6 +628,7 @@ impl RawConfig {
             bootstrap_runner_token: s.bootstrap_runner_token.clone(),
             bootstrap_connector_tokens,
             bootstrap_connector_host_token: s.bootstrap_connector_host_token.clone(),
+            bootstrap_connector_host_tokens,
             bootstrap_relay_token: s.bootstrap_relay_token.clone(),
             auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
@@ -1260,6 +1265,59 @@ fn bootstrap_connectors(
                 NAME,
                 "entries must be `id:aun_…` (id: [a-z][a-z0-9-]{1,31})",
             ),
+        }
+    }
+    out
+}
+
+/// `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` (FIX-120): a JSON array of
+/// `{"name": 1-80 chars, "token": "auh_…", "types": [connector type ids]}`; names and tokens
+/// are unique and every type list is non-empty.
+fn bootstrap_host_tokens(
+    c: &mut Ctx,
+    v: &Option<Redacted<String>>,
+) -> Vec<(String, Redacted<String>, Vec<String>)> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Item {
+        name: String,
+        token: String,
+        types: Vec<String>,
+    }
+    const NAME: &str = "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS";
+    let mut out: Vec<(String, Redacted<String>, Vec<String>)> = Vec::new();
+    let Some(v) = v else {
+        return out;
+    };
+    let Ok(items) = serde_json::from_str::<Vec<Item>>(v.expose()) else {
+        c.err(NAME, "must be a JSON array of {name, token, types}");
+        return out;
+    };
+    for it in items {
+        let name = it.name.trim().to_owned();
+        let mut types: Vec<String> = it.types.iter().map(|t| t.trim().to_owned()).collect();
+        types.sort();
+        types.dedup();
+        let ok = !name.is_empty()
+            && name.chars().count() <= 80
+            && !name.chars().any(char::is_control)
+            && it.token.starts_with("auh_")
+            && it.token.len() > 4
+            && !types.is_empty()
+            && types.len() <= 64
+            && types.iter().all(|t| valid_id(t));
+        if !ok {
+            c.err(
+                NAME,
+                "each entry needs a name (1-80 chars), an `auh_…` token and a non-empty list of connector type ids",
+            );
+        } else if out
+            .iter()
+            .any(|(n, t, _)| *n == name || t.expose() == &it.token)
+        {
+            c.err(NAME, "names and tokens must be unique");
+        } else {
+            out.push((name, Redacted::new(it.token), types));
         }
     }
     out
