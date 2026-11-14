@@ -717,7 +717,7 @@ again" and "Show the getting-started guide again".
     (FIX-127, D-195(g), C-713/C-714) One integration is preselected. After attaching, a **Next steps**
     panel offers "Talk to it: DM @bot" (link) and "Add it to a channel: invite @bot, then bind
     here" with an **Add to a channel** picker (`GET /v1/integrations/{id}/spaces?mine=true`: spaces
-    you are in; each shows whether the bot is present; listen mode `mentions` by default →
+    you are in; each shows whether the bot is present; the picker says "Invite @bot to a private channel to see it here"; listen mode `mentions` by default →
     `POST /v1/agents/{agent}/space-bindings`) — or, as the alternative, `@bot bind <handle>` in the
     channel. A `409 bot_not_in_space` shows its hint; `link_required` links to `/account/channels`.
     The empty state is "Attach this agent to Mattermost" with the integration picker, or, when the
