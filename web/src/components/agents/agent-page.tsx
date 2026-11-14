@@ -176,7 +176,7 @@ export function AgentPage() {
             </Menu>
           ) : null}
         </div>
-        <div className="order-3 w-full min-w-0 md:order-2 md:w-[27rem] md:shrink">
+        <div className="order-3 w-full min-w-0 md:order-2 md:w-108 md:shrink">
           <Tabs
             items={sections.map((s) => ({ value: s.id, label: s.label }))}
             value={sectionId}
