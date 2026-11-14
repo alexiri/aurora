@@ -1,8 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 55998134dedb5228a15ccdb519e3404f20067c852a4cf4e1060de7ff9185aa80 # shrinks to s = "<!-- c --> \n # h"
-cc 8d59c6ec302462eab7d9f6bd5bdd3235fcbef86fd6e161795ed479f180d10b9f # shrinks to s = "<!-- c --> <@user:U1> $![x](https://e.example/?d=S)$"
