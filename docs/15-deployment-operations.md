@@ -234,7 +234,8 @@ one new entry without activating it.
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
 | `retention.conversation_days_max` | — (no ceiling) | api | (phase 2, RFE-010) instance maximum for an org's conversation retention window (tighten-only, 7..3650) |
-| `telemetry.otlp_endpoint` | — | all | optional tracing export |
+| `telemetry.otlp_endpoint` | — | all | optional tracing export (OTLP/HTTP; a base URL gets `/v1/traces` appended). (phase 5, FIX-146, D-232) Request ids, propagation and `x-request-id` work without it; setting it adds the exporter, enables `POST /v1/telemetry/traces` (404 otherwise) and, on Helm, renders the dashboard's tracing switch (`23`). In Kubernetes the collector must also be in `networkPolicy.telemetryTo` (`§Observability`) |
+| `telemetry.sample_ratio` | `1.0` | all (api, gateway, hookhost, runner, relay, connector host, connectors; the dashboard through the chart) | (phase 5, FIX-146, D-232, C-732 (7)) fraction of traces sampled, 0.0–1.0 (anything else, or not a number, refuses startup naming the key); applied by the trace-id rule of C-732 (7) to every root and browser-adopted context, parent-based elsewhere. `0.0` exports no span (server or browser) while log lines still carry `request_id` |
 | `telemetry.log_level` | `info` | all | |
 
 ### Governance example (corporate LLM accounts only, strict egress)
@@ -558,9 +559,48 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   must be removed by hand (Mattermost: System Console → Integrations → Bot
   Accounts, disable/delete `platform_user_ref`). An org's shared bot is never
   deprovisioned by Aurora.
-- Logs: JSON to stdout, correlation ids per `02 §Coding rules`.
-- Tracing: optional OTLP export; `traceparent` propagated API ↔ gateway-internal
-  ↔ hookhost ↔ runner ↔ connector calls.
+- Logs: JSON to stdout, correlation ids per `02 §Coding rules`. (phase 5, FIX-146, D-232) Every line
+  emitted inside a request or job span carries `request_id`, the W3C trace id (32 lowercase hex) of that
+  span, **with or without a collector**, so `kubectl logs … | grep <request id>` follows one request
+  across api, gateway, hookhost and runner. Every router except `/healthz`, `/readyz` and `/metrics`
+  writes one `info` access line per request: `message="request"`, `method`, `route` (the route
+  template, never the raw path; `unmatched` when no route matched), `status`, `duration_ms`,
+  `request_id`. Public API responses carry the same id as `x-request-id` (C-732 (1)); the dashboard
+  shows it as the "Reference" of an error.
+- Tracing (phase 5, FIX-146, D-232, C-732, SEC-88): request tracing end to end, browser to database.
+  - **Always on, export optional.** Every service installs the W3C propagator and a tracer provider at
+    startup; the OTLP/HTTP exporter is added only when `telemetry.otlp_endpoint` is set. An unsampled
+    request still has its trace id and still propagates it.
+  - **Sampling** is one rule, the same in every Rust service and the dashboard (C-732 (7)): a trace is
+    sampled when its rightmost 7 bytes, read as a big-endian integer, are below
+    `telemetry.sample_ratio` × 2^56. It decides for every root and for browser-adopted contexts;
+    internal and machine adoption is parent-based. The SDKs' `TraceIdRatioBased` sampler is not used.
+  - **Spans**: a server span per request (`"{METHOD} {route}"`, attributes `http.request.method`,
+    `http.route`, `http.response.status_code`, `aurora.error_code` on ≥ 400; error status on 5xx and
+    panics); a client span per call to another Aurora service (`traceparent`/`tracestate` injected:
+    API ↔ gateway-internal ↔ hookhost ↔ runner ↔ relay ↔ connector host); a database span per sqlx
+    query inside a sampled span (`"{operation} {table}"`, parameterized SQL ≤ `DB_SPAN_STATEMENT_MAX`,
+    never bind values, back-dated by the query's elapsed time); a root span `job {name}` per
+    background-job iteration that claims work (an empty poll makes no span); a gateway span per proxied
+    request (`"gateway {host}"`, decision, app, tool, rule, status).
+  - **Turns cross the queue** through `turns.trace_context` (`03`): the runner (work items, `16 §W5`),
+    the API (supervisor reports and channel events of the turn), the gateway (the turn's context
+    credential), approval holds and hook calls record their work as children of the turn's context,
+    read from the database or a trusted Aurora peer, never from the sandbox. Child turns join the
+    parent turn's trace.
+  - **Browser spans** (dashboard, `14 §Architecture rules`) are posted same-origin to
+    `POST /v1/telemetry/traces`; the API rebuilds and re-exports them through its own exporter
+    (C-732 (6)). Without an endpoint that route is 404 and the dashboard loads no tracing code.
+  - **Trust and content** follow SEC-88: which incoming `traceparent` is adopted where, `traceparent`
+    sent only to Aurora's own services (never to apps, LLM providers, IdPs or chat platforms), span
+    attributes from an allowlist only. Sandboxes and the supervisor export nothing and get no collector
+    egress.
+  - **Kubernetes**: the chart's default-deny NetworkPolicies block the collector until
+    `networkPolicy.telemetryTo` names it (`23`); with an endpoint set and `telemetryTo` empty, the
+    chart's NOTES warn. Any OTLP/HTTP receiver works (Jaeger, Grafana Tempo, an OpenTelemetry
+    Collector, a vendor accepting OTLP). kind dev: `deploy/dev/kind-dev.sh up --tracing` installs a
+    dev-only in-memory Jaeger and points every service at it (`kubectl -n aurora port-forward
+    svc/jaeger 16686` for the UI).
 
 ## Backups and state
 

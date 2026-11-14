@@ -149,6 +149,7 @@ matrix:
     | `simulate` | `POST …/policy/simulate`, `GET /v1/agents/{agent}/effective` | 20 / min, burst 5 |
     | `search` | `GET …/memories/search` and any future search route | 30 / min, burst 10 |
     | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict) | 6 / hour, burst 2 |
+    | `telemetry` | (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces` (instead of `write`, so browser telemetry never spends the budget of real writes) | 60 / min, burst 20 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
 
   - **Concurrency cap** for streams: at most `API_STREAMS_PER_PRINCIPAL` (20)
@@ -222,6 +223,17 @@ matrix:
       total) and is the default shared choice because it adds no infrastructure.
       Operators can keep the API limiter local and share only the gateway with
       `ratelimit.counters.api = "memory"` (`15`).
+- **Request id and trace context (phase 5, FIX-146, D-232, C-732).** Every response of the public
+  listener (`/v1/**` and `/scim/v2/**`), errors and the 404 fallback included, carries
+  `x-request-id: <32 lowercase hex>` — the W3C trace id of the request, also when no tracing backend
+  is configured. It is opaque (shown for support, never parsed by clients, not in the body) and is the
+  `request_id` of every server log line of that request (`02 §Coding rules`); the dashboard shows it as
+  the "Reference" of an error. A request may send `traceparent`/`tracestate`; sending them is never an
+  error, and how they are treated depends on the route (SEC-88): parent-based on the machine planes
+  (`/v1/runner/*`, `/v1/connector-host/*`, `/v1/relay/*`), trace id and parent span id kept but the
+  sampled flag ignored and `tracestate` dropped on every other `/v1` route (the sampling rule of
+  C-732 (7) decides), ignored on `/scim/v2/**`, OAuth/OIDC callbacks and webhooks. `/healthz`,
+  `/readyz` and `/metrics` get no span and no access line.
 - (phase 2, RFE-010) The conversation SSE adds the ephemeral `event.redacted
   { seq }` (no `id:`), telling clients to re-read that event.
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;
@@ -819,6 +831,11 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 | GET `/v1/admin/orgs/{org}`; GET `/v1/admin/orgs/{org}/workspaces` (paginated) | IA | (phase 5, P5-ADMDEL, D-234, C-733) one organization's row as above; its workspaces: `id`, `slug`, `name`, `personal`, `agent_count`, `created_at` — metadata only |
 | DELETE `/v1/admin/orgs/{org}`; DELETE `/v1/admin/workspaces/{ws}` `{ confirm }` | IA (SO) | (phase 5, P5-ADMDEL, D-234, C-733) delete any organization / workspace: `confirm` = its slug (400 `confirmation_mismatch`), recent OIDC re-authentication (412 `reauth_required`), works on frozen orgs; the owner paths' services; audit `admin.org.delete` / `admin.workspace.delete` (security-critical, instance-level) |
 | GET/POST `/v1/admin/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | IA | instance-level OAuth clients (`08 §OAuth clients`) |
+
+### Telemetry (phase 5, FIX-146, D-232; C-732)
+| Method & path | Auth | Purpose |
+|---|---|---|
+| POST `/v1/telemetry/traces` | SO | (phase 5, FIX-146) browser span ingestion, C-732 (6): OTLP/HTTP JSON (`ExportTraceServiceRequest`, `content-type: application/json`) from the dashboard; CSRF and the `telemetry` rate-limit class apply; limits `TELEMETRY_INGEST_BODY_MAX` (256 KiB, 413), `TELEMETRY_INGEST_SPANS_MAX` (512), `TELEMETRY_SPAN_ATTRIBUTES_MAX` (32), `TELEMETRY_SPAN_EVENTS_MAX` (8). The API never trusts the payload: it rebuilds every span (resource replaced, spans failing the sampling rule dropped, names outside the C-732 shapes renamed `browser`, browser attribute allowlist, id-like route/page segments dropped, links and `tracestate` removed, timestamps clamped, SEC-88) and exports through its own exporter. 204 on success (also when every span was dropped); 400 `invalid_request` on malformed input; 401 without a session; 429 over the rate limit; **404 when `telemetry.otlp_endpoint` is not set** (like an unknown route) |
 
 ### Planes (machine callers)
 Runner plane `/v1/runner/*` and connector plane `/v1/connector/*` are specified

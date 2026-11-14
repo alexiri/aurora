@@ -2,6 +2,18 @@
 # unread = no reader outside limits.rs (wire it or delete it with its docs/02 row);
 # no-row = no docs/02 row; doc-only = docs/02 names it but limits.rs does not define it.
 # Entries can only be removed: closing a gap without removing its line fails the guard.
+# Exception (coordinator): a spec step may add `doc-only` entries for limits it specifies before
+# the code exists, marked with the task that must close them; that task's lane removes them.
+# FIX-146 (spec step 0, 2026-11-14) — Part A2 adds DB_SPAN_STATEMENT_MAX, Part D the TELEMETRY_*:
+DB_SPAN_STATEMENT_MAX doc-only
+TELEMETRY_CLOCK_FUTURE doc-only
+TELEMETRY_CLOCK_PAST doc-only
+TELEMETRY_INGEST_BODY_MAX doc-only
+TELEMETRY_INGEST_SPANS_MAX doc-only
+TELEMETRY_SPAN_ATTRIBUTES_MAX doc-only
+TELEMETRY_SPAN_DURATION_MAX doc-only
+TELEMETRY_SPAN_EVENTS_MAX doc-only
+TELEMETRY_STACKTRACE_MAX doc-only
 ACCESS_NOTIFY_BULK doc-only
 ACCESS_RECHECK doc-only
 ACTION_APPROVAL_TTL no-row

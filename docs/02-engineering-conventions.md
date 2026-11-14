@@ -93,7 +93,7 @@ loaders live in `aurora-db`.
 | Shared counters (phase 4, P4-CNT) | `redis` (async, `tokio-rustls`; cargo feature `redis` of `aurora-counters`, off unless the backend is built in); the Postgres backend uses `sqlx` |
 | LLM providers (phase 5 (D-138, moved from phase 4), P4-LLM) | SigV4 through the existing `aws-sigv4`; GCP service-account JWT (RS256) signed with `aws-lc-rs`/`rsa`, token exchange with `reqwest`; no cloud SDK (`aws-sdk-*`, `google-cloud-*`) in `aurora-llm` or the gateway |
 | Blob store (phase 5 (D-138, moved from phase 4), P4-S3) | `aws-sdk-s3` + `aws-config` (provider chain), `default-features = false` with rustls; crate `aurora-blobstore` |
-| Logging / tracing | `tracing`, `tracing-subscriber` (JSON), `opentelemetry-otlp` (optional) |
+| Logging / tracing | `tracing`, `tracing-subscriber` (JSON), `opentelemetry-otlp` (optional); (phase 5, FIX-146, D-232) the OpenTelemetry SDK tracer provider and W3C propagator are always installed, only the OTLP exporter is optional |
 | Metrics | `metrics` + `metrics-exporter-prometheus` |
 | Errors | `thiserror` in crates; `anyhow` only in `main` and tests |
 | CLI | `clap` (derive) |
@@ -127,7 +127,17 @@ generated from the API's OpenAPI document, Playwright for end-to-end tests.
   and when known `org_id`, `workspace_id`, `agent_id`, `conversation_id`,
   `turn_id`, `request_id`. URLs are logged only through the redactor (query
   values masked when the key looks credential-like: `token`, `key`, `secret`,
-  `password`, `sig`, `code`, `auth*`).
+  `password`, `sig`, `code`, `auth*`). (phase 5, FIX-146, D-232) **`request_id` is the W3C
+  trace id** (32 lowercase hex) of the current span's context, added by the JSON formatter to
+  every line emitted inside a span, also when no OTLP exporter is configured; it is the
+  `x-request-id` of the public API's response (C-732 (1)). Never invent a second request
+  identifier. One `info` access line per request (`15 §Observability`). Span attributes and
+  span events follow the SEC-88 allowlist: ids, route templates, methods, statuses, hosts,
+  model names, decisions, error codes, durations, counts and parameterized SQL — never raw
+  paths, query strings, headers, bodies, message text, prompts, tool arguments or results,
+  secrets, tokens, e-mail addresses, display names or bind values. Calls to another Aurora
+  service go through the one outgoing-call helper (it injects `traceparent` and records the
+  client span); calls to third parties never carry an Aurora `traceparent`.
 
 ## Error envelope (all HTTP surfaces, including gateway guidance)
 
@@ -289,7 +299,7 @@ overridden by the named configuration key (`15`).
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
-| `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600) | `ratelimit.api.*` | 05 |
+| `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600); (phase 5, FIX-146, D-232) telemetry 60/min (20), the per-user limit of `POST /v1/telemetry/traces` | `ratelimit.api.*` | 05 |
 | `API_RATE_UNAUTH` | (phase 2, RFE-017) 120 / min / IP public GETs; 30 / min / IP for requests with a rejected bearer | — | 05 |
 | `COUNTER_TIMEOUT` | (phase 4, P4-CNT) 50 ms per shared-counter store call (10–2000 ms) | `ratelimit.counters.timeout_ms` | 05, 06, 15 |
 | `COUNTER_BREAKER_FAILURES` / `COUNTER_BREAKER_COOLDOWN` | (phase 4, P4-CNT) 3 consecutive failures open the breaker; one probe after 5 s | — | 06, 15 |
@@ -347,3 +357,8 @@ overridden by the named configuration key (`15`).
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |
+| `TELEMETRY_INGEST_BODY_MAX` / `TELEMETRY_INGEST_SPANS_MAX` | (phase 5, FIX-146, D-232, C-732 (6)) 256 KiB request body (413 above it) / 512 spans per `POST /v1/telemetry/traces` request | — | 05 |
+| `TELEMETRY_SPAN_ATTRIBUTES_MAX` / `TELEMETRY_SPAN_EVENTS_MAX` | (phase 5, FIX-146, C-732 (6)) 32 attributes / 8 events per browser span | — | 05 |
+| `TELEMETRY_STACKTRACE_MAX` | (phase 5, FIX-146, C-732 (6)) 4 KiB of `exception.stacktrace` per browser span | — | 05, 14 |
+| `TELEMETRY_CLOCK_PAST` / `TELEMETRY_CLOCK_FUTURE` / `TELEMETRY_SPAN_DURATION_MAX` | (phase 5, FIX-146, C-732 (6)) browser span timestamps clamped to [now − 15 min, now + 1 min]; duration clamped to ≤ 15 min | — | 05 |
+| `DB_SPAN_STATEMENT_MAX` | (phase 5, FIX-146, D-232(g)) 4 KiB of parameterized SQL in a database span's `db.query.text` | — | 15 |

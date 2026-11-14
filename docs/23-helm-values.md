@@ -319,6 +319,10 @@ feature:
 - SCIM: `scim.enabled` and `scim.ratePerMinute` are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are config keys (`config.scim.*`, `15 §SCIM directory sync`)
 - approval park + Web Push (phase 5, D-138; not in the chart yet): `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)
 - S3 blob store (phase 5, D-138; not in the chart yet): `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
+- request tracing (phase 5, FIX-146, D-232, C-732 (5); not in the chart yet — FIX-146 Part C moves these into [§NetworkPolicy](#networkpolicy) and §Workloads):
+  - `networkPolicy.telemetryTo` — list of raw NetworkPolicy `to` entries, default `[]`. Rendered into the egress of every exporting workload (api, gateway, hookhost, runner, relay, connector host, connector Deployments; never the sandboxes namespace) so they can reach the OTLP collector named by `config.telemetry.otlp_endpoint`; the default-deny policies block it otherwise. Set it whenever an endpoint is set; with an endpoint and an empty `telemetryTo` the chart's `NOTES.txt` warns.
+  - web workload environment: `AURORA_TRACING_SAMPLE_RATIO` is rendered **only when `config.telemetry.otlp_endpoint` is set**, with the value of `config.telemetry.sample_ratio` (default `1.0`). The dashboard's root layout reads it at request time; absent, the dashboard loads no tracing code and posts nothing. Not a chart value of its own: it follows the two config keys (`15 §Configuration reference`).
+  - kind dev only: `deploy/kind/values-tracing.yaml` (used by `deploy/dev/kind-dev.sh up --tracing`) sets the endpoint to the dev Jaeger's OTLP/HTTP port 4318 and `telemetryTo` to it.
 
 Until a feature's chart work merges, set its `config.*` keys directly (the
 chart passes `config` through verbatim).
