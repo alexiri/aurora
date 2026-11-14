@@ -122,8 +122,16 @@ pub struct PluginPackage {
     pub publisher: String,
     pub digest: String,
     pub signer: PluginSigner,
-    /// `builtin` | `directory` | `upload`.
+    /// `builtin` | `directory` | `upload` | `addon` (P5-ASRC).
     pub source: String,
+    /// (P5-ASRC, C-600) the addon source row for `source = "addon"`.
+    pub source_id: Option<Uuid>,
+    /// (P5-ASRC, C-600) the addon source's name at read time (never stored).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+    /// (P5-ASRC, C-600) a manifest version of the same package is newer than this row.
+    #[serde(default)]
+    pub update_available: bool,
     /// `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`.
     pub status: String,
     pub status_reason: Option<String>,
@@ -213,6 +221,9 @@ impl PluginPackage {
             publisher: r.publisher,
             digest: r.digest,
             source: r.source,
+            source_id: r.source_id,
+            source_name: None,
+            update_available: false,
             status: r.status,
             status_reason: r.status_reason,
             approved_at: r.approved_at,

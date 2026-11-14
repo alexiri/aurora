@@ -192,6 +192,21 @@ design in [docs/13 §5](../13-channels-connectors.md), screens in [docs/14](../1
 Account), make it a member of the team, and copy its access token. Optionally create a
 personal access token of a system administrator: with it Aurora can reply privately to a person
 and register `/aurora`; without it, replies to individuals arrive as direct messages.
+Agent messages keep their formatting in Mattermost (bold, code, tables, lists, quotes, code
+blocks); footnotes, alerts, math and raw HTML are converted to the nearest Mattermost form
+([docs/20 §Rendering](../20-mattermost-connector.md)). Mattermost's **server** fetches the first
+bare URL of a post by itself, with no click (System Console → Site Configuration → Posts →
+*Enable Link Previews*; checked on 11.7.15: a `GET` from `Mattermost-Bot/1.1` arrives while the
+post is created). Mattermost has no per-post switch, so Aurora writes every URL an agent puts
+in a message as a labelled link (`[url](url)`, which the server never fetches): agent posts
+show no preview cards, and a prompt-injected agent cannot send data out in a URL's query
+string by way of the preview. That is defence in depth with the setting: an administrator who
+wants no server-side fetches at all (people's own messages too) turns *Enable Link Previews*
+off. Aurora also never lets an agent's message ping a whole channel or group: `@channel`,
+`@all`, other spellings of `@here` and group mentions are shown as code and notify nobody
+(only a plain `@here` written by the agent notifies the people online, and a held
+`send_message` says so in its approval); `@username` of one person still works. Math renders when *Enable Latex Rendering* / *Enable Inline Latex Rendering*
+(Site Configuration → Posts) are on; both were on by default on the 11.7.15 server we checked.
 The Mattermost server must be reachable from the connector host; a server on a private
 network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
 ([docs/20](../20-mattermost-connector.md)), and one behind a private CA needs the CA bundle

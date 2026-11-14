@@ -141,6 +141,20 @@ pub const LIBRARY_REFRESH_CONCURRENCY: usize = 4;
 pub const LIBRARY_CHECK_NOW_INTERVAL: Duration = Duration::from_secs(60);
 pub const LIBRARY_BROWSE_CACHE: Duration = Duration::from_secs(5 * 60);
 pub const LIBRARY_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+// Addon sources (phase 5, P5-ASRC, D-250; docs/02 §Limits, docs/22).
+/// The `aurora-addons.yaml` manifest (download cap; a bigger body is refused before parsing).
+pub const ADDON_MANIFEST_MAX: usize = MIB;
+/// Addon entries per manifest and versions per addon.
+pub const ADDON_ADDONS_MAX: usize = 100;
+pub const ADDON_VERSIONS_MAX: usize = 50;
+/// The per-source lease of the poll job and the manual "Check now".
+pub const ADDON_LEASE: Duration = Duration::from_secs(5 * 60);
+/// Sources checked at once per replica.
+pub const ADDON_CHECK_CONCURRENCY: usize = 2;
+/// Manifest and package fetch timeouts.
+pub const ADDON_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+/// Backoff until a source is re-checked after a failed poll.
+pub const ADDON_FAILURE_BACKOFF: Duration = Duration::from_secs(3600);
 pub const ATTACH_IN_FILE_MAX: u64 = 10 * MIB as u64;
 /// per message.
 pub const ATTACH_IN_COUNT: u32 = 10;

@@ -522,11 +522,102 @@ async fn broadcasts_are_defused() {
         .as_str()
         .unwrap()
         .to_owned();
+    // (FIX-142) Typed tokens and raw HTML declarations never reach the platform live.
     assert!(
         !text.contains("<@here>") && !text.contains("<!channel>"),
         "{text}"
     );
-    assert!(text.contains("\\<"), "{text}");
+    assert!(
+        text.contains('\u{200B}'),
+        "the typed token is broken: {text:?}"
+    );
+    assert!(text.contains("@everyone hi"), "{text}");
+}
+
+/// (FIX-142) A `send_message` body keeps its Markdown; a standalone `@here` is a broadcast;
+/// a held message that carries one says so in its (label-only) approval summary.
+#[tokio::test]
+async fn send_message_keeps_markdown_and_at_here_broadcasts_with_a_notice_when_held() {
+    let w = W::new(&["threads"], "ask").await;
+    w.presence(w.integ).await;
+    w.thread_link(w.integ, "C1", "T1").await;
+    let md = "**Done:** `deploy` ok\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n![x](https://evil.example/p.png)";
+    let v = w
+        .run("send_message", json!({"to": "here", "text": md}))
+        .await;
+    assert_eq!(ok(&v)["status"], "sent", "{v}");
+    let text = w.posts().await[0].1["content"]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The shared bot's "Agent · via Bot" line comes first, then the body as written.
+    assert!(
+        text.contains("\n\n**Done:** `deploy` ok\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("[🖼 x (evil.example)](<https://evil.example/p.png>)"),
+        "{text}"
+    );
+
+    let v = w
+        .run_as(
+            None,
+            "c2",
+            "send_message",
+            json!({"to": "here", "text": "@here the build is green"}),
+        )
+        .await;
+    assert_eq!(ok(&v)["status"], "sent", "{v}");
+    let posts = w.posts().await;
+    assert!(
+        posts[1].1["content"]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("\n\n<@here> the build is green"),
+        "{:?}",
+        posts[1].1["content"]["text"]
+    );
+
+    // Another space is held for approval (proactive messaging `ask`): the summary says what
+    // @here does, in the core's words only.
+    w.bind_space("C_OPS").await;
+    let to = format!("{}:space:C_OPS", w.integ);
+    let v = w
+        .run_as(
+            None,
+            "c3",
+            "send_message",
+            json!({"to": to, "text": "@here maintenance at 5"}),
+        )
+        .await;
+    assert_eq!(ok(&v)["status"], "pending_approval", "{v}");
+    let id: Uuid = ok(&v)["approval_id"].as_str().unwrap().parse().unwrap();
+    let summary: String = sqlx::query_scalar("SELECT summary FROM action_approvals WHERE id=$1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert!(
+        summary.contains("Notifies everyone online in the channel (@here)"),
+        "{summary}"
+    );
+    assert!(!summary.contains("maintenance"), "{summary}");
+    let v = w
+        .run_as(
+            None,
+            "c4",
+            "send_message",
+            json!({"to": to, "text": "no broadcast here"}),
+        )
+        .await;
+    let id: Uuid = ok(&v)["approval_id"].as_str().unwrap().parse().unwrap();
+    let summary: String = sqlx::query_scalar("SELECT summary FROM action_approvals WHERE id=$1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert!(!summary.contains("@here"), "{summary}");
 }
 
 #[tokio::test]

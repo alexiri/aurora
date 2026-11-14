@@ -32,6 +32,14 @@ const REASON_TEXT: Record<string, string> = {
   publisher_changed: "A different publisher ships this version of an installed package. Approve it only if you expect the change of publisher.",
   version_downgrade: "This version is older than one you already approved. Approving it rolls the package back.",
   builtin_id_reserved: "This package id belongs to a built-in package, and this version does not come from the built-in source.",
+  // (P5-ASRC) addon sources: third-party code never activates on its own.
+  first_install: "The first version of an addon from a third-party source. Its permissions are never activated on first sight: review them, then approve.",
+  addon_update: "An update from an addon source never activates by itself. Approving it applies the ordinary update rules (connections, grants, host claims).",
+  digest_mismatch: "The archive does not match the checksum the addon source's manifest lists, so it was not read.",
+  signer_not_source_key: "The package is not signed by the key the addon source published.",
+  publisher_mismatch: "The package's publisher is not the addon source's publisher.",
+  identity_mismatch: "The package is not the id and version the addon source's manifest lists.",
+  package_id_taken: "This package id already belongs to another source or publisher on this instance.",
 };
 
 function reconnectLine(n: number): string {
