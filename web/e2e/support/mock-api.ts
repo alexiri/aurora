@@ -275,7 +275,19 @@ export async function mockApi(
     if (p === "/v1/admin/placement/choices") {
       return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
     }
-    if (p === "/v1/admin/orgs") return json({ items: [{ id: id(1), slug: "users", name: "Users", frozen: null, created_at: now }], next_cursor: null });
+    // P5-ADMDEL (C-733): counts and ownerless state; the organization page and its workspaces.
+    const adminOrg = { id: id(1), slug: "users", name: "Users", frozen: null, created_at: now, ownerless: true, member_count: 3, workspace_count: 2, agent_count: 5 };
+    if (p === "/v1/admin/orgs") return json({ items: [adminOrg], next_cursor: null });
+    if (p === `/v1/admin/orgs/${id(1)}`) return json(adminOrg);
+    if (p === `/v1/admin/orgs/${id(1)}/workspaces`) {
+      return json({
+        items: [
+          { id: id(2), slug: "main", name: "Main workspace", personal: false, agent_count: 4, created_at: now },
+          { id: id(3), slug: "ada", name: "Ada", personal: true, agent_count: 1, created_at: now },
+        ],
+        next_cursor: null,
+      });
+    }
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
     // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.
@@ -380,6 +392,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-setup", path: "/admin/setup" },
   { name: "admin-users", path: "/admin/users" },
   { name: "admin-orgs", path: "/admin/orgs" },
+  { name: "admin-org-detail", path: `/admin/orgs/${id(1)}` },
   { name: "admin-placement", path: "/admin/placement" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },
