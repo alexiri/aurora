@@ -1152,6 +1152,9 @@ Rule: `04 §SCIM`, `16 §W15` (wire subset), `05 §SCIM management`, `03 §scim_
 ### Phase 5 — P5-AGENT (agent page status rail, D-201)
 - C-700 **`agent_id` filter on the gateway approvals list.** `GET /v1/workspaces/{ws}/approvals?status=&agent_id=&limit=&cursor=` (phase 5, P5-AGENT-1): optional `agent_id` (UUID) returns only approvals of that agent, with the same semantics as the existing `agent_id` filter on `GET /v1/workspaces/{ws}/action-approvals`: an agent of another workspace or an unknown id yields an empty page, never 404; a malformed id is the existing query-validation error. The filter is applied inside the query, before pagination and together with the visibility predicate (approvals naming a conversation the caller cannot see stay omitted, `05 §Conversation visibility`). Response shape (`Page<Approval>`), auth (`can_approve`) and every other filter are unchanged. Additive: a client that omits it gets today's response.
 
+### FIX-140 (phase-4 follow-ups)
+- C-720 **`DELETE /v1/me/api-key`** (API-key callers; D-188 d). Revokes the API key that authenticates the request — the presenting key — and nothing else (other keys of the same user are untouched). 204 on success (the same revocation and cache invalidation as `DELETE /v1/api-keys/{id}`); a session caller gets 400 `not_an_api_key`; a key that is already revoked or expired fails authentication first (401). Audited as the critical event `api_key.revoke` (`target = api_key`, `metadata = { name, self: true }`). No request body. `aurora logout` calls it before deleting the local file and prints which of three outcomes happened: revoked, already invalid (401), or could not be reached/refused (the key stays valid until its TTL, `auth.cli_key_ttl_days`).
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._

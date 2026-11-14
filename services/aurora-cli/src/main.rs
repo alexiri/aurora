@@ -195,19 +195,38 @@ async fn real_main() -> Result<i32> {
         Cmd::Logout => {
             let p = config::default_path()?;
             let stored = Config::load(&p).ok();
+            // Revoke the key server-side first (C-720), then delete the file, and say truthfully
+            // what happened (FIX-118 item 7, FIX-140).
+            let revoked = match &stored {
+                Some(c) => Some(match Client::new(&c.url, Some(c.api_key.clone())) {
+                    Ok(client) => client.revoke_my_api_key().await,
+                    Err(e) => Err(e),
+                }),
+                None => None,
+            };
             match std::fs::remove_file(&p) {
                 Ok(()) => {
                     println!("Logged out: the local credentials file is deleted.");
-                    // There is no endpoint to revoke the key a device login created (the CLI does
-                    // not know its id), so say so instead of implying it is gone (FIX-118, PKG-7).
-                    if let Some(c) = stored {
-                        println!(
-                            "The API key and {} stored agent token(s) were NOT revoked on {}: \
-                             revoke them there (Workspace, API keys; the agent's token) if the \
-                             file may have been copied.",
-                            c.agents.len(),
-                            aurora_client::clean(&c.url)
-                        );
+                    if let (Some(c), Some(r)) = (stored, revoked) {
+                        let url = aurora_client::clean(&c.url);
+                        match r {
+                            Ok(()) => println!("The API key was revoked on {url}."),
+                            Err(e) if e.status() == Some(401) => println!(
+                                "The API key was already invalid on {url} (expired or revoked)."
+                            ),
+                            Err(e) => println!(
+                                "Could not revoke the API key on {url} ({}): it stays valid until \
+                                 it expires (90 days after login by default); revoke it there \
+                                 (Workspace, API keys) if the file may have been copied.",
+                                aurora_client::clean(&e.to_string())
+                            ),
+                        }
+                        if !c.agents.is_empty() {
+                            println!(
+                                "{} stored agent token(s) were dropped locally, not revoked on {url}.",
+                                c.agents.len()
+                            );
+                        }
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("Not logged in."),

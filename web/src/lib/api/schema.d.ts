@@ -2463,6 +2463,28 @@ export interface paths {
         patch: operations["patchMe"];
         trace?: never;
     };
+    "/v1/me/api-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke the API key this request is authenticated with (C-720; `aurora logout`).
+         * @description Only the presenting key is touched; a session caller gets 400 `not_an_api_key`. Revoking a
+         *     key that is already revoked answers 401 before reaching the handler (the key no longer
+         *     authenticates).
+         */
+        delete: operations["revokeMyApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/api-keys": {
         parameters: {
             query?: never;
@@ -20373,6 +20395,49 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revokeMyApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -159,6 +159,12 @@ impl Client {
         self.send(self.req(Method::GET, "/v1/me")).await
     }
 
+    /// Revoke the API key this client authenticates with (`DELETE /v1/me/api-key`, C-720).
+    pub async fn revoke_my_api_key(&self) -> Result<()> {
+        check(self.req(Method::DELETE, "/v1/me/api-key").send().await?).await?;
+        Ok(())
+    }
+
     pub async fn resolve(&self, org: &str, workspace: Option<&str>) -> Result<Resolved> {
         let mut q = vec![("org", org)];
         if let Some(w) = workspace {
