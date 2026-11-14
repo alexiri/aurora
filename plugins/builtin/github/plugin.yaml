@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 1.1.0
+  version: 1.1.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -157,6 +157,7 @@ apps:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://github.com/{path.2}/{path.3}/issues"
       update_issue:
         title: Update issue
@@ -165,6 +166,7 @@ apps:
           - { label: Repository, source: path, segment: 3 }
           - { label: Issue, source: path, segment: 5 }
           - { label: State, source: body, steps: [ { json: /state } ] }
+          - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://github.com/{path.2}/{path.3}/issues/{path.5}"
       create_issue_comment:
         title: Comment on issue or pull request
@@ -180,6 +182,7 @@ apps:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Body, source: body, steps: [ { json: /body } ] }
           - { label: From, source: body, steps: [ { json: /head } ] }
           - { label: Into, source: body, steps: [ { json: /base } ] }
         link: "https://github.com/{path.2}/{path.3}/pulls"
@@ -199,6 +202,7 @@ apps:
           - { label: File, source: path, segment: 5 }
           - { label: Branch, source: body, steps: [ { json: /branch } ] }
           - { label: Message, source: body, steps: [ { json: /message } ] }
+          - { label: Content, source: body, steps: [ { json: /content }, { base64: {} } ] }
       create_ref:
         title: Create branch or tag
         fields:
@@ -356,6 +360,7 @@ apps:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://{request.host}/{path.4}/{path.5}/issues"
       update_issue:
         title: Update issue
@@ -364,6 +369,7 @@ apps:
           - { label: Repository, source: path, segment: 5 }
           - { label: Issue, source: path, segment: 7 }
           - { label: State, source: body, steps: [ { json: /state } ] }
+          - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://{request.host}/{path.4}/{path.5}/issues/{path.7}"
       create_issue_comment:
         title: Comment on issue or pull request
@@ -379,6 +385,7 @@ apps:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Body, source: body, steps: [ { json: /body } ] }
           - { label: From, source: body, steps: [ { json: /head } ] }
           - { label: Into, source: body, steps: [ { json: /base } ] }
         link: "https://{request.host}/{path.4}/{path.5}/pulls"
@@ -398,6 +405,7 @@ apps:
           - { label: File, source: path, segment: 7 }
           - { label: Branch, source: body, steps: [ { json: /branch } ] }
           - { label: Message, source: body, steps: [ { json: /message } ] }
+          - { label: Content, source: body, steps: [ { json: /content }, { base64: {} } ] }
       create_ref:
         title: Create branch or tag
         fields:

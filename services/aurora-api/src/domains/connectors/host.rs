@@ -5,6 +5,7 @@
 //! `assignments` is the only place secret settings are decrypted (SEC-70). The response is never
 //! logged, and nothing here writes a secret value anywhere.
 
+use super::auth::{HostAuth, host_auth};
 use super::managed::{self, store_unavailable};
 use super::manifest;
 use super::plane::verify_manifest;
@@ -42,8 +43,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .route("/connector-host/status", post(status))
 }
 
-/// `Authorization: Bearer auh_…` whose hash is in `connector_host_tokens`.
-pub struct HostToken;
+/// `Authorization: Bearer auh_…` whose hash is a live row of `connector_host_tokens`
+/// (FIX-120: not revoked; the shared bootstrap token only while no bound token exists).
+pub struct HostToken(pub HostAuth);
 
 impl FromRequestParts<AppState> for HostToken {
     type Rejection = ApiError;
@@ -56,10 +58,29 @@ impl FromRequestParts<AppState> for HostToken {
             .and_then(|v| v.strip_prefix("Bearer "))
             .filter(|t| token::parse_prefix(t) == Some(TokenPrefix::ConnectorHost))
             .ok_or_else(|| ApiError::unauthenticated("Connector host token required."))?;
-        if !connector_hosts::token_exists(&st.pool, &token::hash(tok)).await? {
-            return Err(ApiError::unauthenticated("Unknown connector host token."));
-        }
-        Ok(Self)
+        host_auth(st, tok)
+            .await?
+            .map(Self)
+            .ok_or_else(|| ApiError::unauthenticated("Unknown connector host token."))
+    }
+}
+
+fn forbidden(code: &'static str, message: impl Into<String>) -> ApiError {
+    ApiError::new(StatusCode::FORBIDDEN, code, message)
+}
+
+/// A bound token may only act for host instances it registered (FIX-120): the instance id is the
+/// handle of the host's announced types and status rows, so another token's id is off limits.
+async fn check_owner(s: &AppState, t: &HostAuth, instance: Uuid) -> Result<(), ApiError> {
+    if t.type_ids.is_none() {
+        return Ok(()); // the shared bootstrap token: unbound, as before
+    }
+    match connector_hosts::host_owner(&s.pool, instance).await? {
+        Some(owner) if owner != Some(t.id) => Err(forbidden(
+            "host_instance_mismatch",
+            "This host instance was registered with another connector host token.",
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -69,18 +90,48 @@ pub async fn bootstrap_host_token(s: &AppState) -> Result<(), aurora_db::DbError
         connector_hosts::upsert_token(&s.pool, &token::hash(t.expose())).await?;
         tracing::info!("bootstrap connector host token applied");
     }
+    // (FIX-120) Per-host tokens bound to connector types; applying one ends the shared token's
+    // validity (`15 §Upgrades`).
+    if !s.config.bootstrap_connector_host_tokens.is_empty() {
+        let mut conn = s.pool.acquire().await?;
+        for (name, tok, types) in &s.config.bootstrap_connector_host_tokens {
+            connector_hosts::upsert_bound_token(
+                &mut conn,
+                &token::hash(tok.expose()),
+                &token::display_prefix(tok.expose()),
+                name,
+                types,
+            )
+            .await?;
+        }
+        tracing::info!(
+            count = s.config.bootstrap_connector_host_tokens.len(),
+            "bootstrap connector host tokens applied"
+        );
+    }
     Ok(())
 }
 
 // -------------------------------------------------------------------- register
 
 async fn register(
-    _t: HostToken,
+    HostToken(auth): HostToken,
     State(s): State<AppState>,
     Json(req): Json<HostRegisterRequest>,
 ) -> Result<Json<HostRegisterResponse>, ApiError> {
     req.validate()
         .map_err(|e| ApiError::invalid_request(e.to_string(), vec![]))?;
+    // (FIX-120) A bound token registers only its own types, and only host instances of its own.
+    if let Some(t) = req.types.iter().find(|t| !auth.allows(&t.type_id)) {
+        return Err(forbidden(
+            "type_not_bound",
+            format!(
+                "This connector host token is not bound to connector type `{}`.",
+                sanitize::one_line(&t.type_id, 64)
+            ),
+        ));
+    }
+    check_owner(&s, &auth, req.instance_id).await?;
     let mut accepted: Vec<Value> = Vec::new();
     let mut rejected = Vec::new();
     let mut unsigned: Vec<String> = Vec::new();
@@ -133,6 +184,11 @@ async fn register(
         );
     }
     connector_hosts::upsert_host(&s.pool, req.instance_id, &req.version, &json!(accepted)).await?;
+    if auth.type_ids.is_some() {
+        connector_hosts::claim_host(&s.pool, req.instance_id, auth.id).await?;
+        // Lost a race with another token registering the same instance id: refuse.
+        check_owner(&s, &auth, req.instance_id).await?;
+    }
     // Heartbeat rows older than a day are of no use.
     connector_hosts::prune(&s.pool, limits::CONNECTOR_HOST_RETAIN.as_secs_f64()).await?;
     Ok(Json(HostRegisterResponse {
@@ -153,10 +209,13 @@ struct AssignmentsQuery {
 }
 
 async fn assignments(
-    _t: HostToken,
+    HostToken(auth): HostToken,
     State(s): State<AppState>,
     Query(q): Query<AssignmentsQuery>,
 ) -> Result<Response, ApiError> {
+    if let Some(id) = q.instance_id {
+        check_owner(&s, &auth, id).await?;
+    }
     let wait = q.wait.unwrap_or(DEFAULT_ASSIGNMENTS_WAIT_SECS);
     if wait > MAX_ASSIGNMENTS_WAIT_SECS {
         return Err(ApiError::invalid_request(
@@ -194,7 +253,7 @@ async fn assignments(
         }
     }
     // The revision is read before the list: a change in between only makes the host fetch again.
-    let connectors = build(&s, q.instance_id).await?;
+    let connectors = build(&s, &auth, q.instance_id).await?;
     let mut resp = Json(AssignmentsResponse {
         revision,
         connectors,
@@ -205,14 +264,29 @@ async fn assignments(
     Ok(resp)
 }
 
-/// Types announced by the calling host, or by every live host when it is not named.
-async fn announced_types(s: &AppState, instance: Option<Uuid>) -> Result<Vec<String>, ApiError> {
-    let hosts = match instance {
-        Some(id) => connector_hosts::get_host(&s.pool, id)
+/// Types announced by the calling host; without an instance id, by every live host the token
+/// registered (a bound token) or by every live host (the shared bootstrap token). A bound token's
+/// answer is further limited to its bound types (FIX-120): an assignment of any other type, and
+/// its decrypted settings, is never built.
+async fn announced_types(
+    s: &AppState,
+    auth: &HostAuth,
+    instance: Option<Uuid>,
+) -> Result<Vec<String>, ApiError> {
+    let hosts = match (instance, auth.type_ids.is_some()) {
+        (Some(id), _) => connector_hosts::get_host(&s.pool, id)
             .await?
             .into_iter()
             .collect(),
-        None => {
+        (None, true) => {
+            connector_hosts::list_seen_by_token(
+                &s.pool,
+                auth.id,
+                limits::CONNECTOR_HOST_STALE.as_secs_f64(),
+            )
+            .await?
+        }
+        (None, false) => {
             connector_hosts::list_seen(&s.pool, limits::CONNECTOR_HOST_STALE.as_secs_f64()).await?
         }
     };
@@ -221,6 +295,7 @@ async fn announced_types(s: &AppState, instance: Option<Uuid>) -> Result<Vec<Str
         .filter_map(|h| h.types.as_array())
         .flatten()
         .filter_map(|t| t.get("type_id").and_then(Value::as_str).map(str::to_owned))
+        .filter(|t| auth.allows(t))
         .collect();
     out.sort();
     out.dedup();
@@ -229,8 +304,12 @@ async fn announced_types(s: &AppState, instance: Option<Uuid>) -> Result<Vec<Str
 
 /// The assignments with decrypted secrets (C-456). A store failure answers 503
 /// `secret_store_unavailable`; the host keeps its running set.
-async fn build(s: &AppState, instance: Option<Uuid>) -> Result<Vec<Assignment>, ApiError> {
-    let types = announced_types(s, instance).await?;
+async fn build(
+    s: &AppState,
+    auth: &HostAuth,
+    instance: Option<Uuid>,
+) -> Result<Vec<Assignment>, ApiError> {
+    let types = announced_types(s, auth, instance).await?;
     let rows = connectors::list_managed_enabled(&s.pool, &types).await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
@@ -276,12 +355,13 @@ async fn assignment(s: &AppState, r: ConnectorRow) -> Result<Assignment, ApiErro
 // ---------------------------------------------------------------------- status
 
 async fn status(
-    _t: HostToken,
+    HostToken(auth): HostToken,
     State(s): State<AppState>,
     Json(req): Json<HostStatusRequest>,
 ) -> Result<StatusCode, ApiError> {
     req.validate()
         .map_err(|e| ApiError::invalid_request(e.to_string(), vec![]))?;
+    check_owner(&s, &auth, req.instance_id).await?;
     let reports: Vec<(String, String, Option<String>)> = req
         .connectors
         .into_iter()
@@ -298,6 +378,7 @@ async fn status(
             (c.id, state.to_owned(), msg)
         })
         .collect();
-    connector_hosts::replace_status(&s.pool, req.instance_id, &reports).await?;
+    connector_hosts::replace_status(&s.pool, req.instance_id, &reports, auth.type_ids.as_deref())
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }

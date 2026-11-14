@@ -505,6 +505,157 @@
         ]
       }
     },
+    "/v1/admin/connector-host-tokens": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Connector-host tokens (C-690): the shared bootstrap token and every per-host token with its\nbound connector types, last use and state.",
+        "operationId": "adminListConnectorHostTokens",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostTokenList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Issue a connector-host token bound to connector types (C-691); shown once. From the first bound\ntoken on, the shared bootstrap token is refused.",
+        "operationId": "adminIssueConnectorHostToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueHostTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostTokenIssued"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/connector-host-tokens/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Revoke a connector-host token (C-692): its next call is 401.",
+        "operationId": "adminRevokeConnectorHostToken",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Token id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/connector-types": {
       "get": {
         "tags": [
@@ -28448,6 +28599,99 @@
           }
         }
       },
+      "HostTokenInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` for the shared bootstrap token."
+          },
+          "prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First characters of the token (never enough to use it)."
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string",
+            "description": "`active` | `revoked` | `refused` (the shared bootstrap token once a bound token exists)."
+          },
+          "type_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "`null` for the shared bootstrap token, which is not bound."
+          }
+        }
+      },
+      "HostTokenIssued": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HostTokenInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "token"
+            ],
+            "properties": {
+              "token": {
+                "type": "string",
+                "description": "`auh_…`, shown once."
+              }
+            }
+          }
+        ]
+      },
+      "HostTokenList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostTokenInfo"
+            }
+          }
+        }
+      },
       "Identity": {
         "oneOf": [
           {
@@ -29282,6 +29526,27 @@
             "format": "uuid"
           }
         }
+      },
+      "IssueHostTokenRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "type_ids"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1–80 characters, unique among live tokens (for example the Deployment's name)."
+          },
+          "type_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The connector types this host may register, poll and report for (1–64)."
+          }
+        },
+        "additionalProperties": false
       },
       "KeyOwner": {
         "type": "object",

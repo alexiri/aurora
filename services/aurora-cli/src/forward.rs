@@ -156,13 +156,40 @@ impl Upstream {
 pub struct Forwarder {
     pub addr: SocketAddr,
     task: JoinHandle<()>,
+    /// The per-run secret a client must present as proxy basic auth (FIX-118, PKG-5).
+    secret: String,
 }
 
 impl Forwarder {
-    /// `http://127.0.0.1:<port>` (no credentials: the forwarder adds them).
+    /// `http://aurora:<per-run secret>@127.0.0.1:<port>`. The secret is only the key to this
+    /// loopback hop: it lets the child (which gets this URL in its proxy variables) use the
+    /// forwarder, and keeps every other local account out. The gateway credential never
+    /// appears here; the forwarder adds it on the TLS leg.
     pub fn url(&self) -> String {
-        format!("http://{}", self.addr)
+        format!("http://{RUN_USER}:{}@{}", self.secret, self.addr)
     }
+}
+
+const RUN_USER: &str = "aurora";
+
+/// Equality without an early exit on the first differing byte.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    let mut d = u8::from(a.len() != b.len());
+    for i in 0..a.len().max(b.len()) {
+        d |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
+    }
+    d == 0
+}
+
+/// 256 random bits, hex-encoded, from the CSPRNG behind `aurora_crypto`.
+fn run_secret() -> Result<String> {
+    use std::fmt::Write as _;
+    let seed = aurora_crypto::generate_signing_key()
+        .map_err(|e| anyhow::anyhow!("no secure random source for the forwarder secret: {e}"))?;
+    Ok(seed.to_bytes().iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    }))
 }
 
 impl Drop for Forwarder {
@@ -177,19 +204,25 @@ pub async fn spawn(upstream: Upstream) -> Result<Forwarder> {
         .await
         .context("cannot bind the loopback forwarder")?;
     let addr = listener.local_addr()?;
+    let secret = run_secret()?;
+    let expected: Arc<str> = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("{RUN_USER}:{secret}"))
+    )
+    .into();
     let up = Arc::new(upstream);
     let task = tokio::spawn(async move {
         loop {
             let Ok((s, _)) = listener.accept().await else {
                 continue;
             };
-            let up = up.clone();
+            let (up, expected) = (up.clone(), expected.clone());
             tokio::spawn(async move {
-                let _ = handle(s, &up).await;
+                let _ = handle(s, &up, &expected).await;
             });
         }
     });
-    Ok(Forwarder { addr, task })
+    Ok(Forwarder { addr, task, secret })
 }
 
 async fn read_head<R: AsyncReadExt + Unpin>(s: &mut R) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
@@ -219,11 +252,23 @@ async fn respond(s: &mut TcpStream, status: &str, body: &str) -> std::io::Result
     s.write_all(msg.as_bytes()).await
 }
 
-async fn handle(mut client: TcpStream, up: &Upstream) -> std::io::Result<()> {
+async fn handle(mut client: TcpStream, up: &Upstream, expected: &str) -> std::io::Result<()> {
     let (head, rest) = read_head(&mut client).await?;
     let Ok(head) = String::from_utf8(head) else {
         return respond(&mut client, "400 Bad Request", "").await;
     };
+    // Before anything else — in particular before any upstream connection — the client must
+    // present the per-run secret (FIX-118, PKG-5): any local account can reach 127.0.0.1.
+    let presented = head
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|l| l.split_once(':'))
+        .find(|(n, _)| n.trim().eq_ignore_ascii_case("proxy-authorization"))
+        .map_or("", |(_, v)| v.trim());
+    if !ct_eq(presented.as_bytes(), expected.as_bytes()) {
+        let msg = "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"aurora\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        return client.write_all(msg.as_bytes()).await;
+    }
     let mut lines = head.split("\r\n");
     let request_line = lines.next().unwrap_or_default();
     let mut parts = request_line.split(' ');
@@ -377,10 +422,22 @@ mod tests {
     }
 
     async fn roundtrip(f: &Forwarder) -> String {
+        let auth =
+            base64::engine::general_purpose::STANDARD.encode(format!("{RUN_USER}:{}", f.secret));
+        roundtrip_with(f, Some(&format!("Basic {auth}"))).await
+    }
+
+    async fn roundtrip_with(f: &Forwarder, proxy_auth: Option<&str>) -> String {
         let mut c = TcpStream::connect(f.addr).await.unwrap();
-        c.write_all(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
-            .await
-            .unwrap();
+        let hdr = proxy_auth
+            .map(|a| format!("Proxy-Authorization: {a}\r\n"))
+            .unwrap_or_default();
+        c.write_all(
+            format!("CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n{hdr}\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
         let mut out = Vec::new();
         let _ =
             tokio::time::timeout(std::time::Duration::from_secs(5), c.read_to_end(&mut out)).await;
@@ -394,7 +451,8 @@ mod tests {
         let f = spawn(Upstream::new(&url, &ca, false).unwrap())
             .await
             .unwrap();
-        assert!(f.url().starts_with("http://127.0.0.1:"));
+        assert!(f.url().starts_with("http://aurora:"), "{}", f.url());
+        assert!(f.url().ends_with(&format!("@{}", f.addr)));
         let r = roundtrip(&f).await;
         assert!(r.starts_with("HTTP/1.1 200"), "{r}");
         let head = seen.lock().unwrap()[0].clone();
@@ -424,6 +482,45 @@ mod tests {
         let r = roundtrip(&f).await;
         assert!(r.starts_with("HTTP/1.1 502"), "{r}");
         assert!(seen.lock().unwrap().is_empty(), "no credential may be sent");
+    }
+
+    /// (FIX-118, PKG-5) Another local account reaches 127.0.0.1 too: without the per-run secret
+    /// the forwarder answers 407 and never opens the upstream connection, so the gateway
+    /// credential is never used on its behalf.
+    #[tokio::test]
+    async fn forwarder_demands_the_per_run_secret_before_any_upstream_connection() {
+        let (ca, port, seen) = stub_gateway().await;
+        let url = ProxyUrl::parse(&format!("https://x:aug_tok@localhost:{port}")).unwrap();
+        let f = spawn(Upstream::new(&url, &ca, false).unwrap())
+            .await
+            .unwrap();
+        let wrong = base64::engine::general_purpose::STANDARD.encode("aurora:not-the-secret");
+        let x_user =
+            base64::engine::general_purpose::STANDARD.encode(format!("other:{}", f.secret));
+        for proxy_auth in [
+            None,
+            Some("Basic".to_owned()),
+            Some(format!("Basic {wrong}")),
+            Some(format!("Basic {x_user}")),
+            Some(format!("Bearer {}", f.secret)),
+        ] {
+            let r = roundtrip_with(&f, proxy_auth.as_deref()).await;
+            assert!(r.starts_with("HTTP/1.1 407"), "{proxy_auth:?}: {r}");
+            assert!(r.contains("Proxy-Authenticate: Basic"), "{r}");
+        }
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "no upstream connection may be made for a client without the secret"
+        );
+        // Each run has its own secret.
+        let g = spawn(Upstream::new(&url, &ca, false).unwrap())
+            .await
+            .unwrap();
+        assert_ne!(f.secret, g.secret);
+        assert_eq!(f.secret.len(), 64);
+        // The right secret still works (the proxy URL in the child's environment carries it).
+        let r = roundtrip(&f).await;
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
     }
 
     #[test]

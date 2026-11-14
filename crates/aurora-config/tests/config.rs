@@ -1132,6 +1132,42 @@ fn dev_config_loads_for_host_processes() {
 }
 
 #[test]
+fn bootstrap_connector_host_tokens_are_validated_strictly() {
+    let key = "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS";
+    let api = |v: &str| load_with(BASE, &[(key, v)]).unwrap().api_config();
+    let ok = api(
+        r#"[{"name":"mm","token":"auh_aaa","types":["mattermost","fake"]},
+            {"name":"other","token":"auh_bbb","types":["x1"]}]"#,
+    )
+    .unwrap();
+    assert_eq!(ok.bootstrap_connector_host_tokens.len(), 2);
+    assert_eq!(
+        ok.bootstrap_connector_host_tokens[0].2,
+        ["fake", "mattermost"]
+    );
+    for bad in [
+        "not json",
+        r#"[{"name":"mm","token":"aun_aaa","types":["a1"]}]"#,
+        r#"[{"name":"mm","token":"auh_aaa","types":[]}]"#,
+        r#"[{"name":"","token":"auh_aaa","types":["a1"]}]"#,
+        r#"[{"name":"mm","token":"auh_aaa","types":["a1"],"extra":1}]"#,
+        r#"[{"name":"mm","token":"auh_aaa","types":["a1"]},{"name":"mm","token":"auh_bbb","types":["a1"]}]"#,
+        r#"[{"name":"a","token":"auh_aaa","types":["a1"]},{"name":"b","token":"auh_aaa","types":["a1"]}]"#,
+    ] {
+        let e = api(bad).unwrap_err();
+        assert!(e.has_key(key), "{bad}: {e}");
+    }
+    assert!(
+        load_with(BASE, &[])
+            .unwrap()
+            .api_config()
+            .unwrap()
+            .bootstrap_connector_host_tokens
+            .is_empty()
+    );
+}
+
+#[test]
 fn bootstrap_connector_host_token_must_be_an_auh_token() {
     let ok = load_with(
         BASE,

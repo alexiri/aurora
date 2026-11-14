@@ -12,6 +12,10 @@
 {{- if and .Values.connectorHost.enabled .Values.api.bootstrap.connectorHostToken }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_CONNECTOR_HOST_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
+{{- if and .Values.connectorHost.enabled .Values.connectorHost.perHostToken }}
+{{- /* FIX-120: the bound per-host token(s), as JSON the hooks job wrote into the Secret. */}}
+{{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS}}" $apiEnv (include "aurora.secretName" .) }}
+{{- end }}
 {{- if .Values.relay.enabled }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RELAY_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RELAY_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
@@ -60,7 +64,7 @@ metadata:
 {{- if .Values.connectorHost.enabled }}
 ---
 {{/* connector host (P4-MCON): callbacks 4110 (Service, routed by the edge under /connectors), ops 4192 (no Service) */}}
-{{ include "aurora.workload" (dict "root" . "name" "connector-host" "spec" .Values.connectorHost "image" (include "aurora.image" (dict "root" . "name" "aurora-connector-host")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_CONNECTOR_HOST_TOKEN"))) "ports" (list (dict "name" "callbacks" "port" 4110) (dict "name" "ops" "port" 4192 "skipService" true))) }}
+{{ include "aurora.workload" (dict "root" . "name" "connector-host" "spec" .Values.connectorHost "image" (include "aurora.image" (dict "root" . "name" "aurora-connector-host")) "args" (list "serve") "env" (ternary (printf "%s\n- name: AURORA_CONNECTOR_HOST_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_CONNECTOR_HOST_TOKEN_BOUND}}" (include "aurora.env" (dict "root" . "keys" (list))) (include "aurora.secretName" .)) (include "aurora.env" (dict "root" . "keys" (list "AURORA_CONNECTOR_HOST_TOKEN"))) (not (not .Values.connectorHost.perHostToken))) "ports" (list (dict "name" "callbacks" "port" 4110) (dict "name" "ops" "port" 4192 "skipService" true))) }}
 {{- end }}
 {{- range .Values.connectors }}
 {{- $c := . }}

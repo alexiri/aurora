@@ -286,12 +286,19 @@
       "state"
     ],
     "connector_host_tokens": [
+      "created_by",
       "id",
-      "token_hash"
+      "last_used_at",
+      "name",
+      "prefix",
+      "revoked_at",
+      "token_hash",
+      "type_ids"
     ],
     "connector_hosts": [
       "instance_id",
       "last_seen_at",
+      "token_id",
       "types",
       "version"
     ],

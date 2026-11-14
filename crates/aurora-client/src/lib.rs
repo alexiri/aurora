@@ -45,6 +45,31 @@ impl Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// `https://` always; `http://` only to `localhost`, `127.0.0.0/8` or `::1`.
+pub fn require_secure_url(url: &str) -> Result<()> {
+    let u = reqwest::Url::parse(url)
+        .map_err(|_| Error::Other(format!("not a valid server URL: {}", clean(url))))?;
+    let host = u.host_str().unwrap_or("").trim_matches(['[', ']']);
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|a| a.is_loopback());
+    match u.scheme() {
+        "https" => Ok(()),
+        "http" if loopback => Ok(()),
+        _ => Err(Error::Other(format!(
+            "refusing to talk to {} over cleartext: the server URL must be https:// (http:// is only allowed for localhost)",
+            clean(url)
+        ))),
+    }
+}
+
+/// Strips control characters (terminal escapes, carriage returns, bells) from a string the
+/// server supplied before it is printed (FIX-118, PKG-7).
+pub fn clean(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
@@ -54,7 +79,11 @@ pub struct Client {
 
 impl Client {
     /// `bearer`: API key (`auk_…`/`auo_…`) or agent token.
+    ///
+    /// (FIX-118, PKG-6) The base URL must be `https://`, or `http://` to a loopback host: the
+    /// device-flow response carries the API key and every request carries a bearer token.
     pub fn new(base_url: &str, bearer: Option<String>) -> Result<Client> {
+        require_secure_url(base_url)?;
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?;

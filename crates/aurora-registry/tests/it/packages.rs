@@ -225,6 +225,10 @@ fn guide_rules() {
 }
 
 fn unsigned_codes(y: &str) -> Vec<&'static str> {
+    unsigned_codes_all(y)
+}
+
+fn unsigned_codes_all(y: &str) -> Vec<&'static str> {
     let p = read(&PackageBuilder::new(y));
     codes(&p, &ctx(), &TrustStore::default(), true)
 }
@@ -293,6 +297,127 @@ fn egress_private_and_reserved() {
         let c = codes(&p, &ctx(), &TrustStore::default(), true);
         assert_eq!(c, [code], "{h}");
     }
+}
+
+fn with_oauth(authorize: &str, token: &str, extra: &str) -> String {
+    manifest("aurora", "api.todoist.com").replacen(
+        "apps:",
+        &format!(
+            "{extra}oauth_clients:\n  - id: cli\n    authorize_url: {authorize}\n    token_url: {token}\napps:"
+        ),
+        1,
+    )
+}
+
+/// (FIX-107, SEC-17) Static token and authorize endpoints lie on a claimed host or a listed
+/// `token_hosts` entry, and never on a reserved or private one.
+#[test]
+fn token_endpoint_hosts() {
+    // Only the endpoint rules are under test (the bare oauth client is not used by an app).
+    let unsigned_codes = |y: &str| -> Vec<&'static str> {
+        let all = unsigned_codes_all(y);
+        all.into_iter()
+            .filter(|c| c.starts_with("token_host") || *c == "host_pattern_invalid")
+            .collect()
+    };
+    let ok = |y: String| assert!(unsigned_codes(&y).is_empty(), "{y}");
+    ok(with_oauth(
+        "https://api.todoist.com/a",
+        "https://api.todoist.com/t",
+        "",
+    ));
+    // Not claimed: refused until listed.
+    let c = unsigned_codes(&with_oauth(
+        "https://api.todoist.com/a",
+        "https://login.other.example/t",
+        "",
+    ));
+    assert_eq!(c, ["token_host_unclaimed"]);
+    ok(with_oauth(
+        "https://api.todoist.com/a",
+        "https://login.other.example/t",
+        "permissions:\n  token_hosts: [login.other.example]\n",
+    ));
+    // Reserved and private hosts are refused even when listed.
+    let c = unsigned_codes(&with_oauth(
+        "https://api.todoist.com/a",
+        "https://api.anthropic.com/t",
+        "permissions:\n  token_hosts: [api.anthropic.com]\n",
+    ));
+    assert!(c.contains(&"token_host_reserved"), "{c:?}");
+    let c = unsigned_codes(&with_oauth(
+        "https://api.todoist.com/a",
+        "https://127.0.0.1/t",
+        "",
+    ));
+    assert!(c.contains(&"token_host_private"), "{c:?}");
+    // A wildcard in the list is not a host.
+    let c = unsigned_codes(&with_oauth(
+        "https://api.todoist.com/a",
+        "https://api.todoist.com/t",
+        "permissions:\n  token_hosts: [\"*.example.com\"]\n",
+    ));
+    assert!(c.contains(&"host_pattern_invalid"), "{c:?}");
+    // The authorize endpoint obeys the same rule.
+    let c = unsigned_codes(&with_oauth(
+        "https://login.other.example/a",
+        "https://api.todoist.com/t",
+        "",
+    ));
+    assert_eq!(c, ["token_host_unclaimed"]);
+}
+
+/// (FIX-107, SEC-15) A key id is the canonical standard-base64 encoding; the URL-safe and the
+/// unpadded spellings parse as the same key but are refused, so revocation can compare strings.
+#[test]
+fn non_canonical_key_ids_are_refused() {
+    use base64::Engine;
+    // A key whose canonical encoding contains `+` or `/` (so the URL-safe spelling differs).
+    let k = loop {
+        let k = key();
+        let id = PackageBuilder::key_id(&k);
+        if id.contains(['+', '/']) {
+            break k;
+        }
+    };
+    let canonical = PackageBuilder::key_id(&k);
+    let y = manifest("acme", "api.todoist.com");
+    let store = |k: &SigningKey| TrustStore {
+        project_key: None,
+        keys: vec![TrustedKey {
+            publisher: "acme".into(),
+            key: k.verifying_key(),
+            revoked: false,
+        }],
+    };
+    let build = |id: &str| {
+        let mut b = PackageBuilder::new(&y);
+        b.sign(&k, id);
+        read(&b)
+    };
+    let ok = build(&canonical);
+    assert!(validate::package(&ok, &ctx(), &store(&k), false).is_empty());
+    let urlsafe = base64::engine::general_purpose::URL_SAFE.encode(k.verifying_key().to_bytes());
+    let unpadded = canonical.trim_end_matches('=').to_owned();
+    for spelling in [urlsafe, unpadded] {
+        assert_ne!(spelling, canonical);
+        let p = build(&spelling);
+        assert_eq!(
+            codes(&p, &ctx(), &store(&k), false),
+            ["signature_malformed"],
+            "{spelling}"
+        );
+    }
+}
+
+#[test]
+fn manifest_size_is_limited() {
+    let y = format!(
+        "{}\n# {}\n",
+        manifest("aurora", "api.todoist.com"),
+        "x".repeat(300 * 1024)
+    );
+    assert_eq!(read_codes(&PackageBuilder::new(&y)), ["manifest_too_large"]);
 }
 
 #[test]

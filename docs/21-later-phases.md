@@ -43,6 +43,11 @@ tool catalogue and policy engine (all phase 0).
   SET of non-session settings, LISTEN/NOTIFY, DO, CALL), `transaction`
   (BEGIN/COMMIT/ROLLBACK/SAVEPOINT — always allowed). Function calls are
   allowed only from a pure-function allow-list; anything unknown → `admin`.
+  (FIX-118, D-188) Operators and casts are judged by the database role: an operator spelled
+  with a schema other than `pg_catalog` (`OPERATOR(public.!!)`) and a cast to a type outside
+  the built-in catalogue are `admin` (they run user-defined functions). Views cannot be
+  inspected: a view over a volatile or user-defined function runs with the role's privileges,
+  so the role is the control (the package's setup note says so).
   Multi-statement strings are classified by their strictest statement.
 - **Policy**: each class maps to a synthetic request `POST
   https://<connection_id>.db.aurora.internal/<class>`; the app's tools declare

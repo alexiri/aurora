@@ -99,8 +99,10 @@ Gmail, Calendar and Drive separately: each is its own connection with its own sc
 
 **Gmail.** Reading is allowed by default: the profile, listing and searching messages and threads,
 reading a message or thread, and listing labels. Held for approval: sending mail, creating a draft,
-sending a draft, and adding or removing labels. The approval shows the recipient and subject of a
-message read from the raw message. Deleting and trashing mail is not available.
+sending a draft, and adding or removing labels. The approval shows every recipient (To, Cc and Bcc),
+the subject, a preview of the message and the number of attachments, read from the raw message.
+Deleting and trashing mail is not offered as a tool; under a full grant such a request is not
+refused by the app, so grant mail access as custom tools unless the agent should be able to delete.
 
 **Calendar.** Reading is allowed by default: the calendar list, a calendar, events (list and get).
 Held for approval: creating, changing and deleting events, and free/busy queries (a read that Google
@@ -110,7 +112,9 @@ exposes only as `POST /calendar/v3/freeBusy`; Aurora treats every `POST` as a ch
 metadata, `alt=media` downloads, exporting Google Docs, Sheets and Slides, and listing who a file is
 shared with. Held for approval: creating files and folders, uploading (`multipart`, `media` and
 `resumable` uploads), changing metadata, renaming, moving and trashing, replacing content,
-copying, and sharing. A file permanently deleted with `DELETE` is not available.
+copying, and sharing. Permanent deletion with `DELETE` is not offered as a tool, but a
+connection with a full grant can still send it and it cannot be undone; use custom tools unless the
+agent should be able to delete.
 
 ### Drive approval summaries
 

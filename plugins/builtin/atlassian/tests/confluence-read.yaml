@@ -2,7 +2,8 @@
 # endpoint is the v1 /wiki/rest/api/search (v2 has none). All credentials and ids are fake.
 # The connect probe (accessible-resources) needs a host entry of each cloud app. The gateway serves
 # that exact path through the Jira Cloud app (longest prefix wins; see jira-read.yaml); the
-# Confluence entry is the broader /oauth/token prefix, which no tool uses.
+# Confluence entry is the broader /oauth/token prefix, which no tool uses (FIX-118: it cannot be
+# narrowed to the exact path, a tie goes to the smaller app id and would take the path from Jira).
 - name: "boundary: the broader /oauth/token prefix of the Confluence entry injects the bearer and selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://api.atlassian.com/oauth/token/other" }

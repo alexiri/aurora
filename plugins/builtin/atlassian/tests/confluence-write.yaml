@@ -11,7 +11,7 @@
     app: confluence
     tool: create_page
     upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
-    summary: { title: "Create Confluence page", fields: { Space: "65537", Title: "Release runbook", Status: "current" } }
+    summary: { title: "Create Confluence page", fields: { Space: "65537", Title: "Release runbook", Status: "current", Content: "<p>Steps</p>" } }
 - name: "negative create_page: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages" }
@@ -26,7 +26,7 @@
   expect:
     app: confluence
     tool: update_page
-    summary: { title: "Update Confluence page", fields: { Page: "98765", Title: "Release runbook v2", Version: "3" } }
+    summary: { title: "Update Confluence page", fields: { Page: "98765", Title: "Release runbook v2", Version: "3", Content: "<p>New steps</p>" } }
 - name: "negative update_page: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765" }

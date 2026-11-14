@@ -374,6 +374,8 @@ async fn invalid_outputs_rejected() {
         ("connect.exchange", exchange("bad_tenant", "")),
         ("connect.exchange", exchange("continue_bad", "")),
         ("connect.authorize", authorize("badurl")),
+        // (FIX-107) https, but a host the package never declared.
+        ("connect.authorize", authorize("foreign")),
     ] {
         let (st, v) = call(&env, hook, input, ok_auth()).await;
         assert_eq!(code(&v), "internal", "{hook}: {v}");
@@ -385,6 +387,78 @@ async fn invalid_outputs_rejected() {
                 .contains("invalid hook output")
         );
     }
+}
+
+/// (FIX-107) A cold module pull that never finishes holds nothing but its own digest's cell: a
+/// cached module of another package, and the snapshot refresh, stay available, and two callers
+/// of the slow digest share one pull.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blocked_module_pull_does_not_delay_other_packages() {
+    let Some(wasm) = guest() else { return };
+    let (snap, digest) = snapshot(wasm, "127.0.0.1");
+    let slow = "ab".repeat(32);
+    let mut snap: Value = serde_json::from_slice(&snap).unwrap();
+    let mut extra = snap["packages"][0].clone();
+    extra["package_id"] = json!("slowpkg");
+    extra["digest"] = json!("slowdigest");
+    extra["hooks_digest"] = json!(slow);
+    snap["packages"].as_array_mut().unwrap().push(extra);
+    let api = MockServer::start().await;
+    let auth = format!("Bearer {}", bearer());
+    Mock::given(method("GET"))
+        .and(path("/internal/v1/registry/active"))
+        .and(header("authorization", auth.as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(serde_json::to_vec(&snap).unwrap()))
+        .mount(&api)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/internal/v1/registry/blobs/{digest}")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(wasm.clone()))
+        .mount(&api)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/internal/v1/registry/blobs/{slow}")))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(25)))
+        .expect(1)
+        .mount(&api)
+        .await;
+    let rt = Runtime::new(FetchPolicy {
+        insecure_local: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let catalog = Catalog::new(&api.uri(), bearer(), rt);
+    catalog.refresh().await.unwrap();
+    // Warm package B.
+    catalog.module(&digest).await.unwrap();
+    // Two callers start the cold pull of A, which stays blocked.
+    let a1 = tokio::spawn({
+        let c = catalog.clone();
+        let d = slow.clone();
+        async move { c.module(&d).await.map(|_| ()) }
+    });
+    let a2 = tokio::spawn({
+        let c = catalog.clone();
+        let d = slow.clone();
+        async move { c.module(&d).await.map(|_| ()) }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await; // let both reach the pull
+    let started = Instant::now();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        catalog.module(&digest).await.unwrap();
+        catalog.refresh().await.unwrap();
+        // A module not yet seen is also not blocked behind A.
+        let _ = catalog.current().await;
+    })
+    .await
+    .expect("another package's call was delayed by a cold pull");
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(
+        !a1.is_finished() && !a2.is_finished(),
+        "the pull is still blocked"
+    );
+    a1.abort();
+    a2.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

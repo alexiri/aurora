@@ -129,10 +129,14 @@ pub async fn act(
                 ));
             }
             if action == Action::Enable {
-                let revoked = plugins::all_trusted_keys(&mut *tx)
-                    .await?
-                    .iter()
-                    .any(|k| k.public_key == row.signer_key_id && k.revoked_at.is_some());
+                let signer = aurora_registry::signature::canonicalize_key_id(&row.signer_key_id)
+                    .unwrap_or_else(|| row.signer_key_id.clone());
+                let revoked = plugins::all_trusted_keys(&mut *tx).await?.iter().any(|k| {
+                    k.revoked_at.is_some()
+                        && aurora_registry::signature::canonicalize_key_id(&k.public_key)
+                            .unwrap_or_else(|| k.public_key.clone())
+                            == signer
+                });
                 if revoked {
                     return Err(ApiError::conflict(
                         "invalid_state",

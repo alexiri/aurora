@@ -1216,12 +1216,19 @@ the agent's own generation; a share change bumps `agents.home_sync_generation`.
 | version | text not null | |
 | types | jsonb not null | `[{type_id, manifest, manifest_digest}]` with verified signatures only |
 | last_seen_at | timestamptz not null | heartbeat (`register`); churn column; rows older than 24 h are pruned |
+| token_id | uuid null fk → connector_host_tokens (set null) | (FIX-120) the bound token that registered this instance; null for an instance registered with the shared bootstrap token. Another token may not register, poll or report as it |
 
 ### `connector_host_tokens`
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid pk | |
-| token_hash | bytea unique not null | `auh_`, from `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` |
+| token_hash | bytea unique not null | `auh_`, from `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (shared, unbound) or issued per host |
+| name | text null CHECK 1–80 chars | (FIX-120) the issued token's name; unique among live tokens (`connector_host_tokens_name_idx`); null for the bootstrap token |
+| prefix | text null | display prefix of an issued token (never enough to use it) |
+| type_ids | text[] null CHECK 1–64 entries | (FIX-120) the connector types the token is bound to; **null = the shared bootstrap token** (unbound; refused once a live bound token exists) |
+| created_by | uuid null fk → users (set null) | the instance admin who issued it |
+| last_used_at | timestamptz null | churn column; written at most once a minute per token |
+| revoked_at | timestamptz null | set by revoke; a revoked token is 401 on its next call |
 
 ### `connector_host_status`
 | Column | Type | Notes |

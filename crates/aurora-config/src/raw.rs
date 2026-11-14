@@ -43,6 +43,9 @@ pub struct EnvSecrets {
     pub bootstrap_runner_token: Option<Redacted<String>>,
     pub bootstrap_connector_tokens: Option<Redacted<String>>,
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
+    /// (FIX-120) JSON `[{"name","token","types":[…]}]`: per-host `auh_…` tokens bound to connector
+    /// types, upserted at start.
+    pub bootstrap_connector_host_tokens: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's anchor token, upserted at start.
     pub bootstrap_relay_token: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's own credential (`aurora-relay` only).

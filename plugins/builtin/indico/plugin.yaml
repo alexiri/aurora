@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.1.0
+  version: 1.1.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -58,7 +58,7 @@ apps:
           - { scope: "read:legacy_api", name: "Read events, timetables, rooms and bookings (documented HTTP API)", access: read }
           - { scope: "write:legacy_api", name: "Book rooms through the documented HTTP API", access: write }
           - { scope: "read:everything", name: "Extended: read everything you can see in Indico (room search by free time, favorites, my bookings, search)", access: read }
-          - { scope: "full:everything", name: "Extended: do everything you can do in Indico (book and cancel rooms, change favorites, prepare events)", access: write }
+          - { scope: "full:everything", name: "Extended write: recurring bookings, cancellations, favorites, event preparation — Indico's internal endpoints, may change between versions", access: write }
         default_scopes: ["read:user", "read:legacy_api"]
         callback: query
         token_response:

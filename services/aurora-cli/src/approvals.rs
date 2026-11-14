@@ -18,25 +18,33 @@ pub struct WatchOpts {
     pub retry_delay: Duration,
 }
 
+/// Every server-supplied string is printed without control characters (FIX-118, PKG-7): an
+/// escape sequence in a summary field must not be able to repaint the approval screen.
 pub fn format_approval(a: &Approval) -> String {
+    use aurora_client::clean as c;
     let mut s = String::new();
-    let agent = a.agent.as_ref().map_or("-", |g| g.handle.as_str());
-    s.push_str(&format!("\n[{}] {}\n", a.id, a.summary.title));
+    let agent = a
+        .agent
+        .as_ref()
+        .map_or_else(|| "-".to_owned(), |g| c(&g.handle));
+    s.push_str(&format!("\n[{}] {}\n", c(&a.id), c(&a.summary.title)));
     s.push_str(&format!(
         "  agent: {agent}   {} {}{}\n",
-        a.method, a.host, a.path
+        c(&a.method),
+        c(&a.host),
+        c(&a.path)
     ));
     for f in &a.summary.fields {
-        s.push_str(&format!("  {}: {}\n", f.label, f.value));
+        s.push_str(&format!("  {}: {}\n", c(&f.label), c(&f.value)));
     }
     if let Some(t) = &a.summary.text {
-        s.push_str(&format!("  {t}\n"));
+        s.push_str(&format!("  {}\n", c(t)));
     }
     if let Some(r) = &a.rule_name {
-        s.push_str(&format!("  rule: {r}\n"));
+        s.push_str(&format!("  rule: {}\n", c(r)));
     }
     if let Some(d) = &a.deadline {
-        s.push_str(&format!("  deadline: {d}\n"));
+        s.push_str(&format!("  deadline: {}\n", c(d)));
     }
     s
 }
@@ -129,6 +137,22 @@ mod tests {
             wait_secs: 0,
             retry_delay: Duration::from_millis(1),
         }
+    }
+
+    /// (FIX-118, PKG-7) Escape sequences and carriage returns in server-supplied strings never
+    /// reach the terminal.
+    #[test]
+    fn control_characters_are_stripped_from_the_approval_card() {
+        let mut v = ap("p\u{1b}[2J1", "w1");
+        v["summary"]["title"] = json!("Send\u{1b}[31m mail\r");
+        v["summary"]["fields"][0]["value"] = json!("a@b\u{7}\u{1b}]0;pwned\u{7}\nBcc: x");
+        let a: Approval = serde_json::from_value(v).unwrap();
+        let s = format_approval(&a);
+        assert!(!s.chars().any(|c| c.is_control() && c != '\n'), "{s:?}");
+        assert!(s.contains("Send[31m mail"), "{s}");
+        // A newline inside a value cannot start a fake line either.
+        assert_eq!(s.lines().filter(|l| l.contains("Bcc: x")).count(), 1);
+        assert!(s.contains("To: a@b]0;pwnedBcc: x"), "{s}");
     }
 
     async fn server() -> MockServer {

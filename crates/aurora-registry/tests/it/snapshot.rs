@@ -225,6 +225,38 @@ fn widening_zone() {
     assert_eq!(widens(&old, &new), vec![Widening::Zone("*.x.com".into())]);
 }
 
+/// (FIX-107, SEC-17) A static token endpoint on a new host, or a new `token_hosts` entry, is a
+/// widening; the same host (or a narrower set) is not.
+#[test]
+fn widening_token_host() {
+    let with = |url: &str, extra: &str| {
+        manifest(&pkg_yaml(
+            "pa",
+            "aa",
+            &[("api.x.com", None)],
+            &format!(
+                "oauth_clients:\n  - id: cli\n    authorize_url: https://api.x.com/authorize\n    token_url: {url}\n{extra}"
+            ),
+        ))
+    };
+    let old = with("https://api.x.com/token", "");
+    assert!(widens(&old, &old).is_empty());
+    assert!(widens(&old, &with("https://api.x.com/other-path", "")).is_empty());
+    assert_eq!(
+        widens(&old, &with("https://evil.example/token", "")),
+        vec![Widening::TokenHost("evil.example".into())]
+    );
+    let listed = with(
+        "https://api.x.com/token",
+        "permissions:\n  token_hosts: [auth.x.com]\n",
+    );
+    assert_eq!(
+        widens(&old, &listed),
+        vec![Widening::TokenHost("auth.x.com".into())]
+    );
+    assert!(widens(&listed, &old).is_empty());
+}
+
 fn snap(hosts: &[(&str, Option<&str>, &str)], lost: &[&str]) -> Snapshot {
     // apps need unique ids; build one package per app
     let pk: Vec<ActivePackage> = hosts

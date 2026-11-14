@@ -15,6 +15,11 @@ classified and checked against your policy before it reaches the server.
 3. Prefer `verify-full`. If the server uses a certificate from a private authority, paste that
    authority's certificate (PEM) in *CA certificate*.
 
+Aurora classifies each statement, but **the database role is the control**. A user-defined
+operator or a cast to a custom type is held as an administrative statement; a **view** cannot be
+inspected, so a view over a volatile or user-defined function runs with the role's privileges and
+Aurora cannot tell. Grant the role no view or function you would not want an agent to run.
+
 ## Connecting
 
 Choose *PostgreSQL* under *Apps*, enter the server host, port (5432 by default), database, user and

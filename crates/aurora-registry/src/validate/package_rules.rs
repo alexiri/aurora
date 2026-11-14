@@ -44,6 +44,7 @@ pub fn package(
     zones(&m, &mut out);
     host_claims(&m, &mut out);
     reserved_claims(&m, ctx, &mut out);
+    token_endpoints(&m, ctx, &mut out);
     egress(&m, ctx, &mut out);
     hooks_wasm(&m, pkg, &mut out);
     for (i, a) in m.apps.iter().enumerate() {
@@ -228,6 +229,78 @@ fn reserved_claims(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violatio
                         format!("`{host}` overlaps a reserved host"),
                     ));
                 }
+            }
+        }
+    }
+}
+
+/// (FIX-107, SEC-17) Static token and authorize endpoints lie on a claimed host or a host listed
+/// in `permissions.token_hosts`, and never on a reserved one: the gateway and the API post the
+/// client secret and every refresh token to the token endpoint.
+fn token_endpoints(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violation>) {
+    let mut allowed: Vec<HostPattern> = m
+        .apps
+        .iter()
+        .flat_map(|a| &a.hosts)
+        .filter_map(|h| HostPattern::parse(&h.matcher.host).ok())
+        .collect();
+    for (i, h) in m.permissions.token_hosts.iter().enumerate() {
+        let path = format!("/permissions/token_hosts/{i}");
+        let bare = h.to_ascii_lowercase();
+        match HostPattern::parse(&bare) {
+            Ok(p) if !bare.contains(['*', ':']) => {
+                if private_ip(&bare) || bare == "localhost" || bare.ends_with(".localhost") {
+                    out.push(Violation::new(
+                        "token_host_private",
+                        path,
+                        format!("token host `{h}` is private or local"),
+                    ));
+                } else if is_reserved(&p, ctx) {
+                    out.push(Violation::new(
+                        "token_host_reserved",
+                        path,
+                        format!("token host `{h}` overlaps a reserved host"),
+                    ));
+                }
+                allowed.push(p);
+            }
+            _ => out.push(Violation::new(
+                "host_pattern_invalid",
+                path,
+                "a token host is an exact host name (no wildcard, no port)",
+            )),
+        }
+    }
+    for (i, c) in m.oauth_clients.iter().enumerate() {
+        for (key, u) in [
+            ("authorize_url", &c.authorize_url),
+            ("token_url", &c.token_url),
+        ] {
+            let UrlOrTemplate::Url(u) = u else { continue };
+            let Some(host) = crate::diff::static_url_host(u) else {
+                continue;
+            };
+            let path = format!("/oauth_clients/{i}/{key}");
+            if private_ip(&host) || host == "localhost" || host.ends_with(".localhost") {
+                out.push(Violation::new(
+                    "token_host_private",
+                    path,
+                    format!("{key} host `{host}` is private or local"),
+                ));
+            } else if HostPattern::parse(&host).is_ok_and(|p| is_reserved(&p, ctx)) {
+                out.push(Violation::new(
+                    "token_host_reserved",
+                    path,
+                    format!("{key} host `{host}` overlaps a reserved host"),
+                ));
+            } else if !allowed.iter().any(|p| p.matches(&host, 443)) {
+                out.push(Violation::new(
+                    "token_host_unclaimed",
+                    path,
+                    format!(
+                        "{key} host `{host}` is neither a claimed host nor listed in permissions.token_hosts"
+                    ),
+                ));
             }
         }
     }

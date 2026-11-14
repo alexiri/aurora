@@ -1,12 +1,15 @@
 package:
   id: microsoft-365
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: Microsoft 365
   description: Outlook mail, calendar and OneDrive or SharePoint files through Microsoft Graph, with Microsoft Entra ID sign-in
   homepage: https://www.microsoft.com/microsoft-365
+permissions:
+  # The OAuth sign-in and token endpoints (FIX-107, SEC-17).
+  token_hosts: [login.microsoftonline.com]
 oauth_clients:
   - id: microsoft
     authorize_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
@@ -119,14 +122,21 @@ apps:
       send_mail:
         title: Send mail
         fields:
-          - { label: To, source: body, steps: [ { json: /message/toRecipients/0/emailAddress/address } ] }
+          # Every recipient, a clamped body preview and the attachment count: the approval is the
+          # only control on outbound mail (FIX-118, 09 §approvals).
+          - { label: To, source: body, steps: [ { json: "/message/toRecipients/*/emailAddress/address" } ] }
+          - { label: Cc, source: body, steps: [ { json: "/message/ccRecipients/*/emailAddress/address" } ] }
+          - { label: Bcc, source: body, steps: [ { json: "/message/bccRecipients/*/emailAddress/address" } ] }
           - { label: Subject, source: body, steps: [ { json: /message/subject } ] }
+          - { label: Message, source: body, steps: [ { json: /message/body/content } ] }
+          - { label: Attachments, source: body, steps: [ { json_count: /message/attachments } ] }
         link: "https://outlook.office.com/mail/"
       create_event:
         title: Create calendar event
         fields:
           - { label: Subject, source: body, steps: [ { json: /subject } ] }
           - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+          - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
         link: "https://outlook.office.com/calendar/"
       create_calendar_event:
         title: Create calendar event
@@ -134,6 +144,7 @@ apps:
           - { label: Calendar, source: path, segment: 4 }
           - { label: Subject, source: body, steps: [ { json: /subject } ] }
           - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+          - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
       upload_drive_item_content:
         title: Upload file content
         fields:

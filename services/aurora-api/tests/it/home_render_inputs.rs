@@ -15,6 +15,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const YAML: &str = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
+permissions:
+  token_hosts: [accounts.example.com]
 oauth_clients:
   - id: goog
     authorize_url: https://accounts.example.com/auth

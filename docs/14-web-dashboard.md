@@ -907,6 +907,8 @@ count and the remediation — restore an owner in the dashboard or run the repai
 operator docs — because the gateway refuses every credential of such an organization.
 
 #### Admin: connectors (phase 4, P4-MCON, `13 §3.1`)
+(FIX-120, C-690..C-692) Below the cards the page has **Connector hosts**: a table of connector-host tokens (name, bound connector types, status `active`/`refused`/`revoked`, last used) with Revoke, and a form that issues a token for a name and a list of types, shown once in the one-time dialog; a notice says when the shared bootstrap token is refused.
+
 The Connectors page lists every connector as a card: icon and name, **Managed** or
 **Self-hosted** badge, status chip (`Waiting for the connector host` / `Running` /
 `Error` with the host's message / `Needs approval` / `Disabled`), the number of integrations,

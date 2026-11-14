@@ -195,6 +195,16 @@ spec:
               put AURORA_CONNECTOR_TOKEN "aun_$(hex)"
               # P4-MCON: the connector host's anchor token (given to the api as the bootstrap token).
               put AURORA_CONNECTOR_HOST_TOKEN "auh_$(hex)"
+              {{- if and .Values.connectorHost.enabled .Values.connectorHost.perHostToken }}
+              # FIX-120 (D-189): one token per connector-host Deployment, bound to the connector types it
+              # runs; the api applies the JSON at start. Once the api has applied a bound token it
+              # refuses the shared AURORA_CONNECTOR_HOST_TOKEN (docs/15 §Upgrades). The JSON is rewritten
+              # on every run (the types follow the values); the token inside is generated once.
+              put AURORA_CONNECTOR_HOST_TOKEN_BOUND "auh_$(hex)"
+              bound="$(get AURORA_CONNECTOR_HOST_TOKEN_BOUND)"
+              json="[{\"name\":\"connector-host\",\"token\":\"$bound\",\"types\":[\"mattermost\"{{ if .Values.connectorHost.testTypes }},\"fake\"{{ end }}]}]"
+              kubectl patch secret "$NAME" -p "{\"data\":{\"AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS\":\"$(printf '%s' "$json" | base64 | tr -d '\n')\"}}" >/dev/null
+              {{- end }}
               # P4-PRV-2: the relay's anchor token (aul_…). One key: the relay reads it as
               # AURORA_RELAY_TOKEN and the api is handed the same secret key as its
               # AURORA_BOOTSTRAP_RELAY_TOKEN env (workloads.yaml). (FIX-069: a second, never-read

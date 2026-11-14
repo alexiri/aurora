@@ -68,10 +68,12 @@ Indico (or Indico discards an old one), requests fail with an upstream 401 until
 | `read:legacy_api` | Search and read events, timetables, rooms and bookings | official |
 | `write:legacy_api` | Book a room for today through the HTTP API | official |
 | `read:everything` | Read anything you can see in Indico through the extended read tools | extended |
-| `full:everything` | Book and cancel rooms, change favorites, prepare events (extended write tools) | extended |
+| `full:everything` | **Opt-in, off by default, listed last.** Extended write: recurring bookings, cancellations, favorites, event preparation — Indico's internal endpoints, which may change between versions (extended write tools) | extended |
 
 `read:everything` and `full:everything` do **not** include the two `legacy_api` scopes: tick both
-if you want both tiers.
+if you want both tiers. The connect form pre-ticks only `read:user` and `read:legacy_api`; Indico has
+no narrower write scope for its extended endpoints, so `full:everything` stays an explicit choice
+(D-196) and the user has to tick it.
 
 > **Warning.** `full:everything` lets the token do **everything you can do in Indico**, on any
 > endpoint. If you are an Indico administrator, that includes administration. Aurora narrows what

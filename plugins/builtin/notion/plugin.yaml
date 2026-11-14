@@ -1,6 +1,6 @@
 package:
   id: notion
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -103,6 +103,7 @@ apps:
           - { label: Parent page, source: body, steps: [ { json: /parent/page_id } ] }
           - { label: Parent data source, source: body, steps: [ { json: /parent/data_source_id } ] }
           - { label: Title, source: body, steps: [ { json: /properties/title/title/0/text/content } ] }
+          - { label: Content, source: body, steps: [ { json_text: /children } ] }
       update_page:
         title: Update page
         fields:
@@ -114,13 +115,14 @@ apps:
         fields:
           - { label: Parent block or page, source: path, segment: 3 }
           - { label: First block type, source: body, steps: [ { json: /children/0/type } ] }
+          - { label: Content, source: body, steps: [ { json_text: /children } ] }
         link: "https://www.notion.so/{path.3}"
       create_comment:
         title: Create comment
         fields:
           - { label: Page, source: body, steps: [ { json: /parent/page_id } ] }
           - { label: Discussion, source: body, steps: [ { json: /discussion_id } ] }
-          - { label: Comment, source: body, steps: [ { json: /rich_text/0/text/content } ] }
+          - { label: Comment, source: body, steps: [ { json_text: /rich_text } ] }
     agent:
       instructions: |
         Notion is connected. Use the REST API at https://api.notion.com/v1 (for example

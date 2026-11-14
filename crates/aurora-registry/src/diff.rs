@@ -26,6 +26,36 @@ pub enum Widening {
         app: String,
         host: String,
     },
+    /// (FIX-107, SEC-17) a static OAuth token endpoint on a host the installed version did not
+    /// use: the next refresh posts every connection's refresh token and the client secret there.
+    TokenHost(String),
+}
+
+/// Lowercase host of a static `https://` URL (no port, userinfo or path); `None` for templates
+/// and the `{instance}` placeholder.
+pub fn static_url_host(u: &str) -> Option<String> {
+    let rest = u.strip_prefix("https://")?;
+    let auth = rest.split(['/', '?', '#']).next()?;
+    let auth = auth.rsplit_once('@').map_or(auth, |(_, h)| h);
+    let host = auth.rsplit_once(':').map_or(auth, |(h, _)| h);
+    (!host.is_empty() && !host.contains(['{', '}'])).then(|| host.to_ascii_lowercase())
+}
+
+fn token_hosts(m: &Manifest) -> BTreeSet<String> {
+    let mut s: BTreeSet<String> = m
+        .permissions
+        .token_hosts
+        .iter()
+        .map(|h| h.to_ascii_lowercase())
+        .collect();
+    for c in &m.oauth_clients {
+        if let UrlOrTemplate::Url(u) = &c.token_url
+            && let Some(h) = static_url_host(u)
+        {
+            s.insert(h);
+        }
+    }
+    s
 }
 
 fn zones(m: &Manifest) -> BTreeSet<String> {
@@ -95,6 +125,13 @@ pub fn widens(old: &Manifest, new: &Manifest) -> Vec<Widening> {
             .difference(&old_zones)
             .cloned()
             .map(Widening::Zone),
+    );
+    let old_th = token_hosts(old);
+    out.extend(
+        token_hosts(new)
+            .difference(&old_th)
+            .cloned()
+            .map(Widening::TokenHost),
     );
     for a in &new.apps {
         let Some(lib) = &a.library else { continue };
