@@ -187,11 +187,36 @@ async fn decide(
     let Ok(old) = serde_json::from_value::<Manifest>(prev.manifest) else {
         return Ok(pending("permissions_widened"));
     };
+    // (FIX-107, SEC-15, 09 §10) A version is a first install when another publisher ships it,
+    // when it is older than the highest approved version, or when the id is a built-in's and the
+    // version does not come from the built-in source.
+    if prev.publisher != m.package.publisher {
+        return Ok(pending("publisher_changed"));
+    }
+    if source != Source::Builtin && plugins::has_builtin_source(&state.pool, &m.package.id).await? {
+        return Ok(pending("builtin_id_reserved"));
+    }
+    let highest = plugins::approved_versions(&state.pool, &m.package.id)
+        .await?
+        .into_iter()
+        .filter_map(|v| semver_key(&v))
+        .max();
+    match (semver_key(&m.package.version), highest) {
+        (Some(new), Some(top)) if new < top => return Ok(pending("version_downgrade")),
+        (None, _) => return Ok(pending("version_downgrade")),
+        _ => {}
+    }
     Ok(if widens(&old, m).is_empty() {
         activate
     } else {
         pending("permissions_widened")
     })
+}
+
+/// Ordering key of a semantic version: `(major, minor, patch, is_release)` — a pre-release
+/// sorts before its release. `None` when it does not parse.
+fn semver_key(v: &str) -> Option<(u64, u64, u64, bool)> {
+    aurora_registry::manifest::parse_semver(v)
 }
 
 /// Ingest `bytes`. Archive/signature failures return 422 (413 when oversize)

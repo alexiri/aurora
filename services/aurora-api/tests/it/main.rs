@@ -65,6 +65,7 @@ mod permission_matrix;
 mod placement;
 mod plugins;
 mod plugins_lifecycle;
+mod plugins_trust;
 mod plugins_upgrade;
 mod policy;
 mod preview_auth;

@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 
-use aurora_core::limits::{PACKAGE_ICON_MAX, PACKAGE_MAX, PACKAGE_SETUP_GUIDE_MAX};
+use aurora_core::limits::{
+    PACKAGE_ICON_MAX, PACKAGE_MANIFEST_MAX, PACKAGE_MAX, PACKAGE_SETUP_GUIDE_MAX,
+};
 use flate2::read::GzDecoder;
 use tar::EntryType;
 
@@ -24,6 +26,7 @@ pub const HOOKS_WASM: &str = "hooks.wasm";
 pub struct Limits {
     pub package_max: usize,
     pub decompressed_max: usize,
+    pub manifest_max: usize,
     pub icon_max: usize,
     pub guide_max: usize,
 }
@@ -33,6 +36,7 @@ impl Default for Limits {
         Self {
             package_max: PACKAGE_MAX,
             decompressed_max: PACKAGE_MAX.saturating_mul(4),
+            manifest_max: PACKAGE_MANIFEST_MAX,
             icon_max: PACKAGE_ICON_MAX,
             guide_max: PACKAGE_SETUP_GUIDE_MAX,
         }
@@ -157,6 +161,14 @@ impl Package {
                 continue;
             }
             let size = entry.size();
+            if name == MANIFEST && size > u64::try_from(limits.manifest_max).unwrap_or(u64::MAX) {
+                out.push(v(
+                    "manifest_too_large",
+                    MANIFEST,
+                    format!("plugin.yaml exceeds {} bytes", limits.manifest_max),
+                ));
+                continue;
+            }
             total = total.saturating_add(size);
             if total > cap {
                 out.push(v(

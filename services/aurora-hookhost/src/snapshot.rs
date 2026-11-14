@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use aurora_registry::snapshot::Snapshot;
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OnceCell, RwLock};
 
 use crate::SUPPORTED_CONTRACT;
 use crate::runtime::{CallError, Module, Runtime};
@@ -28,7 +28,7 @@ pub struct Catalog {
     key_id: Option<String>,
     runtime: Runtime,
     current: RwLock<Option<Arc<Loaded>>>,
-    modules: Mutex<HashMap<String, Module>>,
+    modules: Mutex<HashMap<String, Arc<OnceCell<Module>>>>,
     last_refresh: Mutex<Option<Instant>>,
 }
 
@@ -181,10 +181,23 @@ impl Catalog {
 
     async fn module_inner(self: &Arc<Self>, digest: &str) -> Result<Module, CallError> {
         let key = strip(digest).to_ascii_lowercase();
-        let mut cache = self.modules.lock().await;
-        if let Some(m) = cache.get(&key) {
-            return Ok(m.clone());
-        }
+        // (FIX-107) One cell per digest: the map lock is held only to read or insert the cell, so
+        // a cold pull/compile of one package never delays another package's call or a snapshot
+        // refresh; concurrent callers of the same digest share one load, and a failed load is
+        // retried by the next caller.
+        let cell = self
+            .modules
+            .lock()
+            .await
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        cell.get_or_try_init(|| self.load_module(digest, &key))
+            .await
+            .cloned()
+    }
+
+    async fn load_module(self: &Arc<Self>, digest: &str, key: &str) -> Result<Module, CallError> {
         let bytes = self
             .get(&format!("/internal/v1/registry/blobs/{digest}"), BLOB_MAX)
             .await
@@ -197,15 +210,13 @@ impl Catalog {
             return Err(CallError::new("internal", "hook module digest mismatch"));
         }
         let this = self.clone();
-        let module = tokio::task::spawn_blocking(move || this.runtime.compile(&bytes))
+        tokio::task::spawn_blocking(move || this.runtime.compile(&bytes))
             .await
             .map_err(|_| CallError::new("internal", "hook module compile failed"))?
             .map_err(|e| {
                 tracing::error!(error = ?e, "hook module compile failed");
                 CallError::new("internal", "hook module compile failed")
-            })?;
-        cache.insert(key, module.clone());
-        Ok(module)
+            })
     }
 
     /// Background poll: fast retries until the first snapshot, then every 60 s.

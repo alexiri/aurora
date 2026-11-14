@@ -21,6 +21,7 @@ permissions:
     connect.exchange: [auth.acme.example]
     token.mint: [auth.acme.example]
   context: [org_id]
+  token_hosts: [accounts.example.com]
 oauth_clients:
   - id: goog
     authorize_url: https://accounts.example.com/auth

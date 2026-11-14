@@ -248,6 +248,8 @@ pub const SUMMARY_FIELDS_MAX: u32 = 12;
 pub const SUMMARY_VALUE_MAX: usize = 200;
 pub const SUMMARY_TEXT_MAX: usize = 1_000;
 pub const PACKAGE_MAX: usize = 20 * MIB;
+/// (FIX-107) `plugin.yaml` of a package (the largest built-in is ~23 KiB).
+pub const PACKAGE_MANIFEST_MAX: usize = 256 * KIB;
 pub const PACKAGE_ICON_MAX: usize = 256 * KIB;
 pub const PACKAGE_SETUP_GUIDE_MAX: usize = 64 * KIB;
 pub const AGENT_SNIPPET_MAX: usize = 2_000;

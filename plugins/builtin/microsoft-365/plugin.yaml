@@ -1,12 +1,15 @@
 package:
   id: microsoft-365
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: Microsoft 365
   description: Outlook mail, calendar and OneDrive or SharePoint files through Microsoft Graph, with Microsoft Entra ID sign-in
   homepage: https://www.microsoft.com/microsoft-365
+permissions:
+  # The OAuth sign-in and token endpoints (FIX-107, SEC-17).
+  token_hosts: [login.microsoftonline.com]
 oauth_clients:
   - id: microsoft
     authorize_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize

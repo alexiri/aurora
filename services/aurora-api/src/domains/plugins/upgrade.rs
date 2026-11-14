@@ -144,7 +144,10 @@ pub async fn compute_for(
         total += 1;
         let entry = by_app.entry(c.app_id.clone()).or_default();
         entry.0 += 1;
-        if !major {
+        // (FIX-107, SEC-57) Every version is checked, not only majors: a minor upgrade that
+        // renames or repurposes a required credential field breaks the connection the same way.
+        // (A first activation has nothing to upgrade from.)
+        if from.is_none() {
             continue;
         }
         let Some(app) = manifest.apps.iter().find(|a| a.about.id == c.app_id) else {

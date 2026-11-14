@@ -284,7 +284,7 @@ overridden by the named configuration key (`15`).
 | `HOOK_WALL` | 15 s (connect, mint) / 1 s (`approval.summarize`) | — | 09 |
 | `HOOK_FETCH_MAX` | 16 calls, 1 MiB response each, 10 s each | — | 09 |
 | `SUMMARY_LIMITS` | title 120, ≤12 fields, value 200, text 1 000 chars | — | 09 |
-| `PACKAGE_MAX` | 20 MiB archive, icon PNG ≤ 256 KiB, setup guide ≤ 64 KiB | — | 09 |
+| `PACKAGE_MAX` | 20 MiB archive, decompressed ≤ 4 × `PACKAGE_MAX`, `plugin.yaml` ≤ 256 KiB (`PACKAGE_MANIFEST_MAX`, FIX-107), icon PNG ≤ 256 KiB, setup guide ≤ 64 KiB | — | 09 |
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |

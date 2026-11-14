@@ -1,6 +1,6 @@
 package:
   id: google-workspace
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -10,6 +10,8 @@ package:
 permissions:
   # Drive approval summaries are built by a hook. approval.summarize never has egress.
   hooks: [approval.summarize]
+  # The OAuth sign-in and token endpoints (FIX-107, SEC-17).
+  token_hosts: [accounts.google.com, oauth2.googleapis.com]
 oauth_clients:
   - id: google
     authorize_url: https://accounts.google.com/o/oauth2/v2/auth

@@ -153,6 +153,7 @@ fn widening(w: &Widening) -> PluginWidening {
         Widening::Context(c) => ("context", c.clone()),
         Widening::HostClaim(k) => ("host_claim", k.clone()),
         Widening::Zone(z) => ("zone", z.clone()),
+        Widening::TokenHost(h) => ("token_host", h.clone()),
         Widening::Library { app, host } => (
             "library",
             format!("{app} can serve a skill library: reads repository files from {host}"),

@@ -56,6 +56,10 @@ pub struct Permissions {
     pub egress: BTreeMap<Hook, Vec<String>>,
     #[serde(default)]
     pub context: Vec<String>,
+    /// (FIX-107, SEC-17) Hosts of static OAuth token or authorize endpoints that are not also a
+    /// claimed host. Exact hosts only; a change is a widening and is shown at approval.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub token_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -1,12 +1,15 @@
 package:
   id: atlassian
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: Atlassian
   description: Jira and Confluence on Atlassian Cloud (OAuth 2.0 3LO, one shared client) and on self-hosted Data Center (personal access token)
   homepage: https://www.atlassian.com
+permissions:
+  # The OAuth sign-in and token endpoints (FIX-107, SEC-17); the API host is claimed below.
+  token_hosts: [auth.atlassian.com]
 oauth_clients:
   - id: atlassian
     authorize_url: https://auth.atlassian.com/authorize

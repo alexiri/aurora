@@ -57,7 +57,10 @@ the compiled-in project key (publisher `aurora`) or a non-revoked
 `package.publisher`.
 
 Unsigned packages are refused unless `plugins.allow_unsigned = true` (dev only;
-the dashboard shows a standing warning banner to instance admins).
+the API logs a warning at startup). (FIX-107, D-187) **`key_id` is the canonical
+standard-base64 (padded) encoding of the 32-byte public key**, or `builtin`; any other
+spelling of the same key (URL-safe, unpadded) is `signature_malformed`, so revocation and
+`enable` can compare key ids as strings. A migration rewrote older rows.
 
 ## 3. Manifest contract v1 (`plugin.yaml`)
 
@@ -100,6 +103,9 @@ oauth_clients:
     authorize_url: https://accounts.google.com/o/oauth2/v2/auth
     token_url: https://oauth2.googleapis.com/token
     # authorize_url may be templated the same way (S-14)
+    # (FIX-107, SEC-17) Static token and authorize endpoints lie on a claimed host or a host
+    # listed in `permissions.token_hosts` (exact hosts, never reserved or private); a new token
+    # endpoint host is a widening and is shown at approval.
     # or tenant-derived: token_url: { template: "https://{connection.tenant_host}/oauth/token", zone: "*.zendesk.com" }
     pkce: true                    # S256
     client_auth: body             # body | basic
@@ -772,7 +778,14 @@ clamped to `SUMMARY_LIMITS`.
   host.
 - `log`: redacted (credential-looking values masked), ≤100 lines per call,
   ≤1 KiB each, emitted with package/app ids.
-- Metrics per package/hook: calls, errors, duration, fuel/epoch kills.
+- Metrics per package/hook: calls, errors, duration, epoch kills (the runtime uses epoch
+  interruption and the memory limit; it does not meter fuel).
+- (FIX-107, D-187) A cold module pull and compile is single-flight per digest and holds no
+  lock another digest or the snapshot refresh needs; the `connect.authorize` URL host must be
+  one the package declared (egress for `connect.authorize` / `connect.exchange`, a claimed
+  host of the app, or an OAuth client's authorize host); a hook call fails (`internal`) when
+  the OS random source cannot be read; `plugin.yaml` is at most `PACKAGE_MANIFEST_MAX`
+  (256 KiB, `manifest_too_large`) and the decompressed package at most 4 × `PACKAGE_MAX`.
 - Runs as its own process (second isolation layer). Replicas: any number.
 
 ## 9. Registry snapshot
@@ -822,7 +835,13 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   context variable, new host claim, new reserved-adjacent zone) require
   instance-admin approval. Upgrades with an identical or narrower permission
   set activate automatically; the previous version stays active until the new
-  one is.
+  one is. (FIX-107, D-187) A version is **also a first install** — and needs
+  instance-admin approval, with the reason shown on the approval screen — when its
+  `package.publisher` differs from the installed package's (`publisher_changed`),
+  when it is lower than the highest approved version of that id
+  (`version_downgrade`), or when the package id belongs to the built-in source and the
+  version does not (`builtin_id_reserved`). Widening includes a new static token-endpoint
+  host or `permissions.token_hosts` entry (SEC-17).
 - **Trust revocation**: revoking a key disables every package it signed; their
   connections stop injecting and show why; nothing is deleted.
 - **App ids and tool ids are immutable**; credential fields may only be added
@@ -832,7 +851,10 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   Phase 0–2 left this undefined (connections would simply fail at injection time
   with `credential_unavailable`). A *major upgrade* is an activation of version
   *N.x* superseding a previously active *M.y* of the same package with `N > M`
-  (semver major). Upgrades are **not refused** while connections exist (unlike app
+  (semver major). (FIX-107, SEC-57) **The check below runs for every version that
+  supersedes an active one, not only for majors**: a minor that renames or repurposes a
+  required credential field is held (`breaks_connections`) and flips the failing
+  connections on approval exactly as a major does. Upgrades are **not refused** while connections exist (unlike app
   removal). In the **same transaction as the activation**:
   1. For every app of the package present in the new version, every live
      `app_connections` row of that app (any org, any scope; statuses `active` and

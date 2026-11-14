@@ -269,6 +269,9 @@ pub async fn revoke_trusted_key(
 }
 
 /// Disable every live package signed by `public_key`; returns `(id, was_active)`.
+///
+/// The comparison ignores the base64 spelling (URL-safe, unpadded) so a row written before ids
+/// were canonical is still found (FIX-107, SEC-15).
 pub async fn disable_signed_by(
     conn: &mut PgConnection,
     public_key: &str,
@@ -277,13 +280,42 @@ pub async fn disable_signed_by(
     Ok(sqlx::query_as(
         "UPDATE plugin_packages p SET status = 'disabled', status_reason = $2, updated_at = now()
          FROM (SELECT id, status FROM plugin_packages
-               WHERE signer_key_id = $1
+               WHERE translate(rtrim(signer_key_id, '='), '-_', '+/')
+                     = translate(rtrim($1, '='), '-_', '+/')
                  AND status IN ('pending_approval','active','superseded') FOR UPDATE) o
          WHERE p.id = o.id RETURNING p.id, (o.status = 'active')",
     )
     .bind(public_key)
     .bind(reason)
     .fetch_all(conn)
+    .await?)
+}
+
+/// Every approved version string of `package_id` (any status but never-approved ones), for the
+/// downgrade check (FIX-107).
+pub async fn approved_versions<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT version FROM plugin_packages WHERE package_id = $1 AND approved_at IS NOT NULL",
+    )
+    .bind(package_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// `true` when some stored version of `package_id` came from the built-in source (FIX-107).
+pub async fn has_builtin_source<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM plugin_packages
+                        WHERE package_id = $1 AND source = 'builtin' AND status <> 'invalid')",
+    )
+    .bind(package_id)
+    .fetch_one(exec)
     .await?)
 }
 

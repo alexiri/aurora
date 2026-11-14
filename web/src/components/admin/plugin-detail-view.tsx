@@ -27,6 +27,13 @@ const SECTIONS = ["hooks", "egress", "context", "claims"] as const;
 // "conversions" joins it when the version converts agent grants (P4-GRANTS, D-123, 09 §10).
 type Section = (typeof SECTIONS)[number] | "impact" | "conversions";
 
+// Why a version waits for an instance admin although it may look like a routine upgrade (FIX-107).
+const REASON_TEXT: Record<string, string> = {
+  publisher_changed: "A different publisher ships this version of an installed package. Approve it only if you expect the change of publisher.",
+  version_downgrade: "This version is older than one you already approved. Approving it rolls the package back.",
+  builtin_id_reserved: "This package id belongs to a built-in package, and this version does not come from the built-in source.",
+};
+
 function reconnectLine(n: number): string {
   return `${n} ${n === 1 ? "connection" : "connections"} will need reconnecting`;
 }
@@ -95,7 +102,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
     toggle(s);
   };
   const impact = plugin.impact ?? null;
-  const majorImpact = impact !== null && impact.major_upgrade;
+  const majorImpact = impact !== null && (impact.major_upgrade || impact.connections_needing_reauth > 0);
   const converting = impact !== null && (impact.grants_to_convert ?? 0) > 0;
   const required: Section[] = [...SECTIONS, ...(majorImpact ? (["impact"] as const) : []), ...(converting ? (["conversions"] as const) : [])];
   const allSeen = required.every((s) => seen.has(s));
@@ -147,6 +154,9 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           <dd>
             <Badge tone={statusTone(plugin.status)}>{plugin.status.replace("_", " ")}</Badge>
             {plugin.status_reason ? <span className="ml-2 text-ink-2">({plugin.status_reason})</span> : null}
+            {plugin.status_reason && REASON_TEXT[plugin.status_reason] ? (
+              <p className="mt-1 text-ink-2">{REASON_TEXT[plugin.status_reason]}</p>
+            ) : null}
           </dd>
           <dt className="text-muted">Publisher</dt>
           <dd className="text-ink">{plugin.publisher}</dd>
@@ -196,7 +206,8 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
         <Notice tone="danger" role="status" aria-label="Upgrade impact">
           <h2 className="font-medium">{reconnectLine(impact.connections_needing_reauth)}</h2>
           <p>
-            This is a major upgrade{impact.from_version ? ` from ${impact.from_version}` : ""} that changes the credential
+            {impact.major_upgrade ? "This is a major upgrade" : "This upgrade"}
+            {impact.from_version ? ` from ${impact.from_version}` : ""} that changes the credential
             fields of {impact.connections_needing_reauth === 1 ? "a connection" : "these connections"}. Approving marks
             {impact.connections_needing_reauth === 1 ? " it" : " them"} as needing reconnection; agents using{" "}
             {impact.connections_needing_reauth === 1 ? "it" : "them"} are refused until a user reconnects.
