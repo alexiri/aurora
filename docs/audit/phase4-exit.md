@@ -23,8 +23,8 @@ Evidence is at suite level: the scripts set every gate these tests check, and ea
 |---|---|
 | F-1 | Fixed on master `73d07309`. Verified: `upgrade.sh` from `a2d921ff` gives 38 passed, 0 failed. |
 | F-2 | Fixed on master `d36213d2`. The validator was wrong; the test now fails on the old rule. |
-| F-3 (medium) | Open. FIX-148 item 1 fixes it before sign-off. |
-| F-4, F-5, F-6 (low) | Open. FIX-148 items 2–4. |
+| F-3 (medium) | Fixed: FIX-148 item 1 (`3ad68f99`, merged `53a5c9c7`). |
+| F-4, F-5, F-6 (low) | Fixed: FIX-148 items 2–4 (merged `53a5c9c7`). |
 
 **Deviations accepted:**
 - Performance budgets are run by the coordinator on an idle machine and recorded separately (perf-only-when-idle).
@@ -32,6 +32,8 @@ Evidence is at suite level: the scripts set every gate these tests check, and ea
 - These were not run: a live terminal session in a browser, a browser preview over wildcard TLS, real IdP consoles.
 
 Phase 4 closes when FIX-148 merges and its gates pass. The coordinator records that on the PROGRESS row AUDIT-004.
+
+**Closed 2026-11-14:** FIX-148 merged (`53a5c9c7`). F-3..F-6 are fixed, with failing-first ITs for F-3 and F-6. F-4's Previews line sits on Admin › Setup, because there is no Overview page; the docs are amended. The lane gate is green. **Phase 4 verdict: pass.**
 
 ---
 
