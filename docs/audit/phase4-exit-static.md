@@ -11,8 +11,10 @@ database of the sqlx test harness (which makes and drops its own scratch databas
 
 ## Verdict for this half
 
-**Steps 5 and 11: green with findings. Steps 6 and 9: statically complete, execution cross-check pending** — the run
-lane's `passed-tests.txt` had not arrived when I committed (see [What is left](#what-is-left)).
+**Steps 5 and 11: green with findings. Steps 6 and 9: every cited unit/service test exists and ran green in step 2;
+nine cited e2e tests are "pending e2e evidence" and two test files are not compiled (F-S12).** The cross-check used
+the run lane's `passed-tests.txt` (2400 names, nextest: 2400 passed, 0 failed, 1 skipped = the `#[ignore]`d
+`aurora-crypto::crypto$print_fixture`, which no SEC row cites). See [Execution cross-check](#execution-cross-check).
 
 - Step 5 is fully green: OpenAPI drift test passes, `spec_schema.json` is up to date, the permission matrix passes with
   `INCONCLUSIVE rows: 0`, all 67 migrations are unique, ordered and apply cleanly on an empty database (second run a
@@ -96,8 +98,9 @@ status per `docs/17-security.md`. "Cited" is the number of backticked identifier
 "fns found" is how many of them are a test function (`fn` in a `.rs` file or a `test()`/`it()` title) somewhere in the
 repository. The rest are file basenames, error codes or words (all 150-odd unresolved identifiers were read; the only
 real misses are F-S1, F-S2, both fixed). The check is by name across the repo, not by cited file, so a test moved to
-another file would still count. **Ran-and-passed: pending `passed-tests.txt`** (column filled by
-my scratch script `crosscheck.py <passed-tests.txt>`, kept outside the repo per the lane's Owns).
+another file would still count. **The "Ran and passed" cells below that read `pending` were written before the
+list arrived; the outcome is in [Execution cross-check](#execution-cross-check)** (my scratch script
+`crosscheck.py <passed-tests.txt>`, kept outside the repo per the lane's Owns).
 
 | Row | Task | docs/17 status | coverage status | Cited | fns found | Ran and passed | Remark |
 |-----|------|----------------|-----------------|------:|----------:|----------------|--------|
@@ -155,7 +158,7 @@ reproducible; the run lane's list decides whether they ran.
 
 `docs/18` describes most phase-4 suites in prose and cites test *files*; I mapped each suite to its files and counted
 test attributes (`#[test]`, `#[tokio::test]`, `#[sqlx::test]`) per file. Ran-and-passed is checked per file/module
-against `passed-tests.txt` (pending).
+against `passed-tests.txt` (done: see the Step 9 result under Execution cross-check).
 
 | Suite (docs/18) | Test modules (count of test attributes) |
 |-----------------|-------------------------------------------|
@@ -222,6 +225,7 @@ Dependabot (`.github/dependabot.yml`) is outside my four steps and is OPS-021, p
 | ID | Sev | Finding | Proposed task |
 |----|-----|---------|---------------|
 | F-S3 | medium | **REVIEW-5 reopenings are not traceable in `docs/tests/security-coverage.md`**: SEC-01, 04, 17 (FIX-104), 19 (FIX-112), 24 (FIX-110), 45 (FIX-109), 62 (FIX-087), 68 (FIX-085), 80 (FIX-097), 83 (FIX-096), 85 (FIX-088/090) cite none of the fix's tests; SEC-02/15/25/47/49/57/60/71/73/81/84 cite 1–3. The tests exist; the rows would let a future reader believe the invariant rests on pre-review tests only. | Doc task: add each fix's invariant tests to its rows, after the passed-list check shows they ran |
+| F-S12 | **high** (test hygiene) | `services/aurora-api/tests/it/skills_library.rs` (2 tests, the P4-GSL/SEC-83 tool-enforcement and projection suite named in `docs/18`) and `skills_workspace.rs` (6 tests) are not `mod`-declared in `tests/it/main.rs`: they are dead code, never compiled or run, so nothing proves what they claim. Found by comparing source test counts with the nextest list; no other orphan file in the it-binaries of api, gateway, relay, supervisor, runner, registry, counters | Fix task: add the `mod` lines, make them pass, add a guard that every file in `tests/it/` is declared |
 | F-S7 | medium | Tracker is stale: FEATURES rows `P4/R5§approval-recheck`, `§params-doubt` `planned` (merged), `sup/12§pty-ctty` `reopened` (fixed), RFE-011b rows say "phase 4" | Coordinator edit of FEATURES/PROGRESS (not in my ownership) |
 | F-S5 | low | `security-coverage.md` rows SEC-63/64/65-remainder/74/75/76 still labelled "(phase 4 …)" / `pending (P4-…)`; their docs/17 rows say phase 5 | Doc relabel |
 | F-S6 | low | Operator docs missing for connector-host tokens (C-690..692), instance audit log (C-638), onboarding/setup wizard, `custom_only` (operator view) | Doc task |
@@ -247,17 +251,60 @@ All doc-only, one commit.
   ("(phase 4)" → phase 5, D-138 for SSH terminator items); `docs/operator/outage-and-alerts.md` three alert rows
   relabelled phase 5 with "the metric does not exist yet".
 
+## Execution cross-check
+
+Source: `/home/alex/orca/workspaces/aurora/audit-run/docs/audit/phase4-logs/passed-tests.txt`, same audited commit
+(format `crate::binary$path::name`; nextest, workspace minus the two e2e crates). Names match by the last path segment.
+
+**Step 6.** Of 452 test-function identifiers cited by the 39 SEC rows (SEC-62..87 and the 13 reopened older rows),
+**434 are in the list**. The 18 that are not break down as: 9 are real tests in the e2e crates (below), the rest are
+not tests (file basenames and helper words such as `invalidation`, `secrets_migrate`, `generation`, `credentials`,
+`conversation` that my name heuristic picked up; each checked against source). **No cited unit/service test is
+missing from the list, and the list has 0 failures.** Rows citing no executable test: SEC-75, SEC-76 (phase 5);
+SEC-63/64/65-remainder/74 cite names that do not exist yet (phase 5). Phase-4 rows with every cited unit/service test passed:
+SEC-62, 65a, 66, 67, 68, 69, 70, 71, 72, 73, 77, 78, 79, 80, 81, 82, 83, 84, 85, 87, 04, 15, 17, 24, 25, 47, 49, 57.
+
+**Pending e2e evidence** (cited by a SEC row, live in `tests/e2e-hosted`, `tests/e2e-gateway` or the kind suite, so
+not in the nextest list; the coordinator should match them to the run lane's step 7/8 logs):
+
+| SEC row | Cited e2e test | Suite / script |
+|---------|----------------|----------------|
+| SEC-01, SEC-02 | `s8_security_probes` | `tests/e2e-hosted/tests/hosted.rs` (`hosted.sh`) |
+| SEC-45 | `s10_freeze_aborts_the_turn_drops_the_held_request_parks_the_sandbox_and_resumes` | `hosted.rs` |
+| SEC-60 | `s11_database_lane_psql_service_read_allowed_write_needs_approval` | `hosted.rs` |
+| SEC-60 | `d1_database_lane_login_read_write_approval_ddl_refused` | `tests/e2e-gateway/tests/database.rs` (`gateway.sh`) |
+| SEC-66 | `s12_codex_agent_answers_through_the_gateway_and_the_sandbox_holds_no_credential` | `hosted.rs` |
+| SEC-19 | `s1_dm_answer_and_gateway_approval_from_card`, `s3_verified_email_autolink_vs_signin_link`, `s5_send_message_action_approval_card` | `tests/e2e-hosted/tests/channels.rs` (`channels.sh`) |
+| SEC-67 | `s19_custom_only_activation_is_seen_consistently_by_both_gateways` | `tests/e2e-gateway/tests/gateway.rs` (`gateway.sh`) |
+
+Gated cases: the list marks a gated test "passed" when its gate was off and it returned early. SEC-62's Redis cases
+(`AURORA_TEST_REDIS=1`), the Vault cases (SEC-11/61) and podman-gated cases therefore need the gated run (CI
+`gated-suites` / run lane step 3) as separate evidence (F-S11).
+
+**REVIEW-5 fixes that reopened a row** (tests each fix added under `*/tests/*`, 241 function names incl. helpers):
+153 are in the list by name; **all 88 others are helpers (`rig`, `send`, `seal`, …), not tests** — I checked each against
+its `#[test]` attribute. So every new test of FIX-080, 082..085, 087, 088, 090, 091, 094..097, 104, 107, 109, 110,
+112, 118 ran and passed in step 2. (Whether a *new test fails without its fix* is not re-proved here; the briefs
+claim it, and AUDIT-004 does not re-run fixes backwards.)
+
+**Step 9.** Per-module comparison of tests in the source with tests in the list (equal everywhere):
+SCIM 89/89 (`scim_protocol` 13, `auth` 10, `scope` 9, `link` 19, `deprovision` 20, `groups` 10, `idp_replay` 5,
+`counters` 3); groups: api `groups` 20, `groups_idp` 11, gateway `groups` 6; managed connectors: `connectors_managed` 27,
+`connectors_host_tokens` 6; counters: `aurora-counters` 16, api `counters` 9, gateway `pipeline` 26; harness:
+`harness_selection` 9, `model_readiness` 6, `fix_029` 13; grants: `grants_custom_only` 9, `grants_bulk` 7,
+`grants_connections` 3, policy corpus 2 (+ gateway `params_matching` 6); previews: api `previews` 22, `preview_auth`
+26, `aurora-relay` 73 across 8 binaries; terminal: api `terminal` 24, supervisor `pty_env_probe` 12, `pty_leak` 7,
+`streams` 11; git library: `skill_library` 34, registry `library` 12; onboarding 3, placement 26, `oidc_roles` 23.
+**Exception: `services/aurora-api/tests/it/skills_library.rs` (2 tests) and `skills_workspace.rs` (6 tests) are not
+declared in `tests/it/main.rs`, so they are never compiled or run (F-S12).** The first is the file that `docs/18 §Git
+skill library` describes (read-only enforcement through every tool, projection like manual skills).
+The "Dashboard", Playwright and kind members of the suites belong to the run lane's steps 4, 7, 8.
+
 ## What is left
 
-1. **`passed-tests.txt`** from `audit-run`: run
-   `python3 -I <scratchpad>/crosscheck.py <path to passed-tests.txt>` from this worktree's root
-   (`/tmp/claude-1000/-home-alex-orca-workspaces-aurora-audit-static/5329c86e-c40e-400d-8630-3a5609c9d8ef/scratchpad/crosscheck.py`). It prints,
-   per SEC row and per reopening fix, `ran-and-passed=n/m` and the names not in the list. Names that are in
-   the repository but not in the list are "not executed" (candidates: Redis/Vault/podman-gated cases, `#[ignore]`d
-   tests) — each is then a finding or an owner-accepted gap. Suites in step 9 are checked the same way, by module.
-2. The step-9 e2e members of the suites (hosted, kind k1..k6, gateway.sh s19, channels, conformance) are evidenced
-   by the run lane's steps 7/8, not here.
-3. Nothing was run on the Vault/Redis/podman gates; I did not run any e2e script, kind, or `scripts/perf/*`.
+1. The coordinator matches the nine e2e tests in the table above to the run lane's step-7/8 logs.
+2. F-S12 (orphan test files) needs a fix task: declare the modules, run them, fix what then fails.
+3. I did not run any e2e script, kind, Vault/Redis/podman-gated suite or `scripts/perf/*`.
 
 ## Leftovers
 
