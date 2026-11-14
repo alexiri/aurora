@@ -330,7 +330,7 @@ A running sandbox is **kept awake** if any of:
 - an active turn or `joining` follow-up exists;
 - a **busy** process (recent output or CPU) on the current boot, or an **armed
 watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
-- (phase 4) a lease-current SSH session;
+- (phase 5, D-138) a lease-current SSH session;
 - (phase 4, P4-PRV-1, D-145) a **preview in use**: `preview_active_until > now()` and fewer than
   `PREVIEW_AWAKE_CAP` (4 h) since the first preview heartbeat of this boot (`§Port previews`);
 - (phase 4, P4-TERM, D-161) a **terminal session in use**: `terminal_active_until > now()` and
