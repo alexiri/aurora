@@ -1,6 +1,5 @@
 "use client";
 
-import { useParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -14,17 +13,18 @@ import { errorMessage } from "@/lib/api/errors";
 import {
   appIsCustomOnly,
   appKeys,
-  connectWindowPath,
-  openConnectWindow,
   useApp,
   useApps,
-  useConnectedListener,
+  useConnectChannel,
   useConnections,
   useDeleteConnection,
   usePatchConnection,
   type Connection,
   type CredScope,
 } from "@/lib/api/apps";
+
+import { ConnectDialog } from "./connect-dialog";
+import { useUrlDialog } from "./use-url-dialog";
 
 type ListScope = CredScope & { kind: "workspace" | "organization" };
 
@@ -39,15 +39,15 @@ function ConnectionRow({
   scope,
   c,
   canOwn,
-  org,
-  ws,
+  onReconnect,
   customOnly = false,
 }: {
   scope: ListScope;
   c: Connection;
   canOwn: boolean;
-  org?: string;
-  ws?: string;
+  /** Opens the Reconnect dialog; absent where a reconnect is not offered (organization-level connections). */
+  onReconnect?: () => void;
+
   /** The app's manifest allows only custom grants (`app_restrictions.custom_only`, P4-GRANTS). */
   customOnly?: boolean;
 }) {
@@ -91,8 +91,8 @@ function ConnectionRow({
                 {c.access === "read" ? "Allow writes" : "Make read-only"}
               </Button>
             ) : null}
-            {org && ws && c.status !== "orphaned" ? (
-              <Button size="sm" variant="outline" aria-label={`Reconnect ${c.label}`} onClick={() => openConnectWindow(connectWindowPath(org, ws, c.app_id, c.id))}>
+            {onReconnect && c.status !== "orphaned" ? (
+              <Button size="sm" variant="outline" aria-label={`Reconnect ${c.label}`} onClick={onReconnect}>
                 Reconnect
               </Button>
             ) : null}
@@ -197,15 +197,16 @@ function ConnectionRow({
 }
 
 export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: boolean }) {
-  const params = useParams<{ org?: string; ws?: string }>();
   const list = useConnections(scope);
+  // The Reconnect dialog (D-272): opened by a row's button or the deep link `?tab=connections&reconnect=<id>`.
+  const [reconnecting, setReconnecting] = useUrlDialog("reconnect");
   // The catalogue says which apps are custom-access-only (`app_restrictions`); the badge is a hint, so a
   // failing or pending catalogue just shows none.
   const apps = useApps(scope.kind === "workspace" ? scope.id : undefined);
   const customOnly = new Set((apps.data?.items ?? []).filter((a) => appIsCustomOnly(a)).map((a) => a.app_id));
   const qc = useQueryClient();
   const refresh = useCallback(() => void qc.invalidateQueries({ queryKey: appKeys.connections(scope) }), [qc, scope]);
-  useConnectedListener(refresh);
+  useConnectChannel(refresh);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
   if (list.data.items.length === 0)
@@ -218,20 +219,46 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
         A connection links your account in an app, such as GitHub, so an agent can act there.
       </EmptyState>
     );
+  const items = list.data.items;
+  const target = reconnecting ? items.find((c) => c.id === reconnecting) : undefined;
+  const canReconnect = canOwn && scope.kind === "workspace";
   return (
-    <ul className="space-y-2" aria-label="Connections">
-      {list.data.items.map((c) => (
-        <ConnectionRow
-          key={c.id}
-          scope={scope}
-          c={c}
-          canOwn={canOwn}
-          customOnly={customOnly.has(c.app_id)}
-          org={scope.kind === "workspace" ? params.org : undefined}
-          ws={scope.kind === "workspace" ? params.ws : undefined}
+    <>
+      {reconnecting && !(target && target.status !== "orphaned" && canReconnect) ? (
+        <Notice tone="pending" role="status" className="mb-3">
+          {!target
+            ? "That connection no longer exists, or it is not in this workspace."
+            : !canReconnect
+              ? `Only a workspace owner can reconnect ${target.label}.`
+              : `${target.label} cannot be reconnected: its app was removed.`}
+        </Notice>
+      ) : null}
+      <ul className="space-y-2" aria-label="Connections">
+        {items.map((c) => (
+          <ConnectionRow
+            key={c.id}
+            scope={scope}
+            c={c}
+            canOwn={canOwn}
+            customOnly={customOnly.has(c.app_id)}
+            onReconnect={scope.kind === "workspace" ? () => setReconnecting(c.id) : undefined}
+          />
+        ))}
+      </ul>
+      {target && target.status !== "orphaned" && canReconnect ? (
+        <ConnectDialog
+          appId={target.app_id}
+          name={target.app_id}
+          workspaceId={scope.id}
+          orgId={target.org_id}
+          reconnect={target.id}
+          onClose={() => {
+            setReconnecting(null);
+            refresh();
+          }}
         />
-      ))}
-    </ul>
+      ) : null}
+    </>
   );
 }
 

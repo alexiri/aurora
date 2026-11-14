@@ -2638,7 +2638,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** OAuth callback: HTML page posting `aurora:connected` to the opener, or `error=<code>`. */
+        /**
+         * OAuth callback: HTML page posting `aurora:connected` on the `aurora-connect` BroadcastChannel, or
+         *     `aurora:connect-failed` and `error=<code>` (C-842).
+         */
         get: operations["oauthCallback"];
         put?: never;
         post?: never;

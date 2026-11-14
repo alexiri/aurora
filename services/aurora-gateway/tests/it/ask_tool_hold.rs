@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use aurora_config::{LlmSection, SecretsSection};
-use aurora_db::repo::gateway::{AppConnectionRow, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{AppConnectionRow, InstanceHostRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
@@ -74,10 +74,14 @@ impl CredentialResolver for Static {
 struct Src {
     ws: ScopePolicyRows,
     conns: Vec<AppConnectionRow>,
+    instances: Vec<InstanceHostRow>,
 }
 
 #[async_trait]
 impl PolicySource for Src {
+    async fn instances(&self, _org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
+        Ok(self.instances.clone())
+    }
     async fn scope_policy(&self, _o: Uuid, ws: Option<Uuid>) -> Result<ScopePolicyRows, String> {
         Ok(if ws.is_some() {
             self.ws.clone()
@@ -166,19 +170,18 @@ struct Env {
     pool: sqlx::PgPool,
 }
 
+/// The policy rows a test world serves: the workspace's rules, its connections and the registered instances.
+struct Rows {
+    ws: ScopePolicyRows,
+    conns: Vec<AppConnectionRow>,
+    instances: Vec<InstanceHostRow>,
+}
+
 async fn start(pool: sqlx::PgPool) -> Env {
-    let w = World {
-        org: Uuid::now_v7(),
-        ws: Uuid::now_v7(),
-        agent: Uuid::now_v7(),
-    };
-    let mem = Arc::new(MemoryStore::new("mem"));
-    mem.preload("c1", None, br#"{"tok":"T0K"}"#);
-    mem.allow_reference(w.org, "*");
-    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
-    let keyring = Arc::new(aurora_crypto::Keyring::parse(&format!("k1:{key}"), "k1").unwrap());
-    let mut reg = StoreRegistry::from_config(&SecretsSection::default(), keyring).unwrap();
-    reg.register(mem);
+    start_with(pool, snapshot(), demo_rows).await
+}
+
+fn demo_rows(w: &World) -> Rows {
     let conn = AppConnectionRow {
         id: Uuid::now_v7(),
         workspace_id: Some(w.ws),
@@ -210,9 +213,31 @@ async fn start(pool: sqlx::PgPool) -> Env {
         json!({"name":"d2","enabled":true,"identities":[],"action":"allow","require_approval":true,
                "targets":[{"type":"connection","id":conn.id,"tools":["write_item"]}]}),
     ));
-    let src = Arc::new(Src {
+    Rows {
         ws,
         conns: vec![conn],
+        instances: vec![],
+    }
+}
+
+async fn start_with(pool: sqlx::PgPool, snap: Value, mk: impl FnOnce(&World) -> Rows) -> Env {
+    let w = World {
+        org: Uuid::now_v7(),
+        ws: Uuid::now_v7(),
+        agent: Uuid::now_v7(),
+    };
+    let mem = Arc::new(MemoryStore::new("mem"));
+    mem.preload("c1", None, br#"{"tok":"T0K"}"#);
+    mem.allow_reference(w.org, "*");
+    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let keyring = Arc::new(aurora_crypto::Keyring::parse(&format!("k1:{key}"), "k1").unwrap());
+    let mut reg = StoreRegistry::from_config(&SecretsSection::default(), keyring).unwrap();
+    reg.register(mem);
+    let rows = mk(&w);
+    let src = Arc::new(Src {
+        ws: rows.ws,
+        conns: rows.conns,
+        instances: rows.instances,
     });
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let up = l.local_addr().unwrap();
@@ -227,7 +252,7 @@ async fn start(pool: sqlx::PgPool) -> Env {
         }
     });
     let store = SnapshotStore::new();
-    store.install(parse("h1", snapshot()).unwrap());
+    store.install(parse("h1", snap).unwrap());
     let llm = Arc::new(
         aurora_llm::ProviderRegistry::from_config(&LlmSection {
             enabled_providers: vec![],
@@ -380,4 +405,89 @@ async fn ask_tool_holds_then_approval_proceeds_and_denial_refuses() {
     assert_eq!(r.status, 403, "{}", r.body);
     assert!(r.body.contains("manual_approval_denied"), "{}", r.body);
     assert!(r.body.contains(&id2.to_string()), "{}", r.body);
+}
+
+/// (FIX-145 follow-up, D-231) For an instance served under a base path (`localhost` + `/jira`), the
+/// approval summary's path fields (and `{path.N}` in its link) count from the **app path** (after the base path),
+/// so the manifest's segment numbers mean the same under `/jira` as on a host of their own; the
+/// approval's own display keeps the full request path.
+#[tokio::test]
+async fn approval_summary_path_segments_count_from_the_app_path_under_a_base_path() {
+    let db = TestDb::new().await;
+    let inst = Uuid::now_v7();
+    let mut app = json!({
+        "app_id": "jira", "package_id": "pkg", "about": {"id": "jira", "name": "jira"},
+        "credentials": [{"name": "tok", "secret": true, "optional": false}],
+        "metadata": [], "connect": [], "token": null,
+        "tools": {"write": {"items": [
+            {"id": "comment", "name": "w", "host": "{instance}", "path": "/rest/api/2/issue/*/comment", "methods": ["POST"]}
+        ]}},
+        // App-path segments: 1 rest, 2 api, 3 2, 4 issue, 5 <key>. Under `/jira` the full path has one more.
+        "approvals": {"comment": {
+            "title": "Comment on an issue",
+            "fields": [{"label": "Issue", "source": "path", "segment": 5}]
+        }},
+        "agent": null, "database": null
+    });
+    app["instances"] = json!({"label": "jira"});
+    let mut snap = json!({
+        "format": 1, "contract": 1,
+        "packages": [{"package_id": "pkg", "version": "1.0.0", "digest": "d", "publisher": "p",
+                      "hooks_digest": null, "egress": {}, "context": ["org_id"]}],
+        "oauth_clients": [], "apps": [app], "hosts": [], "reserved_hosts": []
+    });
+    snap["instance_hosts"] = json!([{
+        "host": "{instance}", "path_prefix": null, "app_id": "jira", "claim_status": "active",
+        "tenant": null, "rewrite_host": null, "inject": [{"bearer": "{credentials.tok}"}],
+        "finalize": null, "transform": null, "intercept": null, "passthrough": []
+    }]);
+    let env = Arc::new(
+        start_with(db.pool().clone(), snap, move |w| {
+            let mut r = demo_rows(w);
+            r.conns[0].app_id = "jira".into();
+            r.conns[0].instance_id = Some(inst);
+            let cid = r.conns[0].id;
+            r.ws.derived = vec![(
+                Uuid::now_v7(),
+                json!({"name":"d","enabled":true,"identities":[],"action":"allow","require_approval":true,
+                       "targets":[{"type":"connection","id":cid,"tools":["comment"]}]}),
+            )];
+            r.instances = vec![InstanceHostRow {
+                id: inst,
+                app_id: "jira".into(),
+                host: "localhost".into(),
+                base_path: Some("/jira".into()),
+            }];
+            r
+        })
+        .await,
+    );
+    let e2 = env.clone();
+    let t = tokio::spawn(async move {
+        let mut s = crate::common::connect(e2.proxy).await;
+        let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
+        let req = format!(
+            "POST http://localhost:{port}/jira/rest/api/2/issue/KEY-7/comment HTTP/1.1\r\nHost: localhost:{port}\r\nProxy-Authorization: Basic {auth}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}",
+            port = e2.up.port()
+        );
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut out = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut out)).await;
+        String::from_utf8_lossy(&out).into_owned()
+    });
+    let (id, summary, path): (Uuid, Value, String) = {
+        let id = pending(&env.pool, env.w.ws).await;
+        sqlx::query_as("SELECT id, summary, path FROM approvals WHERE id = $1")
+            .bind(id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap()
+    };
+    // `{path.5}` is the issue key (app path), not `issue` (full path, where the base path is segment 1).
+    assert_eq!(summary["fields"][0]["value"], "KEY-7", "{summary}");
+    // The approval's own display keeps the full path.
+    assert_eq!(path, "/jira/rest/api/2/issue/KEY-7/comment");
+    decide(&env.pool, id, "denied", env.w.ws).await;
+    let out = t.await.unwrap();
+    assert!(out.contains("manual_approval_denied"), "{out}");
 }

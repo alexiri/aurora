@@ -48,7 +48,8 @@ async fn connect(
     Ok(r)
 }
 
-/// OAuth callback: HTML page posting `aurora:connected` to the opener, or `error=<code>`.
+/// OAuth callback: HTML page posting `aurora:connected` on the `aurora-connect` BroadcastChannel, or
+/// `aurora:connect-failed` and `error=<code>` (C-842).
 #[utoipa::path(
     get, path = "/oauth/callback", operation_id = "oauthCallback", tag = "connections",
     responses((status = 200, description = "HTML page", content_type = "text/html"),
@@ -62,17 +63,15 @@ async fn callback(
 ) -> Response {
     let cookie = cookie_value(&headers, flow::COOKIE);
     let Ok(caller) = caller else {
-        return page::error("oauth_state_invalid");
+        return page::error("oauth_state_invalid", None);
     };
     // Fragment-mode providers: no query yet, the bridge re-submits the fragment.
     if q.is_empty() && cookie.is_some() {
         return page::bridge();
     }
     match service::callback(&state, &caller, &q, cookie).await {
-        Ok(service::Done::Connected(id, missing)) => {
-            let origin =
-                crate::http::csrf::origin_of(&state.config.external_url).unwrap_or_default();
-            page::connected(id, &missing, &origin)
+        Ok(service::Done::Connected(id, missing, landing)) => {
+            page::connected(id, &missing, &landing)
         }
         Ok(service::Done::Redirect { url, cookie }) => {
             let mut r = StatusCode::FOUND.into_response();
@@ -88,7 +87,7 @@ async fn callback(
             h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             r
         }
-        Err(code) => page::error(code),
+        Err(f) => page::error(f.code, f.landing.as_ref()),
     }
 }
 
