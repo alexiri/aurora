@@ -4,7 +4,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 dev-db:
     podman start aurora-dev-pg 2>/dev/null || podman run -d --name aurora-dev-pg \
       -e POSTGRES_USER=aurora -e POSTGRES_PASSWORD=aurora -e POSTGRES_DB=aurora \
-      -p 127.0.0.1:55432:5432 docker.io/library/postgres:16
+      -p 127.0.0.1:55432:5432 docker.io/library/postgres:16 -c max_connections=300
 
 # Cargo profile for the developer loop (I-36): incremental on for workspace members. Set AURORA_DEV_PROFILE=dev for the plain dev profile.
 profile := env("AURORA_DEV_PROFILE", "dev-fast")

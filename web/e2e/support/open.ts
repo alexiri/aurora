@@ -17,6 +17,9 @@ export async function openRoute(page: Page, path: string, scheme: Scheme) {
   await page.locator("h1, h2").first().waitFor();
   await page.waitForLoadState("networkidle");
   await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
+  // The page title comes from Next's streamed metadata and a client redirect (`/`) swaps the page
+  // after the first paint; axe's `document-title` rule must not run before a title exists.
+  await expect(page).toHaveTitle(/\S/);
   // A mock that does not fit the page would crash it; a crashed page proves nothing.
   expect(errors, `${path} threw`).toEqual([]);
 }

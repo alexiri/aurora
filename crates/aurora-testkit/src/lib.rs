@@ -69,6 +69,42 @@ pub fn gate_decision(gate: &str, value: Option<&str>, ci: Option<&str>) -> Resul
 /// Name of the env var that overrides the test server.
 pub const TEST_DB_ENV: &str = "AURORA_TEST_DATABASE_URL";
 
+/// How long a connection attempt keeps waiting for a free server slot (SQLSTATE 53300).
+const CONNECT_SLOT_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Whether `e` is Postgres refusing a connection because `max_connections` is used up
+/// (`53300 too_many_connections`, or `53400` when the role's own limit is).
+fn is_no_free_slot(e: &sqlx::Error) -> bool {
+    matches!(e, sqlx::Error::Database(d) if matches!(d.code().as_deref(), Some("53300" | "53400")))
+}
+
+/// Retry `attempt` while the server has no free connection slot, polling until
+/// [`CONNECT_SLOT_DEADLINE`]. The dev Postgres (`max_connections` 100) is shared by every lane and
+/// by every nextest process (each opens its own pool), so under load a connect can be refused for a
+/// moment although nothing is wrong; any other error is returned at once.
+async fn retry_no_free_slot<T, F, Fut>(mut attempt: F) -> sqlx::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = sqlx::Result<T>>,
+{
+    let deadline = tokio::time::Instant::now() + CONNECT_SLOT_DEADLINE;
+    let mut wait = Duration::from_millis(25);
+    loop {
+        match attempt().await {
+            Err(e) if is_no_free_slot(&e) && tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(Duration::from_millis(500));
+            }
+            other => return other,
+        }
+    }
+}
+
+/// `PgConnection::connect` that waits out a full server (see [`retry_no_free_slot`]).
+pub async fn connect_admin(url: &str) -> sqlx::Result<PgConnection> {
+    retry_no_free_slot(|| PgConnection::connect(url)).await
+}
+
 /// Env var overriding the per-`TestDb` pool size (VEL-005).
 pub const TEST_POOL_SIZE_ENV: &str = "AURORA_TEST_POOL_SIZE";
 
@@ -116,7 +152,7 @@ impl TestDb {
         let server_url = server_url().await?;
         let name = format!("aurora_test_{}", uuid::Uuid::now_v7().simple());
 
-        let mut admin = PgConnection::connect(&server_url)
+        let mut admin = connect_admin(&server_url)
             .await
             .context("connecting to test server")?;
         // VEL-003: clone the per-server template (migrated once) at
@@ -136,11 +172,13 @@ impl TestDb {
         admin.close().await.ok();
 
         let url = replace_db_name(&server_url, &name)?;
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(test_pool_size())
-            .connect(&url)
-            .await
-            .context("connecting to test database")?;
+        let pool = retry_no_free_slot(|| {
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(test_pool_size())
+                .connect(&url)
+        })
+        .await
+        .context("connecting to test database")?;
         if !migrated {
             template::migrate_pool(&pool).await?;
         }
@@ -161,7 +199,7 @@ impl TestDb {
     pub async fn gateway_role_url(&mut self) -> anyhow::Result<String> {
         let role = format!("aurora_test_gw_{}", uuid::Uuid::now_v7().simple());
         let password = uuid::Uuid::now_v7().simple().to_string();
-        let mut admin = PgConnection::connect(&self.server_url)
+        let mut admin = connect_admin(&self.server_url)
             .await
             .context("connecting to test server")?;
         sqlx::query(&format!(
@@ -247,7 +285,7 @@ impl Drop for TestDb {
 }
 
 async fn drop_database(server_url: &str, name: &str) -> anyhow::Result<()> {
-    let mut admin = PgConnection::connect(server_url)
+    let mut admin = connect_admin(server_url)
         .await
         .context("connecting to test server for DROP")?;
     sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
@@ -260,7 +298,7 @@ async fn drop_database(server_url: &str, name: &str) -> anyhow::Result<()> {
 
 /// Drop a role created by [`TestDb::gateway_role_url`] (after its database is gone).
 async fn drop_role(server_url: &str, role: &str) -> anyhow::Result<()> {
-    let mut admin = PgConnection::connect(server_url)
+    let mut admin = connect_admin(server_url)
         .await
         .context("connecting to test server for DROP ROLE")?;
     sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
