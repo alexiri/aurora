@@ -281,8 +281,8 @@ fn scalar_text(v: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Every string stored under a `text` or `content` key below `v` (Atlassian document format
-/// text nodes, Notion rich text), in document order; a string `v` is its own text.
+/// Every string stored under a `text` or `content` key below `v` (nested document and rich-text
+/// block formats), in document order; a string `v` is its own text.
 fn collect_text(v: &serde_json::Value, out: &mut Vec<String>, depth: usize) {
     if depth > 32 {
         return;
@@ -520,7 +520,7 @@ mod tests {
         let st = |v: serde_json::Value| -> Vec<Decoder> { serde_json::from_value(v).unwrap() };
         let body = br#"{"message":{"toRecipients":[{"emailAddress":{"address":"a@x.io"}},{"emailAddress":{"address":"b@x.io"}}],"attachments":[{},{},{}]},
             "body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph","content":[{"type":"text","text":"second"},{"type":"text","text":"third"}]}]},
-            "children":[{"paragraph":{"rich_text":[{"type":"text","text":{"content":"notion words"}}]}}]}"#;
+            "children":[{"paragraph":{"rich_text":[{"type":"text","text":{"content":"block words"}}]}}]}"#;
         assert_eq!(
             run_steps(
                 &st(json!([{"json":"/message/toRecipients/*/emailAddress/address"}])),
@@ -544,7 +544,7 @@ mod tests {
         );
         assert_eq!(
             run_steps(&st(json!([{"json_text":"/children"}])), body).as_deref(),
-            Some("notion words")
+            Some("block words")
         );
     }
 

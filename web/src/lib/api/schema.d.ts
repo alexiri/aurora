@@ -97,6 +97,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/connector-host-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connector-host tokens (C-690): the shared bootstrap token and every per-host token with its
+         *     bound connector types, last use and state.
+         */
+        get: operations["adminListConnectorHostTokens"];
+        put?: never;
+        /**
+         * Issue a connector-host token bound to connector types (C-691); shown once. From the first bound
+         *     token on, the shared bootstrap token is refused.
+         */
+        post: operations["adminIssueConnectorHostToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/connector-host-tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a connector-host token (C-692): its next call is 401. */
+        delete: operations["adminRevokeConnectorHostToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/connector-types": {
         parameters: {
             query?: never;
@@ -6186,6 +6227,31 @@ export interface components {
             message?: string | null;
             state: components["schemas"]["HostState"];
         };
+        HostTokenInfo: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            /** @description `null` for the shared bootstrap token. */
+            name?: string | null;
+            /** @description First characters of the token (never enough to use it). */
+            prefix?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            /** @description `active` | `revoked` | `refused` (the shared bootstrap token once a bound token exists). */
+            state: string;
+            /** @description `null` for the shared bootstrap token, which is not bound. */
+            type_ids?: string[] | null;
+        };
+        HostTokenIssued: components["schemas"]["HostTokenInfo"] & {
+            /** @description `auh_…`, shown once. */
+            token: string;
+        };
+        HostTokenList: {
+            items: components["schemas"]["HostTokenInfo"][];
+        };
         Identity: {
             /** Format: uuid */
             id: string;
@@ -6406,6 +6472,12 @@ export interface components {
             display_name: string;
             /** Format: uuid */
             id: string;
+        };
+        IssueHostTokenRequest: {
+            /** @description 1–80 characters, unique among live tokens (for example the Deployment's name). */
+            name: string;
+            /** @description The connector types this host may register, poll and report for (1–64). */
+            type_ids: string[];
         };
         KeyOwner: {
             display_name: string;
@@ -10315,6 +10387,116 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListConnectorHostTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostTokenList"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminIssueConnectorHostToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueHostTokenRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostTokenIssued"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminRevokeConnectorHostToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

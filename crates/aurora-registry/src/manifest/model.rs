@@ -777,7 +777,7 @@ pub enum Decoder {
     /// (FIX-118) Number of elements of the JSON array at this pointer (`0` when it is absent).
     JsonCount(String),
     /// (FIX-118) Every `text`/`content` string below the JSON value at this pointer, joined with
-    /// spaces (Atlassian document format, Notion rich text).
+    /// spaces (nested document and rich-text block formats).
     JsonText(String),
 }
 
