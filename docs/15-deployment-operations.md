@@ -474,6 +474,11 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - Order: migrate → api → hookhost → gateway → runner → relay (when `relay.enabled`; after the API, whose relay plane
   it registers with, and after the runners, whose :4108 stream listener it dials) → web → connectors.
   Gateways and runners of the previous version keep working during the roll.
+  A runner pod that stops cleanly retires its replica through the API, so the new replica owns
+  its sandboxes at once; this needs the API to be up while runners roll (the order above). A
+  replica that dies without retiring (crash, kill, API unreachable at shutdown) keeps ownership
+  until it has been silent for `REPLICA_ONLINE_THRESHOLD` (90 s): restart, stop and park of its
+  sandboxes wait up to that long (AUDIT-004 F-1).
 - (FIX-120, D-189) **Connector-host tokens.** Upgrading is two steps, with no downtime: (1) upgrade
   Aurora (migration `20261201000071` adds the binding columns; every existing token row is the
   shared, unbound bootstrap token and keeps working); (2) issue one token per connector-host
