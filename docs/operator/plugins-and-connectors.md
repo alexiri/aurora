@@ -169,7 +169,8 @@ and register `/aurora`; without it, replies to individuals arrive as direct mess
 The Mattermost server must be reachable from the connector host; a server on a private
 network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
 ([docs/20](../20-mattermost-connector.md)), and one behind a private CA needs the CA bundle
-(`connectorHost.tlsExtraCaBundle`, [install-helm.md](install-helm.md#connector-host)).
+(`extraCaBundle`, which the chart also hands to the connector host as `AURORA_TLS_EXTRA_CA_BUNDLE`,
+[install-helm.md](install-helm.md#connector-host)).
 
 1. **Instance administrator: add the connector.** *Admin → Connectors → Add connector → Add
    Mattermost.* Nothing needs typing: every Mattermost setting is optional or generated, and

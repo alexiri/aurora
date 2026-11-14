@@ -160,6 +160,10 @@ spec:
           {{- include "aurora.containerSecurity" $r | nindent 10 }}
           env:
             {{- if .env }}{{ .env | nindent 12 }}{{ end }}
+            {{- /* FIX-139: connector workloads read the PEM bundle named here (the extraCaBundle mount) for their own outbound TLS */}}
+            {{- if and .connectorCa (or $r.Values.extraCaBundle.existingConfigMap $r.Values.extraCaBundle.existingSecret) }}
+            - {name: AURORA_TLS_EXTRA_CA_BUNDLE, value: {{ printf "/etc/aurora-tls/%s" $r.Values.extraCaBundle.key | quote }}}
+            {{- end }}
             {{- with .spec.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
           ports:
             {{- range .ports }}
