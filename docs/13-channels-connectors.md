@@ -239,7 +239,8 @@ code `reserved_event_id`.
 | `history.read` | `{ space_ref, thread_ref?, limit ≤ 50, before? }` → `{ messages: [{ message_ref, author, text, at }] }` |
 | `presence.provision` | `{ agent: { handle, name, avatar_url } }` → `{ platform_user_ref, handle, credentials }` |
 | `presence.deprovision` / `presence.rename` / `presence.set_icon` | `{ presence_id, … }` |
-| `credentials.validate` | `{ config, credentials }` → `{ tenant_ref, tenant_label, shared_bot?, capabilities? }` — `capabilities` may only **narrow** the manifest's for this integration (e.g. no `ephemeral` without an admin token); stored in `channel_integrations.config._capabilities` and used by the core for fallbacks |
+| `credentials.validate` | `{ config, credentials, mode?: "probe" }` → `{ tenant_ref, tenant_label, shared_bot?, capabilities? }` — `capabilities` may only **narrow** the manifest's for this integration (e.g. no `ephemeral` without an admin token); stored in `channel_integrations.config._capabilities` and used by the core for fallbacks. (FIX-127, C-710, D-217) **Probe mode**: `mode: "probe"` validates what it can (a field not yet set is not an error), has **no effect on the platform** (no command registration, profile edit or webhook) and returns `choices: { <field>: [{ value, label }] }` for every `integration_setup` field declaring `choices: "from_validate"`, plus `warnings: [string]`; the result fields above become optional. Nothing is stored. A connector without probe support returns `unsupported`. The dashboard's guided setup uses it (`§5.8`) |
+| `space.members` listing for binding | (FIX-127) also used by `POST /v1/agents/{agent}/space-bindings` and `GET /v1/integrations/{id}/spaces?mine=true` (§5.3) to check the caller's linked account is a member |
 
 **Self-contained deprovision operations** (phase 3, RFE-024, D-67). Phase 0–2
 enqueued `presence.deprovision` "before the delete commits", but the delete then
@@ -475,6 +476,14 @@ the same from inside the space. Bindings can be edited/removed in the
 dashboard by workspace owners. Removing the bot deactivates the binding;
 re-adding needs an owner again.
 
+(FIX-127, C-713/C-714, D-218) A workspace owner can also bind **from the dashboard**, for spaces
+the person is in: `POST /v1/agents/{agent}/space-bindings` requires the caller's linked chat
+account on the integration to be a member of the space (`space.members`) and the shared bot to be
+in it already (409 `bot_not_in_space` with the invite hint). Nobody can bind an agent to a
+conversation they are not part of; direct conversations are not bindable. The effects (row with
+`bound_by_user_id`, audit `space_binding.create`, the bot's announcement) are those of `bind`.
+`GET /v1/integrations/{id}/spaces?mine=true` lists such spaces.
+
 ### 5.4 Commands (platform-neutral)
 
 Connectors map their command syntax (slash command, `!cmd`, or a mention
@@ -548,6 +557,16 @@ Org owners/admins: choose a connector → form from `integration_setup` → `POS
 `tenant_ref`, label, shared bot and `active`; a `tenant_ref` already bound to
 another org → 409 `tenant_already_bound`. Credential rotation by connectors goes
 through `POST /v1/connector/credentials` (CAS on `credentials_version`).
+
+(FIX-127, C-710/C-711/C-712, D-217/D-218) **Guided setup.** The dashboard first calls `POST
+/v1/orgs/{org}/channel-integrations:probe` (server and bot token): a probe-mode
+`credentials.validate` that stores nothing and returns `choices` for fields declaring
+`choices: "from_validate"` (Mattermost: `team`, from `/users/me/teams`) and `warnings`
+(for example "no admin token: replies to individuals arrive as DMs"). Create then runs the
+authoritative synchronous validation as before; a choice list is only a convenience. Before any
+connector is usable, `GET /v1/connector-availability` tells an org admin per connector type whether it
+is `active`, `not_added`, `waiting_for_host`, `disabled` or `needs_approval`, and which instance
+admins to ask. Setup fields may carry `advanced: true` (collapsed in the dashboard, C-715).
 
 ### 5.9 User linking
 
