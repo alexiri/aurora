@@ -278,6 +278,15 @@ async fn a_leaked_database_older_than_the_ttl_is_reaped_and_fresh_or_connected_o
     let fresh = aged_db_name(1_000);
     let old_connected = aged_db_name(ttl + 120_000);
     let mut admin = sqlx::PgConnection::connect(&server).await.expect("connect");
+    // Every test process reaps leaked databases once at start (`ensure_template`), on the same
+    // server, so a concurrently starting test would reap the aged databases made here — `old`
+    // before our reap runs, `old_connected` before the session below is open. Hold the reap lock
+    // exclusively (the one reaps take) while they are set up.
+    let mut guard = sqlx::PgConnection::connect(&server).await.expect("connect");
+    sqlx::query("SELECT pg_advisory_lock(hashtext('aurora_test_reap'))")
+        .execute(&mut guard)
+        .await
+        .expect("take the reap lock");
     for n in [&old, &fresh, &old_connected] {
         sqlx::query(&format!("CREATE DATABASE \"{n}\""))
             .execute(&mut admin)
@@ -289,18 +298,17 @@ async fn a_leaked_database_older_than_the_ttl_is_reaped_and_fresh_or_connected_o
         sqlx::PgConnection::connect(&anchor.url().replacen(anchor.name(), &old_connected, 1))
             .await
             .expect("connect to the old connected db");
+    guard.close().await.expect("release the reap lock");
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_millis() as u64;
-    let dropped = aurora_testkit::template::reap_leaked(&server, now_ms)
+    // Not asserted: how many *this* call dropped. A test process starting at the same moment may
+    // have reaped `old` first; what matters is that it is gone, and the others are not.
+    aurora_testkit::template::reap_leaked(&server, now_ms)
         .await
         .expect("reap");
-    assert!(
-        dropped >= 1,
-        "expected the old leaked database to be reaped"
-    );
     assert!(
         !database_exists(&server, &old).await,
         "old leaked db must be reaped"
@@ -329,6 +337,66 @@ async fn a_leaked_database_older_than_the_ttl_is_reaped_and_fresh_or_connected_o
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connect_admin_waits_for_a_free_slot_instead_of_failing_with_too_many_clients() {
+    // The shared dev Postgres runs out of `max_connections` when several lanes run suites at once.
+    // A role limited to one connection reproduces that refusal (SQLSTATE 53300) deterministically.
+    let anchor = TestDb::new().await;
+    let server = anchor.server_url().to_owned();
+    let role = format!("aurora_test_limit_{}", uuid::Uuid::now_v7().simple());
+    let mut admin = sqlx::PgConnection::connect(&server).await.expect("connect");
+    sqlx::query(&format!(
+        "CREATE ROLE \"{role}\" LOGIN PASSWORD 'pw' CONNECTION LIMIT 1"
+    ))
+    .execute(&mut admin)
+    .await
+    .expect("create the limited role");
+    let (scheme, rest) = server.split_once("://").expect("scheme");
+    let host_part = rest.rsplit_once('@').map_or(rest, |(_, h)| h);
+    let limited = format!("{scheme}://{role}:pw@{host_part}");
+
+    let held = sqlx::PgConnection::connect(&limited)
+        .await
+        .expect("the first connection fits");
+    // Without the wait this is the "too many clients" failure.
+    let refused = sqlx::PgConnection::connect(&limited)
+        .await
+        .expect_err("the second connection is refused");
+    assert_eq!(
+        refused
+            .as_database_error()
+            .and_then(|d| d.code().map(|c| c.to_string()))
+            .as_deref(),
+        Some("53300"),
+        "{refused}"
+    );
+
+    let url = limited.clone();
+    let waiting = tokio::spawn(async move { aurora_testkit::connect_admin(&url).await });
+    // Still waiting while the slot is taken (bounded check, not a synchronisation sleep)...
+    let mut waiting = waiting;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut waiting)
+            .await
+            .is_err(),
+        "connect_admin returned while no slot was free"
+    );
+    // ...and through as soon as it is released.
+    held.close().await.expect("release the slot");
+    let conn = tokio::time::timeout(std::time::Duration::from_secs(30), waiting)
+        .await
+        .expect("connect_admin did not get the freed slot")
+        .expect("join")
+        .expect("connect_admin failed after the slot was released");
+    conn.close().await.expect("close");
+
+    sqlx::query(&format!("DROP ROLE \"{role}\""))
+        .execute(&mut admin)
+        .await
+        .expect("drop the limited role");
+    anchor.cleanup().await.expect("cleanup anchor");
+}
+
+#[tokio::test]
 async fn concurrent_clones_and_reaps_do_not_fail_each_other() {
     // FIX-103: clones hold the reap lock shared, reaps exclusive. Run both at once, repeatedly; every
     // clone must succeed and every reap must either run or report that it skipped.
