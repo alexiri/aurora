@@ -59,6 +59,13 @@ apps:
         default_scopes: [read, write]
         callback: query
         probe: { url: "https://api.acme.example/me", label: /email }
+      - id: oauth_app
+        kind: oauth2
+        client: goog
+        scopes: []
+        default_scopes: []
+        callback: query
+        probe: { url: "https://api.acme.example/me", label: /email }
       - id: hook
         kind: hook
         authorize: true
@@ -477,6 +484,56 @@ async fn oauth_happy_path_pkce_cookie_and_state_checks() {
     assert!(uid != Uuid::nil());
     let req = &w.oauth.token_requests()[0];
     assert!(req.contains_key("code_verifier") && req["client_id"] == "cid");
+}
+
+/// (FIX-133) A scope-less OAuth method (GitHub App user authorization: permissions live on the app,
+/// not in the request): the authorization URL carries no `scope`, the code exchange still uses
+/// PKCE, and the expiring token with its rotating refresh token is stored with its expiry.
+#[tokio::test]
+async fn a_scopeless_oauth_method_connects_with_an_expiring_token() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    w.oauth.set_extra(json!({
+        "expires_in": 28800, "refresh_token": "ghr_fixture", "refresh_token_expires_in": 15_897_600,
+        "scope": ""
+    }));
+    let (s, sc, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(w.connect_body("oauth_app")),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap().to_owned();
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    assert!(
+        url.contains("code_challenge_method=S256") && !url.contains("scope="),
+        "{url}"
+    );
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    let (scopes, expires, keys): (
+        Vec<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<Vec<String>>,
+    ) = sqlx::query_as(
+        "SELECT scopes, credentials_expires_at, credential_keys FROM app_connections",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(scopes.is_empty());
+    let left = expires.unwrap() - chrono::Utc::now();
+    assert!(
+        left.num_seconds() > 28_000 && left.num_seconds() <= 28_800,
+        "{left}"
+    );
+    let mut keys = keys.unwrap();
+    keys.sort();
+    assert_eq!(keys, ["access_token", "refresh_token"]);
 }
 
 #[tokio::test]

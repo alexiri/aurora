@@ -26,6 +26,20 @@ oauth_clients:
       - { name: client_id, label: Client ID }
       - { name: client_secret, label: Client secret, secret: true }
     setup_note: "On GitHub open Settings, Developer settings, OAuth Apps and register a new OAuth app (or use an organization's). Set the authorization callback URL to the Aurora redirect URI and generate a client secret."
+  # A GitHub App's user authorization uses the same two endpoints as an OAuth app but is a
+  # different registration: no scopes (permissions are set on the app), expiring user tokens
+  # (8 hours) with a rotating refresh token (6 months), PKCE supported.
+  # https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+  - id: github-app
+    authorize_url: https://github.com/login/oauth/authorize
+    token_url: https://github.com/login/oauth/access_token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: "Client ID (not the App ID)" }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "On GitHub open Settings, Developer settings, GitHub Apps and register a new GitHub App (or use an organization's). Set the callback URL to the Aurora redirect URI, keep expiring user tokens enabled, grant the permissions you want agents to have (Contents, Issues and Pull requests read access for a read-only setup) and generate a client secret. Use the Client ID, not the App ID."
   - id: github-ghes
     authorize_url: "https://{instance}/login/oauth/authorize"
     token_url: "https://{instance}/login/oauth/access_token"
@@ -36,6 +50,16 @@ oauth_clients:
       - { name: client_id, label: Client ID }
       - { name: client_secret, label: Client secret, secret: true }
     setup_note: "Register an OAuth app on your GitHub Enterprise Server (Settings, Developer settings, OAuth Apps). Every GitHub Enterprise Server instance has its own OAuth app."
+  - id: github-app-ghes
+    authorize_url: "https://{instance}/login/oauth/authorize"
+    token_url: "https://{instance}/login/oauth/access_token"
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: "Client ID (not the App ID)" }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "Register a GitHub App on your GitHub Enterprise Server (Settings, Developer settings, GitHub Apps), keep expiring user tokens enabled and grant the permissions you want agents to have. Every GitHub Enterprise Server instance has its own GitHub App."
 apps:
   - about:
       id: github
@@ -113,6 +137,37 @@ apps:
           expect_status: [200]
           label: /login
           metadata: { login: /login }
+      - id: oauth_app
+        kind: oauth2
+        label: GitHub App sign-in
+        description: "Sign in with GitHub through a GitHub App and act as you with only the permissions the app was given, on the repositories both you and the app can reach (GitHub enforces this). Tokens last eight hours and refresh by themselves. Needs a GitHub App registered by an administrator."
+        client: github-app
+        # A GitHub App has no scopes: its permissions are set on its registration, so the
+        # authorization request carries none (GitHub ignores any; `offline_access` only forces
+        # expiring tokens, which a new app has by default).
+        scopes: []
+        default_scopes: []
+        callback: query
+        token:
+          kind: oauth2_refresh
+          client: github-app
+          refresh_field: refresh_token
+          rotate_refresh_token: true
+          max_lifetime_secs: 28800
+          stale_codes:
+            - { status: 401, body_contains: Bad credentials }
+          reauth_codes: [bad_refresh_token]
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://api.github.com/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
     hosts:
       - match: { host: api.github.com }
         inject:
@@ -154,8 +209,8 @@ apps:
         items:
           # Acting as a user: an installation token has no user, so these two exist only for the
           # OAuth and personal-token methods; `list_installation_repos` only for the GitHub App.
-          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET], connect_methods: [token, oauth] }
-          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET], connect_methods: [token, oauth] }
+          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
           - { id: list_installation_repos, name: List repositories of the installation, host: api.github.com, path: /installation/repositories, methods: [GET], connect_methods: [github_app] }
           - { id: get_repo, name: Get a repository, host: api.github.com, path: "/repos/*/*", methods: [GET] }
           - { id: list_issues, name: List issues, host: api.github.com, path: "/repos/*/*/issues", methods: [GET] }
@@ -341,6 +396,34 @@ apps:
           expect_status: [200]
           label: /login
           metadata: { login: /login }
+      - id: oauth_app
+        kind: oauth2
+        label: GitHub App sign-in
+        description: "Sign in through a GitHub App registered on the server and act as you with only the permissions the app was given, on the repositories both you and the app can reach (GitHub enforces this). Tokens expire and refresh by themselves. Needs a GitHub App registered on the server by an administrator."
+        client: github-app-ghes
+        scopes: []
+        default_scopes: []
+        callback: query
+        token:
+          kind: oauth2_refresh
+          client: github-app-ghes
+          refresh_field: refresh_token
+          rotate_refresh_token: true
+          max_lifetime_secs: 28800
+          stale_codes:
+            - { status: 401, body_contains: Bad credentials }
+          reauth_codes: [bad_refresh_token]
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://{instance}/api/v3/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
     hosts:
       - match: { host: "{instance}", path_prefix: /api/v3 }
         inject:
@@ -383,8 +466,8 @@ apps:
     tools:
       read:
         items:
-          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET], connect_methods: [token, oauth] }
-          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET], connect_methods: [token, oauth] }
+          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
           - { id: list_installation_repos, name: List repositories of the installation, host: "{instance}", path: /api/v3/installation/repositories, methods: [GET], connect_methods: [github_app] }
           - { id: get_repo, name: Get a repository, host: "{instance}", path: "/api/v3/repos/*/*", methods: [GET] }
           - { id: list_issues, name: List issues, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [GET] }

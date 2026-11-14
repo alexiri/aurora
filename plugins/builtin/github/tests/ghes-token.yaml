@@ -59,3 +59,28 @@
       outcome: unavailable
       request_url: "https://github.example.com/login/oauth/access_token"
   expect: { app: github-ghes }
+- name: "ghes token (oauth_app): a GitHub App user token refreshes on the instance host"
+  connection:
+    instance_host: github.example.com
+    method: oauth_app
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "Iv1.fixtureappclient", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://github.example.com/api/v3/repos/example/demo" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials"}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://github.example.com/login/oauth/access_token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "Iv1.fixtureappclient" }
+        response:
+          status: 200
+          body: '{"access_token":"ghu_fixturenew","expires_in":28800,"refresh_token":"ghr_fixture2","refresh_token_expires_in":15897600,"scope":"","token_type":"bearer"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://github.example.com/login/oauth/access_token"
+      credentials: { access_token: "ghu_fixturenew", refresh_token: "ghr_fixture2" }
+      retried:
+        url: "https://github.example.com/api/v3/repos/example/demo"
+        headers: { authorization: "Bearer ghu_fixturenew" }
+  expect: { app: github-ghes, tool: get_repo }
