@@ -785,13 +785,14 @@ injected (the agent should see the real upstream error).
 
 | Cache | Key | TTL | Invalidated by |
 |-------|-----|-----|----------------|
-| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; (phase 4, P4-GRP-1) `user` (by speaker); `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration; phase 4: and the speaker's group ids) |
+| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; (phase 4, P4-GRP-1) `user` (by speaker); `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration — (phase 5, SET-2) from the `governance` settings snapshot; phase 4: and the speaker's group ids) |
 | ResolvedHost | `org/ws/credential/host` | 60 s | `org`, `workspace`, `agent`, `connection`, `all` |
 | Plaintext values | `(SecretRef, version)` | 60 s | `connection`, `workspace`, `org`, `all` (zeroized on eviction) |
 | Effective governance (`08 §11`) | org | 60 s | `org`, `all` |
 | LLM key origin verifications | `(secret_id, sha256(plaintext))` | `LLM_ORIGIN_RECHECK` | `org`, `workspace`, `all` |
 | Leaf certificates | host | until near expiry | never |
 | Registry snapshot | content hash | until replaced | `aurora_registry` (+ 30 s poll of the active hash) |
+| (phase 5, SET-1, D-236) Instance settings (`governance`, `llm`, `approvals`, `limits`, `secrets` sections merged with the gateway's own configuration; `15 §Instance settings`) | section | until replaced | `aurora_settings` (+ `SETTINGS_RELOAD_POLL` poll of the generations; all sections on LISTEN reconnect). A reload validates the merged view and swaps it atomically; a failing one keeps the previous snapshot. After a swap of `governance`, `llm`, `limits` or `secrets` the gateway flushes as for `all`, so the instance governance (until then built at start), BYO switch, endpoint table, destination guard list and store registry are never served stale beyond the reload. During a database outage the last snapshot stays in force |
 
 Phase 0–2: on LISTEN connection loss the gateway flushes all caches except
 leaf certificates, then reconnects. **From phase 3 (RFE-014) the order is

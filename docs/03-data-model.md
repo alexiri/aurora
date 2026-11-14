@@ -1601,6 +1601,27 @@ index still serves the conflict check and the gateway's instance lookup. The gat
 has table-level `SELECT` on `app_instances` (`§Gateway database role grants`), so it reads
 `base_path` without a new grant (instance selection, `06 §MITM lane: connect-time resolution`).
 
+#### `instance_settings` (new table; instance-wide; phase 5, SET-1, D-236)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| section | text pk CHECK (section ~ `'^[a-z][a-z_]{0,31}$'`) | the section id (`governance`, `llm`, `sign_in`, `email`, `secrets`, `agents`, `approvals`, `retention`, `skills`, `scim`, `previews`, `terminal`, `limits`; C-770). The vocabulary is the application's registry, not a CHECK, so a section added later needs no migration; a row the running release does not know is ignored with a warning (written by a newer release) | 5 (SET-1, D-236) |
+| schema_version | int not null default 1 | shape version of `value` for this section. A release that changes a section's shape converts the stored rows in its own migration; readers ignore keys they do not know (D-238(c)) | 5 (SET-1, D-236) |
+| value | jsonb not null default `'{}'` CHECK (jsonb_typeof(value) = 'object') | flat object `{ "<dotted key>": <value> }` of stored values: dashboard-edited values and, for keys the configuration currently sets, the mirrored configuration value (D-236(c)). Keyed lists are stored whole under their key (`"auth.oidc_providers": [ { "id": …, … } ]`). A secret field is `{ "$secret": { "ref": "<SecretRef>", "owner": "<uuid>", "updated_at": "<RFC 3339>" } }`: purpose `instance_setting`, always the `inline` store, org = nil UUID, owner = the field's own id (`08 §1`); never plaintext. Size ≤ `SETTINGS_SECTION_BYTES_MAX` (checked by the service; 413 `settings_too_large`) | 5 (SET-1, D-236) |
+| generation | bigint not null default 0 | bumped by every write, including Helm mirroring and CLI resets; writes are `UPDATE … WHERE section = $1 AND generation = $2` (409 `stale_revision` on no row), or an insert of generation 1 that conflicts on the key | 5 (SET-1, D-236) |
+| updated_by | uuid null FK→users (set null) | the instance admin of the last dashboard write; null for system writes (mirroring, CLI) | 5 (SET-1, D-236) |
+| updated_by_label | text null | denormalized actor label (the admin's e-mail, `system`, or `cli`) so the page can name the writer after the user row is gone | 5 (SET-1, D-236) |
+
+`created_at`/`updated_at` follow §Conventions. Rows are created on the first write to a section (no
+row = nothing stored: every key is `helm` or `default`). The table holds no plaintext secret, so the
+**gateway database role gets `SELECT`** on it (it reads the `governance`, `llm`, `approvals`,
+`limits` and `secrets` sections; it already reads SecretRefs on `secrets`) and nothing else; only the
+API writes it. After a committed write the writer sends `NOTIFY aurora_settings`
+`{ "section", "generation" }` (`05 §Event bus`). History is the audit log (`instance_settings.update`
+rows carry the before/after diff, `04 §Audit`); no history table. Migration
+`20261201000190_instance_settings.sql` (block `000190..199`, SET-1..SET-5) creates the table and the
+grant; no data is written by the migration (the first API start mirrors the configuration's locked
+keys, D-238(a)).
+
 ### `preview_shares` (port previews, phase 4, P4-PRV-1, D-144, D-145)
 | Column | Type | Notes |
 |---|---|---|

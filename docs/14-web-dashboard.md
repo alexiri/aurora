@@ -548,6 +548,7 @@ here, add it here and document it.
 | Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
 | Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
 | Checkbox | `CheckboxField` | A checkbox with its label and optional hint; use it for boolean settings instead of a bare `<input type="checkbox">`. |
+| Setting | `SettingField` | (phase 5, SET-1) One instance setting (`§Instance administration`, Settings): label, hint, the control (built from `Field`, `CheckboxField` or a list editor) and a source `Badge` — "Helm", "Dashboard" or "Default". **Locked** (source Helm): the effective value as read-only text, the note "Configured in Helm (`<helm key>`)" and no control. **Dashboard**: a ghost **Reset to default** action naming the default. Its `id` is the key, so `#<key>` links scroll to it. |
 | Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
@@ -930,6 +931,48 @@ records are kept. This cannot be undone."), asks for the slug typed exactly, and
 retries once. On success the list refreshes and a status notice names what was
 deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
 No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
+
+(phase 5, SPEC-SETTINGS, D-236..D-238, C-770..C-784; not built yet: SET-1 the shell, SET-2..SET-5
+and FIX-124 the sections) **Settings** (`/admin/settings`): the instance settings of `15 §Instance
+settings`, one page per section, grouped under **Settings** in the admin navigation: Governance,
+LLM endpoints, Sign-in, Email, Secret stores (FIX-124, `/admin/secret-stores`), Agents & sandboxes,
+Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limits
+(`/admin/settings/<section>`, the section id with `-` for `_`).
+- **Index** (`/admin/settings`): a `Section` per settings section with its description, the number
+  of keys configured in Helm and set in the dashboard, the last change (who, when) and a link; a
+  `Notice` (`neutral`) when keys are locked: "N settings are configured in Helm and cannot be
+  changed here. To manage one here, remove it from your Helm values and upgrade: it keeps its
+  current value." with a disclosure listing each key and its Helm key (dismissed per viewer in
+  local storage). Actions: **Export** (YAML, or JSON from a menu) and **Import…** (`FormDialog`
+  `xl`: paste or choose a file, then a per-section diff table from the dry run, keys that would be
+  ignored because Helm sets them to the same value, and errors; **Apply** is enabled only without
+  errors and runs the re-authentication step on 412).
+- **Section page**: `PageHeader` (title, one-line description, last change), then the section's
+  settings in `FormSection`s, each through the **`SettingField`** primitive (below). One
+  `FormActions` row: **Save** (primary) and **Discard changes**. Save first calls the preview
+  route: when it reports loosening keys or affected organizations, a `ConfirmDialog` lists them
+  ("This allows more than before: … — affects 3 organizations: Acme, Physics, Beams") before the
+  PUT; otherwise it saves directly. 409 `stale_revision` shows a `Notice` ("Someone changed these
+  settings meanwhile") with **Reload** (the typed values are kept until reload); 409
+  `setting_locked` reloads the page (Helm changed under it); 412 runs the same
+  re-authentication step as account deletion and retries once; 422 errors land on their fields,
+  and an error on a key of another section names it with a link. A success shows a status notice
+  "Saved. Applied to every replica within seconds."
+- **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
+  `ItemList` of entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open
+  read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
+  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
+  a list, locked as a whole.
+- **Secrets** are write-only fields: "Set" / "Not set" with **Replace…** and **Remove**; the value
+  is never shown, and the page never receives it.
+- **Org pages**: "enforced by instance" hints (governance, BYO, retention) name the setting; for an
+  instance admin they link to it (`/admin/settings/<section>#<key>`), for everyone else they read
+  "Set by the instance administrator".
+- Every page: tokens only, both themes, no horizontal scroll at 390 px (a `SettingField` stacks its
+  label, control and source below 768 px).
+
+The **Identity** page (P4-IDP-1, read-only) becomes the editable **Sign-in** section (SET-4); the
+read-only sign-up mode on **Sign-up & placement** links to it.
 Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
 hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes; phase 4, P4-S3: the active blob backend, bytes and counts per backend, and for `s3` the bucket, prefix, health ("reachable" / "unreachable since …"), encryption and versioning state — never credentials; an unreachable store shows a banner and uploads show "Attachment storage is temporarily unavailable, try again in a moment" instead of the quota text; an expired chip is unchanged), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per

@@ -16,6 +16,11 @@ Every new workspace gets a default agent whose brief is copied from `agents.defa
 - It applies to **new** workspaces only. Changing it, or upgrading from phase 0–2, never alters the
   brief of an existing agent.
 - `agents.default_name` stays `Daneel` unless you change it.
+- (phase 5, SET-5; not built yet) Both are instance settings: leave them out of your Helm values
+  and an instance admin edits them on **Admin › Settings › Agents & sandboxes**, with the same
+  limits and the same "new workspaces only" rule. Setting them in Helm (as in the example below)
+  locks them: the page then shows them read-only, "Configured in Helm". Removing them from the
+  values later keeps the text you had (`docs/23-helm-values.md` §Instance settings and Helm locks).
 
 ### Opt-in example: the Daneel persona
 

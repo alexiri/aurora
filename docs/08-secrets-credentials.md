@@ -17,6 +17,7 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Managed connector secret settings (phase 4, P4-MCON; owner = `connectors.secret_owner`, org = nil UUID) | `connectors.secret_refs` (one per field) | `connector.settings` |
 | Web Push VAPID private key (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the key id, org = nil UUID) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
 | Web Push subscription endpoint and keys (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the subscription id, org = nil UUID) | `push_subscriptions.secret_ref` | `webpush.subscription` |
+| Instance setting secrets: OIDC client secrets, the SMTP password, Vault AppRole secret ids (phase 5, SET-1, D-236(g); owner = the field's own id, org = nil UUID; **always the `inline` store**, whatever `secrets.default_store` says, so sign-in, mail and reaching Vault never depend on an external store) | `instance_settings.value` (`$secret` fields, `03 §Planned changes`) | `instance_setting` |
 
 Every such column holds a **SecretRef**. Code never interprets a SecretRef
 outside `aurora-secrets`; it calls the **SecretVault** service:
@@ -39,6 +40,10 @@ impl SecretVault {
 
 The vault holds a **store registry** built at startup from configuration. Both
 the API and the gateway build it from the same `[secrets]` configuration.
+(phase 5, FIX-124 on SET-1, D-195(d)) `secrets.default_store` and the store definitions become
+instance settings (`15 §Instance settings`, section `secrets`, keyed list `secrets.stores` by `id`):
+stores the configuration defines are locked, others are added on Admin › Secret stores, and both
+services rebuild the registry live when the section changes.
 
 ## 2. The SecretStore seam
 
@@ -757,7 +762,7 @@ above, enforced at several points.
 
 | Level | Who | Where stored | Can |
 |-------|-----|--------------|-----|
-| **Instance ceiling** | operator | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 3, RFE-013) set a maximum age for BYO agent tokens; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
+| **Instance ceiling** | operator; (phase 5, SET-2/SET-3, D-195(b)) instance admins | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`); (phase 5) **application state**: the instance settings sections `governance` and `llm` (`15 §Instance settings`), edited on Admin › Governance and Admin › LLM endpoints, with a key set in the configuration locked (D-236) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 3, RFE-013) set a maximum age for BYO agent tokens; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
 | **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list; (phase 3, RFE-013) set a stricter maximum age for BYO agent tokens; (phase 2, RFE-025) choose the org **BYO posture** and default BYO source CIDRs |
 | **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten); (phase 2, RFE-025) set the workspace's **BYO posture** (`enabled` \| `owners_only` \| `disabled`; it can only tighten) |
 | **Agent grants and rules** | workspace owners | grants, rules (`07`) | decide which permitted keys each agent may use |
@@ -766,6 +771,15 @@ Effective settings are computed, never stored: `effective = instance ∩ org`
 for permissions and lists, `max(instance minimum, org)` for postures. When the
 instance tightens later, orgs are tightened automatically and the dashboard
 shows "enforced by instance".
+
+(phase 5, SPEC-SETTINGS, D-236(i)) Moving the instance level into the database changes **only
+where it is stored and who edits it**: the layering, the rules of §11.2 and the enforcement points
+of §11.7 are unchanged, and there is still **no instance-level policy rule scope** (D-195(f)). An
+instance change takes effect live: the API and gateways reload it (`15 §Instance settings`), and the
+API runs §11.2's re-evaluation (stored origins, model overrides, gateway invalidation) for every
+organization as a background job, so an instance change has the same effect on an org as an org
+change. "Enforced by instance" carries the setting it comes from (C-783): instance admins get a link
+to it, everyone else the text "Set by the instance administrator".
 
 ### 11.2 Organization governance document
 
@@ -1001,7 +1015,8 @@ BYO is governed like the rest of this section. **Hosted agents are unaffected**
   and homes stay; the gateway simply refuses them, so loosening again restores
   service instantly (invalidation scopes `agent`/`workspace`/`org`; the instance
   switch is read from configuration at start, so changing `byo.enabled` is a
-  rolling restart). The dashboard marks affected agents "BYO disabled by
+  rolling restart — (phase 5, SET-2, D-237(f)) from then on it is a live instance
+  setting: the gateways reload it and drop their credential caches, no restart). The dashboard marks affected agents "BYO disabled by
   <level>".
 
 **(b) Source restriction.** `agents.byo_source_cidrs` (≤32 IPv4/IPv6 CIDRs; null =

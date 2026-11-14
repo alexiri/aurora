@@ -362,3 +362,8 @@ overridden by the named configuration key (`15`).
 | `TELEMETRY_STACKTRACE_MAX` | (phase 5, FIX-146, C-732 (6)) 4 KiB of `exception.stacktrace` per browser span | — | 05, 14 |
 | `TELEMETRY_CLOCK_PAST` / `TELEMETRY_CLOCK_FUTURE` / `TELEMETRY_SPAN_DURATION_MAX` | (phase 5, FIX-146, C-732 (6)) browser span timestamps clamped to [now − 15 min, now + 1 min]; duration clamped to ≤ 15 min | — | 05 |
 | `DB_SPAN_STATEMENT_MAX` | (phase 5, FIX-146, D-232(g)) 4 KiB of parameterized SQL in a database span's `db.query.text` | — | 15 |
+| `SETTINGS_SECTION_BYTES_MAX` | (phase 5, SET-1, D-236) 128 KiB of stored JSON per instance-settings section (413 `settings_too_large`) | — | 03, 05 |
+| `SETTINGS_IMPORT_BYTES_MAX` | (phase 5, SET-1, C-776) 512 KiB settings document per import request (413) | — | 05 |
+| `SETTINGS_RELOAD_POLL` | (phase 5, SET-1, D-236(f)) 30 s: API replicas and gateways compare the section generations with their snapshot as a backstop to `aurora_settings` | — | 06, 15 |
+| `SETTINGS_AUDIT_VALUE_MAX` | (phase 5, SET-1, C-777) 1 KiB per before/after value in an `instance_settings.*` audit row (longer values truncated with `…`; lists over it recorded as added/removed entries) | — | 04 |
+| `SETTINGS_PREVIEW_ORGS_MAX` | (phase 5, SET-1, C-774) 200 affected organizations listed by a settings preview (`affected_orgs_total` counts the rest) | — | 05 |

@@ -106,5 +106,13 @@ the runner's reported limits.
 - **OIDC providers move to the app** (Admin › Sign-in) as proposed: client secrets sealed in the secret store, Helm-defined providers locked ("managed by Helm"), `auth.instance_admins` stays in Helm as the break-glass list.
 - The rest of the classification table stands as proposed.
 
+## Spec batch written (2026-11-14)
+Decisions **D-236** (framework), **D-237** (classification, chart rules), **D-238** (upgrade,
+break-glass); contracts **C-770..C-784** (C-785..C-789 reserved, unused); **SEC-89**, **SEC-90**;
+spec text in `15 §Instance settings` (normative key list), `03 §Planned changes`
+(`instance_settings`), `04`, `05`, `06`, `08`, `14`, `17`, `23`, `02` (`SETTINGS_*`); briefs
+**SET-1..SET-5** (`docs/tasks/SET-n.md`), migrations `20261201000190..000199`. Order: SET-1 →
+FIX-124 → SET-2 → SET-3; SET-4 and SET-5 after SET-1 (one lane in practice).
+
 ## Suggested agent/model and reason
 Opus main session (architecture + spec reconciliation); implementation by Sonnet lanes per SET brief.
