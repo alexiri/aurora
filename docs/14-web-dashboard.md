@@ -31,9 +31,26 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   a style attribute cannot run script, and `img-src`/`connect-src` keep it
   from loading anything from another origin).
 - Untrusted text (model output, plugin text, platform names, labels) is
-  rendered with the markdown renderer in safe mode (no raw HTML, links show
-  their target, `rel="noopener noreferrer nofollow"`); never
-  `dangerouslySetInnerHTML`.
+  rendered with the one Markdown renderer (`components/ui/markdown.tsx`, FIX-137,
+  D-227): **it renders like github.com** — CommonMark 0.31, GFM (tables, task
+  lists, strikethrough, extended autolinks), footnotes, alerts, emoji
+  shortcodes, highlighted code with a language label and Copy, math, heading
+  anchors and GitHub's raw-HTML allowlist — **except**: an image from another
+  origin is a link ("🖼 alt"), never loaded (same-origin attachments are
+  inline); only `http`, `https`, `mailto` and same-origin relative links are
+  links (any other scheme is its label as text); a link whose label looks like
+  a URL or domain of another host gets "→ host"; raw HTML outside the
+  allowlist is dropped (its text kept; a `<script>`'s content goes with it);
+  KaTeX runs with `trust: false`; a ```` ```mermaid ```` block is shown as a
+  code block (D-245: Mermaid's SVG carries an inline `<style>` that the CSP
+  forbids, and loosening `style-src` is out). External links carry
+  `rel="noopener noreferrer nofollow"` and the full URL as their tooltip. Tables
+  and code blocks scroll inside themselves (never the page). Math, the
+  highlighter and emoji are lazy chunks loaded only for messages that use them.
+  Output is React elements (parse → hast → sanitize → React); never
+  `dangerouslySetInnerHTML` (the theme script of I-41 is the sole exception). A
+  streaming reply holds back an unfinished table row; an unclosed fence is a
+  code block until it closes.
 - (phase 2, RFE-017) The generated client treats 429 as retryable: it waits for
   `retry-after` (cap 30 s, jittered) for idempotent reads and shows a non-blocking
   "You're going fast — retrying in Ns" toast; non-idempotent writes are **not**
@@ -509,10 +526,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - Agent turns are left-aligned, with a 32 px avatar aligned to the top of
       the meta line. The bubble is `subtle`, with a 14 px radius, a 4 px
       top-left corner and a maximum width of 80 % (as person bubbles).
-    - Bubbles render markdown in safe mode. In a person's message a single
+    - Bubbles render Markdown like github.com with D-227's exceptions (see
+      the safety rules above). In a person's message a single
       typed newline stays a line break. Inline code and code blocks sit on
-      `surface` (dark: `canvas`) with a `line` border, and code blocks scroll
-      horizontally inside themselves.
+      `surface` (dark: `canvas`) with a `line` border, and code blocks and
+      tables scroll horizontally inside themselves (keyboard-focusable
+      regions); alerts use the note/tip/important/warning/caution tokens.
     - (Phase 5, P5-CHAT-2, D-228, C-725; board "P5-CHAT · Reply".) **Quote
       strip.** A message whose `turn.queued` payload has `reply_to` shows a strip
       directly above its bubble, on the bubble's side, at most as wide as a

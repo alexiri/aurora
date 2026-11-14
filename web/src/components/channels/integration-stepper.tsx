@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { DynamicForm } from "@/components/apps/dynamic-form";
-import { Markdown } from "@/components/apps/markdown";
+import { Markdown } from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";

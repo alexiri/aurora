@@ -178,9 +178,15 @@ cards, one-line statuses, labels, notices or logs.
 | `markdown_as_data(s, max)` | `block` + escape so that the dashboard/connector renders it as text, never as active markup (no raw HTML, links shown with their target). |
 | `markdown_safe(s, max)` | (phase 5, FIX-142, D-227; planned) `block` + minimal edits for D-227's security exceptions only (images → links, link scheme allowlist, host after a URL-looking label of another host, HTML outside GitHub's allowlist, typed neutral tokens), verified by re-parsing; everything else kept byte for byte. Only for an agent's own message body on a chat platform (`13 §4.3`); all other text uses `markdown_as_data`. |
 
-Dashboard rule: model/user/plugin text is rendered through a markdown renderer
-with raw HTML disabled and link targets displayed; never with
-`dangerouslySetInnerHTML`.
+Dashboard rule: (phase 5, FIX-137, D-227, D-245) model/user/plugin text is rendered
+through the one Markdown renderer (`web/src/components/ui/markdown.tsx`), which
+renders like github.com (CommonMark 0.31, GFM, footnotes, alerts, emoji, highlighted
+code, math, GitHub's raw-HTML allowlist) except for D-227's security exceptions:
+other-origin images become links, only `http`/`https`/`mailto` and same-origin
+relative links are links, a URL-looking label of another host shows the real host,
+raw HTML outside the allowlist is dropped (text kept; a `<script>`'s content with it),
+KaTeX `trust: false`, Mermaid shown as code (D-245). Output is React elements, parse →
+hast → sanitize → React; never `dangerouslySetInnerHTML`.
 
 ## Limits registry
 

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { AvailabilityEditor } from "@/components/apps/availability-view";
 import { DynamicForm } from "@/components/apps/dynamic-form";
-import { Markdown, safeHref } from "@/components/apps/markdown";
+import { Markdown, safeHref } from "@/components/ui/markdown";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import {
   buildClientPatchFields,
@@ -80,14 +80,16 @@ describe("postMessage origin check", () => {
 });
 
 describe("markdown", () => {
-  it("does not render raw HTML or unsafe links, and shows link targets", () => {
-    const { container } = render(<Markdown source={'<script>x</script> [ok](https://e.com/a) [bad](javascript:alert(1))'} />);
+  it("does not render disallowed raw HTML or unsafe links, and keeps the full target in the tooltip", () => {
+    const { container } = render(<Markdown source={'<script>x</script>\n\n[ok](https://e.com/a) [bad](javascript:alert(1))'} />);
     expect(container.querySelector("script")).toBeNull();
-    expect(container.textContent).toContain("<script>");
+    // D-227: raw HTML outside the allowlist is dropped (a script's content with it, as on github.com).
+    expect(container.textContent).not.toContain("<script>");
     const links = container.querySelectorAll("a");
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://e.com/a");
-    expect(links[0].textContent).toContain("https://e.com/a");
+    expect(links[0]).toHaveAttribute("title", "https://e.com/a");
+    expect(container.textContent).toContain("bad");
     expect(safeHref("javascript:alert(1)")).toBeNull();
   });
 });
