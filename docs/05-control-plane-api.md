@@ -363,7 +363,7 @@ claim-based and safe to run everywhere.
 | Preview housekeeping (phase 4, P4-PRV-1/2): delete expired `preview_sessions`, `preview_grant_uses` and `preview_stream_grants`; clear stale `sandboxes.preview_wake_at`/`preview_start_requested_at`; count shares per org for `aurora_preview_shares` | every 60 s | idempotent (`SKIP LOCKED` batches) |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) (FIX-111: implemented for terminal `channel_inbox`/`channel_ops` rows (a pending deprovision op survives), settled `channel_cards`, expired `link_requests`, sessions and context credentials past `SESSION_PRUNE_GRACE`, `webhook_deliveries` past `WEBHOOK_DELIVERY_RETENTION` or over `WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`, and `cli_logins` past `SESSION_PRUNE_GRACE` after expiry; used action tokens are pruned by the card fan-out, `email_tokens` are no longer written (OIDC-only sign-in); each statement deletes at most `RETENTION_PRUNE_BATCH` rows) | daily | singleton, `SKIP LOCKED` batches |
-| Runtime daily rollup | hourly | singleton |
+| Runtime daily rollup (phase 5, D-138; **specified, not built**: no job exists and `runtime_daily` is never written) | hourly | singleton |
 | Plugin directory scan | startup + 60 s | singleton |
 | Snapshot compile & activate | on package state change | singleton |
 | Peer-task and reach expiry (FIX-111: `approved` reach grants past `expires_at`, set by `expires_in` on the decision, become `expired`) | every 60 s | idempotent |
@@ -463,6 +463,19 @@ Auth column: **S** session, **K** API key (workspace or org), **SO** session
 only, **IA** instance admin (session), **A** agent token, **R** runner, **C**
 connector, **P** public capability. Permission checks per `04`.
 
+**Outside the OpenAPI document (by design).** `web/openapi.json` describes the routes a dashboard or API-key
+client calls. These served routes are not in it — machine planes (their own tokens), SCIM, and the browser
+WebSocket — and each is listed here so a catalogue row without an OpenAPI entry is either one of them or
+unbuilt (phase-tagged). `scripts/guards/docs-routes.sh` checks every catalogue row against this table, the
+OpenAPI document and the phase tags (FIX-119).
+
+| Route | Why it is outside |
+|---|---|
+| GET `/v1/agents/{agent}/terminal` | WebSocket upgrade (C-616): not describable as an OpenAPI operation |
+| GET `/v1/previews/authorize` | browser navigation redirect of the preview origin flow (C-540..C-549) |
+| POST `/v1/relay/register` | relay plane (`aul_` token, C-550..C-559) |
+| POST `/v1/runner/preview-streams/open` | runner plane (`aur_` token) |
+
 ### Health and instance
 | Method & path | Auth | Purpose |
 |---|---|---|
@@ -517,7 +530,7 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `/v1/orgs/{org}/storage/refresh` | S/K | (FIX-126) org `owner`/`admin`: recompute the org's snapshot now, same body as the GET; `export` class |
 | GET/PUT `/v1/orgs/{org}/retention` | S/K | (phase 2, RFE-010/015) org `owner`/`admin`; `{ conversations_days?, attachments_days?, attachment_quota_mib? }`, `null` = none; 422 `retention_invalid` / `retention_above_instance_maximum` |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
-| GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
+| GET `/v1/workspaces/{ws}/usage` | S/K | (phase 5, D-138; **specified, not built** — no route, no job; the hourly "Runtime daily rollup" and token-usage aggregation of `§Background jobs` and `10` are the same item; `runtime_daily` is never written) runtime + tokens |
 | POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |
 
 ### Groups (phase 4, P4-GRP-1, D-130)

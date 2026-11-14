@@ -174,6 +174,12 @@ than the tools did. The gate's gain here is correctness (dependents) not speed.
 `aurora_template_meta` table is gone and the hash is a stable SHA-256 prefix. A testkit test asserts a clone's relation list
 equals the `AURORA_TEST_TEMPLATE_DB=0` path's and that the stamp table is absent.
 
+**Leaked test databases and the reap lock (FIX-103).** `aurora_test_<uuid>` databases left by killed runs are reaped (no
+connection, older than 2 h by the creation time in the v7 uuid) by the first `TestDb` of any test process; their
+`aurora_test_gw_*` roles with them. Clones take the advisory lock `aurora_test_reap` shared, reaps exclusive (skipped after a
+10 s wait), so a reap of another migration set's template never races a clone. The gate's migration scope is the
+reverse-dependency closure of `aurora-testkit`, not just `aurora-db` and `aurora-api`.
+
 ## aurora-api split (VEL-007 Part A)
 
 Question: with incremental `dev` (§6) merged, does moving part of `aurora-api` (75.5 k LOC, 311 files) into its own

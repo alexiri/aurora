@@ -1,0 +1,27 @@
+{{- if .Values.monitoring.podMonitor.enabled }}
+{{- /* (FIX-102, docs/15 §Observability) Prometheus Operator scraping, behind a flag (needs the monitoring.coreos.com
+       CRDs). A PodMonitor, not a ServiceMonitor: the ops listeners (runner 4106, relay 4193, connector host
+       4192) have no Service by design. One monitor per component, on the port that serves /metrics;
+       the NetworkPolicy side is networkPolicy.monitoringFrom. */ -}}
+{{- $full := include "aurora.fullname" . -}}
+{{- $targets := list (dict "c" "api" "port" "http") (dict "c" "gateway" "port" "internal") (dict "c" "hookhost" "port" "http") -}}
+{{- if .Values.runner.enabled }}{{ $targets = append $targets (dict "c" "runner" "port" "ops") }}{{ end -}}
+{{- if .Values.relay.enabled }}{{ $targets = append $targets (dict "c" "relay" "port" "ops") }}{{ end -}}
+{{- if .Values.connectorHost.enabled }}{{ $targets = append $targets (dict "c" "connector-host" "port" "ops") }}{{ end -}}
+{{- range $targets }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $full }}-{{ .c }}
+  labels: {{- include "aurora.labels" $ | nindent 4 }}
+    {{- with $.Values.monitoring.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "aurora.selector" (dict "root" $ "component" .c) | nindent 6 }}
+  podMetricsEndpoints:
+    - {port: {{ .port }}, path: /metrics, interval: {{ $.Values.monitoring.podMonitor.interval }}}
+{{- end }}
+{{- end }}

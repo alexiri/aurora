@@ -67,6 +67,10 @@
       the operator's config (the chart comment points there) — the edge route follows
       `scim.enabled` below. */ -}}
 {{- $_ := set $cfg "scim" (merge (dict "rate_per_minute" .Values.scim.ratePerMinute) (default (dict) $cfg.scim)) -}}
+{{- /* (FIX-102) half-enabled switches fail the render instead of serving a surface the edge does not route
+      (SCIM) or rendering runner-bound policy without a runner (terminal, previews). */ -}}
+{{- if and (get (default (dict) $cfg.scim) "enabled") (not .Values.scim.enabled) }}{{ fail "config.scim.enabled=true alone serves /scim/v2 with no edge route: set the top-level scim.enabled (the chart then routes /scim to the API)" }}{{ end -}}
+{{- if and (or .Values.terminal.enabled .Values.relay.enabled) (not .Values.runner.enabled) }}{{ fail "terminal.enabled and relay.enabled (previews) need the runner (their streams terminate there): set runner.enabled=true, or turn both features off" }}{{ end -}}
 {{- if .Values.scim.enabled }}{{ $_ := set (default (dict) $cfg).scim "enabled" true }}{{ end -}}
 {{- /* (P4-PRV-2, FIX-056) the chart-level wiring renders only from the top-level switch:
       the relay workload, the wildcard edge rules and the NetworkPolicy posture below all

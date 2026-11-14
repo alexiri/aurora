@@ -174,7 +174,10 @@ trap 'kill -KILL "$WATCHER" 2>/dev/null' EXIT   # replaced by cleanup's trap bel
     echo "front doors up: nginx :8091, haproxy :8092 (mock upstream :8093)"
   fi
 
-  cargo test -p aurora-e2e-gateway -- --test-threads=1 "$@"
+  # (FIX-101) --nocapture so the SKIPPED: lines of the gated tests are visible; with CI=true any of them fails the run.
+  # shellcheck source=scripts/e2e/lib-skip.sh
+  source scripts/e2e/lib-skip.sh
+  run_logged "$(mktemp /tmp/aurora-e2e-gateway-log.XXXXXX)" cargo test -p aurora-e2e-gateway -- --test-threads=1 --nocapture "$@"
   rc=$?
   exit $rc
 }

@@ -26,6 +26,46 @@ pub mod template;
 
 pub use wiremock;
 
+/// (FIX-101) The skip policy of env-gated suites. A suite that needs a service the developer may not have
+/// (podman, Redis, Vault, the strict front doors) names its gate variable and calls this first:
+///
+/// - gate set (non-empty, not `0`): returns `true`, the suite runs;
+/// - gate unset, `CI` not `true`: prints a `SKIPPED:` line and returns `false`, the caller returns early;
+/// - gate unset and `CI=true`: **panics**. A suite the specifications cite as evidence must run in CI or
+///   fail there, never pass by skipping (REVIEW-5 pattern 2).
+///
+/// The e2e scripts additionally fail on a `SKIPPED:` line when `CI=true` (`scripts/e2e/lib-skip.sh`).
+#[allow(clippy::panic)]
+pub fn require_or_skip(gate: &str) -> bool {
+    match gate_decision(
+        gate,
+        std::env::var(gate).ok().as_deref(),
+        std::env::var("CI").ok().as_deref(),
+    ) {
+        Ok(true) => true,
+        Ok(false) => {
+            eprintln!(
+                "SKIPPED: {gate} is not set (this suite needs it; CI sets it and fails without it)"
+            );
+            false
+        }
+        Err(msg) => panic!("{msg}"),
+    }
+}
+
+/// The pure decision behind [`require_or_skip`]: `Ok(true)` run, `Ok(false)` skip, `Err` fail.
+pub fn gate_decision(gate: &str, value: Option<&str>, ci: Option<&str>) -> Result<bool, String> {
+    if value.is_some_and(|v| !v.is_empty() && v != "0") {
+        return Ok(true);
+    }
+    if ci == Some("true") {
+        return Err(format!(
+            "{gate} is not set but CI=true: this env-gated suite must run in CI, not skip. Set {gate} (and its service variables) in the workflow job, or take the suite out of the CI run on purpose (docs/18 §Skip policy)"
+        ));
+    }
+    Ok(false)
+}
+
 /// Name of the env var that overrides the test server.
 pub const TEST_DB_ENV: &str = "AURORA_TEST_DATABASE_URL";
 

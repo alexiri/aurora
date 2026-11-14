@@ -9,7 +9,7 @@ ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:5a4b41a427c9717be8f
 
 # ---- supervisor, built against an older glibc than the AlmaLinux runtime (OPS-020: cargo-chef deps
 # layer + lld, same design as images/services/Containerfile; target/ stays in layers for the gha cache)
-ARG RUST_IMAGE=docker.io/library/rust:1-bookworm
+ARG RUST_IMAGE=docker.io/library/rust:1-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea
 FROM ${RUST_IMAGE} AS chef
 ARG CARGO_CHEF_VERSION=0.1.78
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -54,10 +54,13 @@ FROM os AS base
 RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     && dnf -y install --setopt=install_weak_deps=False \
          git curl jq ripgrep fd-find less openssh-clients python3 python3-pip \
-         nodejs npm gcc gcc-c++ make unzip zip procps-ng \
-    && (dnf -y install --setopt=install_weak_deps=False chromium || echo "chromium unavailable") \
+         nodejs npm gcc gcc-c++ make unzip zip procps-ng chromium \
+    # (FIX-103) Chromium is required, not best-effort: the `sandbox` target declares the `browser`
+    # capability below, and the runner schedules browser boots from that label. A build where the
+    # package is unavailable fails here instead of shipping an image that advertises a browser it lacks.
+    && { test -x /usr/bin/chromium-browser || test -x /usr/bin/chromium; } \
     && dnf clean all && rm -rf /var/cache/dnf \
-    && pip3 install --no-cache-dir uv \
+    && pip3 install --no-cache-dir uv==0.13.8 \
     && npm config set prefix /workspace/.local --global \
     # No privilege escalation or package management for the agent.
     && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/dnf* /usr/bin/yum /usr/bin/rpm* 2>/dev/null; true
@@ -82,11 +85,16 @@ LABEL org.aurora.harnesses="${SANDBOX_HARNESSES},fake"
 # Pinned Claude Code CLI; must match PINNED_VERSION in
 # services/aurora-supervisor/src/adapters/claude_code/mod.rs.
 ARG CLAUDE_CODE_VERSION=2.1.319
+# (FIX-103) The whole npm tree is pinned by images/sandbox/harness/claude-code/package-lock.json and
+# installed with `npm ci` (integrity-checked); bump the version in package.json, regenerate the
+# lockfile (`npm install --package-lock-only --ignore-scripts` in that directory) and PINNED_VERSION together.
+COPY images/sandbox/harness/claude-code/package.json images/sandbox/harness/claude-code/package-lock.json /tmp/claude-code-pin/
 RUN case ",${SANDBOX_HARNESSES}," in *,claude-code,*) \
       mkdir -p /opt/aurora/harness/claude-code \
-   && npm install --prefix /opt/aurora/harness/claude-code --no-audit --no-fund \
-        @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-   && /opt/aurora/harness/claude-code/node_modules/.bin/claude --version ;; esac
+   && cp /tmp/claude-code-pin/package.json /tmp/claude-code-pin/package-lock.json /opt/aurora/harness/claude-code/ \
+   && (cd /opt/aurora/harness/claude-code && npm ci --no-audit --no-fund) \
+   && test "$(/opt/aurora/harness/claude-code/node_modules/.bin/claude --version | cut -d' ' -f1)" = "${CLAUDE_CODE_VERSION}" ;; esac \
+   && rm -rf /tmp/claude-code-pin
 # Pinned OpenAI Codex CLI (release rust-v${CODEX_VERSION}, the static musl build); must match
 # PINNED_VERSION in services/aurora-supervisor/src/adapters/codex/mod.rs. The archive is verified
 # against the checksum below before it is unpacked; a mismatch fails the build.

@@ -1,0 +1,28 @@
+package:
+  id: fixture-invalid-unknown-oauth-client
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Invalid fixture
+  description: "Expected rejection: unknown_oauth_client"
+apps:
+  - about: { id: invalid-app, name: Invalid app, web_hosts: [app.invalid.example.test] }
+    credentials: [ { name: access_token, secret: true } ]
+    metadata: [ { name: org } ]
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: no_such_client
+        scopes:
+          - { scope: read, name: Read, access: read }
+        default_scopes: [read]
+        token_response: { access_token: /access_token, refresh_token: /refresh_token, expires_in: /expires_in }
+    hosts:
+      - match: { host: api.invalid.example.test }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: list_things, name: List things, host: api.invalid.example.test, path: /v1/things, methods: [GET] }

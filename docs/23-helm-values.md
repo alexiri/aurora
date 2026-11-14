@@ -104,7 +104,7 @@ reference names them (TOML-style keys, e.g. `hosted:
 | `database.allowSharedLogin` | bool | `false` | the explicit, **not recommended** opt-in to the gateway sharing the main database login (every privilege the API has). Mutually exclusive with the pair (`helm` fails); with `postgres.enabled` it switches the automatic role off | never in production |
 | `database.cidrs` / `.port` | CIDR list / int | `[]` / `5432` | NetworkPolicy egress to an **external** database (ignored when `postgres.enabled`) | external DB on a private range |
 | `postgres.enabled` | bool | `false` | bundled single-node Postgres 16, **evaluation only**; its StatefulSet/Service/PVC are pre-install hook resources, so `helm uninstall` leaves them (NOTES.txt has the cleanup commands) | never in production ([install-helm §Database](operator/install-helm.md#database)) |
-| `postgres.image` / `.storage` / `.storageClass` | image / quantity / class | `postgres:16` / `5Gi` / `""` | the evaluation database's image, PVC size and class | evaluation only |
+| `postgres.image` / `.storage` / `.storageClass` | image / quantity / class | `postgres:16` pinned by digest (FIX-103) / `5Gi` / `""` | the evaluation database's image, PVC size and class | evaluation only |
 | `postgres.initScriptsConfigMap` | ConfigMap name | `""` | `*.sql`/`*.sh` run once on an empty data dir (the gateway role is created by the chart; an init script is for other objects, or for the explicit role pair) | evaluation |
 
 ## Workloads
@@ -258,7 +258,11 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.enabled` | bool | `true` | render any policies at all (leave on unless the cluster forbids them) | never off in production |
 | `networkPolicy.edgeNamespaceSelector` | label selector | `kubernetes.io/metadata.name: ingress-nginx` | which namespace's pods may reach api:4101, web:4100, connector callbacks | another ingress namespace |
 | `networkPolicy.dnsNamespaceSelector` | label selector | `kube-system` | DNS egress | custom DNS |
-| `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= any:443/6443) / `[443, 6443]` | runner and `secrets` hook → Kubernetes API egress | pinned API-server endpoints |
+| `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= the addresses of the `kubernetes` EndpointSlice in `default`, read at install/upgrade; no rule where unreadable) / `[443, 6443]` | runner and `secrets` hook → Kubernetes API egress | pinned API-server endpoints; any cluster where the installing identity cannot read endpointslices |
+| `networkPolicy.kubeApiOpen` | bool | `false` | explicitly allow any:`kubeApiPorts` for the runner and the `secrets` hook (the pre-FIX-102 default); never silent | only when the API server addresses cannot be pinned |
+| `networkPolicy.monitoringFrom` | list of NetworkPolicy peers | `[]` | peers allowed to scrape every ops/metrics port (4101, 4103, 4104, 4106, 4192, 4193); nothing opens them by default | Prometheus in another namespace |
+| `monitoring.podMonitor.enabled` / `.interval` / `.labels` | bool / duration / map | `false` / `30s` / `{}` | one Prometheus Operator `PodMonitor` per component (ops listeners have no Service); needs the Prometheus Operator CRDs (API group monitoring.coreos.com) | Prometheus Operator |
+| `secrets.allowRegenerate` | bool | `false` | let an **upgrade** create fresh encryption keys when the generated Secret is absent (otherwise the hook refuses: stored credentials would become undecryptable) | deliberately starting over after a restore without the Secret |
 | `networkPolicy.cilium.enabled` | bool | `false` | add CiliumNetworkPolicies for runner and `secrets` hook → kube-apiserver (Cilium matches those as entities, not ipBlocks) and admit the `ingress` entity on the edge ports | Cilium cluster (`15 §Production`) |
 | `networkPolicy.cilium.edgeEntities` | list of Cilium entities | `[ingress]` | entities admitted on the edge ports (host-network ingresses: `[host, remote-node]`) | host-network ingress |
 | `networkPolicy.externalEgress.cidr` / `.except` | CIDR / list | `0.0.0.0/0` / private ranges | external egress (OIDC, SMTP, LLM endpoints, push services) for api/gateway/hookhost/connectors; `except` carves private ranges out (they need explicit rules) | lock egress down |

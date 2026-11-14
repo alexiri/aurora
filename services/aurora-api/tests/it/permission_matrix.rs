@@ -1542,7 +1542,37 @@ async fn permission_matrix_routes_by_principal() {
         failures.len(),
         failures.join("\n")
     );
+    // (FIX-101) An INCONCLUSIVE row proves nothing about its denial side (the request failed validation before
+    // authorization ran), so it fails the test unless it is on the explicit list below. Fix the row by giving
+    // `body_for` a valid minimal body; do not grow the list to make a run pass.
+    let unexplained: Vec<&String> = inconclusive
+        .iter()
+        .filter(|r| {
+            !ACCEPTED_INCONCLUSIVE
+                .iter()
+                .any(|(row, _)| *row == r.as_str())
+        })
+        .collect();
+    assert!(
+        unexplained.is_empty(),
+        "{} permission-matrix rows are INCONCLUSIVE (validation before authorization) and not on ACCEPTED_INCONCLUSIVE: {unexplained:?}",
+        unexplained.len()
+    );
+    let stale: Vec<&str> = ACCEPTED_INCONCLUSIVE
+        .iter()
+        .map(|(row, _)| *row)
+        .filter(|row| !inconclusive.contains(*row))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "ACCEPTED_INCONCLUSIVE lists rows that are conclusive now (remove them): {stale:?}"
+    );
 }
+
+/// Rows allowed to stay INCONCLUSIVE, as `("<METHOD> <path template>", "why a valid body cannot be built")`.
+/// Empty at FIX-101: all 315 routes answer their denial side with a valid minimal body (checked on
+/// 2026-11-14: `INCONCLUSIVE rows: 0`). The list may only shrink.
+const ACCEPTED_INCONCLUSIVE: &[(&str, &str)] = &[];
 
 /// Org-scope single-resource reads (I-27 amendment): rows for `/v1/secrets/{id}` etc. use
 /// unseeded ids and only exercise workspace scope, so seed an org secret and an org connection

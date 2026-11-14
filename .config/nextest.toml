@@ -17,6 +17,10 @@ archive.include = [
 ]
 
 [profile.ci]
+# (FIX-101) The env-gated suites run in their own CI job (`gated-suites`: a pinned Redis service and the
+# runner's podman tests, gates set). The shards have neither service, and under CI=true the skip policy
+# (`aurora_testkit::require_or_skip`) fails a gated test whose gate is unset: keep them out of the shards.
+default-filter = "not (package(aurora-runner) & test(/^podman::/)) & not (package(aurora-counters) & test(/redis/))"
 test-threads = 8
 fail-fast = false
 retries = 0

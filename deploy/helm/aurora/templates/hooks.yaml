@@ -10,8 +10,52 @@
        AURORA_CONNECTOR_HOST_TOKEN yet. Every `put` is idempotent (only absent keys are written), so the hook
        runs on every upgrade. */ -}}
 {{- $secretHook := "pre-install,pre-upgrade" -}}
-{{- if or $genSecrets $genCA }}
-# Hook ServiceAccount + Role: may only read/create/patch Secrets in the release namespace.
+{{- /* (FIX-102) One ServiceAccount, Role and RoleBinding per hook Job, with `resourceNames` on get/patch:
+       the secrets Job reaches only the generated Secret, the CA Job (install only) only the CA Secret —
+       neither can read the other's key material. `create` cannot be restricted by name. */ -}}
+{{- if $genCA }}
+# CA hook ServiceAccount + Role: creates and reads the gateway CA Secret, nothing else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-hooks-ca
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $full }}-hooks-ca
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+    resourceNames: [{{ $ca | quote }}]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $full }}-hooks-ca
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-hooks-ca}
+subjects:
+  - {kind: ServiceAccount, name: {{ $full }}-hooks-ca, namespace: {{ .Release.Namespace }}}
+{{- end }}
+{{- if $genSecrets }}
+---
+# Secrets hook ServiceAccount + Role: reads and patches the generated Secret, creates it when absent.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -32,7 +76,11 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [get, create, patch]
+    verbs: [get, patch]
+    resourceNames: [{{ $secret | quote }}]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -44,7 +92,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-hooks}
 subjects:
-  - {kind: ServiceAccount, name: {{ $full }}-hooks}
+  - {kind: ServiceAccount, name: {{ $full }}-hooks, namespace: {{ .Release.Namespace }}}
 {{- if .Values.networkPolicy.enabled }}
 {{- /* The hook jobs talk to the Kubernetes API with kubectl. On pre-upgrade the release's
        default-deny policy already exists (hooks run before regular resources on upgrade, so
@@ -64,35 +112,29 @@ spec:
   podSelector:
     matchLabels: {{- include "aurora.selector" (dict "root" . "component" "secrets") | nindent 6 }}
   policyTypes: [Egress]
+  {{- /* FIX-069/FIX-102: who may the secrets hook reach on 443/6443? In order of preference:
+         (1) networkPolicy.kubeApiCidrs, as set by the operator;
+         (2) the real API server addresses, read from the `kubernetes` EndpointSlice in `default` at
+             install/upgrade time (Helm `lookup`, see the aurora.kubeApiCidrs helper) — /32 each;
+         (3) neither (`helm template`/--dry-run, or no `get` on endpointslices in `default`): no rule
+             at all — never a silent 0.0.0.0/0; an operator who accepts that sets
+             networkPolicy.kubeApiOpen=true. (An empty `to:` would mean "everywhere", so the rule is
+             omitted, not emptied.) */}}
+  {{- $hookApi := include "aurora.kubeApiCidrs" . | fromJsonArray }}
+  {{- if or $hookApi $np.kubeApiOpen }}
   egress:
     - to:
-        {{- /* FIX-069: who may the secrets hook reach on 443/6443? In order of preference:
-               (1) networkPolicy.kubeApiCidrs, as set by the operator;
-               (2) the real API server addresses, read from the `kubernetes` Endpoints in
-                   `default` at install/upgrade time (Helm `lookup`; this is the post-DNAT address
-                   a NetworkPolicy matches, so the ClusterIP would not do) — /32 each;
-               (3) only when neither exists (`helm template`/--dry-run, where lookup is empty, or
-                   no read access to that Endpoints object): 0.0.0.0/0, as before, so no existing
-                   install or render breaks. Requiring kubeApiCidrs instead would fail every
-                   current upgrade that leaves it empty. */}}
-        {{- $hookApi := list }}
-        {{- if $np.kubeApiCidrs }}
-        {{- $hookApi = $np.kubeApiCidrs }}
-        {{- else }}
-        {{- $eps := lookup "v1" "Endpoints" "default" "kubernetes" }}
-        {{- range (dig "subsets" (list) $eps) }}
-        {{- range (default (list) .addresses) }}
-        {{- $hookApi = append $hookApi (printf "%s/%s" .ip (ternary "128" "32" (contains ":" .ip))) }}
-        {{- end }}
-        {{- end }}
-        {{- end }}
-        {{- range ($hookApi | default (list "0.0.0.0/0")) }}
+        {{- range $hookApi }}
         - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+        {{- if $np.kubeApiOpen }}
+        - ipBlock: {cidr: 0.0.0.0/0}
         {{- end }}
       ports:
         {{- range (default (list 443 6443) $np.kubeApiPorts) }}
         - {protocol: TCP, port: {{ . }}}
         {{- end }}
+  {{- end }}
 {{- if $np.cilium.enabled }}
 ---
 # Cilium: the API server is the `kube-apiserver` entity, which no NetworkPolicy ipBlock
@@ -149,12 +191,25 @@ spec:
             - {name: PG_HOST, value: {{ printf "%s-postgres" $full | quote }}}
             - {name: GW_ROLE_AUTO, value: {{ ternary "true" "false" (not (empty (include "aurora.gatewayRoleAuto" .))) | quote }}}
             - {name: GW_ROLE, value: {{ include "aurora.gatewayAutoRole" . | quote }}}
+            - {name: IS_UPGRADE, value: {{ .Release.IsUpgrade | quote }}}
+            - {name: ALLOW_REGENERATE, value: {{ default false .Values.secrets.allowRegenerate | quote }}}
           volumeMounts: [{name: tmp, mountPath: /tmp}]
           command: ["/bin/sh", "-ec"]
           args:
             - |
               export HOME=/tmp
-              kubectl get secret "$NAME" >/dev/null 2>&1 || kubectl create secret generic "$NAME"
+              if ! kubectl get secret "$NAME" >/dev/null 2>&1; then
+                # (FIX-102) An upgrade that finds the generated Secret gone (a namespace restore without it,
+                # a deleted Secret) must not mint fresh encryption keys: every stored credential would become
+                # undecryptable and nothing would say so (the API starts without checking). Restore the
+                # Secret (docs/operator/backups.md) or, only if nothing encrypted must survive, set
+                # secrets.allowRegenerate=true.
+                if [ "$IS_UPGRADE" = "true" ] && [ "$ALLOW_REGENERATE" != "true" ]; then
+                  echo "refusing to generate new keys: Secret $NAME is absent on an upgrade, so credentials stored with the old keys would be lost. Restore the Secret from backup (docs/operator/backups.md); to start over deliberately, upgrade again with --set secrets.allowRegenerate=true." >&2
+                  exit 1
+                fi
+                kubectl create secret generic "$NAME"
+              fi
               # Idempotent: only keys that are absent are written; existing values are never overwritten.
               have() { [ -n "$(kubectl get secret "$NAME" -o "jsonpath={.data.$1}")" ]; }
               put() { case "$2" in ""|k1:|aur_|aun_|auh_|aul_) echo "empty generated value for $1" >&2; exit 1;; esac; have "$1" || kubectl patch secret "$NAME" -p "{\"stringData\":{\"$1\":\"$2\"}}" >/dev/null; }
@@ -241,7 +296,7 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: {{ $full }}-hooks
+      serviceAccountName: {{ $full }}-hooks-ca
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -265,6 +320,53 @@ spec:
               if kubectl get secret "$NAME" >/dev/null 2>&1; then echo "CA secret exists; not overwriting"; exit 0; fi
               kubectl create secret generic "$NAME" --from-file=ca.pem=/ca/ca.pem --from-file=ca.key=/ca/ca.key
       volumes: [{name: ca, emptyDir: {}}, {name: tmp, emptyDir: {}}]
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# (FIX-102) The migrate and gateway-role Jobs' policies are hook resources, like the secrets hook's: on
+# `helm upgrade` from a chart that predates them, the hooks run before any regular resource, under the
+# previous release's default-deny, and the Job could not reach the database. Database egress only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "migrate") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    {{- /* DNS too: on a first install the regular `allow-dns` policy does not exist yet, and a hook-rendered
+           policy that selects the pod is then the only one in force, so without this rule the Job cannot
+           resolve the database host (kind run, 2026-11-14). The rule is the allow-dns one. */}}
+    - to:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $np.dnsNamespaceSelector | nindent 14 }}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    {{- include "aurora.dbEgress" . | nindent 4 }}
+{{- if .Values.postgres.enabled }}
+---
+# ... and the bundled Postgres admits those Jobs (the regular -postgres policy admits api and gateway).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-postgres-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "postgres") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "aurora.peer" (dict "root" . "c" "migrate") | nindent 8 }}
+      ports: [{protocol: TCP, port: 5432}]
+{{- end }}
 {{- end }}
 {{- if include "aurora.gatewayRoleAuto" . }}
 ---

@@ -10,6 +10,24 @@ One row per invariant of `docs/17-security.md` (SEC-01..SEC-87; the phase-4 rows
 `e2e-g` = `tests/e2e-gateway/tests`, `cfg` = `crates/aurora-config/tests`, `cli` = `services/aurora-cli`. Level: unit / service (real Postgres, in-process
 services) / e2e (full stack) / guard (script).
 
+**Where each kind of evidence runs (FIX-101; docs/18 §Skip policy).** A row's "proven" rests on a suite that actually
+executes where this column says; an env-gated suite fails in CI rather than skipping.
+
+| Evidence | Runs | Job / command |
+|---|---|---|
+| unit, service (`api`, `gw`, `sup`, `run` lib, `reg`, `config`, `crypto`, `channels`, `hookhost`, `web/tests`) | every PR | `rust-test` shards (nextest, profile `ci`), `web` (vitest) |
+| guards (`scripts/guards/*`) | every PR | `guards` |
+| `e2e-g` (`tests/e2e-gateway`), including the strict front doors | every PR | `e2e-gateway`: `scripts/e2e/gateway.sh`, `FRONTDOOR=1` |
+| `e2e-h` (`tests/e2e-hosted`) except the chromium scenarios | every PR | `e2e-hosted`: `scripts/e2e/hosted.sh` |
+| `e2e-h` chromium scenarios (SEC-41, `s8d`), Codex/LLM live | **nightly** / manual | `hosted-full` (full sandbox image); `llm.sh` is manual |
+| channel e2e (`e2e-h/channels.rs`; SEC-18/19/20) | **nightly** | `channels`: `scripts/e2e/channels.sh` |
+| Redis counters conformance (SEC-62) | every PR | `gated-suites`: `AURORA_TEST_REDIS=1` against the pinned Redis service |
+| runner podman hardening (`run/tests/it/podman.rs`, SEC-26) | every PR | `gated-suites`: `AURORA_TEST_PODMAN=1` |
+| Vault (SEC-61 live) | every PR | `vault` |
+| Playwright mocked project / production-build project (terminal CSP, `web/e2e/terminal.prod.spec.ts`) | every PR | `web` |
+| Playwright real-stack, kind e2e (`e2e-h/k8s.rs`) | **nightly** | `first-run`, `kind-e2e` |
+| performance budgets | **manual, idle machine** | none |
+
 Status: **proven** = an existing test already asserts it (verified when this table was written);
 **added** = a test added by TEST-018 (marked **New**) closes a gap; **pending** = waiting on a
 named task; **gap** = not implemented (see "Open gaps").

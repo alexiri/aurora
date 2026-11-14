@@ -61,7 +61,10 @@ socat "UNIX-LISTEN:$SOCKDIR/pg.sock,fork,mode=600" "TCP:$PGHOST_:$PGPORT_" &
 HOST_SOCAT=$!
 
 SOCK=$(podman info --format '{{.Host.RemoteSocket.Path}}')
-podman unshare --rootless-netns env \
+# (FIX-101) With CI=true a SKIPPED: line fails the run (scripts/e2e/lib-skip.sh).
+# shellcheck source=scripts/e2e/lib-skip.sh
+source scripts/e2e/lib-skip.sh
+run_logged "$(mktemp /tmp/aurora-e2e-channels-log.XXXXXX)" podman unshare --rootless-netns env \
   AURORA_TEST_DATABASE_URL="$AURORA_TEST_DATABASE_URL" PGBRIDGE_SOCK="$SOCKDIR/pg.sock" PGBRIDGE_PORT="$PGPORT_" \
   AURORA_E2EH_SOCK="$SOCK" AURORA_E2EH_NETWORK="$SBX_NET" AURORA_E2EH_TOKEN="$TOKEN" \
   AURORA_E2EH_FP="$FP" AURORA_E2EH_IMAGE="$IMAGE" \

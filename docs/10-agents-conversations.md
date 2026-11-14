@@ -457,8 +457,12 @@ backend is a later registry entry.
     (`details: { used_mib, quota_mib }`); a connector `file.fetch` → the attachment
     is `failed` with `failure_reason = quota_exceeded` and the person gets a
     platform-voice notice; the agent's `send_file` (runner `POST /attachments`) →
-    tool error `attachment_quota_exceeded`. At 80 % and 100 % the org's owners get a
-    dashboard notice (and the e-mail notification channel of RFE-011a when enabled).
+    tool error `attachment_quota_exceeded`. At 80 % and 100 % (once per crossing) the sweep writes an
+    **audit row** and, when a mailer exists, **e-mails the org's owners**; the dashboard shows the level as a
+    badge on **Admin › Storage** (`GET /v1/orgs/{org}/storage` → `notice`: `clear` / `warning` / `full`) and
+    nowhere else — **there is no banner in the app shell and no in-app notification** (FIX-119 reworded this
+    sentence; an app-shell banner for org owners while the notice is `warning` or `full` is the open
+    follow-up, same shape as the SCIM expiry notice).
   - **Retention.** `attachments_days` (optional, default none; same bounds and
     instance ceiling `attachments.days_max` as conversations, `RETENTION_MIN_DAYS`..
     `RETENTION_MAX_DAYS`) purges attachment **bytes** older than the window: the
@@ -780,7 +784,7 @@ arming conversation.
 
 - **Runtime intervals**: one row per boot (opened by the start report, closed by
 whatever ends it, plus a reconcile sweep), control-plane timestamps only, no
-foreign keys. `runtime_daily` is rebuilt hourly.
+foreign keys. `runtime_daily` is rebuilt hourly (phase 5, D-138; **specified, not built** — the table exists, nothing writes it, and `GET /v1/workspaces/{ws}/usage` has no route).
 - **Token usage** per turn (`turns.usage`) as reported by the harness;
 aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 5 (D-138, moved from phase 4), P4-LLM) The API stamps
 `provider`, `endpoint_id` and `model` into `turns.usage` from the turn's `ModelChoice`

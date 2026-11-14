@@ -55,7 +55,7 @@ pub struct State {
 }
 
 const CACHE_POS: Duration = Duration::from_secs(15);
-const CACHE_NEG: Duration = Duration::from_secs(5);
+const CACHE_NEG: Duration = aurora_core::limits::PREVIEW_AUTH_CACHE_NEG;
 /// Cache entries beyond this count are dropped wholesale (labels are bounded anyway).
 const CACHE_MAX: usize = 100_000;
 

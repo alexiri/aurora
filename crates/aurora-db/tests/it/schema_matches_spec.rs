@@ -110,6 +110,106 @@ fn describe_diff(
     }
 }
 
+/// (FIX-101) docs/03 type word -> the `udt_name` Postgres reports for it.
+fn spec_type_to_udt(t: &str) -> Option<&'static str> {
+    Some(match t {
+        "uuid" => "uuid",
+        "text" => "text",
+        "citext" => "citext",
+        "timestamptz" => "timestamptz",
+        "date" => "date",
+        "int" | "integer" => "int4",
+        "smallint" => "int2",
+        "bigint" => "int8",
+        "bool" | "boolean" => "bool",
+        "jsonb" => "jsonb",
+        "bytea" => "bytea",
+        "inet" => "inet",
+        "text[]" => "_text",
+        "uuid[]" => "_uuid",
+        "int[]" => "_int4",
+        _ => return None,
+    })
+}
+
+/// Known drift between docs/03 and the migrations that the guard tolerates, one `table.column` per entry
+/// with the reason. It may only shrink: an entry that no longer differs fails the test, so a fix removes
+/// its line. (FIX-101: the guard used to compare table and column NAMES only.)
+const KNOWN_TYPE_DRIFT: &[&str] = &[];
+
+/// Compares the declared type and nullability of every column docs/03 types ("<type> [not] null") with
+/// the migrated catalog. Not compared: constraints, indexes, defaults, checks, foreign keys, partitions.
+async fn column_type_diff(pool: &PgPool) -> Vec<String> {
+    let json: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture is valid JSON");
+    let spec = json["columns"]
+        .as_object()
+        .expect("fixture has a `columns` object (run scripts/extract-schema.py)");
+    let rows = sqlx::query(
+        "SELECT c.table_name, c.column_name, c.udt_name, c.is_nullable \
+         FROM information_schema.columns c \
+         JOIN pg_namespace n ON n.nspname = c.table_schema \
+         JOIN pg_class k ON k.relname = c.table_name AND k.relnamespace = n.oid \
+         WHERE c.table_schema = 'public' AND k.relkind IN ('r', 'p') AND NOT k.relispartition",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("query column types");
+    let mut actual: BTreeMap<(String, String), (String, bool)> = BTreeMap::new();
+    for r in rows {
+        let nullable: String = r.get("is_nullable");
+        actual.insert(
+            (r.get("table_name"), r.get("column_name")),
+            (r.get("udt_name"), nullable == "YES"),
+        );
+    }
+    let mut out = Vec::new();
+    for (table, cols) in spec {
+        for (col, decl) in cols.as_object().expect("columns per table") {
+            let key = format!("{table}.{col}");
+            let decl = decl.as_str().expect("declaration is a string");
+            let (typ, null) = match decl.strip_suffix(" not null") {
+                Some(t) => (t, Some(false)),
+                None => match decl.strip_suffix(" null") {
+                    Some(t) => (t, Some(true)),
+                    None => (decl, None),
+                },
+            };
+            let Some((udt, is_null)) = actual.get(&(table.clone(), col.clone())) else {
+                continue; // a missing column is reported by the name comparison
+            };
+            let want_udt = spec_type_to_udt(typ);
+            let mut problems = Vec::new();
+            match want_udt {
+                None => problems.push(format!(
+                    "docs/03 type `{typ}` is not in the guard's type map"
+                )),
+                Some(w) if w != udt => {
+                    problems.push(format!("type: docs/03 `{typ}` ({w}), migrated `{udt}`"))
+                }
+                _ => {}
+            }
+            if let Some(n) = null
+                && n != *is_null
+            {
+                problems.push(format!(
+                    "nullability: docs/03 `{}`, migrated `{}`",
+                    if n { "null" } else { "not null" },
+                    if *is_null { "null" } else { "not null" }
+                ));
+            }
+            let known = KNOWN_TYPE_DRIFT.iter().any(|k| *k == key);
+            match (problems.is_empty(), known) {
+                (false, false) => out.push(format!("{key}: {}", problems.join("; "))),
+                (true, true) => out.push(format!(
+                    "{key}: no longer differs: remove it from KNOWN_TYPE_DRIFT"
+                )),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
 async fn migrated_schema_matches_03(pool: PgPool) {
     assert_fixture_current();
@@ -123,4 +223,38 @@ async fn migrated_schema_matches_03(pool: PgPool) {
             actual.len()
         );
     }
+    let drift = column_type_diff(&pool).await;
+    assert!(
+        drift.is_empty(),
+        "migrated column types/nullability differ from docs/03 ({} columns):\n{}",
+        drift.len(),
+        drift.join("\n")
+    );
+}
+
+/// The guard bites: a column whose type or nullability differs from its declaration is reported.
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn a_wrong_column_type_or_nullability_fails_the_schema_guard(pool: PgPool) {
+    // users.display_name is `text not null` in docs/03.
+    sqlx::query("ALTER TABLE users ALTER COLUMN display_name TYPE varchar(80)")
+        .execute(&pool)
+        .await
+        .expect("alter type");
+    sqlx::query("ALTER TABLE users ALTER COLUMN last_login_at SET NOT NULL")
+        .execute(&pool)
+        .await
+        .ok(); // may fail on rows; the table is empty here
+    let drift = column_type_diff(&pool).await;
+    assert!(
+        drift
+            .iter()
+            .any(|d| d.starts_with("users.display_name: type")),
+        "the type change must be reported: {drift:?}"
+    );
+    assert!(
+        drift
+            .iter()
+            .any(|d| d.starts_with("users.last_login_at: nullability")),
+        "the nullability change must be reported: {drift:?}"
+    );
 }

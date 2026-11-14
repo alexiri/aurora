@@ -322,7 +322,7 @@ override changes nothing else (same package list, same labels, same tag scheme
 - (phase 4, P4-PRV-2) With `relay.enabled` (the chart's single previews switch,
   FIX-056) the edge also serves the **wildcard host** `*.<previews.domain>` →
   relay :4112 (a second host, never a path of `server.external_url`;
-  `§Port previews`). Without it nothing about the edge changes.
+  `§Port previews`; with Gateway API a separate `HTTPRoute`, FIX-102). Without it nothing about the edge changes.
 - (phase 2, RFE-017) The API limits by authenticated principal, not by IP, except
   for unauthenticated routes (which trust the edge's overwritten `X-Forwarded-For`).
   Size `ratelimit.api.multiplier` up for deployments where service keys legitimately
@@ -498,10 +498,14 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   `§Port previews` below).
 - (FIX-069) Narrower egress on upgrade: the `secrets` hook's NetworkPolicy (`<release>-aurora-hooks`) now allows
   443/6443 only to `networkPolicy.kubeApiCidrs` when you set it, else to the API server addresses that Helm
-  reads from the `kubernetes` Endpoints in `default` at `helm install/upgrade` time (it was always `0.0.0.0/0`).
-  `helm template` and `--dry-run` cannot read them and still render `0.0.0.0/0`, as does a Helm user without
-  read access to that Endpoints object. No value changes are required; set `kubeApiCidrs` to pin it
-  explicitly (managed control planes whose endpoint is not in `default/kubernetes`). The relay's policy lost its
+  reads from the `kubernetes` EndpointSlice (`discovery.k8s.io/v1`) in `default` at `helm install/upgrade` time (it
+  was always `0.0.0.0/0`). **(FIX-102)** The lookup moved from the deprecated core `v1` Endpoints (every `helm upgrade`
+  on Kubernetes ≥ 1.33 printed `Warning: v1 Endpoints is deprecated`) to the EndpointSlice, in one helper
+  (`aurora.kubeApiCidrs`) shared by the hook and the runner policy; the installing identity needs `get` on
+  `endpointslices.discovery.k8s.io` in `default`. Where nothing can be read (`helm template`, `--dry-run`, no
+  access) there is **no** silent `0.0.0.0/0` any more: the egress rule is not rendered (NOTES.txt warns) until
+  you set `networkPolicy.kubeApiCidrs`, or `networkPolicy.kubeApiOpen: true` to say "any:443/6443" on purpose.
+  An upgrade by an identity without that read access therefore needs `kubeApiCidrs` set first. The relay's policy lost its
   external egress (it only ever needs the api and the runners). An instance whose Secret still carries the
   unused `AURORA_BOOTSTRAP_RELAY_TOKEN` key can delete it.
 - Running sandboxes keep their image until their next boot; the dashboard shows
@@ -526,6 +530,15 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   (warning) and for `gateway.resolve_cache_ttl_secs` (critical: cache is running out,
   new requests are being refused); page on `state="down"`. Kubernetes probes use
   plain `/readyz`; use `?strict=true` only in monitoring, never as a readiness probe.
+  **(FIX-102)** The chart's probes are `httpGet`: readiness `/readyz`, liveness `/healthz`, on the port that
+  serves the ops router (api 4101, gateway 4103, hookhost 4104, runner 4106, connector host 4192, relay 4193),
+  so an API replica without its database, or a gateway reporting `down`, leaves rotation. The web workload and
+  external connector images have no ops router and keep a TCP check. Kubelet probes are not subject to
+  NetworkPolicy on the supported CNIs; the gateway's 4103 is checked on kind (`scripts/e2e/kind.sh`).
+- Scraping: `networkPolicy.monitoringFrom` (raw NetworkPolicy `from` entries, empty by default) opens every
+  ops/metrics port (4101, 4103, 4104, 4106, 4192, 4193) to your Prometheus; `monitoring.podMonitor.enabled`
+  renders a Prometheus Operator `PodMonitor` per component (a PodMonitor, not a ServiceMonitor: the runner,
+  relay and connector-host ops listeners have no Service by design). Neither is on by default.
 - Metrics: Prometheus `/metrics` per service (internal listener). Required
   series: HTTP requests by route/status/latency (api), gateway decisions and
   latencies, holds pending, refresh/mint outcomes, due-work arm durations and
@@ -955,10 +968,9 @@ harmlessly, and it can be deleted). With `secrets.existingSecret`, create the ke
 restart loses only open streams.
 
 **NetworkPolicy** (default deny stays; each rule is rendered only with `relay.enabled`, FIX-056):
-relay ingress from the edge on 4112; **no policy of the chart opens any ops/metrics port** (4193 included, like
-the other components' ops ports; the chart has no monitoring-namespace selector, FIX-074 decision), so a
-Prometheus in another namespace needs an additional NetworkPolicy of the operator's own allowing its pods to the
-component's ops port; relay egress to **api:4101** and **runner:4108** (runner pods of this release;
+relay ingress from the edge on 4112; **no policy of the chart opens any ops/metrics port by default** (4193 included,
+like the other components' ops ports); with `networkPolicy.monitoringFrom` set (FIX-102, replacing the FIX-074 "bring your
+own policy" rule) one policy admits those peers to every ops port, 4193 among them; relay egress to **api:4101** and **runner:4108** (runner pods of this release;
 a runner outside the cluster must be reachable from the relay by the overlay/private link described
 above, there is no chart value for extra egress) and DNS **only**: no Postgres, no
 gateway, no hook host, no sandboxes, no Internet; api ingress from the relay on 4101; runner ingress

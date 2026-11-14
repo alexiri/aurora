@@ -11,9 +11,10 @@
 # NetworkPolicy podSelector — and, with networkPolicy.cilium.enabled, also by a
 # CiliumNetworkPolicy endpointSelector (the API server is Cilium's `kube-apiserver` entity, which
 # no NetworkPolicy ipBlock ever matches, so the NetworkPolicy alone admits nothing there).
-# Exempt: hooks without pre-upgrade (gateway-ca: pre-install runs before any policy exists) and
-# hook pods that do not use the API (migrate: automountServiceAccountToken false, no
-# serviceAccountName; its database egress policy is a regular resource and install order covers it).
+# Exempt: hooks without pre-upgrade (gateway-ca: pre-install runs before any policy exists).
+# (FIX-102) migrate and gateway-role (no API identity, database egress) are checked too: the policy
+# that admits them must itself be a hook, since a regular resource does not exist yet when an upgrade
+# from a chart that predates it runs its hooks. Only a policy carrying a helm.sh/hook annotation counts.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -27,7 +28,12 @@ require_helm hook-policies || exit 0
 check_render() {
   local label="$1"; shift
   # (FIX-106) allowSharedLogin: these checks are about hooks, not the gateway's database role.
-  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | python3 -I -c '
+  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | analyse "$label"
+}
+# analyse <label>: the rendered chart on stdin.
+analyse() {
+  local label="$1"
+  python3 -I -c '
 import sys, yaml
 label = sys.argv[1]
 HOOK_KEY = "helm.sh/hook"
@@ -69,7 +75,9 @@ for d in docs:
     if kind == "Job":
         jobs.append(d)
     elif kind == "NetworkPolicy":
-        policies.append(d["spec"]["podSelector"])
+        # (FIX-102) only a policy that is itself a hook exists when the hooks run on an upgrade.
+        if HOOK_KEY in (d.get("metadata", {}).get("annotations") or {}):
+            policies.append(d["spec"]["podSelector"])
     elif kind == "CiliumNetworkPolicy":
         cnps.append(d["spec"]["endpointSelector"])
 
@@ -88,8 +96,8 @@ for job in jobs:
     labels = (pod_meta.get("labels") or {})
     spec = pod.get("spec") or {}
     name = job["metadata"]["name"]
-    if not spec.get("serviceAccountName"):
-        continue  # no API identity -> not a kubectl-to-API hook (e.g. migrate)
+    # (FIX-102) migrate has no API identity but needs the database: its allow policy must be a hook
+    # too (an upgrade from a chart that predates the policy would otherwise default-deny the Job).
     checked += 1
     covered_np = any(selector_matches(s, labels) for s in policies)
     if not covered_np:
@@ -98,8 +106,8 @@ for job in jobs:
              "previous release\u2019s default-deny policy and the upgrade times out; render the "
              "allow policy as a helm hook (like the -hooks policy) or label the pod to match one"
              % (name, spec.get("serviceAccountName"), labels), name)
-    if not cnps:
-        continue
+    if not cnps or not spec.get("serviceAccountName"):
+        continue  # the Cilium kube-apiserver entity matters only to hooks that talk to the API
     covered_cnp = any(selector_matches(s, labels) for s in cnps)
     if not covered_cnp:
         fail("pre-upgrade hook Job %r is matched by no CiliumNetworkPolicy endpointSelector: on "
@@ -117,3 +125,17 @@ print("hook-policies: %s ok (%d hook Job(s) checked)" % (label, checked))
 
 check_render "default values"
 check_render "cilium" --set networkPolicy.cilium.enabled=true
+
+# (FIX-102) Mutation self-test: the migrate allow policy as a regular resource (no hook annotation) is
+# exactly the upgrade-from-an-older-chart hole, and must fail.
+if helm template guard deploy/helm/aurora --set database.allowSharedLogin=true | python3 -I -c '
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+for d in docs:
+    if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-migrate"):
+        d["metadata"].pop("annotations", None)
+yaml.safe_dump_all(docs, sys.stdout)
+' | analyse "self-test" >/dev/null 2>&1; then
+  fail "self-test: a migrate allow policy that is not a hook passed"
+fi
+echo "hook-policies: self-test ok"

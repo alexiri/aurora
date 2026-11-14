@@ -3,7 +3,9 @@
 # Verifies the Helm Ingress and the Helm HTTPRoute (the compose Caddyfile is gone: phase 1, OPS-017), each
 # rendered with the chart defaults and with the kind dev profile (deploy/kind/values-dev.yaml):
 #   /v1/* -> api:4101, /connectors/* -> connector-host:4110, everything else -> web:4100,
-#   /internal and /metrics never routed to api.
+#   /internal and /metrics never routed to api. (FIX-102) No `rules[].hostnames` (it is not a Gateway API
+#   field), the previews wildcard is its own HTTPRoute, the dashboard host's `/` binds to web; the
+#   rendered Gateway API objects are validated with kubeconform when it is installed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -14,61 +16,37 @@ fail() { echo "edge-routes: FAIL: $*" >&2; exit 1; }
 # shellcheck source=scripts/guards/lib.sh
 source scripts/guards/lib.sh
 require_helm edge-routes || exit 0
+
+# (FIX-102) Mutation self-test: the old chart shape (a hostname-scoped rule inside the dashboard
+# HTTPRoute, wildcard listed in spec.hostnames) must fail the checker.
+planted="$(mktemp)"
+trap 'rm -f "$planted"' EXIT
+cat >"$planted" <<'YAML'
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: x}
+spec:
+  hostnames: [aurora.example, "*.previews.example"]
+  rules:
+    - hostnames: ["*.previews.example"]
+      matches: [{path: {type: PathPrefix, value: /}}]
+      backendRefs: [{name: x-relay, port: 4112}]
+    - matches: [{path: {type: PathPrefix, value: /v1}}]
+      backendRefs: [{name: x-api, port: 4101}]
+    - matches: [{path: {type: PathPrefix, value: /connectors}}]
+      backendRefs: [{name: x-connector-host, port: 4110}]
+    - matches: [{path: {type: PathPrefix, value: /}}]
+      backendRefs: [{name: x-web, port: 4100}]
+YAML
+if python3 -I scripts/guards/edge-routes-check.py "self-test" <"$planted" >/dev/null 2>&1; then
+  fail "self-test: a rules[].hostnames HTTPRoute passed the checker"
+fi
+
 check_render() {
   local label="$1"; shift
   # (FIX-106) allowSharedLogin: not about the gateway's database role.
-  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" | python3 -I -c '
-import sys, yaml
-label = sys.argv[1]
-docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
-routes = []  # (host, path, backend service suffix, port)
-for d in docs:
-    if d["kind"] == "Ingress" and "connector" not in d["metadata"]["name"]:
-        for r in d["spec"]["rules"]:
-            for p in r["http"]["paths"]:
-                b = p["backend"]["service"]
-                routes.append((r.get("host", ""), p["path"], b["name"], b["port"]["number"]))
-    elif d["kind"] == "HTTPRoute":
-        for r in d["spec"]["rules"]:
-            # Only hostname-scoped rules belong to that hostname; shared rules apply to
-            # every spec-level hostname and are checked by their own exact-host branch.
-            for m in r["matches"]:
-                for b in r["backendRefs"]:
-                    if r.get("hostnames"):
-                        for h in r["hostnames"]:
-                            routes.append((h, m["path"]["value"], b["name"], b["port"]))
-                    else:
-                        # Shared rule: attach to each non-wildcard spec hostname only.
-                        for h in d["spec"].get("hostnames", []):
-                            if not h.startswith("*."):
-                                routes.append((h, m["path"]["value"], b["name"], b["port"]))
-def fail(msg):
-    sys.exit("edge-routes: FAIL: %s: %s (routes=%s)" % (label, msg, routes))
-if not routes:
-    fail("no routes rendered")
-for host, path, svc, port in routes:
-    if path.startswith(("/internal", "/metrics")):
-        fail("routes " + path)
-    if host.startswith("*."):
-        # (P4-PRV-2) the previews wildcard serves everything through the relay, nothing else.
-        if not (svc.endswith("-relay") and port == 4112):
-            fail("wildcard host %s must route to relay:4112 only" % host)
-        continue
-    if path == "/v1" and not (svc.endswith("-api") and port == 4101):
-        fail("/v1 must go to api:4101")
-    # (P4-GRP-2) SCIM: /scim (the /scim/v2 plane) is served by the API, only when enabled.
-    if path == "/scim" and not (svc.endswith("-api") and port == 4101):
-        fail("/scim must go to api:4101")
-    if path == "/" and not (svc.endswith("-web") and port == 4100):
-        fail("/ must go to web:4100")
-    if path == "/connectors" and not (svc.endswith("-connector-host") and port == 4110):
-        fail("/connectors must go to connector-host:4110")
-if not any(p == "/v1" for _, p, _, _ in routes): fail("no /v1 route")
-if not any(p == "/" and not h.startswith("*.") for h, p, _, _ in routes): fail("no / route")
-# (P4-MCON) the platform callbacks of managed connectors are served by the connector host on one port.
-if not any(p == "/connectors" for _, p, _, _ in routes): fail("no /connectors route (connector host)")
-print("edge-routes: %s ok" % label)
-' "$label"
+  helm template guard deploy/helm/aurora --set database.allowSharedLogin=true "$@" \
+    | python3 -I scripts/guards/edge-routes-check.py "$label"
 }
 check_render "helm Ingress"
 check_render "helm HTTPRoute" --set ingress.enabled=false --set gatewayApi.enabled=true
@@ -91,8 +69,9 @@ if grep -qE 'component: relay|aurora-relay|-relay,' <<<"$default_render"; then
   fail "relay resources rendered while relay.enabled is false (previews off must change nothing)"
 fi
 # Enabled: the wildcard host `*.<domain>` must be the relay and only the relay; the dashboard
-# host must still route / to web. A preview domain on the relay with previews disabled (or the
-# reverse) must fail to render at all (the chart's own fail guard), so just render both edges.
+# host must still route / to web (the checker asserts it for both edge types). A preview domain on
+# the relay with previews disabled (or the reverse) must fail to render at all (the chart's own fail
+# guard), so just render both edges.
 # (FIX-056) Single-switch form: relay.enabled mirrors config.previews.enabled, so the guard
 # renders with the top-level switch only.
 check_render "helm Ingress with previews" \
@@ -100,40 +79,39 @@ check_render "helm Ingress with previews" \
 check_render "helm HTTPRoute with previews" \
   --set ingress.enabled=false --set gatewayApi.enabled=true \
   --set relay.enabled=true --set relay.domain=previews.guard.invalid
-helm template guard deploy/helm/aurora --set database.allowSharedLogin=true \
-  --set relay.enabled=true --set relay.domain=previews.guard.invalid \
-  | python3 -I -c '
+previews_render="$(helm template guard deploy/helm/aurora --set database.allowSharedLogin=true \
+  --set ingress.enabled=false --set gatewayApi.enabled=true \
+  --set relay.enabled=true --set relay.domain=previews.guard.invalid)" || fail "the previews render failed"
+python3 -I -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
-wild = []     # ingress rules with a wildcard host
-dash_web = False
-relay_svcs = 0
-for d in docs:
-    if d["kind"] == "Ingress" and "connector" not in d["metadata"]["name"]:
-        for r in d["spec"]["rules"]:
-            host = r.get("host", "")
-            if host.startswith("*."):
-                wild.append((host, r["http"]["paths"]))
-            else:
-                for p in r["http"]["paths"]:
-                    if p["path"] == "/" and p["backend"]["service"]["name"].endswith("-web"):
-                        dash_web = True
-    elif d["kind"] == "HTTPRoute":
-        for host in d["spec"].get("hostnames", []):
-            if host.startswith("*."):
-                for r in d["spec"]["rules"]:
-                    if host in r.get("hostnames", []):
-                        for b in r["backendRefs"]:
-                            wild.append((host, [{"backend": {"service": {"name": b["name"], "port": {"number": b["port"]}}}}]))
-if not wild:
-    sys.exit("edge-routes: FAIL: previews on but no wildcard host rendered")
-for host, paths in wild:
-    if not all(p["backend"]["service"]["name"].endswith("-relay") and p["backend"]["service"]["port"]["number"] == 4112 for p in paths):
-        sys.exit("edge-routes: FAIL: wildcard host %s routes something other than relay:4112" % host)
-if not dash_web:
-    sys.exit("edge-routes: FAIL: previews on but the dashboard / route to web is gone")
-print("edge-routes: previews wildcard ok (relay only, dashboard untouched)")
-'
+routes = [d for d in docs if d["kind"] == "HTTPRoute"]
+wild = [d for d in routes if any(h.startswith("*.") for h in d["spec"]["hostnames"])]
+if len(wild) != 1 or not wild[0]["metadata"]["name"].endswith("-previews"):
+    sys.exit("edge-routes: FAIL: the previews wildcard must be exactly one HTTPRoute named <fullname>-previews")
+if not all(h.startswith("*.") for h in wild[0]["spec"]["hostnames"]):
+    sys.exit("edge-routes: FAIL: the previews HTTPRoute must carry only the wildcard host")
+dash = [d for d in routes if d is not wild[0]]
+if any(h.startswith("*.") for d in dash for h in d["spec"]["hostnames"]):
+    sys.exit("edge-routes: FAIL: the dashboard HTTPRoute lists the wildcard host")
+print("edge-routes: previews wildcard ok (own HTTPRoute, relay only, dashboard untouched)")
+' <<<"$previews_render"
+
+# --- (FIX-102) Gateway API objects validate against the upstream schemas (when kubeconform exists) ---
+if command -v kubeconform >/dev/null 2>&1; then
+  if ! kubeconform -strict -summary -ignore-missing-schemas \
+      -schema-location default \
+      -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+      <<<"$previews_render" >/dev/null 2>&1; then
+    # No network to the schema catalogue is not a chart defect: retry offline, built-in kinds only.
+    kubeconform -strict -summary -ignore-missing-schemas <<<"$previews_render" >/dev/null \
+      || fail "kubeconform rejected the rendered chart"
+  fi
+  echo "edge-routes: kubeconform ok"
+else
+  echo "edge-routes: kubeconform not installed, schema validation skipped"
+fi
+
 # Enabled without a domain must fail to render (the chart guards partial setups).
 if helm template guard deploy/helm/aurora --set database.allowSharedLogin=true --set relay.enabled=true >/dev/null 2>&1; then
   fail "relay.enabled without relay.domain rendered (a preview domain is required)"

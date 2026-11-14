@@ -387,7 +387,9 @@ connectors, [below](#connectors-optional), do not need it).
 
 Every workload runs as non-root (UID/GID 65532), with a read-only root filesystem and all
 capabilities dropped (`aurora.podSecurity`, `aurora.containerSecurity`). A
-PodDisruptionBudget is rendered for each (`podDisruptionBudget.enabled`, `minAvailable: 1`).
+PodDisruptionBudget is rendered for each workload **with two or more replicas** (`podDisruptionBudget.enabled`,
+`minAvailable: 1`; a budget on a single replica would block every node drain, FIX-102). Readiness is `httpGet /readyz`
+and liveness `httpGet /healthz` on each workload's ops port (docs/15 §Observability).
 
 The hook image (`hookImage`, used by the secrets and gateway-ca hook Jobs and the API `seed-plugins`
 init container) is `docker.io/alpine/k8s:1.31.2` **pinned by the multi-arch index digest**
@@ -514,8 +516,10 @@ With `networkPolicy.enabled: true` (default) the chart renders:
   bundled database is on), `-connector-<id>` (self-hosted connectors);
 - the runner's stream listener **:4108** (only with `relay.enabled` or `terminal.enabled`): ingress from the relay pods
   and the api pods only, never from the sandboxes namespace;
-- the `migrate` hook pod (`-migrate`): egress to the database only, so `helm upgrade` can
-  run migrations while the other policies are in place;
+- the `migrate` hook pod (`-migrate`, and `-postgres-migrate` admitting it to the bundled Postgres): egress to
+  the database only, so `helm upgrade` can run migrations while the other policies are in place. Both are
+  **hook resources** (FIX-102): an upgrade from a chart that predates them runs its hooks before any regular
+  resource, under default-deny;
 - the `secrets` hook pod (`-hooks`): egress to the Kubernetes API on `kubeApiPorts` only
   (it is rendered as a hook too, at weight −15, before the job: on `helm upgrade` the
   release's default-deny policy already exists — a regular chart resource would be applied
@@ -528,7 +532,15 @@ Set the selectors for your cluster:
 - `networkPolicy.edgeNamespaceSelector` (default `kubernetes.io/metadata.name: ingress-nginx`),
   the namespace allowed to reach the API, web and connector callbacks;
 - `networkPolicy.dnsNamespaceSelector` (default `kube-system`);
-- `networkPolicy.kubeApiCidrs`, for runner egress to the Kubernetes API (empty allows any), and
+- `networkPolicy.kubeApiCidrs`, for runner and `secrets` hook egress to the Kubernetes API. Empty: the chart reads
+  the addresses of the `kubernetes` EndpointSlice in `default` (`discovery.k8s.io/v1`) at `helm install/upgrade`
+  time, so **the installing identity needs `get` on `endpointslices.discovery.k8s.io` in `default`**; when that
+  is not readable (and under `helm template`) no API rule is rendered, the runner cannot start sandboxes and
+  NOTES.txt warns: set `kubeApiCidrs`, or `networkPolicy.kubeApiOpen: true` to allow any:443/6443 on purpose
+  (FIX-102; the chart no longer opens `0.0.0.0/0` silently). `networkPolicy.monitoringFrom` admits your
+  Prometheus to the ops ports. The hooks use one ServiceAccount per Job; their Roles name the Secrets they read and patch.
+  An **upgrade** whose generated Secret has vanished (a restore without it) is refused rather than minting new
+  encryption keys: restore the Secret ([backups](backups.md)), or `secrets.allowRegenerate=true` to start over;
   `networkPolicy.kubeApiPorts` (default `[443, 6443]`), the API server's endpoint port. Check it with
   `kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes`;
 - `networkPolicy.externalEgress` (`cidr` and `except`), for OIDC, SMTP, LLM endpoints and secret stores.

@@ -1,6 +1,12 @@
 Aurora {{ .Chart.AppVersion }} installed. Public URL: {{ .Values.externalUrl }}
 Upgrade order is enforced by the migrate hook (runs before any new api replica); roll api, hookhost, gateway, runner, web, connectors.
 Secrets: {{ include "aurora.secretName" . }} (generated once, never overwritten). Gateway CA: {{ include "aurora.caSecretName" . }}.
+{{- if and .Values.networkPolicy.enabled .Values.runner.enabled (not .Values.networkPolicy.kubeApiOpen) (not (include "aurora.kubeApiCidrs" . | fromJsonArray)) }}
+
+WARNING: the Kubernetes API server addresses are unknown (the `kubernetes` EndpointSlice in `default` could not be read), so
+the runner's and the secrets hook's egress policies carry no API rule and the runner cannot start sandboxes. Grant the installing
+identity `get` on endpointslices.discovery.k8s.io in `default`, set networkPolicy.kubeApiCidrs, or (not recommended) networkPolicy.kubeApiOpen=true.
+{{- end }}
 {{- if .Values.database.allowSharedLogin }}
 
 WARNING: database.allowSharedLogin is set: the gateway logs in with the main database login (every privilege the API

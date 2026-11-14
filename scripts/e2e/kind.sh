@@ -256,6 +256,28 @@ helm --kube-context "$CTX" install "$RELEASE" deploy/helm/aurora -n "$NS" --crea
   -f deploy/kind/values-e2e.yaml "${HELM_OVERRIDES[@]}" --wait --timeout 8m || exit 1
 k -n "$NS" get pods -o wide >&2
 
+# (FIX-102) The runner's Kubernetes API egress is exactly the API server address(es) the chart read from the
+# `kubernetes` EndpointSlice in `default` (a /32 or /128 each), never 0.0.0.0/0. `--wait` above already proves the
+# httpGet /readyz and /healthz probes (kubelet -> pod, including the gateway's policy-restricted 4103) pass.
+log "asserting the runner policy carries the API server address from the EndpointSlice"
+SLICE_ADDRS="$(k -n default get endpointslice kubernetes -o jsonpath='{range .endpoints[*]}{.addresses[*]}{"\n"}{end}' 2>&1)" \
+  || { echo "cannot read endpointslice default/kubernetes ($SLICE_ADDRS): the chart's lookup needs it" >&2; exit 1; }
+RUNNER_CIDRS="$(k -n "$NS" get networkpolicy "$FULL-runner" -o jsonpath='{range .spec.egress[*].to[*]}{.ipBlock.cidr}{"\n"}{end}')"
+echo "  EndpointSlice addresses: $(printf '%s' "$SLICE_ADDRS" | tr '\n' ' ')" >&2
+echo "  runner policy ipBlocks:  $(printf '%s' "$RUNNER_CIDRS" | tr '\n' ' ')" >&2
+[ -n "$SLICE_ADDRS" ] || { echo "the kubernetes EndpointSlice has no addresses" >&2; exit 1; }
+if printf '%s\n' "$RUNNER_CIDRS" | grep -qx '0.0.0.0/0'; then echo "runner policy opens 0.0.0.0/0" >&2; exit 1; fi
+for a in $SLICE_ADDRS; do
+  case "$a" in *:*) want="$a/128" ;; *) want="$a/32" ;; esac
+  printf '%s\n' "$RUNNER_CIDRS" | grep -qx "$want" || { echo "runner policy lacks the API server address $want" >&2; exit 1; }
+done
+# No pod may sit un-Ready behind a TCP-only check any more: every Deployment with an ops router uses httpGet.
+for d in api gateway hookhost runner connector-host; do
+  p="$(k -n "$NS" get "deploy/$FULL-$d" -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.httpGet.path}' 2>/dev/null)"
+  [ "$p" = "/readyz" ] || { echo "deploy/$FULL-$d readiness probe is not httpGet /readyz (got '$p')" >&2; exit 1; }
+done
+echo "  readiness probes are httpGet /readyz; PodDisruptionBudgets: $(k -n "$NS" get pdb -o name 2>/dev/null | tr '\n' ' ')" >&2
+
 # ---- 5. reach the API, run the scenarios ---------------------------------------------------------
 log "port-forward svc/$FULL-api -> 127.0.0.1:$LOCAL_PORT"
 k -n "$NS" port-forward "svc/$FULL-api" "$LOCAL_PORT:4101" >"$WORK/port-forward.log" 2>&1 &
@@ -319,11 +341,13 @@ if [ "$STATUS" -eq 0 ]; then log "kind e2e PASSED"; else log "kind e2e FAILED (r
 # leg adds ~1–2 minutes. `AURORA_E2E_UPGRADE_LEGS=0` (or --no-upgrade-legs) keeps the old
 # fresh-install-only flow.
 upgrade_leg() {
-  local label="$1" replicas="$2"
+  local label="$1" replicas="$2" err
+  err="$WORK/upgrade-$(printf '%s' "$label" | tr -c 'A-Za-z0-9' _).err"
   log "helm upgrade leg: $label (web.replicas=$replicas)"
   if ! timeout 300 helm --kube-context "$CTX" upgrade "$RELEASE" deploy/helm/aurora -n "$NS" \
       -f deploy/kind/values-e2e.yaml "${HELM_OVERRIDES[@]}" --set "web.replicas=$replicas" \
-      --wait --timeout 4m; then
+      --wait --timeout 4m 2>"$err"; then
+    cat "$err" >&2
     echo "helm upgrade leg '$label' FAILED:" >&2
     echo "  hook jobs/pods (look for the hook timeout: BackoffLimitExceeded, hangs in kubectl):" >&2
     k -n "$NS" get jobs,pods -l "job-name=$FULL-secrets" -o wide >&2 || true
@@ -333,6 +357,14 @@ upgrade_leg() {
     done
     echo "  networkpolicies in $NS:" >&2
     k -n "$NS" get networkpolicy -o name >&2 || true
+    return 1
+  fi
+  cat "$err" >&2
+  # (FIX-102) The chart reads the API server addresses from the discovery.k8s.io/v1 EndpointSlice; a read of the
+  # core v1 Endpoints made every upgrade on Kubernetes >= 1.33 warn "v1 Endpoints is deprecated".
+  if grep -qi 'is deprecated' "$err"; then
+    echo "helm upgrade leg '$label': helm printed a deprecation warning:" >&2
+    grep -i 'is deprecated' "$err" >&2
     return 1
   fi
   local st

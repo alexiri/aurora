@@ -19,14 +19,14 @@
 {{- if .Values.relay.enabled }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RELAY_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RELAY_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
-{{ include "aurora.workload" (dict "root" . "name" "api" "spec" .Values.api "caCert" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
+{{ include "aurora.workload" (dict "root" . "name" "api" "probePort" 4101 "spec" .Values.api "caCert" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
 ---
-{{ include "aurora.workload" (dict "root" . "name" "hookhost" "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET") "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "http" "port" 4104))) }}
+{{ include "aurora.workload" (dict "root" . "name" "hookhost" "probePort" 4104 "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET") "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "http" "port" 4104))) }}
 ---
 {{ include "aurora.workload" (dict "root" . "name" "web" "spec" .Values.web "image" (include "aurora.image" (dict "root" . "name" "aurora-web")) "env" (include "aurora.env" (dict "root" .)) "ports" (list (dict "name" "http" "port" 4100))) }}
 ---
 {{/* gateway: Service for 4103 (internal) is separate from the proxy Service (4102, TLS-only: RFE-002) */}}
-{{ include "aurora.workload" (dict "root" . "name" "gateway" "spec" .Values.gateway "ca" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "proxyTlsSecret" .Values.gateway.proxy.tls.existingSecret "env" (printf "%s%s\n- name: POD_NAMESPACE\n  valueFrom: {fieldRef: {fieldPath: metadata.namespace}}" (include "aurora.env" (dict "root" . "db" true "gatewayDb" true "configFile" $gwConfig "keys" $common "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) (printf "%s%s" (include "aurora.vaultEnv" (dict "root" . "svc" "gateway")) (include "aurora.countersEnv" .))) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}
+{{ include "aurora.workload" (dict "root" . "name" "gateway" "probePort" 4103 "spec" .Values.gateway "ca" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "proxyTlsSecret" .Values.gateway.proxy.tls.existingSecret "env" (printf "%s%s\n- name: POD_NAMESPACE\n  valueFrom: {fieldRef: {fieldPath: metadata.namespace}}" (include "aurora.env" (dict "root" . "db" true "gatewayDb" true "configFile" $gwConfig "keys" $common "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) (printf "%s%s" (include "aurora.vaultEnv" (dict "root" . "svc" "gateway")) (include "aurora.countersEnv" .))) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}
 ---
 apiVersion: v1
 kind: Service
@@ -53,18 +53,18 @@ metadata:
   name: {{ $full }}-runner
   labels: {{- include "aurora.labels" . | nindent 4 }}
 ---
-{{ include "aurora.workload" (dict "root" . "name" "runner" "spec" .Values.runner "serviceAccount" (printf "%s-runner" $full) "image" (include "aurora.image" (dict "root" . "name" "aurora-runner")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RUNNER_SESSION_KEY" "AURORA_RUNNER_TOKEN"))) "ports" (list (dict "name" "http" "port" 4105) (dict "name" "streams" "port" 4108))) }}
+{{ include "aurora.workload" (dict "root" . "name" "runner" "probePort" 4106 "spec" .Values.runner "serviceAccount" (printf "%s-runner" $full) "image" (include "aurora.image" (dict "root" . "name" "aurora-runner")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RUNNER_SESSION_KEY" "AURORA_RUNNER_TOKEN"))) "ports" (list (dict "name" "http" "port" 4105) (dict "name" "streams" "port" 4108) (dict "name" "ops" "port" 4106 "skipService" true))) }}
 {{- end }}
 {{- if .Values.relay.enabled }}
 ---
 {{/* port-previews relay (P4-PRV-2): edge 4112 (Service, wildcard-routed by routing.yaml),
      ops 4193 (health/metrics, no Service). The relay token is the AURORA_RELAY_TOKEN secret. */}}
-{{ include "aurora.workload" (dict "root" . "name" "relay" "spec" .Values.relay "image" (include "aurora.image" (dict "root" . "name" "aurora-relay")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RELAY_TOKEN"))) "ports" (list (dict "name" "edge" "port" 4112) (dict "name" "ops" "port" 4193 "skipService" true))) }}
+{{ include "aurora.workload" (dict "root" . "name" "relay" "probePort" 4193 "spec" .Values.relay "image" (include "aurora.image" (dict "root" . "name" "aurora-relay")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RELAY_TOKEN"))) "ports" (list (dict "name" "edge" "port" 4112) (dict "name" "ops" "port" 4193 "skipService" true))) }}
 {{- end }}
 {{- if .Values.connectorHost.enabled }}
 ---
 {{/* connector host (P4-MCON): callbacks 4110 (Service, routed by the edge under /connectors), ops 4192 (no Service) */}}
-{{ include "aurora.workload" (dict "root" . "name" "connector-host" "spec" .Values.connectorHost "image" (include "aurora.image" (dict "root" . "name" "aurora-connector-host")) "args" (list "serve") "env" (ternary (printf "%s\n- name: AURORA_CONNECTOR_HOST_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_CONNECTOR_HOST_TOKEN_BOUND}}" (include "aurora.env" (dict "root" . "keys" (list))) (include "aurora.secretName" .)) (include "aurora.env" (dict "root" . "keys" (list "AURORA_CONNECTOR_HOST_TOKEN"))) (not (not .Values.connectorHost.perHostToken))) "ports" (list (dict "name" "callbacks" "port" 4110) (dict "name" "ops" "port" 4192 "skipService" true))) }}
+{{ include "aurora.workload" (dict "root" . "name" "connector-host" "probePort" 4192 "spec" .Values.connectorHost "image" (include "aurora.image" (dict "root" . "name" "aurora-connector-host")) "args" (list "serve") "env" (ternary (printf "%s\n- name: AURORA_CONNECTOR_HOST_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_CONNECTOR_HOST_TOKEN_BOUND}}" (include "aurora.env" (dict "root" . "keys" (list))) (include "aurora.secretName" .)) (include "aurora.env" (dict "root" . "keys" (list "AURORA_CONNECTOR_HOST_TOKEN"))) (not (not .Values.connectorHost.perHostToken))) "ports" (list (dict "name" "callbacks" "port" 4110) (dict "name" "ops" "port" 4192 "skipService" true))) }}
 {{- end }}
 {{- range .Values.connectors }}
 {{- $c := . }}

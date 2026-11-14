@@ -35,3 +35,18 @@ fixture-invalid-params-shadowed-by-params params_tool_shadowed
 fixture-invalid-form-without-body-methods params_invalid
 fixture-invalid-positive-fixture-claim params_fixture_missing
 fixture-invalid-host-claim-too-broad zone_too_broad
+# FIX-101: manifest rules that had no failing fixture.
+fixture-invalid-unknown-context unknown_context
+fixture-invalid-unknown-oauth-client unknown_oauth_client
+fixture-invalid-bad-tenant-field bad_tenant_field
+fixture-invalid-bad-version bad_version
+fixture-invalid-tool-path-invalid tool_path_invalid
+fixture-invalid-undeclared-field undeclared_field
+fixture-invalid-guide-not-utf8 guide_not_utf8
+fixture-invalid-manifest-not-utf8 manifest_not_utf8
+fixture-invalid-archive-corrupt archive_corrupt
+fixture-invalid-archive-entry-type archive_entry_type
+fixture-invalid-hooks-wasm-garbage hooks_wasm_invalid
+fixture-invalid-hooks-wasm-core-module hooks_wasm_not_component
+fixture-invalid-hooks-wasm-import-forbidden hooks_wasm_import_forbidden
+fixture-invalid-hooks-wasm-export-unexpected hooks_wasm_export_unexpected

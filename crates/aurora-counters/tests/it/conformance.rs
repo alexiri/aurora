@@ -661,10 +661,14 @@ async fn postgres(pool: aurora_db::PgPool) {
 
 // ---- redis ---------------------------------------------------------------------------
 
+/// (FIX-101) `None` skips (gate unset outside CI); with `CI=true` and the gate unset `require_or_skip`
+/// panics, so the Redis backend cannot silently drop out of the equivalence claim (SEC-62).
+#[allow(clippy::expect_used)]
 fn redis_addr() -> Option<String> {
-    (std::env::var("AURORA_TEST_REDIS").is_ok_and(|v| v == "1"))
-        .then(|| std::env::var("AURORA_TEST_REDIS_ADDR").ok())
-        .flatten()
+    aurora_testkit::require_or_skip("AURORA_TEST_REDIS").then(|| {
+        std::env::var("AURORA_TEST_REDIS_ADDR")
+            .expect("AURORA_TEST_REDIS is set: AURORA_TEST_REDIS_ADDR (rediss:// or redis://host:port) must be too")
+    })
 }
 
 fn redis_store(addr: &str, prefix: &str) -> aurora_counters::redis_store::RedisStore {

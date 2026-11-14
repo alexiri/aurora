@@ -20,12 +20,28 @@ bash scripts/guards/edge-routes.sh
 echo "== hook-policies (OPS-024: pre-upgrade hooks admitted by hook-rendered policies)"
 bash scripts/guards/hook-policies.sh
 
+echo "== chart-ops (FIX-102: no v1 Endpoints, httpGet probes, ops-port peers, no silent 0.0.0.0/0, hook RBAC, PDB, half-enabled switches)"
+bash scripts/guards/chart-ops.sh
+
 echo "== helm-gateway-role (FIX-106: the gateway's least-privilege role is automatic, required, or explicitly waived)"
 source scripts/guards/lib.sh
 if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; fi
 
 echo "== limits-readers (FIX-116: every limits.rs constant has a reader and a docs/02 row)"
 bash scripts/guards/limits-readers.sh
+
+echo "== docs-routes (FIX-119: docs/05 catalogue vs web/openapi.json, phase tags, docs/17 invariant table contiguous)"
+python3 -I scripts/guards/docs-routes.py --self-test
+python3 -I scripts/guards/docs-routes.py
+
+echo "== release-environment (FIX-119: environment: release in exactly one push-only job)"
+bash scripts/guards/release-environment.sh
+
+echo "== e2e-skip (FIX-101: a SKIPPED: line fails an e2e script in CI; gated suites use require_or_skip)"
+bash scripts/guards/e2e-skip.sh
+
+echo "== image-pins (FIX-103: every base image pinned by digest)"
+bash scripts/guards/image-pins.sh
 
 echo "== no-dev-idp-in-release (SEC-42)"
 bash scripts/guards/no-dev-idp-in-release.sh

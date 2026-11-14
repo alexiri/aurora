@@ -165,6 +165,18 @@ spec:
             {{- range .ports }}
             - {name: {{ .name }}, containerPort: {{ .port }}}
             {{- end }}
+          {{- /* (FIX-102, docs/15 §Health) readiness is plain `/readyz`, liveness `/healthz`, on the port
+                 that serves the ops router (`probePort`). A workload without an ops router (web, the
+                 external connector images) keeps the TCP check on its first port. */}}
+          {{- if .probePort }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: {{ .probePort }}}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: {{ .probePort }}}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          {{- else }}
           readinessProbe:
             tcpSocket: {port: {{ (first .ports).port }}}
             periodSeconds: 10
@@ -172,6 +184,7 @@ spec:
             tcpSocket: {port: {{ (first .ports).port }}}
             initialDelaySeconds: 15
             periodSeconds: 20
+          {{- end }}
           resources: {{- toYaml .spec.resources | nindent 12 }}
           volumeMounts:
             - {name: config, mountPath: /etc/aurora, readOnly: true}
@@ -254,7 +267,8 @@ spec:
     - {name: {{ .name }}, port: {{ .port }}, targetPort: {{ .port }}}
     {{- end }}
     {{- end }}
-{{- if $r.Values.podDisruptionBudget.enabled }}
+{{- /* (FIX-102) minAvailable: 1 on a single replica would block every node drain: a budget only from two replicas */}}
+{{- if and $r.Values.podDisruptionBudget.enabled (ge (int .spec.replicas) 2) }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -266,6 +280,44 @@ spec:
   selector:
     matchLabels: {{- include "aurora.selector" (dict "root" $r "component" .name) | nindent 6 }}
 {{- end }}
+{{- end -}}
+
+{{- /* (FIX-102, FIX-069) The Kubernetes API server addresses a NetworkPolicy matches (the post-DNAT
+       endpoint addresses, not the ClusterIP), as a JSON list of CIDRs. In order: networkPolicy.kubeApiCidrs;
+       the `kubernetes` EndpointSlice in `default` (discovery.k8s.io/v1, GA since 1.21 — the chart floor is
+       1.30; the core v1 Endpoints it replaces is deprecated from 1.33), read by Helm `lookup` at install
+       and upgrade time: `.endpoints[].addresses[]` are plain strings, endpoints with `conditions.ready:
+       false` are skipped, /32 or /128 by `addressType`. When the cluster names the slice differently the
+       namespace's slices are listed and filtered on the label `kubernetes.io/service-name: kubernetes`.
+       Empty when nothing is known (`helm template`, --dry-run, no `get` on endpointslices in `default`): the
+       callers then open nothing, unless networkPolicy.kubeApiOpen is set. */ -}}
+{{- define "aurora.kubeApiCidrs" -}}
+{{- $out := list -}}
+{{- if .Values.networkPolicy.kubeApiCidrs -}}
+{{- $out = .Values.networkPolicy.kubeApiCidrs -}}
+{{- else -}}
+{{- $slices := list -}}
+{{- $one := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "kubernetes" -}}
+{{- if $one -}}
+{{- $slices = list $one -}}
+{{- else -}}
+{{- $all := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" -}}
+{{- range (dig "items" (list) $all) -}}
+{{- if eq (dig "metadata" "labels" "kubernetes.io/service-name" "" .) "kubernetes" }}{{ $slices = append $slices . }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- range $s := $slices -}}
+{{- $mask := ternary "128" "32" (eq (dig "addressType" "IPv4" $s) "IPv6") -}}
+{{- range (dig "endpoints" (list) $s) -}}
+{{- if ne (toString (dig "conditions" "ready" true .)) "false" -}}
+{{- range (default (list) .addresses) -}}
+{{- $out = append $out (printf "%s/%s" . $mask) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson (uniq $out) -}}
 {{- end -}}
 
 {{- define "aurora.peer" -}}

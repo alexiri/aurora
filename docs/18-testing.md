@@ -13,11 +13,11 @@ done when its tests exist, pass in CI, and the security invariants it touches
 | **Service** | one service in-process with real Postgres and mocks for its neighbours (API with fake runner/connector clients; gateway with mock upstreams and a stub hook host) | `aurora-testkit`, `wiremock` | every PR |
 | **Contract** | OpenAPI document vs handlers; JSON Schemas of every wire type vs checked-in schemas; dashboard client regenerated without drift | schema diff | every PR |
 | **Conformance** | harness adapters, connectors, plugin packages against their contracts | `tests/conformance/*` | every PR (fake implementations); env-gated for live ones |
-| **End-to-end: gateway** | real gateway + API + hook host + Postgres + fixture plugins + mock upstreams/OAuth providers, black-box over the proxy port; CI-only strict front doors (pinned nginx + haproxy containers between the gateway and the mock upstream, TEST-021 tier 2: `AURORA_E2E_FRONTDOOR`, skipped when unset) | `tests/e2e-gateway` | every PR |
-| **End-to-end: hosted** | real API, gateway, hook host, runner (podman backend), sandbox image with the `fake` harness, fake connector | `tests/e2e-hosted` | every PR on Linux CI with podman; nightly on Kubernetes (kind with a NetworkPolicy CNI) |
+| **End-to-end: gateway** | real gateway + API + hook host + Postgres + fixture plugins + mock upstreams/OAuth providers, black-box over the proxy port; CI-only strict front doors (pinned nginx + haproxy containers between the gateway and the mock upstream, TEST-021 tier 2: `AURORA_E2E_FRONTDOOR`; CI runs `gateway.sh` with `FRONTDOOR=1` and `FRONTDOOR_HAPROXY=1`, and with `CI=true` a `SKIPPED:` line fails the script, FIX-101) | `tests/e2e-gateway` | every PR |
+| **End-to-end: hosted** | real API, gateway, hook host, runner (podman backend), sandbox image with the `fake` harness, fake connector | `tests/e2e-hosted` | every PR on Linux CI with podman (the chromium scenarios, SEC-41, need the full sandbox image and run in the nightly `hosted-full` job; the PR job declares that one exception in `AURORA_E2E_ALLOW_SKIPPED`); channels (`scripts/e2e/channels.sh`, SEC-18/19/20) in the nightly `channels` job; nightly on Kubernetes (kind with a NetworkPolicy CNI) |
 | **Dashboard** | component tests; Playwright flows against the host-process stack (`scripts/e2e/m1.sh`, default) or the kind dev stack (`m1.sh --kind`; phase 1, OPS-017: kind replaces the compose stack) | vitest, Playwright | every PR |
 | **Live** | `claude-code` adapter against a configured LiteLLM/Anthropic endpoint through the gateway; Mattermost connector against a Mattermost container (phase 1) | env-gated | nightly |
-| **Performance** | gateway overhead and throughput; due-work poll cost with 1 000 agents | criterion, k6 | nightly |
+| **Performance** | gateway overhead and throughput; due-work poll cost with 1 000 agents | criterion, k6 | **manual, on an idle machine** (FIX-101: no workflow runs it; the owner's rule is that performance budgets are measured only while no lane builds or tests, and a shared CI runner never is that machine) |
 
 ## Required suites (non-exhaustive, by area)
 
@@ -485,7 +485,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 ### SCIM (phase 4, P4-GRP-2, D-132, D-135, SEC-72, SEC-73)
 - **Conformance** (`api/it/scim_protocol.rs` plus an in-repo Rust SCIM test client built from the RFC 7644 examples; an external validator such as the Microsoft SCIM validator is run by hand against a staging instance before a release and is not a CI gate): discovery documents; `POST/GET/PUT/PATCH/DELETE` for Users and Groups; filter subset and `invalidFilter` for everything else; `startIndex`/`count`/`count=0`, stable ordering, empty page past the end, `count` clamping; PATCH `add`/`replace`/`remove` with and without `path`, `emails[type eq "work"].value`, case-insensitive `op`, `active` as boolean and `"False"`, atomicity (one bad operation applies none), `SCIM_MAX_PATCH_OPS`; unsupported attributes (`roles`, `password`) → 400; SCIM error format and `Content-Type: application/scim+json`; `406`/`415`/`413`.
-- **Recorded IdP traffic** (`api/it/scim_idp_replay.rs`, fixtures `tests/fixtures/scim/{entra,okta,keycloak}/*.json`, request/response pairs reconstructed from each vendor's documented provisioning behaviour with synthetic tenants and users, no real data): initial sync (probe `GET filter`, `POST`, `409` → `PATCH`), attribute updates, deactivate/reactivate, group create and member churn, a token rotation mid-sync, a repeated `POST` after a lost response. Replay asserts final state and the exact statuses the IdPs rely on.
+- **Recorded IdP traffic** (`api/it/scim_idp_replay.rs`, fixtures `services/aurora-api/tests/fixtures/scim/{entra,okta,keycloak}/*.json`, request/response pairs reconstructed from each vendor's documented provisioning behaviour with synthetic tenants and users, no real data): initial sync (probe `GET filter`, `POST`, `409` → `PATCH`), attribute updates, deactivate/reactivate, group create and member churn, a token rotation mid-sync, a repeated `POST` after a lost response. Replay asserts final state and the exact statuses the IdPs rely on.
 - **Auth and scope** (SEC-72, `scim_auth.rs`, `scim_scope.rs`): `/scim/v2` is 404 with `scim.enabled = false` and 401 (identical body) for no token, malformed, unknown, revoked, expired, other-prefix (`auk_`, `aug_`) and org-disabled tokens; an `aud_` token on `/v1/**` is 401 and a session cookie on `/scim/v2` is ignored; token lifecycle (owner only, session only, recent re-authentication, hash only in the database, shown once, expiry cap, five-token limit, expiry notice and audit rows 14 d and 1 d before); org A's token cannot read, filter or write org B's users and groups (404, never 403); manual groups invisible; no way to set a role, create an owner or admin, or mutate an owner (PUT/PATCH/DELETE → 403, last-owner untouched); e-mail domain allow-list and instance allow-list; seat limit; per-token rate limit and 429 with `retry-after`, bad-token IP limit; body, operation, member and page limits; audit coverage scan for the new actions and forced audit failure (nothing applied, 503); token never appears in any response, log line or audit row.
 - **Linking and deprovisioning** (SEC-73, `scim_link.rs`, `scim_deprovision.rs`): a SCIM user is pre-provisioned unverified and cannot act before sign-in; the OIDC sign-in with the verified e-mail (and with a trusted-domain e-mail, D-118) binds it, an unverified claim or a matching `externalId` alone does not; a signed-in user's `users.email`/`display_name` are unchanged by SCIM updates; an existing user is linked without touching their row; the full effects matrix of `04 §SCIM` for suspend and remove (membership, sessions rule with one and with two orgs, key revocation including after reactivation, running speaker turns `user_deprovisioned`, group-derived access, automations disabled at fire time and listed in the offboarding view, pending invitations cancelled); JIT and invitation acceptance refused for a suspended or removed link, allowed again after the IdP re-provisions; reactivation only when `suspended_by_scim`; `exclusive` mode; owner untouched; the person's other org is unaffected.
 - **Groups through SCIM** (`scim_groups.rs`): SCIM groups appear in `/v1` as `source = scim` with read-only name and members (`group_managed_by_scim`), members must be this org's links, removed links rejected, `PUT` replaces atomically with one audit row per change, deleting in the IdP deletes bindings, the effect on access and gateway identities is that of `## Groups`.
@@ -881,9 +881,15 @@ hatch, not the loop).
 plan lists each added crate and the dependency that pulled it in), so a change
 in `aurora-core`, `aurora-db` or `aurora-protocol` can no longer pass while
 `aurora-api` or `aurora-gateway` stop compiling; the e2e crates are never
-pulled in. Tests stay on the directly touched crates, plus `aurora-db` and
-`aurora-api` when `crates/aurora-db/migrations/**` changed (migrations change
-behaviour everywhere). Tests run under `cargo nextest` when it is installed
+pulled in. Tests stay on the directly touched crates, plus `aurora-db`,
+`aurora-api` and the **reverse-dependency closure of `aurora-testkit`** (gateway,
+supervisor, …: they build their databases from the same migrator) when
+`crates/aurora-db/migrations/**` changed (migrations change behaviour
+everywhere); `plugins/**` and `scripts/fixtures/**` select `aurora-api` (the
+`connect::` tests run against built fixtures); a change under `deploy/`,
+`images/`, `.github/`, `scripts/` or `justfile` runs
+`bash scripts/guards/run-all.sh` (the guards read the chart, the images and the
+workflows; FIX-103). Tests run under `cargo nextest` when it is installed
 (same tests as `cargo test`, one process each; **doctests are skipped** —
 run `cargo test --doc -p <crate>` or `just test` for them), else `cargo test`.
 Inner-loop clippy drops `--all-features` unless a touched crate defines
@@ -894,7 +900,17 @@ The gate prints one line when `target/` exceeds 60 GB (`just clean-stale`);
 it never deletes anything. Test databases are cloned from a migration
 template (VEL-003) whose provenance stamp is a `COMMENT ON DATABASE`, so a
 clone has exactly the schema of the `AURORA_TEST_TEMPLATE_DB=0` path (a
-testkit test asserts it); `AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
+testkit test asserts it). **Leaked databases (FIX-103):** a killed run leaves its
+`aurora_test_<uuid>` databases (`Drop` never ran); the testkit reaps those with no
+connection older than two hours (the v7 uuid carries the creation time) once per test
+process, and `just clean-testkit` says how to trigger it. Clones hold the advisory lock
+`aurora_test_reap` **shared** while `CREATE DATABASE … TEMPLATE` runs; reaps (leaked
+databases, other migration sets' templates) hold it **exclusive** and skip when it cannot
+be had, so a reap never drops a template under a clone (its own key, not the template
+build lock, which a builder of another migration set holds for a whole migration run).
+`scripts/e2e/llm.sh` is a **manual** gate (live-gated, not in CI): it rebuilds the
+sandbox images on every run unless `SKIP_IMAGE_BUILD=1`.
+`AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
 pool (default 5 — 2 starves 20 `aurora-api` tests, see
 `docs/ops/build-performance.md` §7).
 
@@ -912,10 +928,10 @@ runs) is what a push hands to CI.
 1. `fmt`, `clippy -D warnings`, `cargo deny` (licenses, advisories), pnpm lint
    and type-check.
 2. Unit + database + service + contract tests.
-3. Build images (multi-arch on main; amd64 on PRs).
+3. Build images (**amd64 only** today, on PRs and on main; multi-arch is not built — FIX-101 corrected the claim).
 4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on the host-process stack (phase 1, OPS-017: was compose; `m1.sh --kind` runs it against the kind dev stack).
 5. Architecture guards.
-6. Nightly: Kubernetes e2e on kind, live suites, performance. The kind run
+6. Nightly: Kubernetes e2e on kind, live suites, the full-image hosted scenarios and the channel e2e (no performance run: see the table — performance is manual, on an idle machine). The kind run
    (`scripts/e2e/kind.sh`) ends with two value-only `helm upgrade` legs
    (OPS-024: `web.replicas` 1 → 2 → 1 against the installed release), which prove
    the pre-upgrade hook path — hooks run under the previous release's policies,
@@ -928,6 +944,31 @@ runs) is what a push hands to CI.
 doctests run in `rust-build` (nextest skips them). `rust-lint`, `rust-deny`, `web` and `guards` are
 separate jobs. Actions are SHA-pinned and on Node 24; runners are pinned to `ubuntu-24.04`.
 `e2e-gateway` (`scripts/e2e/gateway.sh`) and `e2e-hosted` (`AURORA_TEST_PODMAN=1 scripts/e2e/hosted.sh`, rootless podman, sandbox image cached with `actions/cache`) are separate jobs after `rust-build`, parallel to the shards; both compile in-job via their scripts. If `e2e-hosted` cannot run on GitHub runners (user-namespace limits), it becomes a local and nightly gate. See `docs/ops/build-performance.md`.
+
+**Skip policy (FIX-101).** A suite the specifications cite as evidence must run in CI or fail there; it may
+not pass by skipping (REVIEW-5 pattern 2).
+- Rust suites that need a service (podman, Redis) name a gate variable and call
+  `aurora_testkit::require_or_skip("<GATE>")` first: gate set → run; gate unset and `CI` not `true` → print
+  `SKIPPED:` and return; gate unset and `CI=true` → **panic**. The nextest `ci` profile keeps those suites out of
+  the shards (`default-filter`), and the CI job `gated-suites` runs them with their gates: the pinned Redis
+  service (`AURORA_TEST_REDIS`, `AURORA_TEST_REDIS_ADDR`: the counters conformance suite and FIX-087's
+  documented-ACL case, SEC-62) and the runner's podman tests (`AURORA_TEST_PODMAN`, SEC-26), each requiring a
+  non-zero passed count. (The Vault suites still skip silently outside their own `vault` job; converting them is
+  left open.)
+- The e2e scripts (`gateway.sh`, `hosted.sh`, `channels.sh`) run through `scripts/e2e/lib-skip.sh`: with `CI=true`
+  a `SKIPPED:` line anywhere in the output fails the script, unless the job declares an exception in
+  `AURORA_E2E_ALLOW_SKIPPED` (a regex, commented in the workflow). `scripts/guards/e2e-skip.sh` self-tests it.
+- Playwright: the **mocked** project runs on every push in the `web` job, the **production-build** project
+  (`AURORA_E2E_PROD=1 pnpm e2e:prod`, port 4110, the only place the real CSP applies) in the same job; the
+  real-stack specs share one stack and run in the nightly `first-run` job and the kind scripts.
+- Schema guard (`crates/aurora-db/tests/it/schema_matches_spec.rs`): compares table and column **names**, and, for
+  every column `docs/03` types, the declared **type and nullability** with the migrated catalog (`udt_name`,
+  `is_nullable`). It does **not** compare constraints, indexes, defaults, checks, foreign keys or partitions; the
+  `KNOWN_TYPE_DRIFT` list may only shrink.
+- Permission matrix (`permission_matrix.rs`): a denial row answered 400/422 (validation before authorisation) is
+  INCONCLUSIVE and fails unless it is on the commented `ACCEPTED_INCONCLUSIVE` list in that file.
+- Plugin fixtures: every manifest/archive/hooks rule code has an invalid fixture in
+  `plugins/fixtures/expected-invalid.txt` (`bash scripts/fixtures/build.sh` prints the count; 57 passed at FIX-101).
 
 **Caching (VTL-001).** Every compiling CI job runs
 [mozilla-actions/sccache-action](https://github.com/mozilla-actions/sccache-action) (SHA-pinned)
