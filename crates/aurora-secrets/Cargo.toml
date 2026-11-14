@@ -35,3 +35,5 @@ memory-store = []
 tokio.workspace = true
 toml.workspace = true
 wiremock.workspace = true
+# (FIX-140) the skip policy of the env-gated Vault suites (`require_or_skip`: CI=true fails instead of skipping).
+aurora-testkit.workspace = true

@@ -14856,6 +14856,56 @@
         ]
       }
     },
+    "/v1/me/api-key": {
+      "delete": {
+        "tags": [
+          "api-keys"
+        ],
+        "summary": "Revoke the API key this request is authenticated with (C-720; `aurora logout`).",
+        "description": "Only the presenting key is touched; a session caller gets 400 `not_an_api_key`. Revoking a\nkey that is already revoked answers 401 before reaching the handler (the key no longer\nauthenticates).",
+        "operationId": "revokeMyApiKey",
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/me/api-keys": {
       "get": {
         "tags": [

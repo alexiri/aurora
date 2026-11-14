@@ -2,7 +2,7 @@ use super::dto::*;
 use super::service;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::http::auth::{Caller, SessionCaller, require_own};
+use crate::http::auth::{Caller, Principal, SessionCaller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, PageParams};
@@ -20,6 +20,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_workspace_keys, create_workspace_key))
         .routes(routes!(list_my_keys))
         .routes(routes!(revoke_key))
+        .routes(routes!(revoke_my_key))
 }
 
 fn page(rows: Vec<api_keys::ApiKeyRow>, limit: u32) -> Page<ApiKey> {
@@ -152,6 +153,50 @@ async fn list_my_keys(
     let rows = api_keys::list_for_user(&s.pool, c.user_id, p.after.map(|a| (a.t, a.id)), p.fetch())
         .await?;
     Ok(Json(page(rows, p.limit)))
+}
+
+/// Revoke the API key this request is authenticated with (C-720; `aurora logout`).
+///
+/// Only the presenting key is touched; a session caller gets 400 `not_an_api_key`. Revoking a
+/// key that is already revoked answers 401 before reaching the handler (the key no longer
+/// authenticates).
+#[utoipa::path(delete, path = "/me/api-key", operation_id = "revokeMyApiKey", tag = "api-keys",
+    responses((status = 204, description = "Revoked"), (status = 400, body = ErrorEnvelope),
+        (status = 401, body = ErrorEnvelope)),
+    security(("api_key" = [])))]
+async fn revoke_my_key(c: Caller, State(s): State<AppState>) -> Result<StatusCode, ApiError> {
+    let Principal::ApiKey {
+        id,
+        org_id,
+        workspace_id,
+        ..
+    } = c.principal
+    else {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "not_an_api_key",
+            "This request is not authenticated with an API key.",
+        ));
+    };
+    let k = api_keys::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::unauthenticated("API key is no longer valid."))?;
+    let mut tx = audit::begin(&s).await?;
+    if api_keys::revoke(&mut tx, id).await? {
+        let mut ev = AuditEvent::new(
+            AuditActor::from_caller(&c),
+            "api_key.revoke",
+            Outcome::Success,
+        )
+        .org(org_id)
+        .target("api_key", id)
+        .metadata(json!({"name": k.name, "self": true}));
+        if let Some(ws) = workspace_id {
+            ev = ev.workspace(ws);
+        }
+        audit::commit_critical(tx, &ev).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Revoke an API key (immediate).

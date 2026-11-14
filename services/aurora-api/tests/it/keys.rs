@@ -301,6 +301,43 @@ async fn audit_count(h: &Harness, action: &str) -> i64 {
     0
 }
 
+/// FIX-140 / C-720: `DELETE /v1/me/api-key` revokes exactly the presenting key.
+#[tokio::test]
+async fn delete_me_api_key_revokes_only_the_presenting_key() {
+    let w = world().await;
+    let h = &w.h;
+    let (_, k1) = h.api_key(w.member, w.org, Some(w.ws), false).await;
+    let (_, k2) = h.api_key(w.member, w.org, Some(w.ws), false).await;
+    // a session caller is refused with 400 not_an_api_key
+    let (s, v) = sess(h, &w.member_tok, Method::DELETE, "/v1/me/api-key", None).await;
+    assert_eq!((s, code(&v)), (400, "not_an_api_key"));
+    let (s, _) = key(h, &k1, Method::DELETE, "/v1/me/api-key", None).await;
+    assert_eq!(s, 204);
+    assert_eq!(audit_count(h, "api_key.revoke").await, 1);
+    let selfs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action='api_key.revoke' AND metadata->>'self'='true'",
+    )
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(selfs, 1);
+    // the revoked key answers 401 (flush the cache like the NOTIFY listener would)
+    let id1: Uuid = sqlx::query_scalar("SELECT id FROM api_keys WHERE revoked_at IS NOT NULL")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    h.state
+        .session_cache
+        .invalidate(&json!({"kind":"key","id":id1}));
+    let (s, _) = key(h, &k1, Method::GET, "/v1/me", None).await;
+    assert_eq!(s, 401);
+    let (s, _) = key(h, &k1, Method::DELETE, "/v1/me/api-key", None).await;
+    assert_eq!(s, 401);
+    // the other key of the same user is untouched
+    let (s, _) = key(h, &k2, Method::GET, "/v1/me", None).await;
+    assert_eq!(s, 200);
+}
+
 /// SEC-32: key creation and revocation are audited, and the audit row never carries
 /// the token.
 #[tokio::test]

@@ -31,6 +31,9 @@ async function mockApi(page: Page) {
     if (p.startsWith("/v1/orgs/")) return json(org);
     if (p === `/v1/workspaces/${ws.id}`) return json(ws);
     if (p.endsWith("/agents")) return json({ items: [agent] });
+    // The API always sends `keys` (openapi `ModelReadiness`); the `{ items: [] }` fallback below made
+    // the overview's getting-started guide throw "Cannot read properties of undefined (reading 'filter')".
+    if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json({ harness: "claude-code", override_dropped: false, default: null, keys: [] });
     if (p === "/v1/instance") {
       return json({ version: "0", signup_mode: "closed", features: { hosted: true }, setup_errors: [], oidc_providers: [{ id: "corp", display_name: "Corporate SSO" }] });
     }

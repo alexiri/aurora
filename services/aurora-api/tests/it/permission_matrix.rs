@@ -487,6 +487,8 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/approvals/pending", G::Auth, false),
     r("GET", "/v1/approvals/stream", G::Auth, false),
     r("DELETE", "/v1/api-keys/{id}", G::Auth, false),
+    // (FIX-140, C-720) Revoke the presenting key; a session gets 400 inside the handler.
+    r("DELETE", "/v1/me/api-key", G::Auth, false),
     // ---- org-level ----
     r("GET", "/v1/orgs/{org}", G::Member, false),
     r("PATCH", "/v1/orgs/{org}", G::Owner, false),

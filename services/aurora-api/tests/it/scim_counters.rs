@@ -108,6 +108,44 @@ async fn store_down_with_the_local_policy_keeps_this_replicas_limit() {
     );
 }
 
+/// FIX-140 item 3 (FIX-087): a `Closed` store refunds the local pre-filter's token exactly once
+/// (`take_shared` refunds; `scim::rate_limit::take` must not again). The local bucket is
+/// observed through how many more takes it grants: burst 3, one token spent, then one closed
+/// cycle — exactly one refund leaves 2 tokens (a missing refund leaves 1, a double refund 3).
+#[tokio::test]
+async fn a_closed_store_refunds_the_local_token_exactly_once() {
+    use aurora_api::http::apilimit::{Charge, Spec};
+    let fx = fixture(ClassPolicy::Closed).await;
+    let s = &fx.h.state;
+    let charges = [Charge {
+        key: "scim:token:fix140-refund".into(),
+        // 3 per hour: the refill during the test is negligible.
+        spec: Spec {
+            burst: 3,
+            limit: 3,
+            per_secs: 3600,
+        },
+        scope: "org",
+        class: "management",
+    }];
+    s.api_limiter.take(&charges).unwrap(); // 3 -> 2
+    // One closed cycle exactly as `scim::rate_limit::take` runs it.
+    s.api_limiter.take(&charges).unwrap(); // 2 -> 1
+    let class = s.counters.management().expect("management class");
+    let refused = aurora_api::http::counters::take_shared(s, class, &charges).await;
+    assert!(
+        matches!(refused, Err(Err(_))),
+        "closed store refuses with an error"
+    );
+    // 2 tokens remain: two takes pass, the third is refused.
+    assert!(s.api_limiter.take(&charges).is_ok());
+    assert!(s.api_limiter.take(&charges).is_ok());
+    assert!(
+        s.api_limiter.take(&charges).is_err(),
+        "a second refund would have left a third token"
+    );
+}
+
 #[tokio::test]
 async fn store_down_with_the_closed_policy_answers_503_in_scim_format() {
     let fx = fixture(ClassPolicy::Closed).await;

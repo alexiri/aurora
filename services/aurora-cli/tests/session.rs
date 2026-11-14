@@ -145,20 +145,59 @@ async fn login_to_another_server_drops_stored_agent_tokens_the_same_server_keeps
     assert!(std::fs::read_to_string(&cfg).unwrap().contains("agt_old"));
 }
 
-#[test]
-fn logout_says_the_key_was_not_revoked() {
+/// Run `aurora logout` against a mock server answering `DELETE /v1/me/api-key` with `resp`
+/// (`None`: nothing mounted, the server answers 404) and return stdout.
+async fn logout_against(resp: Option<ResponseTemplate>) -> String {
+    let s = MockServer::start().await;
+    if let Some(r) = resp {
+        Mock::given(method("DELETE"))
+            .and(path("/v1/me/api-key"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer auk_old",
+            ))
+            .respond_with(r)
+            .expect(1)
+            .mount(&s)
+            .await;
+    }
     let dir = Tmp::new();
-    std::fs::write(
-        dir.path().join("config.toml"),
-        config("https://old.example.org"),
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("config.toml"), config(&s.uri())).unwrap();
+    let d = dir.path().to_owned();
+    let out = tokio::task::spawn_blocking(move || aurora(&d, &["logout"]))
+        .await
+        .unwrap();
+    assert!(out.status.success());
+    assert!(!dir.path().join("config.toml").exists());
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(text.contains("1 stored agent token"), "{text}");
+    let out = aurora(dir.path(), &["logout"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Not logged in"));
+    text
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn logout_revokes_the_key_and_reports_each_outcome() {
+    let text = logout_against(Some(ResponseTemplate::new(204))).await;
+    assert!(text.contains("The API key was revoked"), "{text}");
+
+    let text = logout_against(Some(
+        ResponseTemplate::new(401)
+            .set_body_json(json!({"error":{"code":"unauthenticated","message":"no"}})),
+    ))
+    .await;
+    assert!(text.contains("already invalid"), "{text}");
+
+    let text = logout_against(Some(ResponseTemplate::new(500))).await;
+    assert!(text.contains("Could not revoke the API key"), "{text}");
+    assert!(text.contains("stays valid until"), "{text}");
+
+    // Unreachable server (nothing listening on the port): the file is still deleted.
+    let dir = Tmp::new();
+    std::fs::write(dir.path().join("config.toml"), config("http://127.0.0.1:1")).unwrap();
     let out = aurora(dir.path(), &["logout"]);
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("NOT revoked"), "{text}");
-    assert!(text.contains("1 stored agent token"), "{text}");
+    assert!(text.contains("Could not revoke the API key"), "{text}");
     assert!(!dir.path().join("config.toml").exists());
-    let out = aurora(dir.path(), &["logout"]);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("Not logged in"));
 }
