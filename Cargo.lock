@@ -454,6 +454,7 @@ dependencies = [
  "hmac 0.12.1",
  "http-body-util",
  "percent-encoding",
+ "proptest",
  "pulldown-cmark",
  "regex",
  "reqwest 0.12.28",
