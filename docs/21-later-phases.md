@@ -230,24 +230,27 @@ tokens), group → workspace access bindings, group identities in policy
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 - **Nested organizations — proposed (`docs/tasks/P6-ORGTREE.md`).** `organizations.parent_org_id`
-  plus a closure table; root orgs are today's orgs. Recommended: membership upward-closed (a sub-org
-  member is a member of every ancestor; removal cascades down), ancestor owners/admins are implicit
+  plus a closure table; root orgs are today's orgs. **Membership is upward-closed (owner, D-276(a))**: a
+  sub-org member is a member of every ancestor, and removal cascades down. Recommended: ancestor owners/admins are implicit
   admins below, plain membership does not flow down; governance, org policy (one rule list per org on
   the path, strictest verdict), retention, app availability, freeze and limits inherit down the tree
   and can only be tightened; credentials, skill libraries and app registrations are shared down only by
   an explicit flag; SCIM at roots; create/move (dry-run impact)/delete children; tree switcher and
-  "Inherited from …" labels in the dashboard. Open questions Q-P6-ORG-1..8.
+  "Inherited from …" labels in the dashboard. Open questions Q-P6-ORG-2..8.
 - **Usage limits and load knobs — proposed (`docs/tasks/P6-LIMITS.md`).** One quota framework
   `(resource, scope, window, value)` with instance defaults (settings section `quotas`), limit profiles
-  (`standard`/`trusted`/`restricted`) assignable to orgs and users, org admins tightening only. First
-  resources: concurrent awake sandboxes and awake-hour budgets (from `runtime_intervals`), per-profile
+  (`standard`/`trusted`/`restricted`) assignable to orgs and users, org admins tightening only. **Threat
+  model (owner, D-276(c)): long jobs on free compute**, so the core is sandbox time with no person engaged:
+  background vs interactive metering, concurrent background sandboxes, background cap and background-hour
+  budgets, and (proposed, Q-P6-LIM-10) only a person's engagement restarts the background cap. Further
+  resources: an awake-hours hard ceiling (from `runtime_intervals`), per-profile
   sandbox deadlines and sizes, schedule/webhook/watch counts above the per-agent caps, a profile cron
   floor applied at fire time, fires and turns per day, gateway request, egress-byte and LLM-request caps,
   invitations. New API classes (`sandbox`, `probe`, `invite`) and per-replica concurrency caps on heavy
   handlers. An instance **pressure level** (`normal`/`elevated`/`critical`) that defers automations and
   background starts before touching interactive chat, switchable live from Admin › Limits and from the
-  CLI. Admin/Org/My usage views and abuse signals (report-only). Abuse control, not billing (Q-P6-LIM-2).
-  Open questions Q-P6-LIM-1..9.
+  CLI. Admin/Org/My usage views and abuse signals (report-only). **Abuse control only, not billing, plans or
+  budgets (owner, D-276(b))**. Open questions Q-P6-LIM-1, 3..8, 10.
 
 ## Other later items
 

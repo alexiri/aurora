@@ -3,6 +3,12 @@
 > **Status: proposal (2026-11-14).** Written ahead of phase 6; nothing here is decided. No D-, C-, SEC-
 > or migration numbers are taken yet (the spec batch takes them from PROGRESS's next-free note). Open
 > questions are `Q-P6-LIM-n` at the end; the recommendations are the coordinator's.
+>
+> **Owner answers, 2026-11-15 (D-276):** (Q-P6-LIM-2) **abuse limits only**: no billing, prices, plans or
+> spending budgets. (Q-P6-LIM-9) the abuse CERN GitLab sees is "people running too many long gitlab jobs,
+> basically using runners as free compute". So **sandbox compute time is the core of this spec**: see
+> *Compute time first* below. The order of the briefs and the catalogue are adjusted accordingly, and a new
+> question Q-P6-LIM-10 follows from it. Q-P6-LIM-1, 3..8 are open.
 
 ## Goal
 
@@ -18,6 +24,15 @@ container with a shell, a cron and an egress path, so it is exposed to all of it
    more than their share, enforced everywhere, visible to the people they apply to.
 2. **Load knobs** — instance-wide levers an admin turns *now* when the cluster is overloaded, that work
    even when the dashboard itself is slow, and that degrade background work before interactive work.
+
+**Threat model (owner, D-276(c)).** The real abuse is long jobs on free compute, not request floods. In
+Aurora the equivalent of a long CI job is a sandbox kept awake with nobody engaged. The ways to do that are:
+- a busy background process (a miner, a crawler, a training run);
+- an armed watch;
+- a schedule or webhook that starts a turn every few minutes.
+
+Each of these is multiplied by the number of agents a person can create. Fairness for interactive chat matters
+less than stopping that. Request rate limits stay in scope but come second.
 
 ## Today (what already exists)
 
@@ -69,12 +84,50 @@ governance):
 Enforcement happens in one service in `aurora-api` (`quota::check(resource, subject)`), the same way
 `authz` is one module: every surface that creates a counted thing or starts metered work calls it.
 
+### Compute time first (D-276(c))
+
+The GitLab analogy is direct: a "job" is a stretch of sandbox time with no person engaged, and the limits
+are how many such jobs run at once, how long one may run, and how many hours they add up to.
+
+- **Background vs interactive time.** Every awake minute of a sandbox is classified, using the keep-awake
+  predicate that exists (`11 §Keep-awake`).
+  - **Interactive**: a turn a person started is active, a terminal, SSH or preview session is in use, or the
+    minute falls within `IDLE_STOP` after a person's engagement.
+  - **Background**: everything else. This covers busy processes, armed watches, and turns created by a
+    schedule, webhook or watch.
+
+  The runtime metering (`runtime_intervals`/`runtime_daily`) records both kinds. Background time is
+  attributed to the person who last engaged the agent (busy processes, watches) or to the automation's
+  fire-time authority (automation turns), and also to the agent and the org with every ancestor.
+- **Only a person re-engages (Q-P6-LIM-10).** Today an automation turn stamps `last_engaged_at` like a person
+  does. A schedule every 5 minutes therefore means `BACKGROUND_CAP` never expires, and that is the "endless
+  CI job" loophole. Proposed: the background cap counts from the last **person** engagement. An automation
+  turn still runs, and can wake a parked sandbox to do so. It keeps the sandbox awake only for its own duration
+  plus `IDLE_STOP`, and never extends busy-process or watch keep-awake past the cap.
+- **The three limits, all per profile:**
+  - `sandbox.concurrent_background`: how many sandboxes of a user or org may be awake on background time at
+    once, the analogue of GitLab's concurrent jobs.
+  - `sandbox.background_cap`: the longest single unattended run (today's `BACKGROUND_CAP`, 12 h, per
+    profile).
+  - `sandbox.background_hours`: the daily and monthly total per user, agent and org.
+- **At a limit:**
+  - Background keep-awake reasons stop counting, so the sandbox parks at its next keep-awake check
+    (`stop_reason = quota`; its home volume and processes' state are kept as for any park).
+  - Automation fires that would need a sandbox are skipped with reason `quota`.
+  - The person is told in the conversation at 80 % and at 100 %.
+  - Interactive use goes on, up to the separate hard ceiling of Q-P6-LIM-3.
+- **Wall-clock, not CPU.** The budget is awake time, because an awake sandbox holds its RAM and a runner slot
+  whether it computes or not. The CPU the supervisor already samples for busy detection feeds the abuse
+  signals (*mining-like*), not the budget.
+
 ### Resource catalogue (first cut)
 
 | Resource | Window | Scopes | Enforced at |
 |---|---|---|---|
 | `sandbox.concurrent_awake` | concurrent | user, org | sandbox start (wake). Over the limit: interactive work waits (`waiting_for_quota`, shown like capacity) up to the capacity wait, then fails `quota_exceeded`; background work is skipped (below) |
-| `sandbox.awake_hours` | day, month | agent, user, org | metered from `runtime_intervals` (attributed to the turn's person / the automation's fire-time authority); at 100 %: no new background starts, interactive starts allowed until a hard ceiling (Q-P6-LIM-3); running sandboxes stopped `stop_reason = quota` at the next keep-awake check |
+| `sandbox.concurrent_background` | concurrent | user, org | keep-awake check and automation wake (*Compute time first*); **first priority** |
+| `sandbox.background_hours` | day, month | agent, user, org | metered background time (*Compute time first*); at 100 %: background keep-awake stops counting, sandbox parks `stop_reason = quota`, automation fires skipped; **first priority** |
+| `sandbox.awake_hours` | day, month | user, org | all awake time, interactive included: the hard ceiling of Q-P6-LIM-3; at 100 % new interactive starts are refused too |
 | `sandbox.background_cap`, `idle_stop`, keep-awake caps | duration | profile | existing deadlines become per-profile (restricted: 1 h background, 10 min idle) |
 | `sandbox.size` | — | profile | CPU / RAM / PIDs per profile within the runner's bounds (runners already advertise axes and bounds) |
 | `schedules.count`, `webhooks.count`, `watches.count` | count | agent (existing), workspace, user (as fire-time authority), org | create / re-enable / reassign; 409 `quota_exceeded` |
@@ -161,8 +214,9 @@ configurable; Admin › Limits › Load):
 
 ### Abuse signals (report first, act later)
 
-Flags on Admin › Usage, no automatic action in the first cut (Q-P6-LIM-7): a sandbox at high CPU for hours
-with no person engaged (mining), an agent whose automations fire far more than anyone reads, egress volume
+Flags on Admin › Usage, no automatic action in the first cut (Q-P6-LIM-7). Led by the D-276(c) pattern: the
+longest unattended runs and the people at their background budget day after day; a sandbox at high CPU for
+hours with no person engaged (mining); an agent whose automations fire far more than anyone reads, egress volume
 spikes or many distinct destinations (scanning), bursts of sign-ups or org creations from one domain.
 
 ## Deliverables of the spec batch (when phase 6 starts)
@@ -179,22 +233,24 @@ one), `18`, `API_CONTRACTS`. Then implementation briefs, roughly:
 | Brief (proposed) | Scope | Size |
 |---|---|---|
 | P6-LIM-1 | Quota framework: settings section, profiles and assignments, `quota::check`, `usage_counters`, error shape; move existing count caps into it | L, Rust |
-| P6-LIM-2 | Sandbox limits: concurrent awake, awake-hour budgets from `runtime_intervals`, per-profile deadlines/sizes, quota stop, background-before-interactive start ordering | L, Rust |
+| P6-LIM-2 | Sandbox compute limits (D-276(c), the core): background/interactive classification and metering, person-only re-engagement (Q-P6-LIM-10), concurrent background sandboxes, per-profile background cap and background hours, the awake-hours hard ceiling, per-profile deadlines/sizes, quota stop, background-before-interactive start ordering | L, Rust |
 | P6-LIM-3 | Automation limits: counts per workspace/user/org, profile minimum interval at create and fire, fires per day, skip reasons | M, Rust |
 | P6-LIM-4 | API classes `sandbox`/`probe`/`invite`, per-replica concurrency caps, gateway request/egress/LLM-request caps | M–L, Rust |
 | P6-LIM-5 | Pressure levels: settings, live reload, CLI, banners, audit + e-mail | M, both |
 | P6-LIM-6 | Dashboard: Admin › Limits (defaults, profiles, pressure), Admin › Usage, Org › Usage, My usage, limit notices in forms and chat | L, Next.js |
 | P6-LIM-7 | Abuse signals and metrics/alerts, operator doc | M, both |
 
-Order: P6-LIM-1 first (everything depends on it); with the org tree, after P6-ORG-1 so org scopes count
+Order: P6-LIM-1 and P6-LIM-2 first, as one batch (the framework and the compute limits it exists for,
+D-276(c)), then P6-LIM-3 (automations, the other half of "too many long jobs"), P6-LIM-6's Limits and Usage
+pages, and the rest; with the org tree, after P6-ORG-1 so org scopes count
 subtrees from the start (or P6-LIM-1 first with flat orgs and the tree adding ancestors later — Q-P6-LIM-8).
 
 ## Open questions for the owner
 
 - **Q-P6-LIM-1** Limit profiles (`standard` / `trusted` / `restricted`, assignable to orgs and users)?
   *Recommended: yes* — one knob per org instead of twenty numbers.
-- **Q-P6-LIM-2** `21` says "not planned: billing, plans, budgets". Confirm these are abuse/fairness limits
-  only — no prices, invoices or cost reporting.
+- **Q-P6-LIM-2** **Answered 2026-11-15 (D-276(b)): abuse limits only.** `21` says "not planned: billing,
+  plans, budgets". Confirm these are abuse/fairness limits only — no prices, invoices or cost reporting.
 - **Q-P6-LIM-3** When a person's awake-hour budget is used up, may they still chat (interactive) up to a hard
   ceiling, or does everything stop? *Recommended: background stops at 100 %, interactive at a separate hard
   ceiling (e.g. 2× the budget).*
@@ -209,5 +265,11 @@ subtrees from the start (or P6-LIM-1 first with flat orgs and the tree adding an
 - **Q-P6-LIM-8** Build the org tree before limits, or limits first (flat orgs) with subtree counting added by
   the tree? *Recommended: limits framework first — it is the more urgent protection; the tree then adds
   ancestor counting in P6-ORG-1.*
-- **Q-P6-LIM-9** Which abuse has CERN GitLab actually seen that we should design against explicitly (e.g.
-  mining in CI, spam accounts, API scraping)? The catalogue above is the coordinator's guess.
+- **Q-P6-LIM-9** **Answered 2026-11-15 (D-276(c)): "people running too many long gitlab jobs, basically using
+  runners as free compute".** Which abuse has CERN GitLab actually seen that we should design against
+  explicitly? → *Compute time first*.
+- **Q-P6-LIM-10** (new, from D-276(c)) Should only a **person's** engagement restart the background cap, so a
+  schedule or webhook firing every few minutes can no longer keep a sandbox awake indefinitely? An automation
+  turn would still run (and wake a parked sandbox), but would keep it awake only for the turn plus
+  `IDLE_STOP`. *Recommended: yes.* It closes the loophole that makes `BACKGROUND_CAP` ineffective today.
+  Legitimate schedules keep working, and their time counts as background time.

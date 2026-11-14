@@ -4,6 +4,9 @@
 > decided. No D-, C-, SEC- or migration numbers are taken yet: the spec batch takes them from
 > PROGRESS's next-free note when the owner starts phase 6. Open questions are `Q-P6-ORG-n` at the end;
 > the recommendations are the coordinator's.
+>
+> **Owner answers, 2026-11-15 (D-276):** (Q-P6-ORG-1) **yes**: members of sub-orgs are members of every
+> parent. Membership is upward-closed and removal cascades down, as proposed below. Q-P6-ORG-2..8 are open.
 
 ## Goal
 
@@ -50,7 +53,7 @@ floors that every child inherits and cannot loosen, the way the instance does fo
 
 ### Membership and roles
 
-- **Membership is upward-closed (recommended, Q-P6-ORG-1):** an active member of a sub-org is always a
+- **Membership is upward-closed (owner, D-276(a)):** an active member of a sub-org is always a
   member of its parent. Adding someone to a child who is not in the parent adds them to every missing
   ancestor as `member` in the same transaction (only if the actor may add members there, or the ancestor
   allows it, else 403). Removing or suspending someone in an ancestor removes/suspends them in the whole
@@ -150,8 +153,9 @@ invariant: a descendant never loosens an ancestor; credentials never flow down w
 
 ## Open questions for the owner
 
-- **Q-P6-ORG-1** Membership upward-closed (a sub-org member is always a member of every ancestor; removal at a
-  parent cascades down)? *Recommended: yes* — it makes offboarding, SCIM and seat caps work for the whole tree.
+- **Q-P6-ORG-1** **Answered 2026-11-15 (D-276(a)): yes.** Membership upward-closed (a sub-org member is always
+  a member of every ancestor; removal at a parent cascades down)? *(Was recommended: yes — it makes
+  offboarding, SCIM and seat caps work for the whole tree.)*
 - **Q-P6-ORG-2** Does plain membership flow down (department members automatically use group workspaces)?
   *Recommended: no*; a parent group bound in the child covers the cases that want it.
 - **Q-P6-ORG-3** Credentials: shared down only by an explicit per-credential flag? *Recommended: yes, default off.*
