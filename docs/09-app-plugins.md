@@ -302,30 +302,74 @@ oauth_clients:
 - `{instance}` stands for a whole host only (never part of a host or a path),
   and only in an app that declares `instances`. With `default_host`, every
   `{instance}` entry also applies to that host as an ordinary static claim.
+  Manifests and the linter are unchanged by base paths (below): `{instance}`
+  stays a whole host in every manifest.
 - An **app instance** (`03 app_instances`) is a host registered for one app by
-  an admin: instance-wide by an instance admin, or for one organization by its
+  an admin, optionally with a **base path** (phase 5, D-231, FIX-145):
+  instance-wide by an instance admin, or for one organization by its
   owners/admins (`05 §App instances`). Registration is the trust decision
   about where that app's credentials may be sent; members never type a host.
 - At registration the host MUST be a DNS name in lower case: no IP literal,
   userinfo, port or path, and not under `aurora.internal`. It MUST NOT equal or
-  fall under a static claim of any active package (another app's host), a
-  governed LLM host (`08 §6`), or another registered instance of the same scope
-  (`instance_host_conflict`). The optional `probe` runs through the gateway's
+  fall under a static claim of any active package (another app's host) or a
+  governed LLM host (`08 §6`), and MUST NOT be one of Aurora's own addresses;
+  these checks are per host and ignore the base path, so a path never gets
+  around them (`instance_host_conflict`). The optional `probe` runs through the gateway's
   destination guard. A private address is reachable only where the operator
   allows it (`gateway.allowed_private`, `06`).
+- (phase 5, D-231) **Base path.** A registration may carry a base path for an
+  app served under a path (`https://its.cern.ch/jira`: host `its.cern.ch`, base
+  path `/jira`). Validation (`instance_base_path_invalid`, pointer `/base_path`):
+  it starts with `/`; it has 1–8 segments; each segment is 1–64 characters from
+  `[A-Za-z0-9._~-]` and is neither `.` nor `..`; the total length is ≤ 128.
+  Normalization before validation: a trailing `/` is dropped, and `""` or `/`
+  means no base path (`null`). Case is kept (paths are case-sensitive). The base
+  path cannot be changed after registration, like the host (register again
+  instead). `default_host` never has a base path: it stays a bare host.
+- **Registrations that share a host.** Two registrations visible to each other
+  (instance-wide and any organization's, or two of one organization) on the same
+  host conflict (`instance_host_conflict`, `kind: instance`) when their base
+  paths **overlap**: either is `null`, they are equal, or one is a segment
+  prefix of the other (`/jira` overlaps `/jira/x`, not `/jira2`). Disjoint base
+  paths on one host may be registered, for one app or different apps (Jira DC at
+  `/jira`, Confluence DC at `/confluence`). Promoting an organization's
+  registration to instance-wide (`instance_host_shared`) uses the same overlap
+  rule. The per-host lock taken while checking is unchanged.
+- **`{instance}` resolution** (D-231(b)). For a registration with a base path,
+  every `https://{instance}/…` the core resolves (registration probe, connect
+  probes, OAuth authorize/token URLs, token refresh, `token.mint`, `library`
+  fetch) is `https://<host><base_path>/…`, built by one resolver in
+  `aurora-registry`; no other code substitutes `{instance}` itself. Hook
+  `permissions.egress` `{instance}` stays the host (egress is checked per host);
+  the hook host request also carries `instance_base_path` (C-249, C-731).
 - A connection of an instance-bound app records its `instance_id` (or none for
-  `default_host`). The gateway injects it **only** on that instance's host,
-  exactly as a tenant-bound connection only on its `tenant_host` (SEC-04, SEC-59).
+  `default_host`). The gateway injects it **only** on that instance's host and,
+  when the instance has a base path, only under it (the path equals the base path
+  or starts with base path + `/`), exactly as a tenant-bound connection only on
+  its `tenant_host` (SEC-04, SEC-59).
+- (phase 5, D-231(c)) **Matching under a base path.** A request belongs to a
+  registration when its host equals the instance host and its path, normalized
+  as for tool matching (`06 §Per-request pipeline` step 3), is the base path or
+  starts with base path + `/`; a registration without a base path matches every
+  path. Among several matches the longest base path wins. Everything the
+  manifest decides uses the **app path**, the path with the base path removed
+  (`hosts[].match.path_prefix`, tool `path`, `{path.N}` in approval templates,
+  `params` conditions), so manifests work unchanged. The upstream request, the
+  audit `path` and the approval display keep the **full** path. A request to the
+  host outside every registered base path matches no instance and nothing is
+  injected (fail closed, as for an unknown host). This supersedes D-92(e) and
+  P2-CAT-7 G7 ("an instance is a bare host") for registered instances.
   A connection without an instance stands for `default_host`: `{instance}`
   resolves to that host in every gateway path (token refresh/exchange, hook
   egress, injection guard), it is injected only there, never on a registered
   instance's host (D-86).
 - OAuth: each self-hosted instance has its own OAuth application, so the client
   is a BYOC client bound to the instance (`app_oauth_clients.instance_id`); the
-  templated URLs resolve to that instance's host and MUST be https.
+  templated URLs resolve to that instance's host and base path and MUST be https.
 - Registered instance hosts are claims for `§7`: a package activated later
   whose static claim overlaps a registered instance host needs an instance-admin
-  decision like any other conflict.
+  decision like any other conflict, whatever the instance's base path (static
+  claims stay host-level).
 - Deleting an instance disables its connections (`status_reason:
   instance_deleted`) and its OAuth clients; nothing is injected on its host again.
 
@@ -730,7 +774,10 @@ and one AWS app and no host-claim decision to make. A package that a present pac
 (phase 2, D-74) A registered app instance host (`§3.4 Instance-bound hosts`) is
 a claim of its app. Registration refuses a host that conflicts with an existing
 static claim; a static claim activated later that overlaps a registered
-instance host is a conflict decided as above.
+instance host is a conflict decided as above. (phase 5, D-231) Both checks are
+per host: an instance's base path never narrows the claim it is compared with,
+so a static claim on the host refuses a registration with any base path.
+Registrations among themselves follow the overlap rule of `§3.4`.
 
 ## 8. Hooks
 
@@ -821,10 +868,15 @@ clamped to `SUMMARY_LIMITS`.
   `GET /internal/v1/registry/blobs/{digest}` (internal secret), refreshing on a
   60 s poll of the active hash (it does not hold a DB connection).
 - Endpoint: `POST /internal/v1/hooks/{hook}` with
-  `{ "package_id", "package_digest", "app_id", "input": <hook input as JSON> }`
+  `{ "package_id", "package_digest", "app_id", "input": <hook input as JSON>,
+  "instance_host"?, "instance_base_path"? }`
   → `{ "ok": <output> }` or `{ "error": { "code", "message" } }`. Auth:
   `Authorization: Bearer <internal secret>`. The egress allow-list is taken
-  from the snapshot, never from the caller.
+  from the snapshot, never from the caller. `instance_host` (C-249) is what
+  `{instance}` in `permissions.egress` resolves to (absent = nothing);
+  `instance_base_path` (phase 5, C-731, D-231) is the connection's registered
+  base path (absent = none). Egress stays checked per host: the base path
+  neither narrows nor widens it.
 - Runtime: wasmtime with the component model; modules compiled once per
   digest; a **fresh `Store` and instance per call**; memory limit
   `HOOK_MEMORY`; epoch interruption enforcing `HOOK_WALL` (15 s for connect and
@@ -1054,7 +1106,13 @@ Fixture file format (`tests/*.yaml`):
 `expect.upstream.headers_absent` (D-86) lists header names (case-insensitive) that the upstream
 request must not carry, whether injected by the package or sent by the client. In a case without a
 `connection.instance_host`, the connection of an instance-bound app is its default-host connection
-(`{instance}` is the app's `default_host`). (phase 4, P4-GRANTS) `request.body_truncated: true` says
+(`{instance}` is the app's `default_host`). (phase 5, D-231, C-731) `connection.instance_base_path`
+(optional, next to `instance_host`, normalized and validated as at registration, `§3.4
+Instance-bound hosts`) gives the registered instance a base path: requests in the case use the full
+URL (`https://its.cern.ch/jira/rest/api/2/myself`), the expected `app`/`tool` and `{path.N}` in
+summaries are matched on the app path (`/rest/api/2/myself`), `expect.upstream.url` is the full URL,
+and a request on the host outside the base path is injected with nothing. `{instance}` URLs of the
+case (refresh `request_url`, cassette entries) resolve to host + base path. (phase 4, P4-GRANTS) `request.body_truncated: true` says
 the body is longer than the gateway's condition buffer (the classifier then sees a truncated
 prefix; a fixture cannot carry 256 KiB), and `expect.no_tool: true` says the app matches but no
 catalogue tool does; the `params` fixtures of `§3.4 tools` use both.
@@ -1068,6 +1126,7 @@ the network and the database are replaced by the recording.
 - name: refresh after a stale 401
   connection:
     instance_host: gitlab.example.com        # the registered instance (omit for the default-host connection)
+    # instance_base_path: /gitlab            # (phase 5, D-231) optional base path of that instance
     credentials: { access_token: "tok-old", refresh_token: "refresh-1" }
     oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }   # fake fields of the registered OAuth client
   request: { method: GET, url: "https://gitlab.example.com/api/v4/user" }

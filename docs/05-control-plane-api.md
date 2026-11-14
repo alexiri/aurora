@@ -603,12 +603,31 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/orgs/{org}/app-instances` | S/K | instances usable in the org (instance-wide + the org's own); any member |
-| POST `/v1/orgs/{org}/app-instances` | S/K | `{ app_id, host, label }` → `AppInstance`; org owner/admin; validated per `09 §3.4 Instance-bound hosts` (probe included) |
+| POST `/v1/orgs/{org}/app-instances` | S/K | `{ app_id, host, label, base_path? }` → `AppInstance`; org owner/admin; validated per `09 §3.4 Instance-bound hosts` (probe included); (phase 5, C-731) `base_path` as below |
 | GET/POST `/v1/admin/app-instances` | S | instance admins; GET lists the instance-wide ones, or with `scope=all` (and `org=`) every organization's too, each row carrying `org_name`/`org_slug` (FIX-132, C-639); POST registers instance-wide; a refused host's `details.conflict` names the holder (`static_claim`, `llm_host`, `aurora_address`, `instance` — C-639) |
-| POST `/v1/admin/app-instances/{id}/promote` | S | (FIX-132, C-639) make an organization's registration instance-wide (`org_id = NULL`): one transaction, connections keep `instance_id`, audited `app_instance.promote` (critical); 409 `instance_already_wide` / `instance_host_shared` (another registration of the host exists) |
-| PATCH/DELETE `/v1/app-instances/{id}` | S/K | label, `status`; delete disables its connections; owner/admin of its scope (instance admin for instance-wide) |
+| POST `/v1/admin/app-instances/{id}/promote` | S | (FIX-132, C-639) make an organization's registration instance-wide (`org_id = NULL`): one transaction, connections keep `instance_id`, audited `app_instance.promote` (critical); 409 `instance_already_wide` / `instance_host_shared` (another registration of the host exists whose base path overlaps, C-731) |
+| PATCH/DELETE `/v1/app-instances/{id}` | S/K | label, `status`; delete disables its connections; owner/admin of its scope (instance admin for instance-wide); `base_path` (like `host`) cannot be changed: an unknown field, 400 |
 
 `POST /v1/apps/{app}/connect` takes `instance_id` for an instance-bound app (absent = `default_host`, refused when the app has none). The connect form and the dashboard list the instances visible to the org.
+
+**Base path** (phase 5, FIX-145, D-231, C-731). Both POST bodies take `base_path?: string | null`
+for an app served under a path (`https://its.cern.ch/jira` → `host: "its.cern.ch"`,
+`base_path: "/jira"`). It is normalized first (a trailing `/` is dropped; `""` and `"/"` mean
+`null`; case is kept), then validated: it starts with `/`, has 1–8 segments, each 1–64 characters
+from `[A-Za-z0-9._~-]` and neither `.` nor `..`, total ≤ 128 characters; otherwise 422
+`instance_base_path_invalid` with `details.fields[].path = "/base_path"`. `AppInstance` gains
+`base_path: string | null` (normalized) and `base_url: string` (`https://<host><base_path or "">`,
+what clients display); `Connection.instance` gains the same two fields. Conflicts:
+`instance_host_conflict` with `details.conflict.kind = "instance"` is raised only when another
+registration visible to this one is on the same host **and** the base paths overlap (either is
+`null`, they are equal, or one is a segment prefix of the other: `/jira` overlaps `/jira/x`, not
+`/jira2`); the conflict then also carries the holder's `base_path` and `base_url`. Registrations on
+one host with disjoint base paths are accepted, for one app or different apps. `static_claim`,
+`llm_host` and `aurora_address` conflicts are per host and ignore `base_path`. Promote's
+`instance_host_shared` uses the same overlap rule. The registration probe, connect probes and OAuth
+URLs resolve `{instance}` to `<host><base_path>`; `instance_probe_failed.details.url` is that full
+URL. A client that omits `base_path` gets today's behaviour; a client must identify a registration
+by `id`, never by `host` alone.
 
 ### Grants and effective views
 | Method & path | Auth | Purpose |
