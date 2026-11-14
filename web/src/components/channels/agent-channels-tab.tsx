@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { DynamicForm } from "@/components/apps/dynamic-form";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
@@ -28,25 +29,51 @@ import {
   type SpaceBinding,
 } from "@/lib/api/channels";
 import { dedicatedFields, formFields, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
+import { useOrg } from "@/lib/api/queries";
+import { cn } from "@/lib/utils";
 
+import { isTalkable, NextSteps } from "./agent-next-steps";
 import { MutationError, StatusChip } from "./shared";
 
-function AttachForm({ agentId }: { agentId: string }) {
+/** Empty state: the organization has no chat integration, so say who can create one. */
+function NoIntegration({ orgId }: { orgId?: string }) {
+  const org = useOrg(orgId);
+  const admin = org.data?.my_role === "owner" || org.data?.my_role === "admin";
+  return (
+    <Notice tone="neutral" role="status" className="space-y-2" data-testid="no-integration">
+      <p>
+        This organization has no chat integration yet. An organization owner or admin connects one (for example Mattermost) under
+        Channels.
+      </p>
+      {admin && org.data ? (
+        <Link href={`/o/${org.data.slug}/channels`} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+          Connect a chat platform
+        </Link>
+      ) : null}
+    </Notice>
+  );
+}
+
+function AttachForm({ agentId, orgId }: { agentId: string; orgId?: string }) {
   const options = usePresenceOptions(agentId);
   const attach = useAttachPresence(agentId);
-  const [integrationId, setIntegrationId] = useState("");
-  const [mode, setMode] = useState<PresenceMode | "">("");
+  const [pickedIntegration, setIntegrationId] = useState("");
+  const [pickedMode, setMode] = useState<PresenceMode | "">("");
   const [values, setValues] = useState<FieldValues>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   if (options.isPending) return <Loading />;
   if (options.isError) return <ErrorState error={options.error} onRetry={() => options.refetch()} />;
+  if (options.data.items.length === 0) return <NoIntegration orgId={orgId} />;
   const usable = options.data.items.filter((o) => !o.attached);
   if (usable.length === 0) {
     return <p className="text-sm text-muted">No active integration is left to attach to.</p>;
   }
+  // One integration → preselected; a shared bot is the only mode with no fields, so it is preselected too.
+  const integrationId = pickedIntegration || (usable.length === 1 ? usable[0]!.integration_id : "");
   const integration = usable.find((o) => o.integration_id === integrationId);
   const modes = integration?.modes ?? [];
+  const mode: PresenceMode | "" = pickedMode || (modes.length === 1 && modes[0] === "shared" ? "shared" : "");
   const dedicated = integration ? formFields((integration.presence_setup as { dedicated?: unknown }).dedicated) : [];
   const fields = mode === "dedicated" ? dedicated : [];
 
@@ -72,7 +99,9 @@ function AttachForm({ agentId }: { agentId: string }) {
 
   return (
     <form className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" onSubmit={submit} aria-busy={attach.isPending}>
-      <h3 className="font-display text-base font-semibold text-ink">Attach to an integration</h3>
+      <h3 className="font-display text-base font-semibold text-ink">
+        {usable.length === 1 ? `Attach this agent to ${usable[0]!.connector_name}` : "Attach to an integration"}
+      </h3>
       <div className="space-y-1.5">
         <label htmlFor="att-int" className="block text-sm font-medium text-ink">
           Integration
@@ -209,7 +238,7 @@ function PresenceRow({ agentId, p, connector }: { agentId: string; p: Presence; 
   );
 }
 
-function Presences({ agentId }: { agentId: string }) {
+function Presences({ agentId, orgId, canOwn }: { agentId: string; orgId?: string; canOwn: boolean }) {
   const q = usePresences(agentId);
   const connectors = useConnectors();
   if (q.isPending) return <Loading />;
@@ -226,7 +255,10 @@ function Presences({ agentId }: { agentId: string }) {
           ))}
         </ItemList>
       )}
-      <AttachForm agentId={agentId} />
+      {canOwn
+        ? q.data.items.filter(isTalkable).map((p) => <NextSteps key={p.id} agentId={agentId} orgId={orgId} presence={p} />)
+        : null}
+      <AttachForm agentId={agentId} orgId={orgId} />
     </Section>
   );
 }
@@ -374,10 +406,10 @@ function Reach({ agentId, canOwn }: { agentId: string; canOwn: boolean }) {
   );
 }
 
-export function AgentChannelsTab({ agentId, canOwn }: { agentId: string; orgId?: string; canOwn: boolean }) {
+export function AgentChannelsTab({ agentId, orgId, canOwn }: { agentId: string; orgId?: string; canOwn: boolean }) {
   return (
     <div className="space-y-8">
-      <Presences agentId={agentId} />
+      <Presences agentId={agentId} orgId={orgId} canOwn={canOwn} />
       {canOwn ? <Bindings agentId={agentId} /> : null}
       <Reach agentId={agentId} canOwn={canOwn} />
     </div>

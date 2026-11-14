@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-import { openMattermost } from "./support/mattermost-flow";
+import { openMattermost, type FlowOptions } from "./support/mattermost-flow";
 import { overflow } from "./support/open";
 
 // FIX-127 (D-195(g), C-710..C-714): Mattermost as one guided path, on the mock API.
@@ -10,6 +10,7 @@ import { overflow } from "./support/open";
 //   is Part C.) Every new screen: both themes, 390 px with no horizontal scroll, axe.
 
 const ORG_CHANNELS = "/o/acme/channels";
+const AGENT_CHANNELS = "/o/acme/w/main/agents/daneel?tab=channels";
 
 async function serious(page: Page) {
   const { violations } = await new AxeBuilder({ page }).analyze();
@@ -47,6 +48,21 @@ test("journey: add Mattermost with zero typed fields, connect it picking a team,
   await done.getByLabel("Agent", { exact: true }).selectOption({ label: "Daneel" });
   await done.getByRole("button", { name: "Attach with the shared bot" }).click();
   await expect(done.getByText(/Attached\./)).toBeVisible();
+
+  // Agent tab: next steps after attaching; bind a channel the person is in.
+  await page.goto(AGENT_CHANNELS);
+  const steps = page.getByTestId("next-steps");
+  await expect(steps.getByRole("link", { name: "Open a DM with @daneel" })).toHaveAttribute("href", "https://chat.example.com/alpha/messages/@daneel");
+  await steps.getByRole("button", { name: "Add to a channel" }).click();
+  await steps.getByLabel("Channel").selectOption({ label: "# town-square" });
+  await steps.getByRole("button", { name: "Add to this channel" }).click();
+  await expect(steps.getByText("Bound. @daneel announced itself in town-square.")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Space binding list" }).getByText("town-square")).toBeVisible();
+  expect(mock.calls.find((c) => c.key === "POST /v1/agents/00000000-0000-4000-8000-000000000011/space-bindings")?.body).toEqual({
+    integration_id: "00000000-0000-4000-8000-000000000701",
+    space_ref: "chan-town",
+    listen: "mentions",
+  });
 
   const probe = mock.calls.find((c) => c.key.endsWith(":probe"));
   expect(probe?.body).toEqual({ connector_id: "mattermost", config: { server_url: "https://chat.example.com" }, credentials: { bot_token: "bot-secret" } });
@@ -102,6 +118,36 @@ for (const scheme of ["light", "dark"] as const) {
       for (const [name, act, opts] of screens) {
         test(`${name}: no horizontal scroll, no serious axe violations`, async ({ page }) => {
           await openMattermost(page, ORG_CHANNELS, scheme, opts);
+          await act(page);
+          expect(await overflow(page)).toBeLessThanOrEqual(0);
+          expect(await serious(page)).toEqual([]);
+        });
+      }
+
+      const agentScreens: [string, (page: Page) => Promise<void>, FlowOptions][] = [
+        ["agent tab: attach with one integration", async (page) => page.getByRole("heading", { name: "Attach this agent to Mattermost" }).waitFor(), { added: true }],
+        ["agent tab: no integration", async (page) => page.getByTestId("no-integration").waitFor(), { added: true, noIntegration: true }],
+        ["agent tab: next steps", async (page) => page.getByTestId("next-steps").waitFor(), { added: true, attached: true }],
+        [
+          "agent tab: add to a channel",
+          async (page) => {
+            await page.getByRole("button", { name: "Add to a channel" }).click();
+            await page.getByLabel("Channel", { exact: true }).waitFor();
+          },
+          { added: true, attached: true },
+        ],
+        [
+          "agent tab: link required",
+          async (page) => {
+            await page.getByRole("button", { name: "Add to a channel" }).click();
+            await page.getByRole("link", { name: "Link your chat account" }).waitFor();
+          },
+          { added: true, attached: true, spaces: "link_required" },
+        ],
+      ];
+      for (const [name, act, opts] of agentScreens) {
+        test(`${name}: no horizontal scroll, no serious axe violations`, async ({ page }) => {
+          await openMattermost(page, AGENT_CHANNELS, scheme, opts);
           await act(page);
           expect(await overflow(page)).toBeLessThanOrEqual(0);
           expect(await serious(page)).toEqual([]);

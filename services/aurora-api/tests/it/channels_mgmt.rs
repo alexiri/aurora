@@ -3197,6 +3197,74 @@ async fn dashboard_binding_requires_membership_and_the_bot() {
     assert_eq!(w.call(&w.wsowner, Method::GET, &no_mine, None).await.0, 400);
 }
 
+/// FIX-127: `POST /agents/{agent}/space-bindings` and `GET /integrations/{id}/spaces` are exempt from
+/// the permission matrix (the matrix has no per-resource role), so each role's answer is pinned
+/// here: nobody below `can_own` reaches the connector, and a caller who cannot see the resource gets
+/// the same 404 as for an unknown id. Nothing is served by the fake platform: any connector op would
+/// stall the call, so a 403/404 also proves no op was enqueued.
+#[tokio::test]
+async fn dashboard_binding_routes_refuse_every_role_below_can_own() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    assert_eq!(w.attach(&w.owner, agent, integ, "shared").await.0, 201);
+    // The workspace roles are owner, approver and member (there is no separate viewer role: a
+    // member is the read-only role); and an admin of another organization.
+    let viewer = w.h.user("approver@x.io", false).await;
+    w.h.member(w.org, viewer, "member", "active").await;
+    w.h.bind_ws(w.ws, viewer, "approver").await;
+    let other_org = w.h.org().await;
+    let other_admin = w.h.user("other-admin@x.io", false).await;
+    w.h.member(other_org, other_admin, "admin", "active").await;
+    let viewer_c = cookie(&w.h.good_session(viewer).await.1);
+    let other_c = cookie(&w.h.good_session(other_admin).await.1);
+    let post = format!("/v1/agents/{agent}/space-bindings");
+    let get = format!("/v1/integrations/{integ}/spaces?mine=true");
+    let body = json!({"integration_id": integ, "space_ref": "C1"});
+
+    // Session callers: (who, POST status, GET status).
+    for (who, name, want_post, want_get) in [
+        (&w.wsmember, "workspace member", 403, 403),
+        (&viewer_c, "workspace approver", 403, 403),
+        (&w.plain, "org member outside the workspace", 404, 403),
+        (&other_c, "admin of another org", 404, 404),
+        (&w.outsider, "not in the org at all", 404, 404),
+    ] {
+        let (s, v) = w.call(who, Method::POST, &post, Some(body.clone())).await;
+        assert_eq!(s, want_post, "POST as {name}: {v}");
+        let (s, v) = w.call(who, Method::GET, &get, None).await;
+        assert_eq!(s, want_get, "GET as {name}: {v}");
+    }
+
+    // API keys follow the session rules (C-713).
+    for (user, org, name, want_post, want_get) in [
+        (
+            w.users.wsmember,
+            w.org,
+            "key of a workspace member",
+            403,
+            403,
+        ),
+        (
+            other_admin,
+            other_org,
+            "key of another org's admin",
+            404,
+            404,
+        ),
+    ] {
+        let (_, key) = w.h.api_key(user, org, None, false).await;
+        let auth = [("authorization", bearer(&key))];
+        let hdrs: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let (s, _, v) =
+            w.h.send(Method::POST, &post, &hdrs, Some(body.clone()))
+                .await;
+        assert_eq!(s, want_post, "POST with {name}: {v}");
+        let (s, _, v) = w.h.send(Method::GET, &get, &hdrs, None).await;
+        assert_eq!(s, want_get, "GET with {name}: {v}");
+    }
+}
+
 /// A shared presence has no bot of its own: nothing is enqueued by any delete.
 #[tokio::test]
 async fn shared_presences_enqueue_nothing_on_org_delete() {

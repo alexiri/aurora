@@ -157,11 +157,12 @@ fn unavailable() -> ApiError {
 }
 
 /// The active integration the person may use for binding, plus their linked chat account.
-async fn linked_account(
+/// An active integration of an org the caller belongs to; anything else is a 404.
+async fn visible_integration(
     s: &AppState,
     c: &Caller,
     integration: Uuid,
-) -> Result<(IntegrationRow, String), ApiError> {
+) -> Result<IntegrationRow, ApiError> {
     let not_found = integration_not_found;
     let integ = integrations_repo::get(&s.pool, integration)
         .await?
@@ -171,7 +172,15 @@ async fn linked_account(
     if !c.org(s, integ.org_id).await.is_ok() {
         return Err(not_found());
     }
-    let link = user_links::list_for_user_in(&s.pool, c.user_id, integration)
+    Ok(integ)
+}
+
+async fn linked_account(
+    s: &AppState,
+    c: &Caller,
+    integ: &IntegrationRow,
+) -> Result<String, ApiError> {
+    let link = user_links::list_for_user_in(&s.pool, c.user_id, integ.id)
         .await?
         .into_iter()
         .next()
@@ -181,7 +190,7 @@ async fn linked_account(
                 "Link your chat account first (Account › Channels).",
             )
         })?;
-    Ok((integ, link.platform_user_ref))
+    Ok(link.platform_user_ref)
 }
 
 fn members_of(v: serde_json::Value) -> Result<Vec<String>, ApiError> {
@@ -241,10 +250,12 @@ pub async fn my_spaces(
             vec![FieldError::new("/mine", "must be true")],
         ));
     }
-    let (integ, me) = linked_account(s, c, integration).await?;
+    // The role first: someone who cannot bind is told so, not asked to link an account.
+    let integ = visible_integration(s, c, integration).await?;
     if !aurora_db::authz::owns_any_workspace(&s.pool, c.user_id, integ.org_id).await? {
         return Err(ApiError::forbidden("Workspace owner role required."));
     }
+    let me = linked_account(s, c, &integ).await?;
     let limit = q.limit.unwrap_or(25).clamp(1, 50);
     let query = q
         .query
@@ -301,10 +312,11 @@ pub async fn create(
     req: CreateBindingRequest,
 ) -> Result<SpaceBinding, ApiError> {
     let agent = owned_agent(s, c, agent).await?;
-    let (integ, me) = linked_account(s, c, req.integration_id).await?;
+    let integ = visible_integration(s, c, req.integration_id).await?;
     if integ.org_id != agent.org_id {
         return Err(integration_not_found());
     }
+    let me = linked_account(s, c, &integ).await?;
     let shared = presences::list_for_agent(&s.pool, agent.id)
         .await?
         .into_iter()

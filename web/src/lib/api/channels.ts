@@ -16,6 +16,7 @@ export type UserLink = S["UserLink"];
 export type DmDefault = S["DmDefault"];
 export type ReachGrant = S["ReachGrant"];
 export type Listen = S["Listen"];
+export type MySpace = S["MySpace"];
 
 const retry = (count: number, err: unknown) =>
   !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
@@ -27,6 +28,7 @@ export const channelKeys = {
   presences: (agent: string) => ["agents", agent, "presences"] as const,
   presenceOptions: (agent: string) => ["agents", agent, "presence-options"] as const,
   bindings: (agent: string) => ["agents", agent, "space-bindings"] as const,
+  mySpaces: (integration: string) => ["channel-integrations", integration, "my-spaces"] as const,
   reach: (agent: string) => ["agents", agent, "reach"] as const,
   myLinks: ["me", "channel-links"] as const,
   dmDefaults: ["me", "dm-defaults"] as const,
@@ -157,6 +159,34 @@ export function useSpaceBindings(agent: string, enabled = true) {
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/space-bindings", { params: { path: { agent } } })),
     enabled,
     retry,
+  });
+}
+
+/** The spaces the caller is in where the integration's shared bot is present (C-714). */
+export function useMySpaces(integration: string, enabled: boolean) {
+  return useQuery({
+    queryKey: channelKeys.mySpaces(integration),
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/integrations/{id}/spaces", {
+          params: { path: { id: integration }, query: { mine: true } },
+        }),
+      ),
+    enabled,
+    retry,
+    // A person invites the bot in Mattermost and comes back: always ask the platform again.
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
+
+/** Bind the agent to a space from the dashboard (C-713). */
+export function useCreateSpaceBinding(agent: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: S["CreateBindingRequest"]) =>
+      unwrap(api.POST("/v1/agents/{agent}/space-bindings", { params: { path: { agent } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.bindings(agent) }),
   });
 }
 

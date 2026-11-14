@@ -16,8 +16,13 @@ export interface MattermostMock {
 
 const integration = {
   id: "00000000-0000-4000-8000-000000000701", org_id: org.id, connector_id: "mattermost", tenant_ref: "chat.example.com/alpha",
-  tenant_label: "@daneel on chat.example.com", config: {}, shared_bot: { handle: "daneel", display_name: "Daneel" },
+  tenant_label: "@daneel on chat.example.com", config: { server_url: "https://chat.example.com", team: "alpha" }, shared_bot: { handle: "daneel", display_name: "Daneel" },
   status: "active", status_reason: null, created_at: now, updated_at: now,
+};
+
+const presence = {
+  id: "00000000-0000-4000-8000-000000000702", agent_id: agent.id, integration_id: integration.id, connector_id: "mattermost",
+  tenant_label: integration.tenant_label, mode: "shared", handle: "@daneel", status: "active", status_reason: null, created_at: now,
 };
 
 /** Integration-setup fields of the real Mattermost connector (docs/20) as `GET /v1/connectors` serves them. */
@@ -36,12 +41,20 @@ export interface FlowOptions {
   added?: boolean;
   /** The availability state while it is not added. */
   state?: "not_added" | "waiting_for_host" | "disabled" | "needs_approval";
+  /** The agent already has a shared presence (the agent-tab screens). */
+  attached?: boolean;
+  /** The org has no integration at all (the agent-tab empty state). */
+  noIntegration?: boolean;
+  /** Make `GET /integrations/{id}/spaces` refuse. */
+  spaces?: "link_required";
 }
 
 export async function mockMattermostFlow(page: Page, opts: FlowOptions = {}): Promise<MattermostMock> {
   const mock: MattermostMock = { calls: [] };
   let added = opts.added === true;
-  let created = false;
+  let created = opts.attached === true;
+  let attached = false;
+  const bindings: Record<string, unknown>[] = [];
   await page.route("**/v1/**", async (route) => {
     const req = route.request();
     const p = new URL(req.url()).pathname;
@@ -87,7 +100,39 @@ export async function mockMattermostFlow(page: Page, opts: FlowOptions = {}): Pr
       return json(integration, 201);
     }
     if (p === `/v1/orgs/${org.id}/channel-integrations`) return json({ items: created ? [integration] : [], next_cursor: null });
-    if (p === `/v1/agents/${agent.id}/presences` && m === "POST") return json({ id: "00000000-0000-4000-8000-000000000702" }, 201);
+    // The agent's Channels tab (Part C): presences, presence options, my spaces, bindings.
+    if (p === `/v1/agents/${agent.id}/presences` && m === "POST") {
+      attached = true;
+      return json(presence, 201);
+    }
+    if (p === `/v1/agents/${agent.id}/presences`) return json({ items: attached || opts.attached ? [presence] : [] });
+    if (p === `/v1/agents/${agent.id}/presence-options`) {
+      return json({
+        items: opts.noIntegration
+          ? []
+          : [{ integration_id: integration.id, connector_id: "mattermost", connector_name: "Mattermost", tenant_label: integration.tenant_label,
+              modes: ["shared"], presence_setup: {}, attached: attached || opts.attached === true }],
+      });
+    }
+    if (p === `/v1/integrations/${integration.id}/spaces`) {
+      if (opts.spaces === "link_required") return json({ error: { code: "link_required", message: "Link your chat account first." } }, 409);
+      return json({
+        items: [
+          { space_ref: "chan-town", label: "town-square", kind: "channel", bot_present: true },
+          { space_ref: "chan-secret", label: "secret-plans", kind: "private", bot_present: true },
+        ],
+      });
+    }
+    if (p === `/v1/agents/${agent.id}/space-bindings` && m === "POST") {
+      const body = req.postDataJSON() as { space_ref: string; listen?: string };
+      const label = body.space_ref === "chan-secret" ? "secret-plans" : "town-square";
+      bindings.push({
+        id: `00000000-0000-4000-8000-00000000080${bindings.length + 1}`, integration_id: integration.id, space_ref: body.space_ref, space_label: label,
+        agent_id: agent.id, listen: body.listen ?? "mentions", followups_need_mention: false, active: true, bound_by: null, created_at: now,
+      });
+      return json(bindings[bindings.length - 1], 201);
+    }
+    if (p === `/v1/agents/${agent.id}/space-bindings`) return json({ items: bindings });
     return route.fallback();
   });
   return mock;

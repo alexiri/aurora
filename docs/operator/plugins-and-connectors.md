@@ -156,6 +156,54 @@ What a managed connector can and cannot do:
 The API routes behind the dashboard: `GET /v1/admin/connector-types`, `POST /v1/admin/connectors`
 with `"managed": true`, and `PATCH /v1/admin/connectors/{id}` (docs/05).
 
+## Mattermost from zero
+
+The whole path, one actor per step. Each step names who does it and what the next step is;
+design in [docs/13 §5](../13-channels-connectors.md), screens in [docs/14](../14-web-dashboard.md).
+
+**Before you start (in Mattermost).** Bot accounts must be enabled (System Console → Integrations
+→ Integration Management). Create a bot account for Aurora (Integrations → Bot Accounts → Add Bot
+Account), make it a member of the team, and copy its access token. Optionally create a
+personal access token of a system administrator: with it Aurora can reply privately to a person
+and register `/aurora`; without it, replies to individuals arrive as direct messages.
+The Mattermost server must be reachable from the connector host; a server on a private
+network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
+([docs/20](../20-mattermost-connector.md)), and one behind a private CA needs the CA bundle
+(`connectorHost.tlsExtraCaBundle`, [install-helm.md](install-helm.md#connector-host)).
+
+1. **Instance administrator: add the connector.** *Admin → Connectors → Add connector → Add
+   Mattermost.* Nothing needs typing: every Mattermost setting is optional or generated, and
+   the *Advanced* section holds the two you almost never change (the address Mattermost uses
+   to reach Aurora, left empty for this Aurora's own address, and two tuning numbers). *Admin →
+   Setup* shows a callout "Mattermost is available — add it" until you do. Adding is explicit, not
+   automatic: it exposes the connector's public callback endpoints and approves its manifest.
+   Next: tell an organization owner or admin. They see your name on *Channels* until it is added.
+2. **Organization owner or admin: connect the server.** *Organization → Channels → Connect
+   Mattermost.* Enter the server address and the bot token, press **Check** (Aurora checks the
+   credentials and stores nothing yet), choose the team from the list (a single team is
+   preselected), optionally add the admin token, and press **Connect**. The done screen shows
+   "Mattermost is connected as @bot in <team>" with three buttons: attach an agent, link your
+   Mattermost account, open a direct message with the bot. If *Channels* says why Mattermost is
+   not available (not added, waiting for the connector host, disabled, needs approval), that
+   message names who acts next.
+3. **Anyone: link your Mattermost account.** *Account → Channels* (or the "Link your Mattermost
+   account" button on the done screen; or write to the bot, which answers with a sign-in link).
+   Without a link Aurora does not know who you are in Mattermost, and you cannot bind a channel from
+   the dashboard.
+4. **Workspace owner: attach an agent.** *Agent → Channels.* With one integration it is
+   preselected; choose the shared bot and **Attach**. A *Next steps* panel appears: **Open a DM
+   with @bot** to talk to the agent, and **Add to a channel**.
+5. **Workspace owner: put the agent in a channel.** Invite the bot to the channel in Mattermost
+   (a private channel too), then *Add to a channel* in the agent's tab: the list shows the channels you
+   are a member of where the bot is already present; choose one and how the agent listens
+   (*Only when mentioned* by default, or *Every message*), and **Add to this channel**. The bot announces
+   itself in the channel. The alternative is to write `@bot bind <handle>` in the channel.
+
+If a step is refused the message says what to do: *Link your chat account* when you have not
+linked one, *Invite @bot to the channel, then try again* when the bot is not in the channel, and
+a plain "you are not a member" when you are not in the channel (nobody can bind an agent to a
+conversation they are not part of). Direct conversations cannot be bound.
+
 ## Self-hosted connectors (advanced)
 
 A self-hosted connector is a service you deploy yourself, with its own `aun_…` token and the
