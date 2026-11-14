@@ -28,6 +28,10 @@ use crate::ws::{WsConn, WsError};
 const USER_TTL: Duration = Duration::from_secs(300);
 const CHANNEL_TTL: Duration = Duration::from_secs(600);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Catch-up reads a channel this many posts at a time, for at most this many pages: 10 000 posts
+/// per channel (docs/20 §Transport).
+const CATCHUP_PER_PAGE: usize = 200;
+const CATCHUP_MAX_PAGES: usize = 50;
 
 pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -730,6 +734,70 @@ impl Integ {
     /// Re-reads recent posts of the bot's channels and DMs and emits them again;
     /// the core's deduplication on `event_id` makes replays harmless.
     pub async fn catch_up(&self) {
+        self.catch_up_paged(CATCHUP_PER_PAGE, CATCHUP_MAX_PAGES)
+            .await;
+    }
+
+    /// The posts of `channel` created at or after `since`, read newest-first a page at a time
+    /// (`GET /channels/{id}/posts?page=&per_page=`; `?since=` is not used: Mattermost answers it
+    /// with one capped batch and no way to continue, so a longer gap lost its oldest messages).
+    /// Stops at a short page, at a page that reaches back past `since`, or after `max_pages`.
+    /// Past the cap the oldest posts of the gap are not replayed (the newest `max_pages ×
+    /// per_page` are), and that is logged: the window is bounded, not silently shortened.
+    async fn channel_posts_since(
+        &self,
+        token: &str,
+        channel: &str,
+        since: i64,
+        per_page: usize,
+        max_pages: usize,
+    ) -> Vec<MmPost> {
+        let per = per_page.to_string();
+        let mut out = Vec::new();
+        for page in 0..max_pages {
+            let p = page.to_string();
+            let v = match self
+                .mm
+                .get_q(
+                    token,
+                    &format!("/channels/{channel}/posts"),
+                    &[("page", &p), ("per_page", &per)],
+                )
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e.message, %channel, page, "catch-up fetch failed");
+                    return out;
+                }
+            };
+            let in_page = v.get("order").and_then(Value::as_array).map_or(0, Vec::len);
+            let batch = posts_of(&v);
+            // The oldest post of the page decides whether the gap is covered: `posts` also holds
+            // thread roots outside the page, so only the page's own `order` is looked at.
+            let oldest = v
+                .get("order")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|id| batch.iter().find(|b| b.id == id))
+                .map(|b| b.create_at)
+                .min();
+            out.extend(batch);
+            if in_page < per_page || oldest.is_none_or(|t| t < since) {
+                return out;
+            }
+        }
+        tracing::warn!(
+            %channel,
+            pages = max_pages,
+            "catch-up reached its page cap: older posts of the gap are not replayed"
+        );
+        out
+    }
+
+    async fn catch_up_paged(&self, per_page: usize, max_pages: usize) {
         let window = self.settings.catchup_window;
         let since = now_ms() - i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 2);
         let d = self.snapshot();
@@ -759,21 +827,10 @@ impl Integ {
                 .iter()
                 .filter(|c| c.kind != "O" || !c.id.is_empty())
             {
-                let s = since.to_string();
-                match self
-                    .mm
-                    .get_q(
-                        token,
-                        &format!("/channels/{}/posts", ch.id),
-                        &[("since", &s)],
-                    )
-                    .await
-                {
-                    Ok(v) => posts.extend(posts_of(&v)),
-                    Err(e) => {
-                        tracing::warn!(error = %e.message, channel = %ch.id, "catch-up fetch failed")
-                    }
-                }
+                posts.extend(
+                    self.channel_posts_since(token, &ch.id, since, per_page, max_pages)
+                        .await,
+                );
             }
         }
         let posts = dedupe_posts(posts, since);
@@ -980,5 +1037,271 @@ mod tests {
         ids.sort();
         assert_eq!(ids, ["a", "b"]);
         assert!(posts_of(&json!({})).is_empty());
+    }
+
+    // ------------------------------------------------ a fake Mattermost + a fake core (FIX-139)
+
+    use aurora_connector_sdk::{CoreClient, RetryPolicy, spawn_event_poster};
+    use aurora_protocol::connector::{EventsRequest, EventsResponse, SharedBot};
+    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::{Mock, MockServer, Request as WmRequest, Respond, ResponseTemplate};
+
+    const TEAM: &str = "team0000000000000000000001";
+    const CH: &str = "chan0000000000000000000001";
+    const BOT: &str = "bot00000000000000000000001";
+    const USER: &str = "user0000000000000000000001";
+
+    /// The fake core accepts every event it is sent.
+    struct AcceptAll;
+    impl Respond for AcceptAll {
+        fn respond(&self, req: &WmRequest) -> ResponseTemplate {
+            let ev: EventsRequest = serde_json::from_slice(&req.body).unwrap();
+            ResponseTemplate::new(200).set_body_json(EventsResponse {
+                accepted: ev.events.iter().map(|e| e.event_id.clone()).collect(),
+                duplicates: vec![],
+                rejected: vec![],
+            })
+        }
+    }
+
+    /// `GET /channels/{id}/posts` over a fixed history, newest first, answering `page`/`per_page`
+    /// like Mattermost (default 60 per page). `since` is ignored, as Mattermost ignores `page` with it.
+    struct PagedPosts {
+        newest_first: Vec<Value>,
+    }
+    impl Respond for PagedPosts {
+        fn respond(&self, req: &WmRequest) -> ResponseTemplate {
+            let q: HashMap<String, String> = req.url.query_pairs().into_owned().collect();
+            let page: usize = q.get("page").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let per: usize = q.get("per_page").and_then(|v| v.parse().ok()).unwrap_or(60);
+            let slice: Vec<&Value> = self
+                .newest_first
+                .iter()
+                .skip(page * per)
+                .take(per)
+                .collect();
+            let order: Vec<&Value> = slice.iter().map(|p| &p["id"]).collect();
+            let posts: serde_json::Map<String, Value> = slice
+                .iter()
+                .map(|p| (p["id"].as_str().unwrap().to_owned(), (*p).clone()))
+                .collect();
+            ResponseTemplate::new(200).set_body_json(json!({"order": order, "posts": posts}))
+        }
+    }
+
+    struct Rig {
+        integ: Arc<Integ>,
+        mm: MockServer,
+        core: MockServer,
+    }
+
+    async fn rig() -> Rig {
+        let core = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/connector/events"))
+            .respond_with(AcceptAll)
+            .mount(&core)
+            .await;
+        let mm = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4/channels/{CH}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": CH, "team_id": TEAM, "type": "O", "name": "general", "display_name": "General"
+            })))
+            .mount(&mm)
+            .await;
+        let client =
+            Arc::new(CoreClient::new(&core.uri(), "aun_test", RetryPolicy::default()).unwrap());
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let sink = spawn_event_poster(client, rx);
+        std::mem::forget(tx);
+        let settings = Settings {
+            public_url: Some("https://connector.test".into()),
+            hmac_key: b"k".to_vec(),
+            catchup_window: Duration::from_secs(60),
+            api_url: None,
+            token_check: Duration::from_secs(3600),
+            capabilities: None,
+            test_control: false,
+            net: crate::api::NetPolicy::allow_all(),
+        };
+        let id = Uuid::from_u128(1);
+        let integration = Integration {
+            id,
+            org_id: Uuid::nil(),
+            tenant_ref: format!("mm.test/{TEAM}"),
+            tenant_label: "T".into(),
+            config: json!({"server_url": mm.uri()}),
+            credentials: json!({"bot_token": "bot"}),
+            credentials_version: 1,
+            shared_bot: Some(SharedBot {
+                platform_user_ref: BOT.into(),
+                handle: "aurora".into(),
+                display_name: "Aurora".into(),
+            }),
+            status: "active".into(),
+        };
+        let integ = Integ::from_config(
+            &integration,
+            &[],
+            &BTreeSet::new(),
+            sink,
+            IntegrationHandle::new(id),
+            settings,
+        )
+        .unwrap();
+        Rig {
+            integ: Arc::new(integ),
+            mm,
+            core,
+        }
+    }
+
+    impl Rig {
+        async fn user_lookup(&self, delay: Duration) {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/v4/users/{USER}")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(delay)
+                        .set_body_json(json!({"id": USER, "username": "alice"})),
+                )
+                .mount(&self.mm)
+                .await;
+        }
+
+        /// `(kind, event_id)` of the events the core received, in arrival order.
+        async fn core_events(&self) -> Vec<(String, String)> {
+            let mut out = Vec::new();
+            for r in self.core.received_requests().await.unwrap() {
+                if let Ok(req) = serde_json::from_slice::<EventsRequest>(&r.body) {
+                    out.extend(
+                        req.events
+                            .iter()
+                            .map(|e| (e.kind.as_str().to_owned(), e.event_id.clone())),
+                    );
+                }
+            }
+            out
+        }
+
+        /// Waits (bounded) until the core has `n` events, then returns them.
+        async fn core_events_n(&self, n: usize) -> Vec<(String, String)> {
+            let end = Instant::now() + Duration::from_secs(30);
+            loop {
+                let ev = self.core_events().await;
+                if ev.len() >= n || Instant::now() >= end {
+                    return ev;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    }
+
+    fn mm_post(id: &str, create_at: i64, deleted: bool) -> Value {
+        json!({"id": id, "create_at": create_at, "update_at": create_at,
+               "delete_at": if deleted { create_at + 1 } else { 0 },
+               "user_id": USER, "channel_id": CH, "message": "hello", "type": ""})
+    }
+
+    fn ws_post_event(kind: &str, post: &Value, seq: i64) -> WsEvent {
+        serde_json::from_value(json!({
+            "event": kind, "data": {"post": post.to_string()},
+            "broadcast": {"channel_id": CH}, "seq": seq
+        }))
+        .unwrap()
+    }
+
+    /// A person posts and deletes straight away while the author lookup is slow: the core must
+    /// see `message.posted` and then `message.deleted`, never the deletion first and a "posted"
+    /// with the original text after it (a message that would stay visible).
+    #[tokio::test]
+    async fn a_post_and_its_immediate_deletion_reach_the_core_in_order() {
+        let rig = rig().await;
+        rig.user_lookup(Duration::from_millis(400)).await;
+        let post = mm_post("post0000000000000000000001", now_ms(), false);
+        rig.integ
+            .dispatch_ws_event(ws_post_event("posted", &post, 1), None);
+        rig.integ
+            .dispatch_ws_event(ws_post_event("post_deleted", &post, 2), None);
+        let ev = rig.core_events_n(2).await;
+        let kinds: Vec<&str> = ev.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(kinds, ["message.posted", "message.deleted"], "{ev:?}");
+    }
+
+    /// A gap longer than one page: catch-up delivers every post of it, oldest first.
+    #[tokio::test]
+    async fn catch_up_pages_through_a_gap_longer_than_one_page() {
+        const N: usize = 450;
+        let rig = rig().await;
+        let ids = mount_history(&rig, N).await;
+
+        rig.integ.catch_up().await;
+
+        let got = posted_ids(rig.core_events_n(N).await);
+        assert_eq!(got.len(), N, "catch-up lost messages");
+        assert_eq!(got, ids, "catch-up replayed out of order");
+    }
+
+    /// Past the page cap the oldest posts of the gap are dropped (and logged), the newest are
+    /// delivered in order, and the fetch does not go on forever.
+    #[tokio::test]
+    async fn catch_up_stops_at_its_page_cap_keeping_the_newest_posts() {
+        let rig = rig().await;
+        let ids = mount_history(&rig, 20).await;
+
+        rig.integ.catch_up_paged(5, 3).await;
+
+        let got = posted_ids(rig.core_events_n(15).await);
+        assert_eq!(got, ids[5..], "the newest 15 of 20, oldest first");
+        let pages = rig
+            .mm
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path().ends_with("/posts"))
+            .count();
+        assert_eq!(pages, 3, "a fourth page was fetched");
+    }
+
+    /// Mounts a channel list and a history of `n` posts (ids ascending with age) and returns
+    /// the `posted:` event ids the core should see, oldest first.
+    async fn mount_history(rig: &Rig, n: usize) -> Vec<String> {
+        rig.user_lookup(Duration::ZERO).await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4/users/{BOT}/teams/{TEAM}/channels")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "id": CH, "team_id": TEAM, "type": "O", "name": "general"
+            }])))
+            .mount(&rig.mm)
+            .await;
+        let base = now_ms() - 30_000;
+        let mut history: Vec<Value> = (0..n)
+            .map(|i| {
+                mm_post(
+                    &format!("post{i:022}"),
+                    base + i64::try_from(i).unwrap() * 10,
+                    false,
+                )
+            })
+            .collect();
+        let ids = history
+            .iter()
+            .map(|p| format!("posted:{}", p["id"].as_str().unwrap()))
+            .collect();
+        history.reverse();
+        Mock::given(method("GET"))
+            .and(path_regex(format!("^/api/v4/channels/{CH}/posts$")))
+            .respond_with(PagedPosts {
+                newest_first: history,
+            })
+            .mount(&rig.mm)
+            .await;
+        ids
+    }
+
+    fn posted_ids(events: Vec<(String, String)>) -> Vec<String> {
+        events.into_iter().map(|(_, id)| id).collect()
     }
 }

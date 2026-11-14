@@ -73,8 +73,13 @@ integration config.
   token; reconnect with jittered backoff; `seq` gaps trigger catch-up.
 - **Catch-up**: after (re)connect, for DM channels of each bot and channels
   with an active binding, fetch posts since `now − catchup_window` (default
-  10 min, max 24 h) via `GET /api/v4/channels/{id}/posts?since=` and emit them
-  as events; core deduplication makes replays harmless.
+  10 min, max 24 h) and emit them oldest first as events; core deduplication
+  makes replays harmless. The read pages newest-first through
+  `GET /api/v4/channels/{id}/posts?page=&per_page=200` (not `?since=`: Mattermost
+  answers that with one capped batch and no way to continue, so a longer gap lost
+  its oldest messages) until a page is short or reaches back past the window.
+  The read is capped at 50 pages (10 000 posts) per channel; past the cap the
+  oldest posts of the gap are not replayed and a warning names the channel.
 - **Event ordering**: socket events of one channel are handled one after another
   in the order they arrived (a queue per channel; channels run in parallel).
   Handling an event awaits channel, user and file lookups, and without the queue a
