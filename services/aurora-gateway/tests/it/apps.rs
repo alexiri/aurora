@@ -223,6 +223,7 @@ fn conn(w: &World, app: &str, path: &str, tenant: Option<&str>) -> AppConnection
         instance_id: None,
         connect_method: None,
         access: "write".into(),
+        scopes: Vec::new(),
     }
 }
 
@@ -1406,6 +1407,73 @@ async fn read_only_connection_blocks_write_and_untooled_even_under_a_full_grant(
             r.body
         );
         assert!(!r.body.contains("RO-TOKEN"));
+    }
+}
+
+/// Two read tools (`/items` needs `read:a`, `/other` needs `read:b`) and one with no requirement.
+fn scoped(annotated: bool) -> Value {
+    let sc = |s: &str| if annotated { json!([s]) } else { json!([]) };
+    let mut app = app_json(
+        "demo",
+        json!({"read": {"items": [
+            {"id": "needs_a", "name": "a", "host": "127.0.0.1", "path": "/items", "methods": ["GET"], "scopes": sc("read:a")},
+            {"id": "needs_b", "name": "b", "host": "127.0.0.1", "path": "/other", "methods": ["GET"], "scopes": sc("read:b")},
+            {"id": "needs_none", "name": "n", "host": "127.0.0.1", "path": "/free", "methods": ["GET"]}
+        ]}}),
+        false,
+    );
+    app["grants"] = json!({"custom_only": false, "block_untooled": false});
+    snapshot(
+        vec![app],
+        vec![host_json(
+            "demo",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    )
+}
+
+/// FIX-136 (D-241): a tool whose scopes the connection lacks is refused before injection with
+/// `tool_scope_missing` and the token is not sent; a covered tool and a tool with no requirement
+/// pass; unknown scopes (empty) and packages without annotations behave exactly as before.
+#[tokio::test]
+async fn a_tool_needing_a_scope_the_connection_lacks_is_refused_before_injection() {
+    for (annotated, scopes, path, status) in [
+        (true, vec!["read:a"], "/items", 200),
+        (true, vec!["read:a"], "/other", 403),
+        (true, vec!["read:a"], "/free", 200),
+        (true, vec!["read:b", "read:a"], "/other", 200),
+        // Unknown scopes never refuse.
+        (true, vec![], "/other", 200),
+        // No annotations: unchanged.
+        (false, vec!["read:a"], "/other", 200),
+    ] {
+        let (env, ..) = start(scoped(annotated), &[("c1", r#"{"tok":"SC-TOKEN"}"#)], |w| {
+            let mut c = conn(w, "demo", "c1", None);
+            c.scopes = scopes.iter().map(|s| (*s).to_owned()).collect();
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        })
+        .await;
+        let r = get(&env, path, "").await;
+        assert_eq!(
+            r.status, status,
+            "{annotated} {scopes:?} {path}: {}",
+            r.body
+        );
+        if status == 403 {
+            assert_eq!(r.code(), "tool_scope_missing", "{}", r.body);
+            let v: Value = serde_json::from_str(&r.body).unwrap();
+            assert_eq!(v["error"]["details"]["tool_id"], "needs_b");
+            assert_eq!(v["error"]["details"]["needs"], json!(["read:b"]));
+            assert!(
+                !r.body.contains("SC-TOKEN"),
+                "the token is never sent: {}",
+                r.body
+            );
+        }
     }
 }
 

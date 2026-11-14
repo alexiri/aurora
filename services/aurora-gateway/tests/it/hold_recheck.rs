@@ -216,6 +216,7 @@ async fn start(pool: sqlx::PgPool) -> Env {
         instance_id: None,
         connect_method: None,
         access: "write".into(),
+        scopes: Vec::new(),
     };
     let conn_id = conn.id;
     let mut ws = ScopePolicyRows {

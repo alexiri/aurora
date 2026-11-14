@@ -437,10 +437,33 @@ impl PolicyHandler {
         method: &str,
         path: &str,
         host: &str,
+        tool: Option<(&str, &[String])>,
     ) -> Option<(ApiError, &'static str)> {
         let policy_url = self.url(rv, "policy");
         match d.verdict {
             Verdict::Allow => None,
+            // (FIX-136, D-241) The token cannot serve the tool: refused before injection, so the
+            // agent gets a clear answer instead of an upstream 403 and the token is not sent.
+            Verdict::Block {
+                reason: BlockReason::ToolScopeMissing,
+            } => {
+                let (tool_id, needs) = tool.unwrap_or(("", &[]));
+                Some((
+                    ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "tool_scope_missing",
+                        format!(
+                            "This connection's token does not have the scope this tool needs ({}). Reconnect with it, or edit the connection's scopes if the token has it.",
+                            needs.join(" or ")
+                        ),
+                    )
+                    .with_details(json!({
+                        "tool_id": tool_id, "needs": needs, "method": method, "path": path,
+                        "manage_url": policy_url
+                    })),
+                    "tool_scope_missing",
+                ))
+            }
             Verdict::Block {
                 reason: BlockReason::Rule,
             } => {
@@ -876,7 +899,16 @@ impl PolicyHandler {
             tool_id: ctx.tool_id.clone(),
             tool_tags: tool
                 .zip(app_match.as_ref())
-                .map(|(t, m)| apps::tool_tags(m.app, t))
+                .map(|(t, m)| {
+                    apps::tool_tags(
+                        m.app,
+                        t,
+                        match &winner {
+                            Some(Cand::App(c)) => Some(c.as_ref()),
+                            _ => None,
+                        },
+                    )
+                })
                 .unwrap_or_default(),
             winning_credential: winner.as_ref().map(Cand::credential),
             is_llm_host: rv.is_llm_host,
@@ -1026,8 +1058,14 @@ impl PolicyHandler {
         {
             // The approval stands: released, whatever the rules now say about asking.
             ctx.decision = "approved";
-        } else if let Some((err, decision)) = self.verdict_error(&rv, &d, &ctx.method, &path, &host)
-        {
+        } else if let Some((err, decision)) = self.verdict_error(
+            &rv,
+            &d,
+            &ctx.method,
+            &path,
+            &host,
+            tool.map(|t| (t.id.as_str(), t.scopes.as_slice())),
+        ) {
             return Outcome::Respond(self.refuse(ctx, &err, decision));
         }
         self.apply_hits(&d, &pk);
@@ -1618,7 +1656,7 @@ impl RequestHandler for PolicyHandler {
         );
         let mut ctx = ctx;
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
-        match self.verdict_error(&rv, &d, "CONNECT", "/", host) {
+        match self.verdict_error(&rv, &d, "CONNECT", "/", host, None) {
             None => {
                 // A CONNECT counts as one request (consumed once, when it is allowed).
                 if let Settled::Refuse(err, decision) =
@@ -1931,7 +1969,7 @@ impl DbSession {
             tool_id: ctx.tool_id.clone(),
             tool_tags: tool
                 .zip(app)
-                .map(|(t, a)| apps::tool_tags(a, t))
+                .map(|(t, a)| apps::tool_tags(a, t, None))
                 .unwrap_or_default(),
             winning_credential: Some(cred),
             is_llm_host: false,
@@ -2051,7 +2089,9 @@ impl DbSession {
         } else if released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval)
         {
             ctx.decision = "approved";
-        } else if let Some((err, decision)) = h.verdict_error(&rv, &d, "POST", &path, &self.host) {
+        } else if let Some((err, decision)) =
+            h.verdict_error(&rv, &d, "POST", &path, &self.host, None)
+        {
             h.refuse(ctx, &err, decision);
             return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
                 DbVerdict::Unavailable(err)

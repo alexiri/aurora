@@ -170,6 +170,7 @@ async fn fixture(kind: &str, token_url: &str, refresh: &str) -> Fx {
         instance_id: None,
         connect_method: None,
         access: "write".into(),
+        scopes: Vec::new(),
     };
     Fx {
         db,

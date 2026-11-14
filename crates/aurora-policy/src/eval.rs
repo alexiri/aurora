@@ -59,6 +59,9 @@ pub enum BlockReason {
     /// (FIX-133, D-240) The winning connection is read-only and the request is a write tool or
     /// matches no catalogue tool; decided before any rule.
     ReadOnlyConnection,
+    /// (FIX-136, D-241) The matched tool needs a scope the winning connection does not have;
+    /// decided before any rule.
+    ToolScopeMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +174,8 @@ pub enum Via {
     AppUntooledBlocked,
     /// (FIX-133, D-240) `ReadOnlyConnection` decided before any rule was consulted.
     ReadOnlyBlocked,
+    /// (FIX-136, D-241) `ToolScopeMissing` decided before any rule was consulted.
+    ToolScopeBlocked,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -305,6 +310,25 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
             Via::ReadOnlyBlocked,
             Some(Verdict::Block {
                 reason: BlockReason::ReadOnlyConnection,
+            }),
+            None,
+        );
+    }
+    // (FIX-136, D-241) The token cannot serve this tool: refused before any rule (not at CONNECT
+    // time, nothing is injected into a tunnel).
+    if !f.connect_time
+        && f.tool_tags.scope_missing
+        && matches!(
+            f.winning_credential,
+            Some(crate::facts::Credential::Connection { .. })
+        )
+    {
+        return finish(
+            Vec::new(),
+            None,
+            Via::ToolScopeBlocked,
+            Some(Verdict::Block {
+                reason: BlockReason::ToolScopeMissing,
             }),
             None,
         );

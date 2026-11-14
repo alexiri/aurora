@@ -88,6 +88,11 @@ pub struct ToolTags {
     /// refuses it.
     #[serde(default)]
     pub write: bool,
+    /// (FIX-136, D-241) The matched tool declares `scopes` and the winning connection's known
+    /// scopes hold none of them: the request is refused before any rule (the token cannot serve
+    /// it). Never set when the connection's scopes are unknown.
+    #[serde(default)]
+    pub scope_missing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
