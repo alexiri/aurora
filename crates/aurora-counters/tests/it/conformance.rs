@@ -751,3 +751,112 @@ async fn redis_keys_expire_and_errors_are_unavailable() {
         assert!(matches!(r, Err(CounterError::Unavailable(_))), "{r:?}");
     }
 }
+
+/// FIX-087 / SEC-62: a stored value that is not a number is `Unavailable`, never "under the
+/// limit" (the scripts used to read it as zero or a full bucket).
+#[tokio::test]
+async fn redis_garbage_values_are_unavailable() {
+    let Some(addr) = redis_addr() else {
+        eprintln!("skipped: set AURORA_TEST_REDIS=1 and AURORA_TEST_REDIS_ADDR (docs/18)");
+        return;
+    };
+    let prefix = format!("{}:", ns());
+    let store = redis_store(&addr, &prefix);
+    let client = redis::Client::open(addr.as_str()).expect("client");
+    let mut c = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("conn");
+    // Window keys are `<prefix>w:<key>:<period s>:<window start ms>`; poison whatever the
+    // store wrote for `x` by consuming first, then overwriting every key under the prefix.
+    store
+        .fixed_window_consume(&[unit("x", 5, 1)])
+        .await
+        .expect("seed window");
+    store
+        .bucket_take(&[take("x", 1000, 1)])
+        .await
+        .expect("seed bucket");
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("{prefix}*"))
+        .query_async(&mut c)
+        .await
+        .expect("keys");
+    assert_eq!(keys.len(), 2, "{keys:?}");
+    for k in &keys {
+        let _: () = redis::cmd("SET")
+            .arg(k)
+            .arg("abc")
+            .query_async(&mut c)
+            .await
+            .expect("poison");
+    }
+    for r in [
+        store.fixed_window_peek(&[probe("x")]).await.map(|_| ()),
+        store
+            .fixed_window_consume(&[unit("x", 5, 1)])
+            .await
+            .map(|_| ()),
+        store.bucket_take(&[take("x", 1000, 1)]).await.map(|_| ()),
+    ] {
+        assert!(matches!(r, Err(CounterError::Unavailable(_))), "{r:?}");
+    }
+}
+
+/// FIX-087: a user limited to the ACL documented in `docs/15` runs the whole conformance body.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn redis_documented_acl_runs_the_scripts() {
+    let Some(addr) = redis_addr() else {
+        eprintln!("skipped: set AURORA_TEST_REDIS=1 and AURORA_TEST_REDIS_ADDR (docs/18)");
+        return;
+    };
+    let prefix = format!("{}:", ns());
+    let user = format!(
+        "acl{}",
+        ns().replace(|c: char| !c.is_ascii_alphanumeric(), "")
+    );
+    let client = redis::Client::open(addr.as_str()).expect("client");
+    let mut admin = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("conn");
+    let _: () = redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg(&user)
+        .arg("on")
+        .arg(">pw-fix087")
+        .arg(format!("~{prefix}*"))
+        .arg("-@all")
+        .arg("+evalsha")
+        .arg("+script|load")
+        .arg("+get")
+        .arg("+set")
+        .arg("+incrby")
+        .arg("+pexpire")
+        .arg("+ping")
+        .arg("+time")
+        .query_async(&mut admin)
+        .await
+        .expect("acl setuser");
+    let store: Arc<dyn CounterStore> = Arc::new(
+        aurora_counters::redis_store::RedisStore::new(
+            &aurora_counters::redis_store::RedisOptions {
+                address: addr.clone(),
+                allow_plaintext: false,
+                username: Some(user.clone()),
+                password: Some("pw-fix087".to_owned()),
+                ca_file: None,
+                db: 0,
+                key_prefix: prefix,
+            },
+        )
+        .expect("redis store"),
+    );
+    suite(store).await;
+    let _: () = redis::cmd("ACL")
+        .arg("DELUSER")
+        .arg(&user)
+        .query_async(&mut admin)
+        .await
+        .expect("acl deluser");
+}

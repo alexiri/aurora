@@ -87,8 +87,10 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["admin", "plugins"] if post => return Some(Class::Upload),
         ["agents", _, "effective"] if is_get => return Some(Class::Simulate),
         ["conversations", _, "export"] if is_get => return Some(Class::Export),
-        ["admin", "storage"] if is_get => return Some(Class::Export),
-        ["orgs", _, "storage"] if is_get => return Some(Class::Export),
+        // (FIX-126) The Storage pages are cached snapshots read in the `general` bucket; only
+        // the deliberate Refresh buttons are `export`-class.
+        ["admin", "storage", "refresh"] if post => return Some(Class::Export),
+        ["orgs", _, "storage", "refresh"] if post => return Some(Class::Export),
         _ => {}
     }
     if post && last == "simulate" && rest.len() >= 2 && rest[rest.len() - 2] == "policy" {
@@ -835,8 +837,17 @@ mod tests {
             c(Method::GET, "/v1/conversations/1/export"),
             Some(Class::Export)
         );
-        assert_eq!(c(Method::GET, "/v1/admin/storage"), Some(Class::Export));
-        assert_eq!(c(Method::GET, "/v1/orgs/1/storage"), Some(Class::Export));
+        // (FIX-126) the Storage pages are plain reads; only the Refresh buttons are `export`.
+        assert_eq!(c(Method::GET, "/v1/admin/storage"), None);
+        assert_eq!(c(Method::GET, "/v1/orgs/1/storage"), None);
+        assert_eq!(
+            c(Method::POST, "/v1/admin/storage/refresh"),
+            Some(Class::Export)
+        );
+        assert_eq!(
+            c(Method::POST, "/v1/orgs/1/storage/refresh"),
+            Some(Class::Export)
+        );
         assert_eq!(c(Method::DELETE, "/v1/agents/1"), Some(Class::Write));
         assert_eq!(c(Method::PATCH, "/v1/agents/1"), Some(Class::Write));
         assert_eq!(c(Method::GET, "/v1/agents/1"), None);

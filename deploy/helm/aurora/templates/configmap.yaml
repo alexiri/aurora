@@ -113,6 +113,17 @@
 {{- if or .Values.extraCaBundle.existingConfigMap .Values.extraCaBundle.existingSecret }}
 {{- $_ := set $cfg "tls" (merge (dict "extra_ca_bundle" (printf "/etc/aurora-tls/%s" .Values.extraCaBundle.key)) (default (dict) $cfg.tls)) -}}
 {{- end -}}
+{{- /* (FIX-116) development-only switches: refused unless externalUrl is a loopback origin, like the binaries do; no credentials inside URLs of the rendered file */ -}}
+{{- $loopback := regexMatch "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]|[A-Za-z0-9.-]+\\.localhost)(:[0-9]+)?/?$" .Values.externalUrl -}}
+{{- if not $loopback }}
+{{- if .Values.connectorHost.testTypes }}{{ fail "connectorHost.testTypes is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if get (default (dict) $cfg.plugins) "allow_unsigned" }}{{ fail "config.plugins.allow_unsigned is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if get (default (dict) $cfg.hosted) "allow_fake_harness" }}{{ fail "config.hosted.allow_fake_harness is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if get (default (dict) $cfg.runner) "dev_allow_external_network" }}{{ fail "config.runner.dev_allow_external_network is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if eq (toString (get (default (dict) (default (dict) $cfg.ratelimit).api) "enabled")) "false" }}{{ fail "config.ratelimit.api.enabled=false is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- end -}}
+{{- if regexMatch "^[a-z]+://[^/@]*@" (toString (get (default (dict) $cfg.email) "smtp_url")) }}{{ fail "config.email.smtp_url must not contain credentials: use config.email.smtp_username and AURORA_SMTP_PASSWORD (api.extraEnv with a secretKeyRef)" }}{{ end -}}
+{{- if regexMatch "^[a-z]+://[^/@]*@" (toString (get (default (dict) $cfg.gateway) "egress_proxy")) }}{{ fail "config.gateway.egress_proxy must not contain credentials" }}{{ end -}}
 {{- if .Values.devIdp.enabled }}
 {{- if not (regexMatch "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]|[A-Za-z0-9.-]+\\.localhost)(:[0-9]+)?/?$" .Values.externalUrl) }}{{ fail "devIdp.enabled is development only: externalUrl must be a loopback origin (localhost, *.localhost, 127.0.0.1, [::1])" }}{{ end -}}
 {{- $auth := default (dict) $cfg.auth -}}

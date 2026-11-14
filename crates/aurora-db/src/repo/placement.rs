@@ -38,7 +38,9 @@ pub async fn save<'e, E: PgExecutor<'e>>(
     by: Uuid,
 ) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO instance_placement (singleton, mode, default_org_id, default_org_role,
+        "WITH setup AS (UPDATE instance_setup SET placement_pending = false, updated_at = now()
+                         WHERE placement_pending)
+         INSERT INTO instance_placement (singleton, mode, default_org_id, default_org_role,
             shared_workspaces, personal_enabled, personal_role, name_template, starter_grants,
             updated_by, updated_at)
          VALUES (true, $1,$2,$3,$4,$5,$6,$7,$8,$9, now())
@@ -177,10 +179,16 @@ pub struct Choices {
     pub connections: Vec<(Uuid, String, String)>,
 }
 
-pub async fn org_count<'e, E: PgExecutor<'e>>(exec: E) -> Result<i64, DbError> {
-    Ok(sqlx::query_scalar("SELECT count(*) FROM organizations")
-        .fetch_one(exec)
-        .await?)
+/// Whether a placement has still to be saved on an instance installed with this release
+/// (FIX-116): ordinary users are refused with `instance_setup_pending` until it is. A missing
+/// row (never written) counts as not pending.
+pub async fn setup_pending<'e, E: PgExecutor<'e>>(exec: E) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT placement_pending FROM instance_setup")
+            .fetch_optional(exec)
+            .await?
+            .unwrap_or(false),
+    )
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

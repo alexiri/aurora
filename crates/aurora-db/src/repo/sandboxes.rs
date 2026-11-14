@@ -118,8 +118,9 @@ pub struct StopClaim {
 }
 
 /// Arm 2: requested stop/restart, idle park, background cap, and stalled `stopping` re-drives.
-/// `awake_cap_secs` is `PREVIEW_AWAKE_CAP`/`TERMINAL_AWAKE_CAP` (the keep-awake reasons
-/// `preview` and `terminal`'s shared per-boot bound).
+/// `awake_cap_secs` is `previews.awake_cap_secs` and `terminal_awake_cap_secs` is
+/// `terminal.awake_cap_secs`: the per-boot bounds of the keep-awake reasons `preview` and
+/// `terminal` (FIX-116: separate clocks, each from its own key).
 #[allow(clippy::too_many_arguments)]
 pub async fn claim_stops(
     conn: &mut PgConnection,
@@ -129,6 +130,7 @@ pub async fn claim_stops(
     cap_secs: f64,
     lease_secs: f64,
     awake_cap_secs: f64,
+    terminal_awake_cap_secs: f64,
     limit: i64,
 ) -> Result<Vec<StopClaim>, DbError> {
     let sql = format!(
@@ -169,10 +171,11 @@ pub async fn claim_stops(
         PREVIEW_KEEP = "s.preview_active_until > now() \
              AND (s.preview_awake_since IS NULL \
                   OR now() - s.preview_awake_since < make_interval(secs => $7))",
-        // (P4-TERM, C-620) the terminal's stamp and cap clock, same bound ($7 = the awake cap).
+        // (P4-TERM, C-620; FIX-116) the terminal's stamp and its own cap clock ($8 =
+        // `terminal.awake_cap_secs`, no longer the preview cap).
         TERMINAL_KEEP = "s.terminal_active_until > now() \
              AND (s.terminal_awake_since IS NULL \
-                  OR now() - s.terminal_awake_since < make_interval(secs => $7))",
+                  OR now() - s.terminal_awake_since < make_interval(secs => $8))",
     );
     Ok(sqlx::query_as(&sql)
         .bind(runner)
@@ -182,6 +185,7 @@ pub async fn claim_stops(
         .bind(limit)
         .bind(lease_secs)
         .bind(awake_cap_secs)
+        .bind(terminal_awake_cap_secs)
         .fetch_all(conn)
         .await?)
 }

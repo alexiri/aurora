@@ -18,6 +18,24 @@ notes where the shipped artifacts do not follow them yet.
    [install-helm.md](install-helm.md) §Database, `03 §Gateway database role grants`). Or, knowingly, set
    `database.allowSharedLogin: true` to keep the gateway on the main login as before. The refusal happens
    while Helm renders, so nothing in the cluster changes until one of the two is set.
+6. **Configuration that is now refused** (FIX-116). The API, runner and connector host refuse at startup
+   (and the chart at render time): `plugins.allow_unsigned`, `hosted.allow_fake_harness`,
+   `runner.dev_allow_external_network`, `connector_host.test_types` and `ratelimit.api.enabled = false`
+   unless `server.external_url` is a loopback origin; credentials (`user:password@`) inside
+   `email.smtp_url` or `gateway.egress_proxy` (move the SMTP password to `AURORA_SMTP_PASSWORD`, set
+   `email.smtp_username`); `scim.token_max_days` above 730; `previews.session_ttl_secs`/`session_idle_secs`
+   above their defaults or zero; `approvals.timeout_secs` below 60; `hosted.background_cap_secs` above a
+   week; `relay.request_body_max_bytes` above 100 MiB. Log-only mail no longer logs sign-in or invitation
+   links (set `email.log_links = true` in development only).
+7. **Lock levels of two phase-4 migrations** (REVIEW-5 PLAT-10). `20261130000001_groups.sql` and
+   `20261127000001_skill_libraries.sql` validate constraints and build indexes inside the migration
+   transaction, which takes `ACCESS EXCLUSIVE` on the touched tables for the duration. On a large instance
+   run them in a maintenance window (or ahead of the roll with `aurora-api migrate`); they cannot be
+   changed after the fact because they have already shipped.
+8. **New migration `20261201000060_instance_setup.sql`** adds the `instance_setup` marker. An instance that
+   already has organizations or a saved placement is not "pending": its behaviour is unchanged. A fresh
+   instance stays closed to ordinary users until a placement is saved, even after an administrator has
+   signed in.
 
 ## Rules that make a rolling upgrade safe
 

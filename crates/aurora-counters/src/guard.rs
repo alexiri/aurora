@@ -49,6 +49,12 @@ enum Gate {
 /// Itself a [`CounterStore`]: every error it returns is [`CounterError::Unavailable`].
 pub struct Guarded {
     inner: Arc<dyn CounterStore>,
+    core: Arc<Core>,
+}
+
+/// The breaker's state, shared with the probe task it owns (FIX-087: the probe's answer, not
+/// the cancellable caller, decides the breaker).
+struct Core {
     cfg: BreakerConfig,
     breaker: Mutex<Breaker>,
 }
@@ -57,8 +63,10 @@ impl Guarded {
     pub fn new(inner: Arc<dyn CounterStore>, cfg: BreakerConfig) -> Self {
         Self {
             inner,
-            cfg,
-            breaker: Mutex::new(Breaker::default()),
+            core: Arc::new(Core {
+                cfg,
+                breaker: Mutex::new(Breaker::default()),
+            }),
         }
     }
 
@@ -66,6 +74,71 @@ impl Guarded {
         self.inner.backend()
     }
 
+    fn gate(&self) -> Gate {
+        self.core.gate()
+    }
+
+    fn success(&self) {
+        self.core.success();
+    }
+
+    fn failure(&self) {
+        self.core.failure();
+    }
+
+    /// Whether the breaker is currently open (tests, metrics).
+    pub fn is_open(&self) -> bool {
+        self.core
+            .breaker
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .open_until
+            .is_some()
+    }
+
+    /// Run the liveness probe in a task the breaker owns: a caller that is dropped while
+    /// waiting neither records a failure nor re-arms the cooldown; the probe's own answer
+    /// closes or re-arms the breaker. A panic in the probe counts as a failure.
+    async fn probe(&self) -> bool {
+        let core = self.core.clone();
+        let inner = self.inner.clone();
+        let task = tokio::spawn(async move {
+            let mut pending = PendingProbe {
+                core: core.clone(),
+                decided: false,
+            };
+            let ok = matches!(
+                tokio::time::timeout(core.cfg.timeout, inner.health()).await,
+                Ok(Ok(()))
+            );
+            pending.decided = true;
+            if ok {
+                core.success();
+            } else {
+                core.failure();
+            }
+            ok
+        });
+        task.await.unwrap_or(false)
+    }
+}
+
+/// Dropped undecided (the probe task panicked or the runtime is shutting down): record a
+/// failure so `probing` is cleared and the breaker can never wedge open.
+struct PendingProbe {
+    core: Arc<Core>,
+    decided: bool,
+}
+
+impl Drop for PendingProbe {
+    fn drop(&mut self) {
+        if !self.decided {
+            self.core.failure();
+        }
+    }
+}
+
+impl Core {
     fn gate(&self) -> Gate {
         let mut b = self.breaker.lock().unwrap_or_else(|p| p.into_inner());
         match b.open_until {
@@ -92,16 +165,9 @@ impl Guarded {
             b.open_until = Some(Instant::now() + self.cfg.cooldown);
         }
     }
+}
 
-    /// Whether the breaker is currently open (tests, metrics).
-    pub fn is_open(&self) -> bool {
-        self.breaker
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .open_until
-            .is_some()
-    }
-
+impl Guarded {
     async fn run<T, F>(&self, op: &'static str, f: F) -> Result<T>
     where
         F: Future<Output = Result<T>>,
@@ -114,21 +180,16 @@ impl Guarded {
                 return Err(CounterError::Unavailable("circuit breaker open".into()));
             }
             Gate::Probe => {
-                // If this future is dropped mid-probe (client disconnect, freeze), the guard
-                // counts a failure and clears `probing`, so the breaker can never wedge open.
-                let abandoned = AbandonedProbe(self);
-                let probe = tokio::time::timeout(self.cfg.timeout, self.inner.health()).await;
-                std::mem::forget(abandoned);
-                if !matches!(probe, Ok(Ok(()))) {
-                    self.failure();
+                // The probe runs in a task the breaker owns; if this caller is dropped
+                // meanwhile (client disconnect, freeze) the probe still decides the breaker.
+                if !self.probe().await {
                     count(backend, op, "breaker_open");
                     return Err(CounterError::Unavailable("circuit breaker open".into()));
                 }
-                self.success();
             }
             Gate::Pass => {}
         }
-        let r = tokio::time::timeout(self.cfg.timeout, f).await;
+        let r = tokio::time::timeout(self.core.cfg.timeout, f).await;
         metrics::histogram!(
             "aurora_counters_call_seconds",
             "backend" => backend,
@@ -153,16 +214,6 @@ impl Guarded {
                 Err(CounterError::Unavailable("timeout".into()))
             }
         }
-    }
-}
-
-/// Dropped while the liveness probe was in flight: record a failure (re-arms the cooldown and
-/// clears `probing`). Disarmed with `mem::forget` once the probe has an answer.
-struct AbandonedProbe<'a>(&'a Guarded);
-
-impl Drop for AbandonedProbe<'_> {
-    fn drop(&mut self) {
-        self.0.failure();
     }
 }
 

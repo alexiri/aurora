@@ -39,8 +39,13 @@ pub fn validate_name(path: &str, s: &str) -> Result<String, ApiError> {
     if n == 0 || n > 80 {
         return Err(bad(path, "must be 1 to 80 characters"));
     }
-    if t.chars().any(char::is_control) {
-        return Err(bad(path, "must not contain control characters"));
+    if t.chars()
+        .any(|c| c.is_control() || aurora_core::sanitize::is_stripped(c))
+    {
+        return Err(bad(
+            path,
+            "must not contain control or invisible formatting characters",
+        ));
     }
     Ok(t.to_owned())
 }
@@ -672,6 +677,20 @@ pub async fn set_byo_posture(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FIX-116: a name with bidi or zero-width characters is refused like one with controls.
+    #[test]
+    fn names_refuse_format_characters() {
+        assert!(validate_name("name", "Acme").is_ok());
+        for bad in [
+            "Ac\u{202E}me",
+            "Ac\u{200B}me",
+            "Ac\u{FEFF}me",
+            "Ac\u{0007}me",
+        ] {
+            assert!(validate_name("name", bad).is_err(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn slugs() {

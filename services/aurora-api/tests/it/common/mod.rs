@@ -141,6 +141,19 @@ impl Harness {
             .execute(self.pool())
             .await
             .unwrap();
+        // A fresh instance: the setup gate (FIX-116) is pending until a placement is saved.
+        sqlx::query("UPDATE instance_setup SET placement_pending = true")
+            .execute(self.pool())
+            .await
+            .unwrap();
+    }
+
+    /// An instance that existed before the setup gate (FIX-116): nothing saved, not pending.
+    pub async fn mark_upgraded_instance(&self) {
+        sqlx::query("UPDATE instance_setup SET placement_pending = false")
+            .execute(self.pool())
+            .await
+            .unwrap();
     }
 
     /// Test helper `sign_in(email)` (docs/04 §Development and end-to-end sign-in): drives the

@@ -14,7 +14,8 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { formatBytes } from "@/lib/api/attachments";
 import { errorMessage } from "@/lib/api/errors";
-import { useOrgStorage, usePutAttachmentLimits, useRetention } from "@/lib/api/org";
+import { StorageFreshness } from "@/components/storage-freshness";
+import { useOrgStorage, usePutAttachmentLimits, useRefreshOrgStorage, useRetention } from "@/lib/api/org";
 
 const NOTICE: Record<string, { tone: "neutral" | "pending" | "danger"; label: string }> = {
   clear: { tone: "neutral", label: "OK" },
@@ -140,6 +141,7 @@ function LimitsForm({ orgId }: { orgId: string }) {
 
 export function OrgStorageView({ orgId }: { orgId: string }) {
   const storage = useOrgStorage(orgId);
+  const refresh = useRefreshOrgStorage(orgId);
   if (storage.isPending) return <Loading />;
   if (storage.isError) return <ErrorState error={storage.error} onRetry={() => storage.refetch()} />;
   const s = storage.data;
@@ -147,6 +149,7 @@ export function OrgStorageView({ orgId }: { orgId: string }) {
   return (
     <div className="max-w-page space-y-8">
       <PageHeader title="Storage" description="Attachment bytes used by this organization, by workspace and direction." className="mb-6" />
+      <StorageFreshness computedAt={s.computed_at} refresh={refresh} />
       <Section id="usage" title="Usage" actions={<Badge tone={notice.tone}>{notice.label}</Badge>} card>
         <div className="space-y-3">
           <UsageBar used={s.used_bytes} quota={s.quota_bytes} />

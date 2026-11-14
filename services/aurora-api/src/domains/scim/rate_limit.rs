@@ -46,16 +46,14 @@ fn bearer(headers: &http::HeaderMap) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
-/// Local + shared take for one charge; `Err` is the 429 to answer.
-async fn take(
-    state: &AppState,
-    charges: &[Charge],
-    management: bool,
-) -> Result<(), (ScimError, Option<Charge>)> {
+/// Local + shared take for one charge; `Err` is the answer. On `Err` no token stays charged:
+/// a local refusal never consumed one, and `take_shared` refunds on a store refusal or
+/// `Closed`. Callers must not refund again.
+async fn take(state: &AppState, charges: &[Charge], management: bool) -> Result<(), ScimError> {
     if let Err(r) = state.api_limiter.take(charges) {
         metrics::counter!("aurora_api_rate_limited_total", "class" => r.class, "scope" => r.scope)
             .increment(1);
-        return Err((ScimError::rate_limited(r.retry_after_secs), None));
+        return Err(ScimError::rate_limited(r.retry_after_secs));
     }
     let class = if management {
         state.counters.management()
@@ -75,39 +73,24 @@ async fn take(
                     "scope" => r.scope
                 )
                 .increment(1);
-                (ScimError::rate_limited(r.retry_after_secs), None)
+                ScimError::rate_limited(r.retry_after_secs)
             }
             // A `closed` class refuses with 503 (never a 429: an outage is not a rate).
-            Err(api) => (
-                ScimError::new(
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    super::error::ScimType::None,
-                    api.message().to_owned(),
-                ),
-                None,
+            Err(api) => ScimError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                super::error::ScimType::None,
+                api.message().to_owned(),
             ),
         });
     }
     Ok(())
 }
 
-fn refund(state: &AppState, charges: &[Charge]) {
-    state.api_limiter.refund(charges);
-}
-
 /// Axum middleware for the `/scim/v2` router (inside the client-IP layer). Resolves the
 /// bearer far enough to find its bucket: a *rejected* bearer is limited per IP instead.
 pub async fn middleware(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let headers = req.headers().clone();
-    let scim_on = state.config.scim.enabled;
-    let Some(tok) = bearer(&headers) else {
-        // No bearer at all: the 401 is answered by the extractor (identical body). Without a
-        // credential there is no bucket; the per-IP limits of the unauthenticated surface are
-        // the rejected-bearer bucket only when a bearer was presented, so nothing is charged.
-        return next.run(req).await;
-    };
-    let _ = tok;
-    if !scim_on {
+    if !state.config.scim.enabled {
         // The whole surface is 404 while the instance switch is off; no buckets apply.
         return next.run(req).await;
     }
@@ -130,11 +113,9 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
                     res.extensions_mut().insert(row);
                     res
                 }
-                Err((e, _)) => {
-                    // The local pre-filter already refused; the shared take may have consumed.
-                    refund(&state, &[charge(token_key(row.id))]);
-                    e.into_response()
-                }
+                // `take` already settled the bucket: a local refusal charged nothing, a store
+                // refusal or `Closed` was refunded once by `take_shared`.
+                Err(e) => e.into_response(),
             }
         }
         RateResolve::Rejected => {
@@ -149,10 +130,7 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
             };
             match take(&state, &[charge(rejected_key(&ip))], false).await {
                 Ok(()) => next.run(req).await,
-                Err((e, _)) => {
-                    refund(&state, &[charge(rejected_key(&ip))]);
-                    e.into_response()
-                }
+                Err(e) => e.into_response(),
             }
         }
         // A database failure while resolving: let the handler/extractor answer (500/401), not

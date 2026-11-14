@@ -408,6 +408,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
     r("GET", "/v1/admin/storage", G::Inst, false),
+    r("POST", "/v1/admin/storage/refresh", G::Inst, false),
     // (P4-IDP-1, C-511) read-only role mapping table
     r("GET", "/v1/admin/identity", G::Inst, false),
     // (P4-GRP-1, C-460..C-469, SEC-71) directory groups: the org-addressed and the
@@ -836,6 +837,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}/retention", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/retention", G::Admin, false),
     r("GET", "/v1/orgs/{org}/storage", G::Admin, false),
+    r("POST", "/v1/orgs/{org}/storage/refresh", G::Admin, false),
     // BE-074 (M6): channel management.
     r(
         "GET",

@@ -460,7 +460,7 @@ impl RawConfig {
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
         let (signup_mode, org_creation) =
             check_auth(&mut c, &self.auth, s, external_url.as_deref());
-        check_email(&mut c, &self.email);
+        check_email(&mut c, &self.email, s.smtp_password.is_some());
         check_secret_stores(&mut c, &self.secrets);
         check_llm(&mut c, &self.llm, &self.governance);
         let governance = check_governance(&mut c, self);
@@ -512,9 +512,15 @@ impl RawConfig {
                 "must be between 30 and 6000 requests per minute",
             );
         }
-        if !(1..=1825).contains(&self.scim.token_max_days) {
-            c.err("scim.token_max_days", "must be between 1 and 1825 days");
+        // One ceiling for SCIM tokens: `SCIM_TOKEN_MAX_DAYS` (docs/02, docs/03).
+        let scim_max = i64::from(aurora_core::limits::SCIM_TOKEN_MAX_DAYS);
+        if !(1..=scim_max).contains(&i64::from(self.scim.token_max_days)) {
+            c.err(
+                "scim.token_max_days",
+                format!("must be between 1 and {scim_max} days"),
+            );
         }
+        check_dev_switches(&mut c, self);
 
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
         // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
@@ -623,7 +629,10 @@ impl RawConfig {
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),
             oidc_client_secrets,
-            email: self.email.clone(),
+            email: EmailSection {
+                smtp_password: s.smtp_password.clone(),
+                ..self.email.clone()
+            },
             secrets: self.secrets.clone(),
             llm: self.llm.clone(),
             governance: governance.unwrap_or_else(|| resolve_governance_lossy(self)),
@@ -717,6 +726,12 @@ impl RawConfig {
         check_url(&mut c, "gateway.hookhost_url", Some(&g.hookhost_url));
         if let Some(p) = &g.egress_proxy {
             check_url(&mut c, "gateway.egress_proxy", Some(p));
+            check_no_userinfo(
+                &mut c,
+                "gateway.egress_proxy",
+                p,
+                "an authenticated egress proxy is not supported through the configuration file",
+            );
         }
         if g.ca_dir.is_empty() {
             c.err("gateway.ca_dir", "must not be empty");
@@ -869,6 +884,18 @@ impl RawConfig {
         if let Some(bin) = r.dev_supervisor_binary.as_deref() {
             check_dev_supervisor_binary(&mut c, bin, backend, &self.server, &r.api_url);
         }
+        check_dev_switches(&mut c, self);
+        // (FIX-116) zero would make every orphan sweep or capacity wait immediate.
+        check_pos(
+            &mut c,
+            "runner.orphan_grace_secs",
+            Some(r.orphan_grace_secs),
+        );
+        check_pos(
+            &mut c,
+            "runner.capacity_wait_secs",
+            Some(r.capacity_wait_secs),
+        );
         check_common(&mut c, &self.tls, &self.telemetry);
         // (FIX-094, SEC-09) On podman the ops listener (health, metrics) defaults to loopback:
         // the host's bridge address is sandbox-reachable, so falling back to the
@@ -948,6 +975,7 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         let h = &self.connector_host;
         if !(h.api_url.starts_with("http://") || h.api_url.starts_with("https://")) {
             c.err("connector_host.api_url", "must be an http(s) URL");
@@ -1020,6 +1048,26 @@ impl RawConfig {
         // Same rules as `server.trusted_proxies`'s sibling lists: strict CIDRs, `/0` refused
         // (trusting every peer would let any visitor forge their address).
         check_cidr_list(&mut c, "relay.trusted_proxies", &r.trusted_proxies, false);
+        // (FIX-116) an operator may only lower the ceilings (PREVIEW_REQUEST_BODY_MAX, docs/02).
+        let body_max = aurora_core::limits::PREVIEW_REQUEST_BODY_MAX;
+        if r.request_body_max_bytes == 0 || r.request_body_max_bytes > body_max {
+            c.err(
+                "relay.request_body_max_bytes",
+                format!("must be between 1 and {body_max} (an operator may only lower it)"),
+            );
+        }
+        check_pos(&mut c, "relay.max_streams", Some(r.max_streams));
+        check_pos(
+            &mut c,
+            "relay.max_streams_per_user",
+            Some(r.max_streams_per_user),
+        );
+        if r.max_streams_per_user > r.max_streams {
+            c.err(
+                "relay.max_streams_per_user",
+                "must not exceed relay.max_streams",
+            );
+        }
         check_common(&mut c, &self.tls, &self.telemetry);
         c.finish()?;
         Ok(RelayConfig {
@@ -1663,6 +1711,56 @@ fn check_dev_supervisor_binary(
     }
 }
 
+/// (FIX-116, SEC-02) Development-only switches are refused unless `server.external_url` is a
+/// loopback origin: each one removes a production protection (sandbox network isolation,
+/// package signatures, the fake harness, the connector-host test types, the whole `/v1` limiter).
+fn check_dev_switches(c: &mut Ctx, raw: &RawConfig) {
+    let loopback = raw
+        .server
+        .external_url
+        .as_deref()
+        .and_then(host_of)
+        .is_some_and(|h| is_dev_idp_host(&h));
+    if loopback {
+        return;
+    }
+    for (key, on) in [
+        (
+            "runner.dev_allow_external_network",
+            raw.runner.dev_allow_external_network,
+        ),
+        ("plugins.allow_unsigned", raw.plugins.allow_unsigned),
+        ("hosted.allow_fake_harness", raw.hosted.allow_fake_harness),
+        ("connector_host.test_types", raw.connector_host.test_types),
+        ("ratelimit.api.enabled", !raw.ratelimit.api.enabled),
+    ] {
+        if on {
+            let shown = if key == "ratelimit.api.enabled" {
+                "false"
+            } else {
+                "true"
+            };
+            c.err(
+                key,
+                format!(
+                    "refused outside dev mode: {key} = {shown} needs server.external_url on localhost, *.localhost, 127.0.0.1 or [::1]"
+                ),
+            );
+        }
+    }
+}
+
+/// (FIX-116) A URL that carries credentials is refused: the configuration file is rendered into
+/// a ConfigMap and read by every replica, secrets come from the environment.
+fn check_no_userinfo(c: &mut Ctx, key: &str, v: &str, hint: &str) {
+    if parse_url(v, &["http", "https", "smtp", "smtps"]).is_ok_and(|p| p.has_userinfo) {
+        c.err(
+            key,
+            format!("must not embed credentials (userinfo); {hint}"),
+        );
+    }
+}
+
 fn check_server(c: &mut Ctx, s: &ServerSection, need_external: bool) -> Option<String> {
     if !is_bind_addr(&s.bind) {
         c.err("server.bind", format!("`{}` is not an IP address", s.bind));
@@ -1995,10 +2093,22 @@ fn check_dev_idp(c: &mut Ctx, d: &DevIdp, providers: &[OidcProvider], external_u
     }
 }
 
-fn check_email(c: &mut Ctx, e: &EmailSection) {
+fn check_email(c: &mut Ctx, e: &EmailSection, has_password: bool) {
     if let Some(u) = &e.smtp_url {
         if let Err(m) = parse_url(u.expose(), &["smtp", "smtps"]) {
             c.err("email.smtp_url", m);
+        }
+        check_no_userinfo(
+            c,
+            "email.smtp_url",
+            u.expose(),
+            "set email.smtp_username and AURORA_SMTP_PASSWORD (or AURORA_SMTP_PASSWORD_FILE)",
+        );
+        if e.smtp_username.is_some() != has_password {
+            c.err(
+                "email.smtp_username",
+                "email.smtp_username and AURORA_SMTP_PASSWORD go together: set both or neither",
+            );
         }
         if e.from.as_deref().is_none_or(|f| !f.contains('@')) {
             c.err(
@@ -2372,6 +2482,10 @@ fn check_approvals(c: &mut Ctx, a: &ApprovalsSection, h: &HostedSection) {
         APPROVAL_TIMEOUT_MAX_CONFIGURABLE, APPROVAL_TIMEOUT_MAX_FLOOR, TURN_CEILING_WARNING,
     };
     check_pos(c, "approvals.timeout_secs", Some(a.timeout_secs));
+    // (FIX-116) rules have a 60 s floor; the instance default follows it.
+    if a.timeout_secs < 60 {
+        c.err("approvals.timeout_secs", "must be at least 60 seconds");
+    }
     let (lo, hi) = (
         APPROVAL_TIMEOUT_MAX_FLOOR.as_secs(),
         APPROVAL_TIMEOUT_MAX_CONFIGURABLE.as_secs(),
@@ -2426,6 +2540,13 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
         ("hosted.turn_stall_secs", h.turn_stall_secs),
     ] {
         check_pos(c, k, Some(v));
+    }
+    // (FIX-116) a background keep-awake longer than a week is a leak, not a setting.
+    if h.background_cap_secs > 7 * 24 * 3600 {
+        c.err(
+            "hosted.background_cap_secs",
+            "must be at most 604800 (7 days)",
+        );
     }
     // (FIX-025, D-158)
     if !(60..=1800).contains(&h.sandbox_ready_timeout_secs) {
@@ -2495,6 +2616,37 @@ fn check_previews(
             "previews.awake_cap_secs",
             "must be greater than 0 and at most hosted.background_cap_secs",
         );
+    }
+    // (FIX-116) session clocks and the daily byte quota: an operator may only lower the limits
+    // of docs/02 (`PREVIEW_SESSION_TTL`, `PREVIEW_SESSION_IDLE`).
+    let (ttl_max, idle_max) = (
+        aurora_core::limits::PREVIEW_SESSION_TTL.as_secs(),
+        aurora_core::limits::PREVIEW_SESSION_IDLE.as_secs(),
+    );
+    if p.session_ttl_secs == 0 || p.session_ttl_secs > ttl_max {
+        c.err(
+            "previews.session_ttl_secs",
+            format!(
+                "must be between 1 and {ttl_max} (an operator may only lower PREVIEW_SESSION_TTL)"
+            ),
+        );
+    }
+    if p.session_idle_secs == 0 || p.session_idle_secs > idle_max {
+        c.err(
+            "previews.session_idle_secs",
+            format!(
+                "must be between 1 and {idle_max} (an operator may only lower PREVIEW_SESSION_IDLE)"
+            ),
+        );
+    }
+    if p.session_idle_secs > p.session_ttl_secs {
+        c.err(
+            "previews.session_idle_secs",
+            "must not exceed previews.session_ttl_secs",
+        );
+    }
+    if p.bytes_per_share_day == 0 {
+        c.err("previews.bytes_per_share_day", "must be greater than 0");
     }
     let Some(domain) = p.domain.as_deref().map(str::trim) else {
         if p.enabled {

@@ -43,5 +43,9 @@ instance_admins = ["placement-admin@e2e.test"]
 enabled = true
 issuer = "http://localhost:4107"
 
+# FIX-116: log-only mail writes the sign-in / invitation links to the log (development only).
+[email]
+log_links = true
+
 [telemetry]
 log_level = "info"

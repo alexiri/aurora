@@ -630,6 +630,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/storage/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recompute the instance storage snapshot now (FIX-126; instance administrators; the strict
+         *     `export` rate class).
+         */
+        post: operations["refreshAdminStorage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/trusted-keys": {
         parameters: {
             query?: never;
@@ -3120,6 +3140,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/storage/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recompute the organization's storage snapshot now (FIX-126; org `owner`/`admin`; the strict
+         *     `export` rate class).
+         */
+        post: operations["refreshOrgStorage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/unfreeze": {
         parameters: {
             query?: never;
@@ -4494,6 +4534,11 @@ export interface components {
             blob_bytes: number;
             /** Format: int64 */
             blob_count: number;
+            /**
+             * Format: date-time
+             * @description When these figures were computed (FIX-126); the page offers a refresh.
+             */
+            computed_at: string;
             /** @description Top 50 orgs by attachment bytes. */
             orgs: components["schemas"]["AdminOrgStorage"][];
             /** Format: int64 */
@@ -6966,11 +7011,16 @@ export interface components {
             attachments_days_effective?: number | null;
             by_workspace: components["schemas"]["WorkspaceStorage"][];
             /**
+             * Format: date-time
+             * @description When the file counts and the breakdown were computed (FIX-126).
+             */
+            computed_at: string;
+            /**
              * Format: int64
              * @description Files that hold bytes.
              */
             files: number;
-            /** @description `clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %). */
+            /** @description `clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %); from the live counter. */
             notice: string;
             /** Format: uuid */
             org_id: string;
@@ -6986,7 +7036,7 @@ export interface components {
             quota_bytes?: number | null;
             /**
              * Format: int64
-             * @description Counter of non-purged attachment bytes.
+             * @description Counter of non-purged attachment bytes (live, never cached).
              */
             used_bytes: number;
         };
@@ -11746,6 +11796,41 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    refreshAdminStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStorage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19910,6 +19995,52 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    refreshOrgStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgStorage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

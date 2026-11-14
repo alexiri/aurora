@@ -160,6 +160,10 @@ pub const RETENTION_SWEEP_BATCH: i64 = 200;
 pub const RETENTION_SWEEP_PER_ORG: i64 = 5_000;
 /// (phase 2, RFE-010) one conversation export: bytes and events.
 pub const EXPORT_MAX_BYTES: u64 = 256 * MIB as u64;
+/// `STORAGE_SNAPSHOT_MAX_AGE` (FIX-126): a Storage page is served from a snapshot at most this
+/// old; an older (or missing) one is recomputed once, under a lock, by the next read. The daily
+/// attachment sweep and the refresh buttons recompute it too.
+pub const STORAGE_SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(3600);
 pub const EXPORT_MAX_EVENTS: i64 = 200_000;
 pub const SCHEDULE_FIRE_LEASE: Duration = Duration::from_secs(300);
 /// consecutive failures.

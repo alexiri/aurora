@@ -433,7 +433,17 @@ fn display_name(v: &Verified) -> String {
         .map(str::trim)
         .filter(|n| !n.is_empty() && !n.chars().any(char::is_control))
         .unwrap_or_else(|| v.email.split('@').next().unwrap_or("User"));
-    raw.chars().take(80).collect()
+    // (FIX-116) bidi and zero-width characters are dropped (`02 §Untrusted text`).
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !aurora_core::sanitize::is_stripped(*c))
+        .take(80)
+        .collect();
+    if cleaned.trim().is_empty() {
+        "User".to_owned()
+    } else {
+        cleaned
+    }
 }
 
 pub async fn callback(

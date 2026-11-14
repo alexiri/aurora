@@ -229,6 +229,20 @@ impl CounterStore for PgCounterStore {
     }
 }
 
+/// [`build_store`] only when `shared`: a service that will not use the shared counters (the
+/// gateway with `ratelimit.counters.gateway = "memory"`) opens no pool and no client.
+pub fn build_store_if(
+    shared: bool,
+    cfg: &aurora_config::CountersConfig,
+    pool: &PgPool,
+) -> std::result::Result<Option<std::sync::Arc<aurora_counters::Guarded>>, String> {
+    if shared {
+        build_store(cfg, pool)
+    } else {
+        Ok(None)
+    }
+}
+
 /// Build the configured shared store, wrapped in the timeout and breaker (`None` for `memory`:
 /// the default needs nothing). The `postgres` backend gets a **dedicated, lazily connecting**
 /// pool of `pool_size` connections to the same database and role as `pool`, so a slow counter

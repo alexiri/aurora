@@ -42,6 +42,144 @@ fn load_with(toml: &str, extra: &[(&str, &str)]) -> Result<RawConfig> {
 // Phase 1 (RFE-004): at least one OIDC provider is required, so every config carries one.
 const BASE: &str = "[[auth.oidc_providers]]\nid = \"base\"\nissuer = \"https://idp.example.org\"\nclient_id = \"b\"\nclient_secret_env = \"BASE_IDP_SECRET\"\n[server]\nexternal_url = \"https://aurora.example.org\"\n";
 
+/// `BASE` on a loopback origin (development installs).
+fn local_base() -> String {
+    BASE.replace("https://aurora.example.org", "http://localhost:4100")
+}
+
+/// FIX-116: development-only switches and credentials in URLs are refused outside a loopback
+/// install; each bound is enforced.
+#[test]
+fn development_switches_userinfo_and_bounds_are_refused() {
+    let api = |extra: &str| {
+        load_with(&format!("{BASE}{extra}"), &[])
+            .unwrap()
+            .api_config()
+    };
+    let local_api = |extra: &str| {
+        load_with(&format!("{}{extra}", local_base()), &[])
+            .unwrap()
+            .api_config()
+    };
+    for (extra, key) in [
+        (
+            "[plugins]\nallow_unsigned = true\n",
+            "plugins.allow_unsigned",
+        ),
+        (
+            "[hosted]\nallow_fake_harness = true\nenabled_harnesses = [\"claude-code\", \"fake\"]\n",
+            "hosted.allow_fake_harness",
+        ),
+        (
+            "[ratelimit.api]\nenabled = false\n",
+            "ratelimit.api.enabled",
+        ),
+    ] {
+        assert!(
+            api(extra).unwrap_err().has_key(key),
+            "{key} refused off loopback"
+        );
+        assert!(local_api(extra).is_ok(), "{key} accepted on loopback");
+    }
+    let raw = format!(
+        "{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\ndev_allow_external_network = true\n"
+    );
+    let e = load_with(&raw, &[]).unwrap().runner_config().unwrap_err();
+    assert!(e.has_key("runner.dev_allow_external_network"), "{e}");
+    let e = load_with(
+        &format!("{BASE}[connector_host]\ntest_types = true\n"),
+        &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")],
+    )
+    .unwrap()
+    .connector_host_config()
+    .unwrap_err();
+    assert!(e.has_key("connector_host.test_types"), "{e}");
+    // Credentials never ride in the file.
+    let e = api("[email]\nsmtp_url = \"smtp://user:pw@mail:25\"\nfrom = \"a@b.io\"\n").unwrap_err();
+    assert!(e.has_key("email.smtp_url"), "{e}");
+    assert!(api("[email]\nsmtp_url = \"smtp://mail:25\"\nfrom = \"a@b.io\"\n").is_ok());
+    let e =
+        api("[email]\nsmtp_url = \"smtp://mail:25\"\nfrom = \"a@b.io\"\nsmtp_username = \"u\"\n")
+            .unwrap_err();
+    assert!(e.has_key("email.smtp_username"), "{e}");
+    let ok = load_with(
+        &format!("{BASE}[email]\nsmtp_url = \"smtp://mail:25\"\nfrom = \"a@b.io\"\nsmtp_username = \"u\"\n"),
+        &[("AURORA_SMTP_PASSWORD", "pw")],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert_eq!(ok.email.smtp_password.unwrap().expose(), "pw");
+    let e = load_with(
+        &format!("{BASE}[gateway]\negress_proxy = \"http://u:p@proxy:3128\"\n"),
+        &[],
+    )
+    .unwrap()
+    .gateway_config()
+    .unwrap_err();
+    assert!(e.has_key("gateway.egress_proxy"), "{e}");
+    // Bounds.
+    for (extra, key) in [
+        ("[approvals]\ntimeout_secs = 30\n", "approvals.timeout_secs"),
+        (
+            "[hosted]\nbackground_cap_secs = 700000\n",
+            "hosted.background_cap_secs",
+        ),
+        ("[scim]\ntoken_max_days = 1000\n", "scim.token_max_days"),
+        (
+            "[previews]\nsession_ttl_secs = 999999\n",
+            "previews.session_ttl_secs",
+        ),
+        (
+            "[previews]\nsession_idle_secs = 0\n",
+            "previews.session_idle_secs",
+        ),
+        (
+            "[previews]\nbytes_per_share_day = 0\n",
+            "previews.bytes_per_share_day",
+        ),
+    ] {
+        assert!(api(extra).unwrap_err().has_key(key), "{key}");
+    }
+    let relay = |extra: &str| {
+        load_with(
+            &format!("{BASE}[relay]\npreviews_domain = \"preview.example.org\"\n{extra}"),
+            &[("AURORA_RELAY_TOKEN", "aul_abc")],
+        )
+        .unwrap()
+        .relay_config()
+    };
+    assert!(relay("").is_ok());
+    for (extra, key) in [
+        (
+            "request_body_max_bytes = 999999999\n",
+            "relay.request_body_max_bytes",
+        ),
+        (
+            "request_body_max_bytes = 0\n",
+            "relay.request_body_max_bytes",
+        ),
+        ("max_streams = 0\n", "relay.max_streams"),
+        (
+            "max_streams = 10\nmax_streams_per_user = 11\n",
+            "relay.max_streams_per_user",
+        ),
+    ] {
+        assert!(relay(extra).unwrap_err().has_key(key), "{key}");
+    }
+    let e = load_with(
+        &format!("{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\norphan_grace_secs = 0\ncapacity_wait_secs = 0\n"),
+        &[],
+    )
+    .unwrap()
+    .runner_config()
+    .unwrap_err();
+    assert!(e.has_key("runner.orphan_grace_secs") && e.has_key("runner.capacity_wait_secs"));
+    // A lowered preview session TTL is carried through.
+    let p = local_api("[previews]\nsession_ttl_secs = 600\nsession_idle_secs = 300\n").unwrap();
+    assert_eq!(p.previews.session_ttl_secs, 600);
+}
+
 #[test]
 fn toml_only_and_api_validates() {
     let raw = load_with(BASE, &[]).unwrap();
@@ -88,13 +226,16 @@ fn hosted_enabled_harnesses_defaults_and_validation() {
             "{why}: {e:?}"
         );
     }
-    // `fake` is fine when explicitly allowed.
+    // `fake` is fine when explicitly allowed — on a loopback install only (FIX-116).
+    let fake =
+        "[hosted]\nallow_fake_harness = true\nenabled_harnesses = [\"claude-code\", \"fake\"]\n";
     assert!(
-        ok(
-            "[hosted]\nallow_fake_harness = true\nenabled_harnesses = [\"claude-code\", \"fake\"]\n"
-        )
-        .is_ok()
+        load_with(&format!("{}{fake}", local_base()), &[])
+            .unwrap()
+            .api_config()
+            .is_ok()
     );
+    assert!(ok(fake).unwrap_err().has_key("hosted.allow_fake_harness"));
     // The Kubernetes runner names the runtimes of its image (it cannot read the label).
     let raw = load_with(
         &format!("{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\nimage_harnesses = [\"claude-code\", \"codex\"]\n"),
@@ -546,8 +687,8 @@ fn known_hosts_extra_and_endpoint_removal() {
 #[test]
 fn secrets_never_in_debug() {
     let mut raw = load_with(
-        &format!("{BASE}[email]\nsmtp_url = \"smtp://u:smtppass@mail:25\"\nfrom = \"a@b.c\"\n[[secrets.stores]]\nid = \"v\"\nkind = \"vault\"\ntoken = \"vaulttoken\"\n"),
-        &[],
+        &format!("{BASE}[email]\nsmtp_url = \"smtp://mail:25\"\nsmtp_username = \"u\"\nfrom = \"a@b.c\"\n[[secrets.stores]]\nid = \"v\"\nkind = \"vault\"\ntoken = \"vaulttoken\"\n"),
+        &[("AURORA_SMTP_PASSWORD", "smtppass")],
     )
     .unwrap();
     raw.env_secrets.runner_token = Some(Redacted::new("aur_topsecret".into()));
@@ -1025,7 +1166,8 @@ fn connector_host_config_defaults_token_and_overrides() {
     assert_eq!(c.token.expose(), "auh_abc123");
     let c = load_with(
         &format!(
-            "{BASE}\n[connector_host]\napi_url = \"http://aurora-api:4101/\"\ntest_types = true\nops_port = 4200\n"
+            "{}\n[connector_host]\napi_url = \"http://aurora-api:4101/\"\ntest_types = true\nops_port = 4200\n",
+            local_base()
         ),
         &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")],
     )
@@ -1089,7 +1231,7 @@ fn relay_config_defaults_token_domain_and_overrides() {
     assert_eq!(c.token.expose(), "aul_abc123");
     let c = load_with(
         &format!(
-            "{BASE}\n[relay]\napi_url = \"http://aurora-api:4101/\"\nlisten = \"0.0.0.0:5112\"\nops_port = 4300\nmax_streams = 8\npreviews_domain = \"Preview.Example.ORG\"\n"
+            "{BASE}\n[relay]\napi_url = \"http://aurora-api:4101/\"\nlisten = \"0.0.0.0:5112\"\nops_port = 4300\nmax_streams = 8\nmax_streams_per_user = 8\npreviews_domain = \"Preview.Example.ORG\"\n"
         ),
         &[("AURORA_RELAY_TOKEN", "aul_abc123")],
     )

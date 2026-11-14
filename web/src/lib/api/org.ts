@@ -213,6 +213,33 @@ export function useRetention(orgId: string | undefined) {
 export type OrgStorage = components["schemas"]["OrgStorage"];
 export type AdminStorage = components["schemas"]["AdminStorage"];
 
+/** The server serves these pages from a snapshot (FIX-126); revisiting within a minute refetches nothing. */
+export const STORAGE_STALE_MS = 60_000;
+
+/** A refresh refused by its strict rate class: `seconds` is the server's `retry-after`. */
+export class RefreshLimited extends Error {
+  readonly seconds: number;
+  /** When the refusal arrived (ms since epoch): the button re-enables at `at + seconds`. */
+  readonly at = Date.now();
+  constructor(seconds: number) {
+    super(`Refreshing is limited; try again in ${seconds} s.`);
+    this.name = "RefreshLimited";
+    this.seconds = seconds;
+  }
+}
+
+async function refreshResult<T>(
+  p: Promise<{ data?: T; error?: unknown; response: Response }>,
+): Promise<T> {
+  const { data, error, response } = await p;
+  if (response.status === 429) {
+    const secs = Number(response.headers.get("retry-after"));
+    throw new RefreshLimited(Number.isFinite(secs) && secs > 0 ? Math.ceil(secs) : 60);
+  }
+  if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+  return data as T;
+}
+
 /** Attachment usage, quota and breakdown (RFE-015; org owner/admin). */
 export function useOrgStorage(orgId: string | undefined) {
   return useQuery({
@@ -220,6 +247,17 @@ export function useOrgStorage(orgId: string | undefined) {
     queryFn: () => unwrap(api.GET("/v1/orgs/{org}/storage", { params: { path: { org: orgId! } } })),
     enabled: !!orgId,
     retry: false,
+    staleTime: STORAGE_STALE_MS,
+  });
+}
+
+/** Recompute the organization's storage snapshot now (strict rate class). */
+export function useRefreshOrgStorage(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      refreshResult(api.POST("/v1/orgs/{org}/storage/refresh", { params: { path: { org: orgId } } })),
+    onSuccess: (s) => qc.setQueryData(["orgs", orgId, "storage"], s),
   });
 }
 
@@ -229,6 +267,16 @@ export function useAdminStorage() {
     queryKey: ["admin", "storage"] as const,
     queryFn: () => unwrap(api.GET("/v1/admin/storage")),
     retry: false,
+    staleTime: STORAGE_STALE_MS,
+  });
+}
+
+/** Recompute the instance storage snapshot now (strict rate class). */
+export function useRefreshAdminStorage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => refreshResult(api.POST("/v1/admin/storage/refresh")),
+    onSuccess: (s) => qc.setQueryData(["admin", "storage"], s),
   });
 }
 

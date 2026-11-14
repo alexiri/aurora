@@ -148,7 +148,7 @@ matrix:
     | `upload` | `POST /v1/conversations/{id}/attachments`, avatar/skill-file/plugin uploads | 20 / min, burst 5 |
     | `simulate` | `POST …/policy/simulate`, `GET /v1/agents/{agent}/effective` | 20 / min, burst 5 |
     | `search` | `GET …/memories/search` and any future search route | 30 / min, burst 10 |
-    | `export` | `GET /v1/conversations/{id}/export`, `GET /v1/admin/storage`, `GET /v1/orgs/{org}/storage` | 6 / hour, burst 2 |
+    | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict) | 6 / hour, burst 2 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
 
   - **Concurrency cap** for streams: at most `API_STREAMS_PER_PRINCIPAL` (20)
@@ -211,7 +211,9 @@ matrix:
       Health, metrics, the machine planes and the exempt routes are never
       affected. The 503 carries `code = counter_unavailable`, `retry-after: 5`,
       `details.limiter`. The refusal is never returned as 429 (a client must not
-      mistake an outage for its own rate).
+      mistake an outage for its own rate). Each class has its own breaker and its
+      own connection budget; a failure in one class never changes another class's
+      verdict (FIX-087).
     - *Metrics:* `aurora_api_rate_limited_total{class,scope}` unchanged; plus the
       `aurora_counters_*` series of `15 §Shared rate-limit counters`.
     - *Cost.* Every authenticated request costs one store round-trip (three
@@ -511,7 +513,8 @@ connector, **P** public capability. Permission checks per `04`.
 | PUT/DELETE `/v1/workspaces/{ws}/access/groups/{group}` | S/K | (phase 4, P4-GRP-1) `PUT { role: "owner"\|"approver"\|"member" }` binds or changes the role of a group; `can_own`; 404 for a group of another org, 422 `group_binding_limit_reached`; DELETE is idempotent; both audited (`group_access.set\|remove`), invalidation scope `workspace` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
-| GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction |
+| GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction; (FIX-126) the file counts and breakdown come from a cached snapshot (`computed_at`), `used_bytes`/`notice` stay live |
+| POST `/v1/orgs/{org}/storage/refresh` | S/K | (FIX-126) org `owner`/`admin`: recompute the org's snapshot now, same body as the GET; `export` class |
 | GET/PUT `/v1/orgs/{org}/retention` | S/K | (phase 2, RFE-010/015) org `owner`/`admin`; `{ conversations_days?, attachments_days?, attachment_quota_mib? }`, `null` = none; 422 `retention_invalid` / `retention_above_instance_maximum` |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
@@ -770,7 +773,8 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest. (phase 4, P4-MCON) `POST` with `managed: true` adds a managed connector (no token; settings, secrets, reviewed digest approved, C-451); PATCH `/v1/admin/connectors/{id}` edits settings, secrets, `enabled` (C-453); `…/token` on a managed connector → 409 `connector_managed` |
 | GET `/v1/admin/connector-types` | IA | (phase 4, P4-MCON) catalogue of built-in connector types announced by live connector hosts (C-450) |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
-| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (phase 5 (D-138, moved from phase 4), P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
+| POST `/v1/admin/storage/refresh` | IA | (FIX-126) recompute the instance snapshot now, same body as the GET; `export` class |
+| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (FIX-126) served from a snapshot shared by every replica, `computed_at` says how old (`STORAGE_SNAPSHOT_MAX_AGE`, recomputed by the daily sweep, by a read past the bound — once, under a lock — and by the refresh route); (phase 5 (D-138, moved from phase 4), P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
 | POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
 | GET `/v1/admin/orgs` (`frozen=true` filter, paginated) | IA | (phase 2, RFE-006, D-76) organizations with their freeze state: id, slug, name only |

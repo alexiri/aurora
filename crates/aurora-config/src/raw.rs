@@ -52,6 +52,8 @@ pub struct EnvSecrets {
     /// (phase 4, P4-CNT) values of `ratelimit.counters.redis.username_env` / `password_env`.
     pub redis_username: Option<Redacted<String>>,
     pub redis_password: Option<Redacted<String>>,
+    /// (FIX-116) `AURORA_SMTP_PASSWORD` / `_FILE`: the mailer's password, never in the config file.
+    pub smtp_password: Option<Redacted<String>>,
 }
 
 /// The whole configuration file, merged with env overrides.
@@ -307,9 +309,18 @@ pub struct OidcJit {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EmailSection {
-    /// May embed a password, hence redacted. Unset => log-only mode.
+    /// `smtp://host:port` or `smtps://…`; **no userinfo** (the file lands in a ConfigMap).
+    /// Unset => log-only mode.
     pub smtp_url: Option<Redacted<String>>,
     pub from: Option<String>,
+    /// (FIX-116) SMTP user name; the password is `AURORA_SMTP_PASSWORD` (or `_FILE`).
+    pub smtp_username: Option<String>,
+    /// (FIX-116) The password read from the environment (never from the file).
+    #[serde(skip)]
+    pub smtp_password: Option<Redacted<String>>,
+    /// (FIX-116) Log-only mode writes the action link (sign-in / invitation tokens) to the log.
+    /// Development only; default `false`.
+    pub log_links: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
