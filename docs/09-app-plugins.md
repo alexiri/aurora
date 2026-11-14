@@ -722,6 +722,11 @@ way: TLS to the claimed port. **A wildcard in a host claim must leave a registra
 to its right** (public-suffix check, as for zones, SEC-17): `*.herokuapp.com` and
 `*.github.io` are refused with `zone_too_broad`, `s3.*.amazonaws.com` is accepted.
 
+(FIX-123, D-195(a)) The built-in packages never conflict with each other: ways to authenticate to one
+service are connect methods of one app (`§3.4 connect[]`), so a fresh instance starts with one GitHub
+and one AWS app and no host-claim decision to make. A package that a present package supersedes
+(`§10`) is not offered to the admin as a conflict.
+
 (phase 2, D-74) A registered app instance host (`§3.4 Instance-bound hosts`) is
 a claim of its app. Registration refuses a host that conflicts with an existing
 static claim; a static claim activated later that overlaps a registered
