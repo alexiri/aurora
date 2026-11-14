@@ -70,10 +70,18 @@ for (const scheme of ["light", "dark"] as const) {
     });
 
     test("a permalink opens the right message in a fresh page", async ({ page }) => {
+      // The highlight lasts 2 s and a loaded machine can outlast it before an assertion runs: record that it was
+      // applied (a MutationObserver from the first paint) instead of racing the timer.
+      await page.addInitScript(() => {
+        const w = window as unknown as { __highlighted?: boolean };
+        new MutationObserver(() => {
+          if (document.querySelector('[data-seq="2"].bg-accent-soft')) w.__highlighted = true;
+        }).observe(document, { subtree: true, attributes: true, childList: true });
+      });
       await openChat(page, scheme, fx, `?c=${MINE.id}&m=2`);
       const target = page.getByRole("log").locator('[data-seq="2"]');
       await expect(target).toBeInViewport();
-      await expect(target).toHaveClass(/bg-accent-soft/);
+      await page.waitForFunction(() => (window as unknown as { __highlighted?: boolean }).__highlighted === true);
       await expect.poll(() => new URL(page.url()).searchParams.has("m")).toBe(false);
     });
 
