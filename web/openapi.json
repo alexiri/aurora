@@ -16976,7 +16976,7 @@
         "tags": [
           "channels"
         ],
-        "summary": "Probe credentials before creating an integration (C-711): returns the choices a connector\noffers for fields such as the Mattermost team. Nothing is stored. 422 `credentials_invalid`,\n`probe_unsupported`, 503 `connector_unavailable`.",
+        "summary": "Probe credentials before creating an integration (C-711): returns the choices a connector\noffers for fields such as a team. Nothing is stored. 422 `credentials_invalid`,\n`probe_unsupported`, 503 `connector_unavailable`.",
         "operationId": "probeChannelIntegration",
         "parameters": [
           {

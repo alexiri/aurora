@@ -2789,7 +2789,7 @@ export interface paths {
         put?: never;
         /**
          * Probe credentials before creating an integration (C-711): returns the choices a connector
-         *     offers for fields such as the Mattermost team. Nothing is stored. 422 `credentials_invalid`,
+         *     offers for fields such as a team. Nothing is stored. 422 `credentials_invalid`,
          *     `probe_unsupported`, 503 `connector_unavailable`.
          */
         post: operations["probeChannelIntegration"];
