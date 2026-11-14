@@ -238,6 +238,45 @@ boundary with "…"; a files-only `turn.queued` target quotes its file names).
   text is `(sent N file(s))`, and door copies and notifications that would quote the text show the
   file names. Without attachments an empty text is still `400`.
 
+### Search (phase 5, P5-CHAT-4, D-229, D-230, C-727, C-728)
+
+People and agents search what was said. One index (`03 §transcript_search`), one query builder
+(`aurora_db::repo::search`), two callers: the dashboard route (`05`) and the agent tools.
+
+- **What is indexed**: durable `turn.queued` (`text`, plus the file names of its attachments), agent
+  `text` (the D-227 Markdown reduced to plain text: code kept, link text and URLs kept, emphasis and
+  structure marks dropped), `attachment` (file name and caption). Not tool events, approvals, notices,
+  errors, thinking or deltas. A `body` is at most 32 KiB; the rest of a longer message is not searchable.
+- **Language**: `doc` stems in the workspace's memory language (weight A) and also holds the `simple`
+  configuration (weight B), so exact words match in any language. Changing the workspace language
+  later does not re-index (exact words keep working; stemming follows the old language).
+- **Write and removal**: the row is inserted in the event's transaction. Redaction deletes it in
+  the redaction's transaction; conversation delete cascades; a purged attachment keeps its file-name
+  row unless the event itself is redacted. Retention removes whole conversations.
+- **Backfill**: a resumable background job started by every API replica (one step at a time under an
+  advisory lock, batches of 1 000 by `(conversation_id, seq)`, persisted cursor) indexes existing
+  events. It share-locks the event rows it reads and re-checks `redacted_at`, so a concurrent
+  redaction can never leave a row behind; rows the write path already made are skipped. The route
+  reports `index_complete: false` until it finishes.
+- **Query**: our parser turns `q` into terms (words, the last prefix-matched, `"phrases"`, `-word`,
+  `OR`; at most 200 characters and 12 terms); user text never reaches `to_tsquery` — each term is a
+  bound parameter of `plainto_tsquery` / `phraseto_tsquery` (the one `to_tsquery` use takes a prefix
+  word made only of letters, digits and `_`), once per configuration, OR-ed. A statement timeout of
+  2 s bounds a query. Snippets are `ts_headline` output with control-character sentinels converted
+  to plain text and UTF-16 highlight ranges on the server; no markup survives.
+- **Visibility** is part of the query, never a post-filter: non-direct conversations, the caller's
+  own direct ones, and every direct one for workspace owners (`can_see_conversation`).
+- **The agent's scope** (`conversation_search`, `conversation_read`, `12 §Phase 0 catalogue`): built
+  from the call's stamped agent and turn, never from arguments. The agent's conversations that are
+  the current one, or direct and owned by the turn's speaker, or non-direct while the speaker still
+  has access to the workspace; a speakerless turn (schedule, webhook) gets the current conversation and
+  the non-direct ones. **Never another person's direct conversation, even when the speaker is an
+  owner**: owners' wider dashboard view does not extend to the agent, because what the agent reads
+  it may repeat to the person it is talking with (the preamble rule above). An out-of-scope
+  conversation and an unknown one answer identically (`not_found`). Results are wrapped as untrusted
+  quoted data and bounded (≤ 64 KiB, 20 hits, 4 000 characters per message); redacted events show as
+  `redacted`.
+
 ### Failure semantics
 
 

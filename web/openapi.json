@@ -12826,7 +12826,7 @@
             }
           },
           "422": {
-            "description": "hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id)",
+            "description": "hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id), reply_target_invalid (details.reason: not_found | not_replyable | redacted)",
             "content": {
               "application/json": {
                 "schema": {
@@ -28070,6 +28070,206 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/messages/search": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Search the messages of a workspace.",
+        "operationId": "searchMessages",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Words (the last one prefix-matched), `\"phrases\"`, `-word` to exclude, `OR` between terms.\n1-200 characters, at most 12 terms.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "description": "`me` | `agent` | `others`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "has",
+            "in": "query",
+            "description": "`file`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "RFC 3339 or `YYYY-MM-DD` (UTC); half-open `[after, before)`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "description": "`include` (default) | `exclude` | `only`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "`recent` (default) | `relevance`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1-50, default 20.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "search_query_invalid (details.reason: empty | too_long | too_many_terms)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "search_timeout",
             "content": {
               "application/json": {
                 "schema": {
@@ -44917,6 +45117,19 @@
           }
         }
       },
+      "ReplyToRef": {
+        "type": "object",
+        "description": "The event a message replies to (C-725): the `seq` of a `text`, `turn.queued` or `attachment`\nevent of the same conversation.",
+        "required": [
+          "seq"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "RequestLogEntry": {
         "type": "object",
         "required": [
@@ -46107,6 +46320,141 @@
           }
         }
       },
+      "SearchAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SearchAuthor": {
+        "type": "object",
+        "required": [
+          "kind",
+          "label"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`person` | `agent` | `other`"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "SearchConversation": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SearchItem": {
+        "type": "object",
+        "required": [
+          "conversation",
+          "agent",
+          "seq",
+          "type",
+          "author",
+          "at",
+          "snippet",
+          "highlights"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/SearchAgent"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "author": {
+            "$ref": "#/components/schemas/SearchAuthor"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/SearchConversation"
+          },
+          "highlights": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            },
+            "description": "`[start, end)` offsets into `snippet`, in UTF-16 code units."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "snippet": {
+            "type": "string",
+            "description": "Plain text (at most 300 characters), never markup."
+          },
+          "type": {
+            "type": "string",
+            "description": "`turn.queued` | `text` | `attachment`"
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "index_complete"
+        ],
+        "properties": {
+          "index_complete": {
+            "type": "boolean",
+            "description": "`false` while the index of older messages is still being built."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Secret": {
         "type": "object",
         "required": [
@@ -46410,9 +46758,6 @@
       },
       "SendMessage": {
         "type": "object",
-        "required": [
-          "text"
-        ],
         "properties": {
           "attachment_ids": {
             "type": "array",
@@ -46421,8 +46766,20 @@
               "format": "uuid"
             }
           },
+          "reply_to": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReplyToRef",
+                "description": "(C-725) Quote an earlier event of this conversation."
+              }
+            ]
+          },
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "May be empty or absent when `attachment_ids` is non-empty (C-726)."
           }
         }
       },

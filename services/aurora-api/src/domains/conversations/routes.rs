@@ -46,6 +46,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(redact_turn))
         .routes(routes!(export_conversation))
         .routes(routes!(get_retention, put_retention))
+        .merge(super::search::router())
 }
 
 /// Archive a conversation (hidden from default lists; a person message unarchives).

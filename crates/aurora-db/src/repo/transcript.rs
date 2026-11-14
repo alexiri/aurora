@@ -67,6 +67,9 @@ pub async fn append_durable_event(
     .bind(payload)
     .execute(&mut *conn)
     .await?;
+    // (P5-CHAT-4) The message search row is written in the transaction that appends the event;
+    // this is the only insert path of durable events.
+    super::search::index_event(&mut *conn, conversation_id, seq, turn_id, ty, payload).await?;
     bus::notify(
         &mut *conn,
         Channel::Conversation,

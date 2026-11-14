@@ -26,6 +26,7 @@ mod channels_inbox;
 mod channels_messaging;
 mod channels_mgmt;
 mod chat_reply;
+mod chat_search;
 mod cli;
 mod common;
 mod connect;

@@ -56,6 +56,7 @@ pub mod runners;
 pub mod sandboxes;
 pub mod schedules;
 pub mod scim;
+pub mod search;
 pub mod secrets;
 pub mod sessions;
 pub mod skill_libraries;

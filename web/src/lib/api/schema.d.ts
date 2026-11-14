@@ -4315,6 +4315,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/messages/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search the messages of a workspace. */
+        get: operations["searchMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/oauth-clients": {
         parameters: {
             query?: never;
@@ -9168,6 +9185,14 @@ export interface components {
             last_seen_at: string;
             version: string;
         };
+        /**
+         * @description The event a message replies to (C-725): the `seq` of a `text`, `turn.queued` or `attachment`
+         *     event of the same conversation.
+         */
+        ReplyToRef: {
+            /** Format: int64 */
+            seq: number;
+        };
         RequestLogEntry: {
             /** Format: uuid */
             agent_id: string;
@@ -9582,6 +9607,44 @@ export interface components {
             considered: components["schemas"]["TraceEntry"][];
             verdict?: null | components["schemas"]["SimVerdict"];
         };
+        SearchAgent: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        SearchAuthor: {
+            /** @description `person` | `agent` | `other` */
+            kind: string;
+            label: string;
+        };
+        SearchConversation: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            title?: string | null;
+        };
+        SearchItem: {
+            agent: components["schemas"]["SearchAgent"];
+            /** Format: date-time */
+            at: string;
+            author: components["schemas"]["SearchAuthor"];
+            conversation: components["schemas"]["SearchConversation"];
+            /** @description `[start, end)` offsets into `snippet`, in UTF-16 code units. */
+            highlights: number[][];
+            /** Format: int64 */
+            seq: number;
+            /** @description Plain text (at most 300 characters), never markup. */
+            snippet: string;
+            /** @description `turn.queued` | `text` | `attachment` */
+            type: string;
+        };
+        SearchResponse: {
+            /** @description `false` while the index of older messages is still being built. */
+            index_complete: boolean;
+            items: components["schemas"]["SearchItem"][];
+            next_cursor?: string | null;
+        };
         Secret: {
             /** Format: date-time */
             created_at: string;
@@ -9663,7 +9726,9 @@ export interface components {
         };
         SendMessage: {
             attachment_ids?: string[];
-            text: string;
+            reply_to?: null | components["schemas"]["ReplyToRef"];
+            /** @description May be empty or absent when `attachment_ids` is non-empty (C-726). */
+            text?: string;
         };
         SetDmDefaultRequest: {
             /** Format: uuid */
@@ -19390,7 +19455,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id) */
+            /** @description hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id), reply_target_invalid (details.reason: not_found | not_replyable | redacted) */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -29739,6 +29804,102 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    searchMessages: {
+        parameters: {
+            query: {
+                /**
+                 * @description Words (the last one prefix-matched), `"phrases"`, `-word` to exclude, `OR` between terms.
+                 *     1-200 characters, at most 12 terms.
+                 */
+                q: string;
+                agent_id?: string;
+                conversation_id?: string;
+                /** @description `me` | `agent` | `others` */
+                author?: string;
+                /** @description `file` */
+                has?: string;
+                /** @description RFC 3339 or `YYYY-MM-DD` (UTC); half-open `[after, before)`. */
+                after?: string;
+                before?: string;
+                /** @description `include` (default) | `exclude` | `only` */
+                archived?: string;
+                /** @description `recent` (default) | `relevance` */
+                sort?: string;
+                /** @description 1-50, default 20. */
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description search_query_invalid (details.reason: empty | too_long | too_many_terms) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description search_timeout */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

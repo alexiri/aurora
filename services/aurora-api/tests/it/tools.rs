@@ -194,7 +194,9 @@ async fn catalogue_lists_available_tools_with_schemas() {
             "list_peer_tasks",
             "cancel_peer_task",
             "propose_custom_connection",
-            "request_app_connection"
+            "request_app_connection",
+            "conversation_search",
+            "conversation_read"
         ]
     );
     for t in &cat {

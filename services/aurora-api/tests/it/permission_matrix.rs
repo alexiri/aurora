@@ -564,6 +564,13 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("GET", "/v1/workspaces/{ws}/activity", G::WsUse, false),
+    // (P5-CHAT-4, C-727) message search: workspace member; visibility is applied inside the query.
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/messages/search",
+        G::WsUse,
+        false,
+    ),
     r(
         "GET",
         "/v1/workspaces/{ws}/members/{user}/offboarding",
@@ -1370,7 +1377,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
 
 async fn fire(h: &Harness, fx: &Fx, row: &Row, p: P) -> (u16, Value) {
     let mut uri = fill(row.p, fx);
-    if row.p.ends_with("/memories/search") {
+    if row.p.ends_with("/memories/search") || row.p.ends_with("/messages/search") {
         uri.push_str("?q=matrix");
     }
     if row.p == "/v1/channel-links/preview" {
