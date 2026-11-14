@@ -221,11 +221,51 @@ fn bare(h: &str) -> &str {
     h.strip_prefix("www.").unwrap_or(h)
 }
 
-/// ` (→ host)` for a link whose label claims another host than the destination's.
-fn deceptive_suffix(label: &str, dest: &str) -> Option<String> {
+/// The host a link really leads to when its `label` looks like a URL or domain of another host
+/// (D-227(2)); `None` for an honest or an ordinary label. The destination is read by WHATWG
+/// rules, spaces and backslashes included. Also used by connectors to re-check their output.
+pub fn link_host_lie(label: &str, dest: &str) -> Option<String> {
     let claimed = label_host(label)?;
     let real = host_of(dest)?;
-    (bare(&claimed) != bare(&real)).then(|| format!(" (→ {})", escape_inline(&real)))
+    (bare(&claimed) != bare(&real)).then_some(real)
+}
+
+/// ` (→ host)` for a link whose label claims another host than the destination's.
+fn deceptive_suffix(label: &str, dest: &str) -> Option<String> {
+    link_host_lie(label, dest).map(|real| format!(" (→ {})", escape_inline(&real)))
+}
+
+/// Whether `url` may be a link target at all: `http`, `https` or `mailto` (D-227(2)).
+pub fn allowed_link_scheme(url: &str) -> bool {
+    allowed_url(url)
+}
+
+/// The destination of an inline link as it is written in the source (`[l](dest "t")`), before
+/// Markdown unescapes it: a platform that keeps it as typed sends the browser there.
+fn raw_dest(link_src: &str) -> Option<String> {
+    let at = link_src.rfind("](")?;
+    let rest = link_src[at + 2..].trim_start();
+    if let Some(r) = rest.strip_prefix('<') {
+        return Some(r[..r.find('>')?].to_owned());
+    }
+    let mut depth = 0i32;
+    let mut end = rest.len();
+    for (i, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => {
+                end = i;
+                break;
+            }
+            ')' => depth -= 1,
+            c if c.is_whitespace() => {
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    Some(rest[..end].to_owned())
 }
 
 /// A link destination that survives any content: `<…>` form, the characters that would end it
@@ -563,7 +603,9 @@ fn rewrite(src: &str) -> String {
                 if allowed_url(dest_url) || matches!(link_type, LinkType::Email) {
                     link_ends.push(r.end);
                     if !matches!(link_type, LinkType::Autolink | LinkType::Email)
-                        && let Some(suf) = deceptive_suffix(&label, dest_url)
+                        && let Some(suf) = deceptive_suffix(&label, dest_url).or_else(|| {
+                            raw_dest(&src[r.clone()]).and_then(|d| deceptive_suffix(&label, &d))
+                        })
                         && !src[r.end..].starts_with(&suf)
                     {
                         edits.push((r.end, r.end, suf));

@@ -33,6 +33,11 @@ fn posts(raw: &str) -> Vec<String> {
 /// The first reason `post` is not safe, if any: an image (or an image opener) outside code, a
 /// link that is not http/https/mailto.
 fn violation(post: &str) -> Option<String> {
+    if !aurora_connector_mattermost::convert::is_safe(post) {
+        return Some(
+            "fails the last-line check (a link that lies about its host, or a bad link)".to_owned(),
+        );
+    }
     let mut in_code = false;
     for (e, r) in Parser::new_ext(post, opts()).into_offset_iter() {
         match e {
@@ -97,6 +102,13 @@ fn the_reviewed_inputs_leave_no_image_and_no_bad_link() {
         format!("![x]({S} =10x10)"),
         "![x](https://evil.example/a b)".to_owned(),
         format!("para\n[r]: {S}\n![x][r]"),
+        // Re-review: links that lie about their host, in the forms Mattermost 11.7.15 links.
+        "see[^a]\n\n[^a]: note\n\n        [https://cern.ch](https://evil.example/login)".to_owned(),
+        "[https://cern.ch](https://evil.example/a b)".to_owned(),
+        "para\n[r]: https://evil.example/login\n[https://cern.ch][r]".to_owned(),
+        "[https://cern.ch](https://evil.example\\@cern.ch)".to_owned(),
+        "[https://cern.ch](http:evil.example/login)".to_owned(),
+        "<div>![x](u)</div>".to_owned(),
     ];
     for src in cases {
         for p in posts(&src) {
@@ -167,6 +179,11 @@ fn fragments() -> impl Strategy<Value = String> {
         "<@here>",
         "<@user:U1>",
         "[https://cern.ch](http:e.example/l)",
+        "[https://cern.ch](https://e.example/a b)",
+        "[https://cern.ch](https://e.example\\@cern.ch)",
+        "para\n[r]: https://e.example/\n[https://cern.ch][r]",
+        "[https://cern.ch]\n\n[https://cern.ch]: https://e.example/",
+        "[^1]\n\n[^1]: n\n\n        [https://cern.ch](https://e.example/login)",
         "<!-- c -->",
         "<script>y</script>",
         "<img src=a onerror=b>",

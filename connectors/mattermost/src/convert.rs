@@ -8,7 +8,9 @@
 //! dropped. Code spans, fenced blocks and the mention tokens are never touched.
 
 use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag};
+use regex::Regex;
 use std::ops::Range;
+use std::sync::LazyLock;
 
 fn options() -> Options {
     Options::ENABLE_TABLES
@@ -62,7 +64,17 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 /// Characters that start Markdown in text that is not Markdown (the text of an HTML block).
 fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
-    for c in s.chars() {
+    let cs: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        // The core wrote `!\[` for an image opener the author typed as `![`: that already is
+        // the escape, shown as the author typed it (`![`), not doubled.
+        if c == '!' && cs.get(i + 1) == Some(&'\\') && cs.get(i + 2) == Some(&'[') {
+            out.push_str("\\!\\[");
+            i += 3;
+            continue;
+        }
         if matches!(
             c,
             '\\' | '`' | '*' | '_' | '[' | ']' | '(' | ')' | '<' | '>' | '!' | '|' | '~' | '$'
@@ -70,8 +82,15 @@ fn escape_text(s: &str) -> String {
             out.push('\\');
         }
         out.push(c);
+        i += 1;
     }
     out
+}
+
+/// Text that is shown literally (inside code) has no use for the core's `!\[` escape: the
+/// author's `![` is restored, safe because it is code.
+fn unbreak(s: &str) -> String {
+    s.replace("!\\[", "![")
 }
 
 /// Break every `![` of Markdown that is carried over as it is (a footnote's text): what the core
@@ -289,7 +308,7 @@ impl Html {
                         let lower = after.to_ascii_lowercase();
                         match lower.find(&format!("</{name}")) {
                             Some(c) => {
-                                let literal = strip_tags(&after[..c]);
+                                let literal = unbreak(&strip_tags(&after[..c]));
                                 if name == "pre" {
                                     out.push_str(&code_fence(&literal));
                                 } else {
@@ -324,6 +343,145 @@ impl Html {
 /// no image opener (`![`, which Mattermost's own dialect — `![x](url =10x10)`, a definition
 /// that interrupts a paragraph — can complete) outside code.
 pub fn is_safe(text: &str) -> bool {
+    links_are_honest(text) && no_image_or_bad_link(text)
+}
+
+static REF_DEF: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^ {0,3}\[([^\]\n]+)\]:[ \t]*<?([^\s>]+)").unwrap_or_else(|_| unreachable!())
+});
+static REF_USE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[([^\[\]\n]*)\](?:\[([^\[\]\n]*)\])?").unwrap_or_else(|_| unreachable!())
+});
+
+/// `text` with code spans and blocks blanked (same length): links in code are not links.
+fn masked(text: &str) -> String {
+    let mut b = text.as_bytes().to_vec();
+    for (e, r) in Parser::new_ext(text, options()).into_offset_iter() {
+        if matches!(e, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
+            for x in &mut b[r] {
+                if *x != b'\n' {
+                    *x = b' ';
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(&b).into_owned()
+}
+
+/// A link as Mattermost reads it must go to an allowed scheme, and a label that names another
+/// host than the destination must be followed by the core's ` (→ host)` note.
+fn link_ok(label: &str, dest: &str, after: &str) -> bool {
+    let dest = dest.trim();
+    if !aurora_core::sanitize::allowed_link_scheme(dest) {
+        return false;
+    }
+    let label: String = label
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '`' | '~'))
+        .collect();
+    match aurora_core::sanitize::link_host_lie(&label, dest) {
+        Some(host) => after.starts_with(&format!(" (→ {host})")),
+        None => true,
+    }
+}
+
+/// The destination of an inline link whose `(` was just read, and the bytes it spans (through the
+/// closing parenthesis): `<…>` form, balanced parentheses, spaces allowed (Mattermost keeps
+/// `https://h/a b`), an optional title cut off.
+fn inline_dest(rest: &str) -> Option<(String, usize)> {
+    let lead = rest.len() - rest.trim_start().len();
+    let body = &rest[lead..];
+    let (dest, end) = if let Some(r) = body.strip_prefix('<') {
+        let e = r.find('>')?;
+        let after = &r[e + 1..];
+        let close = after.find(')')?;
+        (r[..e].to_owned(), lead + 1 + e + 1 + close + 1)
+    } else {
+        let mut depth = 0i32;
+        let mut close = None;
+        for (i, c) in body.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' if depth == 0 => {
+                    close = Some(i);
+                    break;
+                }
+                ')' => depth -= 1,
+                _ => {}
+            }
+        }
+        let close = close?;
+        let inner = &body[..close];
+        let cut = inner.find([' ', '\t']).map_or(inner.len(), |_| {
+            inner
+                .find(" \"")
+                .or_else(|| inner.find(" '"))
+                .unwrap_or(inner.len())
+        });
+        (inner[..cut].to_owned(), lead + close + 1)
+    };
+    Some((dest, end))
+}
+
+fn links_are_honest(text: &str) -> bool {
+    let m = masked(text);
+    // Inline links, `[label](dest)`.
+    let mut from = 0;
+    while let Some(p) = m[from..].find("](") {
+        let close = from + p;
+        from = close + 2;
+        if m[..close].ends_with('\\') {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut start = None;
+        for (i, c) in m[..close].char_indices().rev() {
+            match c {
+                ']' => depth += 1,
+                '[' if depth == 0 => {
+                    start = Some(i);
+                    break;
+                }
+                '[' => depth -= 1,
+                _ => {}
+            }
+        }
+        let Some(start) = start else { continue };
+        if m[..start].ends_with('\\') {
+            continue;
+        }
+        let Some((dest, span)) = inline_dest(&m[close + 2..]) else {
+            continue;
+        };
+        if !link_ok(&m[start + 1..close], &dest, &m[close + 2 + span..]) {
+            return false;
+        }
+    }
+    // Reference links: definitions anywhere (Mattermost lets one interrupt a paragraph).
+    let defs: std::collections::HashMap<String, String> = REF_DEF
+        .captures_iter(&m)
+        .map(|c| (c[1].to_lowercase(), c[2].to_owned()))
+        .collect();
+    for c in REF_USE.captures_iter(&m) {
+        let whole = c.get(0).map_or(0..0, |w| w.range());
+        if m[whole.end..].starts_with(['(', ':']) || m[..whole.start].ends_with('\\') {
+            continue;
+        }
+        let label = &c[1];
+        let key = match c.get(2) {
+            Some(r) if !r.as_str().is_empty() => r.as_str(),
+            _ => label,
+        };
+        if let Some(dest) = defs.get(&key.to_lowercase())
+            && !link_ok(label, dest, &m[whole.end..])
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn no_image_or_bad_link(text: &str) -> bool {
     use pulldown_cmark::{LinkType, TagEnd};
     let mut in_code = false;
     for (e, r) in Parser::new_ext(text, options()).into_offset_iter() {
@@ -443,8 +601,15 @@ pub fn convert(neutral: &str) -> String {
                 let mut text = lines.next().unwrap_or("").trim().to_owned();
                 for l in lines {
                     let l = l.strip_prefix("    ").unwrap_or(l.trim_start());
-                    if !l.trim().is_empty() {
-                        text.push(' ');
+                    if l.trim().is_empty() {
+                        continue;
+                    }
+                    text.push(' ');
+                    // Still indented after the note's own indentation: it was code. Flattened into
+                    // prose it could be a link that lies or a broadcast; it stays literal.
+                    if l.starts_with("    ") {
+                        text.push_str(&code_span(l.trim()));
+                    } else {
                         text.push_str(l.trim());
                     }
                 }
@@ -504,18 +669,23 @@ pub fn convert(neutral: &str) -> String {
             Event::InlineHtml(_) => {
                 let raw = &neutral[r.clone()];
                 let (closing, name) = tag_name(raw);
-                if closing {
+                if closing
+                    && (mark(&name).is_some() || matches!(name.as_str(), "code" | "kbd" | "a"))
+                {
                     // A closer that belongs to an opener we converted is handled with it
                     // (`closers`); a stray one is dropped.
                     let rep = closers.remove(&r.start).unwrap_or_default();
                     edits.push((r.start, r.end, rep));
+                } else if closing {
+                    let c = html.convert(raw);
+                    edits.push((r.start, r.end, c));
                 } else if matches!(name.as_str(), "code" | "kbd") {
                     // Code is literal: the pair becomes one code span around the source text
                     // between the tags, however many backticks it holds. Unpaired: dropped.
                     match find_close(&evs, i, &name) {
                         Some(k) => {
                             let end = evs[k].1.end;
-                            let inner = strip_tags(&neutral[r.end..evs[k].1.start]);
+                            let inner = unbreak(&strip_tags(&neutral[r.end..evs[k].1.start]));
                             edits.push((r.start, end, code_span(&inner)));
                             consumed = end;
                         }
@@ -708,6 +878,54 @@ mod tests {
         }
     }
 
+    /// Re-review: Mattermost 11.7.15 reads more as a link than CommonMark does — a destination
+    /// with spaces (`](https://h/a b)`), a destination kept as typed (`\@`), a definition right
+    /// after a paragraph line — so the last-line check reads links the way it does and refuses a
+    /// label that names another host than the destination (checked on the dev server).
+    #[test]
+    fn the_last_line_check_catches_links_that_lie_about_their_host() {
+        for lie in [
+            "[https://cern.ch](https://evil.example/login)",
+            "[https://cern.ch](https://evil.example/a b)",
+            "[https://cern.ch](https://evil.example\\@cern.ch)",
+            "[https://cern.ch](http:evil.example/login)",
+            "[cern.ch](<https://evil.example/x>)",
+            "para\n[r]: https://evil.example/login\n[https://cern.ch][r]",
+            "para\n[r]: https://evil.example/login\n[cern.ch][]\n\n[cern.ch]: https://evil.example/x",
+            "para\n[https://cern.ch]: https://evil.example/login\n[https://cern.ch]",
+            "[x](javascript:alert(1) \"t\")",
+            "[x](/relative)",
+        ] {
+            assert!(!super::is_safe(lie), "{lie:?}");
+        }
+        for ok in [
+            "[https://cern.ch/a](https://cern.ch/b)",
+            "[cern.ch](https://www.cern.ch/)",
+            "[read this](https://evil.example/)",
+            "[https://cern.ch](https://evil.example/login) (→ evil.example)",
+            "[mail](mailto:a@x.example)",
+            "`[https://cern.ch](https://evil.example/login)`",
+            "```\n[https://cern.ch](https://evil.example/login)\n```",
+            "[x][r]\n\n[r]: https://x.example/",
+            "[ref] alone and [a](https://a.example)",
+        ] {
+            assert!(super::is_safe(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn a_footnote_cannot_flatten_code_into_a_lie_or_an_image() {
+        let s = "https://evil.example/login";
+        for src in [
+            format!("see[^a]\n\n[^a]: note\n\n        [https://cern.ch]({s})"),
+            format!("see[^a]\n\n[^a]: note\n\n        ![x]({s})"),
+        ] {
+            let neutral = aurora_core::sanitize::markdown_safe(&src, 10_000);
+            let out = convert(&neutral);
+            assert!(super::is_safe(&out), "{src:?} -> {neutral:?} -> {out:?}");
+        }
+    }
+
     #[test]
     fn html_pairs_convert_and_unpaired_tags_are_dropped() {
         assert_eq!(convert("a <code>x</code> b\n"), "a `x` b\n");
@@ -724,6 +942,32 @@ mod tests {
             convert("!<a href=\"https://x.example\">x</a>\n"),
             "!\u{200B}[x](https://x.example)\n"
         );
+    }
+
+    #[test]
+    fn inline_details_summary_and_sub_close_their_tags() {
+        let out =
+            convert("<b>bold</b> next <details><summary>More</summary>hidden text</details>\n");
+        assert!(out.contains("**More**"), "{out}");
+        assert!(!out.contains('<'), "{out}");
+        assert_eq!(
+            convert("H<sub>2</sub>O and x<sup>2</sup>\n"),
+            "H2O and x2\n"
+        );
+    }
+
+    #[test]
+    fn the_core_s_image_opener_escape_is_not_doubled_or_shown() {
+        let n = aurora_core::sanitize::markdown_safe(
+            "<div>![x](u)</div>\n\n<pre>\n![y](v)\n</pre>",
+            1000,
+        );
+        let out = convert(&n);
+        assert!(out.contains("\\!\\[x\\]\\(u\\)"), "{out}");
+        assert!(!out.contains("\\\\["), "{out}");
+        // Inside code the author's `![` is back (code is not parsed for images).
+        assert!(out.contains("![y](v)"), "{out}");
+        assert!(super::is_safe(&out), "{out}");
     }
 
     #[test]

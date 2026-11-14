@@ -440,6 +440,17 @@ fn a_label_cannot_hide_the_destination_host() {
             "evil.example",
         ),
         ("[cern.ch](https:/evil.example/x)", "evil.example"),
+        // Re-review F5: the destination as written, not only as pulldown decodes it — one
+        // backslash before `@` is a Markdown escape to pulldown (host cern.ch) but stays a
+        // backslash where the destination is kept as typed (host evil.example).
+        (
+            "[https://cern.ch](https://evil.example\\@cern.ch)",
+            "evil.example",
+        ),
+        (
+            "[cern.ch](<https://evil.example\\@cern.ch/x>)",
+            "evil.example",
+        ),
     ] {
         let out = md(src);
         assert!(out.ends_with(&format!("(→ {host})")), "{src} -> {out}");
@@ -452,6 +463,25 @@ fn a_label_cannot_hide_the_destination_host() {
     assert_eq!(
         md("[cern.ch](https://www.cern.ch/)"),
         "[cern.ch](https://www.cern.ch/)"
+    );
+}
+
+#[test]
+fn link_host_lie_names_the_real_host() {
+    assert_eq!(
+        link_host_lie("https://cern.ch", "https://evil.example/x"),
+        Some("evil.example".to_owned())
+    );
+    assert_eq!(link_host_lie("cern.ch", "https://www.cern.ch/x"), None);
+    assert_eq!(link_host_lie("read this", "https://evil.example"), None);
+    assert_eq!(
+        link_host_lie("cern.ch", "https://evil.example\\@cern.ch"),
+        Some("evil.example".to_owned())
+    );
+    // A destination with a space is still a destination (Mattermost keeps it).
+    assert_eq!(
+        link_host_lie("https://cern.ch", "https://evil.example/a b"),
+        Some("evil.example".to_owned())
     );
 }
 

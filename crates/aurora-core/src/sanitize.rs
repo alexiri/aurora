@@ -9,7 +9,9 @@
 mod chunk;
 mod safe;
 pub use chunk::markdown_chunks;
-pub use safe::{broadcast_here, markdown_fallbacks, markdown_safe};
+pub use safe::{
+    allowed_link_scheme, broadcast_here, link_host_lie, markdown_fallbacks, markdown_safe,
+};
 
 /// `true` for characters that are removed outright: controls (C0, DEL, C1)
 /// that are not whitespace, plus Unicode general category `Cf`
