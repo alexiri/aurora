@@ -710,7 +710,10 @@ if any of:
   includes any claim whose pattern **matches** an exact configured LLM endpoint host
   (Bedrock `bedrock-runtime.<region>.amazonaws.com`, Vertex `<location>-aiplatform.googleapis.com`,
   an Azure resource host), so a package can never obtain a second, ungoverned way to
-  inject on those hosts; the built-in AWS packages (`s3.*`, `ec2.*`) are unaffected;
+  inject on those hosts; the built-in AWS packages (`s3.*`, `ec2.*`) are unaffected
+  ((phase 5, P4-LLM spec batch, D-261) Bedrock credentials, including assume-role, are LLM
+  secrets and never `aws-keys` connections; the gateway's LLM mint reuses the `aws_sigv4`
+  finalizer and the AssumeRole shape of D-95, not the package or its hook);
 - unknown mechanism or decoder;
 - (phase 4, P4-GRANTS) `grants` with unknown keys or non-boolean values, `custom_only` on an
   app with no tools (`custom_only_without_tools`), `custom_only` without `block_untooled`

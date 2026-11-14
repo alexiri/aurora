@@ -492,7 +492,12 @@ minted.
    | Translated | an address that **embeds** an IPv4 address is judged by the embedded address: IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` (so `64:ff9b::a00:1` is `10.0.0.1`; one embedding a public IPv4 address is public). An IPv4 CIDR in `allowed_private` does not open the translated forms of its range |
 
    Cloud-metadata addresses (169.254.169.254, fd00:ec2::254, and their translated
-   forms) only by exact-IP entry. The gateway's own listeners and database are
+   forms) only by exact-IP entry. (phase 5, P4-LLM spec batch, D-262) The implicit
+   allowance for LLM endpoint hosts (`08 §LLM hosts`) is added only for endpoints
+   defined in the deployment configuration, never covers a metadata or link-local
+   address, and is rebuilt with the endpoint table on every `llm` or `limits`
+   reload; a dashboard endpoint is judged by `gateway.allowed_private` like any
+   other destination. The gateway's own listeners and database are
    refused by address+port regardless of the allow-list: a listener bound to the
    wildcard address covers loopback, the unspecified address **and every address of
    the host's own interfaces** (read at start-up, `/proc/net` on Linux), so the pod
@@ -562,9 +567,13 @@ minted.
    - (phase 5 (D-138, moved from phase 4), P4-LLM, SEC-65) a winning LLM secret of a provider with an
      `inference_paths` set (`08 §Phase 4 providers`): the method and path (and, for
      `vertex`, the project and location in it) must be in the set, else 403
-     `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` a request body above
+     `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` (phase 5, D-261: or
+     `aws_assume_role`) a request body above
      `LLM_SIGN_BODY_MAX` (8 MiB) → 413 `llm_request_too_large`. Both are decided before
-     policy and before any credential is opened (SEC-03).
+     policy and before any credential is opened (SEC-03). (phase 5, P4-LLM spec batch,
+     D-260(b)/(c)) `anthropic` has a set too (`/v1/messages`, `/v1/messages/count_tokens`,
+     `GET /v1/models[/{id}]`), and the endpoint's `allowed_paths` only ever **adds** to a
+     set (never for `bedrock`/`vertex`, whose entries cannot carry it).
 7. **Policy decision** (`07 §Evaluation`) with the winning credential known →
    `block` (403 `blocked_by_policy`), `default_denied` (403
    `blocked_by_default_policy`), `egress_denied` (403
@@ -589,6 +598,14 @@ minted.
     token cache, single-flight per secret version, no database lock; Vertex); the
     mint or the signing key is never sent anywhere but the provider's token endpoint
     and signing happens in the gateway only (`08 §Phase 4 providers`, SEC-64).
+    (phase 5, P4-LLM spec batch, D-261) Two more recipes use the same **LLM mint
+    service** (`08 §Phase 4 providers`, *Minted credentials*, C-807): `entra_token`
+    (Azure `azure_entra`: an Entra client-credentials token, `Authorization: Bearer`,
+    agent `api-key` removed) and `aws_assume_role` (Bedrock: STS `AssumeRole` session
+    credentials, then the `aws_sigv4` finalizer with `X-Amz-Security-Token`). The mint
+    runs here, after policy and approval, single-flight per secret version; a failed or
+    held mint answers 502 `credential_unavailable` (`details: { kind: "llm_mint",
+    reason: "mint_rejected" | "mint_unavailable" }`) and nothing is forwarded.
     **LLM key origin preflight** (`08 §11.3`): before an LLM key value is
     injected for the first time (per `LLM_ORIGIN_RECHECK`), verify its origin
     with the provider; non-compliant → 403 `llm_key_wrong_organization` /
@@ -757,7 +774,7 @@ dashboard URL to fix the problem when one exists.
 | `multiple_connections` / `multiple_providers` | 409 | step 9 | `choices`, `header: "x-aurora-connection-id"` |
 | `connection_not_found` | 404 | stale/ungranted id | — |
 | `connection_reauth_required` | 403 | refresh refused earlier | `connection_id`, `reconnect_url` |
-| `credential_unavailable` | 502 | granted secret/connection could not be produced (store error, mint failure) | `kind` |
+| `credential_unavailable` | 502 | granted secret/connection could not be produced (store error, mint failure); (phase 5, P4-LLM, D-261) also a failed or held LLM mint (Vertex, Entra, STS) | `kind`; for an LLM mint `kind: "llm_mint"` and `reason` (`mint_rejected` \| `mint_unavailable`) |
 | `secret_store_unavailable` | 503 | external store unreachable | `store_id` |
 | `app_unavailable` | 403 | org posture restricts the app | `app_id` |
 | `access_restricted` | (upstream status) | upstream 401/403, nothing injected, workspace holds an ungranted candidate | `kind`, `provider`, `manage_url` |
@@ -790,6 +807,7 @@ injected (the agent should see the real upstream error).
 | Plaintext values | `(SecretRef, version)` | 60 s | `connection`, `workspace`, `org`, `all` (zeroized on eviction) |
 | Effective governance (`08 §11`) | org | 60 s | `org`, `all` |
 | LLM key origin verifications | `(secret_id, sha256(plaintext))` | `LLM_ORIGIN_RECHECK` | `org`, `workspace`, `all` |
+| (phase 5, P4-LLM, D-261, C-807) LLM mint (Vertex/Entra tokens, STS sessions) | `(secret_id, value_version, mode, region)` | until `LLM_TOKEN_SKEW` before expiry (≤ 55 min); failures `LLM_TOKEN_MINT_FAILURE_HOLD`; ≤ `LLM_MINT_CACHE_MAX` entries | `connection`, `workspace`, `org`, `all`, an `llm` settings reload (endpoint region or removal); zeroized on eviction; **not** kept through a Postgres outage beyond its own expiry |
 | Leaf certificates | host | until near expiry | never |
 | Registry snapshot | content hash | until replaced | `aurora_registry` (+ 30 s poll of the active hash) |
 | (phase 5, SET-1, D-236) Instance settings (`governance`, `llm`, `approvals`, `limits`, `secrets` sections merged with the gateway's own configuration; `15 §Instance settings`) | section | until replaced | `aurora_settings` (+ `SETTINGS_RELOAD_POLL` poll of the generations; all sections on LISTEN reconnect). A reload validates the merged view and swaps it atomically; a failing one keeps the previous snapshot. After a swap of `governance`, `llm`, `limits` or `secrets` the gateway flushes as for `all`, so the instance governance (until then built at start), BYO switch, endpoint table, destination guard list and store registry are never served stale beyond the reload. During a database outage the last snapshot stays in force |

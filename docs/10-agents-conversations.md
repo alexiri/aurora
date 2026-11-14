@@ -798,6 +798,7 @@ foreign keys. `runtime_daily` is rebuilt hourly (phase 5, D-138; **specified, no
 aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 5 (D-138, moved from phase 4), P4-LLM) The API stamps
 `provider`, `endpoint_id` and `model` into `turns.usage` from the turn's `ModelChoice`
 (never from what the harness reports), and the aggregate gains a `by_model` breakdown
-keyed by `(provider, endpoint_id, model)` over the same token counters. The gateway
+keyed by `(provider, endpoint_id, model)` over the same token counters ((phase 5, D-260(g))
+P4-LLM lands the stamping only; `by_model` is built with the usage route itself). The gateway
 counts no tokens; spend limits stay out of scope.
 - Budgets are out of scope (deferred).

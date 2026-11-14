@@ -259,7 +259,10 @@ overridden by the named configuration key (`15`).
 | `ATTACH_CAPTION_MAX` | 500 chars | — | 10 |
 | `ATTACH_PENDING_TTL` | 24 h | — | 10 |
 | `LLM_SIGN_BODY_MAX` | (phase 5 (D-138, moved from phase 4), P4-LLM) 8 MiB request body buffered to SigV4-sign a Bedrock request (larger → 413 `llm_request_too_large`) | — | 06, 08 |
-| `LLM_TOKEN_MINT_TIMEOUT` / `LLM_TOKEN_SKEW` | (phase 5 (D-138, moved from phase 4), P4-LLM) 10 s per OAuth2 token mint (Vertex) / tokens cached until 300 s before expiry, at most 55 min | — | 08 |
+| `LLM_TOKEN_MINT_TIMEOUT` / `LLM_TOKEN_SKEW` | (phase 5 (D-138, moved from phase 4), P4-LLM) 10 s per OAuth2 token mint (Vertex) / tokens cached until 300 s before expiry, at most 55 min; (P4-LLM spec batch, D-261) the same for Entra tokens and STS sessions (an STS session never past its `Expiration`) | — | 08 |
+| `LLM_TOKEN_MINT_FAILURE_HOLD` | (phase 5, P4-LLM spec batch, D-261) 5 s: after a failed mint the gateway answers 502 `credential_unavailable` for the same `(secret_id, value_version, mode, region)` without calling the token endpoint again | — | 06, 08 |
+| `LLM_MINT_CACHE_MAX` | (phase 5, P4-LLM spec batch, D-261) 10 000 minted entries per gateway replica (least recently used evicted, then minted again on demand) | — | 06, 08 |
+| `LLM_ASSUME_ROLE_DURATION` | (phase 5, P4-LLM spec batch, D-261) `aws_assume_role` session length: 900–43 200 s, default 3 600 (`session_duration_secs` in the secret value; the role's own maximum also applies) | — | 08 |
 | `S3_UPLOAD_CONCURRENCY` | (phase 5 (D-138, moved from phase 4), P4-S3) 16 uploads in flight per API replica (1–64); wait ≤ 10 s then 503 `blob_store_busy` | `blobs.s3.upload_concurrency` | 10, 15 |
 | `S3_CONNECT_TIMEOUT` / `S3_REQUEST_TIMEOUT` / `S3_RETRIES` | (phase 5 (D-138, moved from phase 4), P4-S3) 5 s / 60 s (idle body 30 s) / 2 retries | — | 15 |
 | `S3_ORPHAN_GRACE` / `S3_ORPHAN_SWEEP_MAX` | (phase 5 (D-138, moved from phase 4), P4-S3) 2 h minimum object age before the sweep may delete an unreferenced object / 50 000 keys per org per run | — | 10 |
