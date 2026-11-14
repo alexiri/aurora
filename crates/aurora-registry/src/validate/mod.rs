@@ -21,7 +21,8 @@ use regex::Regex;
 use crate::Violation;
 use crate::manifest::{
     Access, App, Connect, FieldType, Finalize, FormField, Hook, HostRule, INSTANCE_HOST, Inject,
-    Manifest, Probe, ProbeMethod, Source, Store, TokenKind, Transform, UrlOrTemplate,
+    LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, Probe, ProbeMethod, Source, Store,
+    TokenKind, Transform, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -690,6 +691,112 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             "/database/engine",
             "only postgres is supported",
         );
+    }
+    if let Some(l) = &app.ldap {
+        ldap_rules(app, l, cx);
+    }
+}
+/// (D-251) The shape of an LDAP app (`docs/09 §3 ldap`): a plain public server name, LDAPS, a
+/// subtree, a bounded attribute allow-list, one synthetic host entry and nothing that carries a
+/// credential — the lane binds anonymously and can only search.
+fn ldap_rules(app: &App, l: &Ldap, cx: &mut Ctx<'_>) {
+    let server = l.server.as_str();
+    let plain_name = !server.is_empty()
+        && server.len() <= 253
+        && server.contains('.')
+        && server
+            .split('.')
+            .all(|p| !p.is_empty() && p.len() <= 63 && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        // An IPv4 literal ends in a number; a registrable name's last label never does.
+        && !server.rsplit('.').next().is_some_and(|l| l.bytes().all(|b| b.is_ascii_digit()));
+    if !plain_name
+        || server.ends_with(".internal")
+        || server.ends_with(".local")
+        || server.ends_with(".localhost")
+    {
+        cx.v(
+            "ldap_server_invalid",
+            "/ldap/server",
+            "the server is an exact public DNS name (no IP literal, wildcard, port or internal name)",
+        );
+    }
+    if l.port == 0 {
+        cx.v("ldap_port_invalid", "/ldap/port", "the port is 1..65535");
+    }
+    if l.base_dn.trim().is_empty()
+        || l.base_dn.len() > 256
+        || l.base_dn.chars().any(char::is_control)
+    {
+        cx.v(
+            "ldap_base_dn_invalid",
+            "/ldap/base_dn",
+            "the base DN is 1..256 characters without control characters",
+        );
+    }
+    if l.attributes.is_empty() || l.attributes.len() > LDAP_MAX_ATTRIBUTES {
+        cx.v(
+            "ldap_attributes_invalid",
+            "/ldap/attributes",
+            format!("list 1..{LDAP_MAX_ATTRIBUTES} attributes"),
+        );
+    }
+    for (i, a) in l.attributes.iter().enumerate() {
+        let ok = a.len() <= 64
+            && a.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && a.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        if !ok {
+            cx.v(
+                "ldap_attributes_invalid",
+                &format!("/ldap/attributes/{i}"),
+                "an attribute is a plain name (letters, digits, `-`); `*`, `+` and options are not allowed",
+            );
+        }
+    }
+    if l.max_entries == 0 || l.max_entries > LDAP_MAX_ENTRIES {
+        cx.v(
+            "ldap_max_entries_invalid",
+            "/ldap/max_entries",
+            format!("max_entries is 1..{LDAP_MAX_ENTRIES}"),
+        );
+    }
+    let host = Ldap::host_of(&app.about.id);
+    if app.database.is_some() {
+        cx.v(
+            "ldap_database_exclusive",
+            "/ldap",
+            "an app is either a database or an LDAP app",
+        );
+    }
+    // Anonymous bind: no credential is declared, so none can be requested or injected.
+    if !app.credentials.is_empty() {
+        cx.v(
+            "ldap_credentials_declared",
+            "/credentials",
+            "an LDAP app binds anonymously and declares no credentials",
+        );
+    }
+    let own = |h: &HostRule| h.matcher.host.eq_ignore_ascii_case(&host);
+    if app.hosts.iter().filter(|h| own(h)).count() != 1 {
+        cx.v(
+            "ldap_host_missing",
+            "/hosts",
+            format!("declare exactly one hosts[] entry for `{host}`"),
+        );
+    }
+    for (i, h) in app.hosts.iter().enumerate() {
+        if !own(h) {
+            cx.v(
+                "ldap_host_foreign",
+                &format!("/hosts/{i}/match/host"),
+                format!("an LDAP app claims only `{host}`"),
+            );
+        } else if !h.inject.is_empty() {
+            cx.v(
+                "ldap_host_inject",
+                &format!("/hosts/{i}/inject"),
+                "the LDAP host injects nothing",
+            );
+        }
     }
 }
 

@@ -330,6 +330,12 @@ impl Proxy {
         let hook = prepared.hook.take();
         let response_headers = std::mem::take(&mut prepared.response_headers);
         let retry = prepared.retry.take();
+        // (D-251) An LDAP app's request is answered by the LDAP lane, never forwarded.
+        if let Some(cfg) = prepared.ldap.take() {
+            return self
+                .ldap_answer(prepared, &cfg, hook, response_headers)
+                .await;
+        }
         // 13. forward
         let kill = t.kill.clone();
         let resp = match self.upstream.send(prepared).await {
@@ -409,6 +415,38 @@ impl Proxy {
         }
         self.finish(resp, hook, response_headers, upgrade_fut, kill)
             .await
+    }
+
+    /// (D-251) The LDAP lane: read the (small) JSON body, run one search, answer as JSON; the
+    /// request-log hook sees the outcome like any upstream answer.
+    async fn ldap_answer(
+        &self,
+        p: crate::pipeline::PreparedRequest,
+        cfg: &aurora_registry::manifest::Ldap,
+        hook: Option<Box<dyn crate::pipeline::PostHook>>,
+        response_headers: http::HeaderMap,
+    ) -> Response<Body> {
+        let (method, path) = (p.method, p.path);
+        let (prefix, ended, _) =
+            crate::decide::buffer_prefix(p.body, crate::ldap::MAX_REQUEST_BODY).await;
+        let mut resp = if ended {
+            crate::ldap::run(self.upstream.ldap(), cfg, &method, &path, &prefix).await
+        } else {
+            guidance::response(&ApiError::new(
+                http::StatusCode::PAYLOAD_TOO_LARGE,
+                "ldap_request_invalid",
+                "The search request is larger than 16 KiB.",
+            ))
+        };
+        if let Some(h) = hook
+            && let Some(replacement) = h.on_response(resp.status(), resp.headers())
+        {
+            return replacement;
+        }
+        for (k, v) in &response_headers {
+            resp.headers_mut().insert(k.clone(), v.clone());
+        }
+        resp
     }
 
     /// 14-15. guidance replacement, request log, upgrade bridging, response hygiene.

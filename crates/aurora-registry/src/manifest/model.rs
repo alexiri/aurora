@@ -165,6 +165,9 @@ pub struct App {
     pub approvals: BTreeMap<String, Approval>,
     pub agent: Option<Agent>,
     pub database: Option<Database>,
+    /// (phase 5, D-251) the gateway LDAP lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ldap: Option<Ldap>,
     #[serde(default)]
     pub grants: Grants,
     /// (phase 4, P4-GSL, D-148, D-149) "this app is a git host that can serve a skill library":
@@ -945,6 +948,45 @@ pub struct Agent {
 #[serde(deny_unknown_fields)]
 pub struct Database {
     pub engine: String,
+}
+
+/// (phase 5, P5-CERN-ADDONS, D-251) "this app reads a directory over LDAP through the gateway
+/// LDAP lane" (`docs/06 §LDAP lane`, `docs/09 §3 ldap`). Anonymous bind, search only, LDAPS only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ldap {
+    /// Exact public DNS name of the directory server.
+    pub server: String,
+    /// LDAPS port; default 636.
+    #[serde(default = "default_ldaps_port")]
+    pub port: u16,
+    /// Every search is confined to this subtree.
+    pub base_dn: String,
+    /// The only attributes a request may ask for and a result may carry.
+    pub attributes: Vec<String>,
+    /// Most entries one search returns (default 50, at most 500).
+    #[serde(default = "default_ldap_max_entries")]
+    pub max_entries: u32,
+}
+
+pub const LDAP_HOST_SUFFIX: &str = ".ldap.aurora.internal";
+pub const LDAP_MAX_ENTRIES: u32 = 500;
+pub const LDAP_MAX_ATTRIBUTES: usize = 64;
+
+fn default_ldaps_port() -> u16 {
+    636
+}
+
+fn default_ldap_max_entries() -> u32 {
+    50
+}
+
+impl Ldap {
+    /// The synthetic request host of an LDAP app: `<app id>.ldap.aurora.internal`.
+    #[must_use]
+    pub fn host_of(app_id: &str) -> String {
+        format!("{app_id}{LDAP_HOST_SUFFIX}")
+    }
 }
 
 /// serde_yaml 0.9 reads enums from `!tag` only; the contract writes them as

@@ -264,9 +264,16 @@ pub struct Upstream {
     /// http/1.1 only (upgrades).
     client_h1: HyperClient,
     header_timeout: Duration,
+    /// (D-251) The LDAP lane's client: the same guarded dial, egress proxy and extra CAs.
+    ldap: crate::ldap::client::Lane,
 }
 
 impl Upstream {
+    #[must_use]
+    pub fn ldap(&self) -> &crate::ldap::client::Lane {
+        &self.ldap
+    }
+
     pub fn new(
         guard: Arc<Guard>,
         egress: Option<EgressProxy>,
@@ -287,6 +294,12 @@ impl Upstream {
             client: mk(&[b"h2", b"http/1.1"])?,
             client_h1: mk(&[b"http/1.1"])?,
             header_timeout,
+            ldap: crate::ldap::client::Lane::new(
+                guard.clone(),
+                egress.clone(),
+                extra_ca_pem,
+                header_timeout.max(Duration::from_secs(10)),
+            )?,
         })
     }
 

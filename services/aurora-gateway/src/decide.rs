@@ -1333,6 +1333,7 @@ impl PolicyHandler {
                 hook: Some(hook),
                 response_headers,
                 retry,
+                ldap: None,
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
@@ -1402,6 +1403,7 @@ impl PolicyHandler {
                 hook: Some(hook),
                 response_headers,
                 retry: None,
+                ldap: None,
             });
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
@@ -1420,6 +1422,7 @@ impl PolicyHandler {
             hook: Some(hook),
             response_headers,
             retry: None,
+            ldap: None,
         })
     }
 }
@@ -1427,7 +1430,36 @@ impl PolicyHandler {
 #[async_trait::async_trait]
 impl RequestHandler for PolicyHandler {
     async fn handle(&self, req: PipelineRequest) -> Outcome {
-        self.handle_with(req, None).await
+        let (identity, port) = (req.identity.clone(), req.port);
+        let outcome = self.handle_with(req, None).await;
+        match outcome {
+            // (D-251) An admitted request on an LDAP app's synthetic host carries the approved
+            // `ldap` block; the proxy translates it instead of forwarding. No block found (the
+            // snapshot changed under the request, a host of no LDAP app) fails closed.
+            Outcome::Forward(mut p) if crate::ldap::is_ldap_host(&p.host) => {
+                let cfg = match self.resolver.resolve(&identity, &p.host, port).await {
+                    Ok(rv) => rv
+                        .registry
+                        .as_ref()
+                        .and_then(|l| apps::identify_app(l, &p.host, port, &p.path))
+                        .and_then(|m| m.app.ldap.clone()),
+                    Err(_) => None,
+                };
+                if cfg.is_none() {
+                    let err = ApiError::bad_gateway(
+                        "ldap_unavailable",
+                        "No directory is configured for this host.",
+                    );
+                    if let Some(h) = p.hook.take() {
+                        h.on_error(&err);
+                    }
+                    return Outcome::Respond(guidance::response(&err));
+                }
+                p.ldap = cfg;
+                Outcome::Forward(p)
+            }
+            o => o,
+        }
     }
 
     async fn db_open(
@@ -2306,6 +2338,7 @@ impl Retry for StaleRetry {
             hook: None,
             response_headers: HeaderMap::new(),
             retry: None,
+            ldap: None,
         })
     }
 }

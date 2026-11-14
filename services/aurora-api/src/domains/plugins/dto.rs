@@ -162,6 +162,14 @@ fn widening(w: &Widening) -> PluginWidening {
         Widening::HostClaim(k) => ("host_claim", k.clone()),
         Widening::Zone(z) => ("zone", z.clone()),
         Widening::TokenHost(h) => ("token_host", h.clone()),
+        Widening::Directory {
+            app,
+            server,
+            base_dn,
+        } => (
+            "directory",
+            format!("{app} can read directory entries from {server} under {base_dn}"),
+        ),
         Widening::Library { app, host } => (
             "library",
             format!("{app} can serve a skill library: reads repository files from {host}"),

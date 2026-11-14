@@ -65,6 +65,9 @@ pub struct PreparedRequest {
     pub response_headers: HeaderMap,
     /// Stale-token resend (step 14): body-less requests only.
     pub retry: Option<Box<dyn Retry>>,
+    /// (D-251) Set for a request on an LDAP app's synthetic host: the approved `ldap` block the
+    /// request is translated with instead of being forwarded.
+    pub ldap: Option<aurora_registry::manifest::Ldap>,
 }
 
 /// Rebuilds a request with fresh credentials after the upstream answered with a
@@ -111,6 +114,7 @@ impl PipelineRequest {
             hook: None,
             response_headers: HeaderMap::new(),
             retry: None,
+            ldap: None,
         }
     }
 }

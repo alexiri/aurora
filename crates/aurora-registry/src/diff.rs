@@ -29,6 +29,13 @@ pub enum Widening {
     /// (FIX-107, SEC-17) a static OAuth token endpoint on a host the installed version did not
     /// use: the next refresh posts every connection's refresh token and the client secret there.
     TokenHost(String),
+    /// (D-251) a new or changed `ldap` block on this app id: "can read directory entries from
+    /// <server>:<port> under <base_dn>"; a wider attribute list or entry cap counts too.
+    Directory {
+        app: String,
+        server: String,
+        base_dn: String,
+    },
 }
 
 /// Lowercase host of a static `https://` URL (no port, userinfo or path); `None` for templates
@@ -145,6 +152,32 @@ pub fn widens(old: &Manifest, new: &Manifest) -> Vec<Widening> {
             out.push(Widening::Library {
                 app: a.about.id.clone(),
                 host: lib.request_host.clone(),
+            });
+        }
+    }
+    for a in &new.apps {
+        let Some(l) = &a.ldap else { continue };
+        let old_l = old
+            .apps
+            .iter()
+            .find(|o| o.about.id == a.about.id)
+            .and_then(|o| o.ldap.as_ref());
+        // Anything but an identical or narrower block (same server, port and base; a subset of
+        // the attributes; no larger cap) is a widening.
+        let narrower = old_l.is_some_and(|o| {
+            o.server.eq_ignore_ascii_case(&l.server)
+                && o.port == l.port
+                && o.base_dn.eq_ignore_ascii_case(&l.base_dn)
+                && l.max_entries <= o.max_entries
+                && l.attributes
+                    .iter()
+                    .all(|x| o.attributes.iter().any(|y| y.eq_ignore_ascii_case(x)))
+        });
+        if !narrower {
+            out.push(Widening::Directory {
+                app: a.about.id.clone(),
+                server: format!("{}:{}", l.server.to_ascii_lowercase(), l.port),
+                base_dn: l.base_dn.clone(),
             });
         }
     }
