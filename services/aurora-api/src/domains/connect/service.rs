@@ -780,8 +780,7 @@ pub async fn start(
                             return Err(invalid(
                                 "/scopes",
                                 &format!("`{bad}` is not a scope of this connect method"),
-                            )
-                            .into());
+                            ));
                         }
                         s.clone()
                     }
