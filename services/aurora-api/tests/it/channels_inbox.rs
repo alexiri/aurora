@@ -1177,6 +1177,50 @@ async fn mirror_shared_attribution_failure_and_doorless() {
     );
 }
 
+/// FIX-128: the shared bot's "Agent · via Bot" line stays in shared spaces and is left out of a
+/// 1:1 DM with the bot (where only one agent can answer).
+#[tokio::test]
+async fn shared_bot_reply_in_a_dm_has_no_via_line() {
+    let w = world_with(json!({"_capabilities": {"history": false}})).await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.bind_space(w.integ, "C1", a, "mentions", false).await;
+    // A 1:1 DM with the shared bot.
+    w.post(w.integ, "v1", dm("U1", "hello", "B1")).await;
+    assert_eq!(w.outcome("v1").await["result"], "turn_created");
+    w.finish("done", Some("hi there"), None).await;
+    // The same agent in the channel.
+    w.post(w.integ, "v2", chan("U1", "q", Some("T1"), true))
+        .await;
+    assert_eq!(w.outcome("v2").await["result"], "turn_created");
+    w.finish("done", Some("in channel"), None).await;
+    let posts = w.ops("message.post").await;
+    let answers: Vec<(&str, &str)> = posts
+        .iter()
+        .filter_map(|p| {
+            Some((
+                p["target"]["space_ref"].as_str()?,
+                p["content"]["text"].as_str()?,
+            ))
+        })
+        .collect();
+    let dm_answer = answers.iter().find(|(s, _)| *s == "D1").expect("DM answer");
+    assert!(dm_answer.1.contains("hi there"), "{dm_answer:?}");
+    assert!(
+        !dm_answer.1.contains("via"),
+        "no attribution in a 1:1 DM: {dm_answer:?}"
+    );
+    let chan_answer = answers
+        .iter()
+        .find(|(s, _)| *s == "C1")
+        .expect("channel answer");
+    assert!(
+        chan_answer.1.starts_with("rex · via Daneel"),
+        "a shared channel keeps the attribution: {chan_answer:?}"
+    );
+}
+
 #[tokio::test]
 async fn mirror_skips_web_and_api_turns_and_sends_files() {
     let w = world().await;

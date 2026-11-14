@@ -347,7 +347,7 @@ must match the event's. The connector never interprets tokens.
 | `edits` | settle cards by posting a new short "settled" message |
 | `buttons` / `menus` / `text_input` | card shows a dashboard link, plus `approve <code>` / `deny <code>` commands when `commands` exists (code = first 8 base32 chars of the approval id) |
 | `reactions` | seen-receipt becomes a "Working…" placeholder post, deleted (or edited to the answer) when done |
-| `ephemeral` | DM the person, linking to the message it concerns |
+| `ephemeral` | DM the person, naming the space it concerns by its label ("In #general: …", "In your group message with Ann, Bob: …"; FIX-128, D-194): never by an internal id, and with no prefix at all when the notice goes to the DM it is about |
 | `native_status` | placeholder post as above |
 | `presence_dedicated` / `presence_shared` | only the other mode is offered |
 | `user_tokens` | read-as-user / send-as-user features hidden (phase 0 implements none) |
@@ -448,7 +448,13 @@ no behaviour in phase 0.
   copy and a dashboard link.
 - **Shared-bot attribution**: posts made by a shared bot start with a context
   line naming the agent ("Research · via Daneel") on the first post in each
-  thread and on every proactive message.
+  thread and on every proactive message. (FIX-128, D-194) The line exists to say
+  which agent speaks when several can answer through one bot, so it is **left out
+  of a 1:1 DM with the bot** (a `direct` conversation, where one agent answers)
+  and kept in shared spaces. The bot's name in the line is the display name
+  Mattermost shows for the bot (the bot record's `display_name`, refreshed whenever
+  the integration is validated), never fewer than two characters: a shorter or
+  missing value falls back to the bot's username.
 
 ### 5.3 Space bindings (shared bot)
 

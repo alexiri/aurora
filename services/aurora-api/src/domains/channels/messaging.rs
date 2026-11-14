@@ -404,10 +404,17 @@ fn bad_text(text: &str, platform: &Platform) -> Option<String> {
     }
 }
 
-/// Text as the platform sees it: untrusted data, with the "via" line for the shared bot.
-fn compose(agent: &AgentRow, platform: &Platform, sender: &Sender, text: &str) -> Content {
+/// Text as the platform sees it: untrusted data, with the "via" line for the shared bot, except in
+/// a 1:1 DM (`direct`), where one agent answers and the line only adds noise (docs/13 §5.2).
+fn compose(
+    agent: &AgentRow,
+    platform: &Platform,
+    sender: &Sender,
+    text: &str,
+    direct: bool,
+) -> Content {
     let body = Content::untrusted(text).text.unwrap_or_default();
-    let text = if matches!(sender, Sender::Shared(_)) {
+    let text = if matches!(sender, Sender::Shared(_)) && !direct {
         let a = format!(
             "{} · via {}",
             sanitize::label(&agent.name),
@@ -465,7 +472,12 @@ async fn post_message(
             },
         ),
     };
-    let content = compose(agent, platform, &sender, text);
+    // A thread link of kind `direct`, or a DM to one person, is a 1:1 conversation with the bot.
+    let direct = match link {
+        Some(l) => l.kind == "direct",
+        None => matches!(r.kind, RKind::User),
+    };
+    let content = compose(agent, platform, &sender, text, direct);
     Ok(send::post(
         conn,
         &platform.ctx,
@@ -986,7 +998,13 @@ pub async fn edit_my_message(
     if let Some(m) = bad_text(text, &platform) {
         return invalid(m);
     }
-    let content = compose(&agent, &platform, &own.sender, text);
+    let direct: bool =
+        sqlx::query_scalar("SELECT kind = 'direct' FROM conversations WHERE id = $1")
+            .bind(conversation)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or(false);
+    let content = compose(&agent, &platform, &own.sender, text, direct);
     let payload = json!(MessageUpdateOp {
         space_ref: own.space_ref,
         message_ref: own.message_ref,
