@@ -16,6 +16,7 @@ import {
   grantValueBody,
   grantValueProblem,
   initialGrantValue,
+  splitByScopes,
   toolsForMethod,
   type GrantValue,
 } from "@/lib/grant-editor";
@@ -44,6 +45,8 @@ export interface GrantSubject {
   appWorkspaceId?: string;
   /** Connections only: how the connection was made; tools restricted to other methods are not offered (FIX-123). */
   connectMethod?: string | null;
+  /** Connections only: the scopes the connection has; tools needing others are listed as unavailable (FIX-136). */
+  scopes?: string[];
   /** Connections only: the app allows only custom grants (`custom_only`, P4-GRANTS), so the form starts on Custom. */
   customOnly?: boolean;
   /** Agents ticked when the picker opens (the getting-started guide preselects the workspace's own agent). */
@@ -219,7 +222,11 @@ export function GiveAccessPanel({
   const isConnection = subject.target.kind === "connection";
   // Connections: the same grant form as the agent's Access tab (FIX-147), Full preselected unless the app is custom-only.
   const app = useApp(isConnection ? subject.appId : undefined, subject.appWorkspaceId);
-  const tools = useMemo(() => toolsForMethod(app.data?.tools ?? [], subject.connectMethod), [app.data, subject.connectMethod]);
+  const split = useMemo(
+    () => splitByScopes(toolsForMethod(app.data?.tools ?? [], subject.connectMethod), subject.scopes),
+    [app.data, subject.connectMethod, subject.scopes],
+  );
+  const tools = split.usable;
   const restrictions = appRestrictions(app.data);
   const customOnly = isConnection && (subject.customOnly === true || forcedCustom || restrictions.custom_only);
   const [edited, setEdited] = useState<GrantValue | null>(null);
@@ -301,6 +308,7 @@ export function GiveAccessPanel({
           <GrantForm
             appName={app.data.name}
             tools={tools}
+            unavailable={split.unavailable}
             customOnly={customOnly}
             blockUntooled={restrictions.block_untooled}
             value={grantValue}

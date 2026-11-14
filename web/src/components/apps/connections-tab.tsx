@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { AccessDialog } from "@/components/credentials/give-access";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { ScopeGroups } from "@/components/grants/scope-groups";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -15,6 +16,7 @@ import {
   appKeys,
   connectWindowPath,
   openConnectWindow,
+  useApp,
   useApps,
   useConnectedListener,
   useConnections,
@@ -116,6 +118,7 @@ function ConnectionRow({
             orgId: c.org_id,
             appId: c.app_id,
             connectMethod: c.connect_method,
+            scopes: c.scopes,
             appWorkspaceId: c.workspace_id ?? (scope.kind === "workspace" ? scope.id : undefined),
           }}
           title={c.label}
@@ -149,6 +152,9 @@ function ConnectionRow({
             ? ". The repo scope allows writes: make this connection read-only to block them."
             : null}
         </p>
+      ) : null}
+      {canOwn && c.connect_method ? (
+        <TokenScopes c={c} ws={c.workspace_id ?? (scope.kind === "workspace" ? scope.id : undefined)} patch={patch} />
       ) : null}
       {c.database ? (
         <Notice tone="neutral" aria-label={`How to connect to ${c.label}`} className="space-y-1 text-xs">
@@ -226,5 +232,41 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
         />
       ))}
     </ul>
+  );
+}
+
+/**
+ * (FIX-136, D-241) The scopes of a pasted token, "as you declared": shown for a connection made with a `fields` method that
+ * declares scopes, editable by whoever can manage it. Aurora uses them only to hide and refuse tools the token cannot serve.
+ */
+function TokenScopes({ c, ws, patch }: { c: Connection; ws?: string; patch: ReturnType<typeof usePatchConnection> }) {
+  const app = useApp(c.app_id, ws);
+  const method = app.data?.connect?.find?.((m) => m.id === c.connect_method);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string[]>(c.scopes);
+  if (!method || method.kind !== "fields" || !method.scopes || method.scopes.length === 0) return null;
+  const names = c.scopes.map((s) => method.scopes.find((x) => x.scope === s)?.name ?? s);
+  return (
+    <div className="space-y-1.5 text-xs" aria-label={`Token scopes of ${c.label}`}>
+      <p className="text-ink-2">
+        Token scopes (as you declared):{" "}
+        <span className="text-ink">{names.length ? names.join(", ") : "none declared, so no tool is hidden"}</span>{" "}
+        <Button variant="ghost" size="sm" onClick={() => { setDraft(c.scopes); setEditing((e) => !e); }}>
+          {editing ? "Cancel" : "Edit scopes"}
+        </Button>
+      </p>
+      {editing ? (
+        <div className="space-y-2">
+          <ScopeGroups scopes={method.scopes} selected={draft} onChange={setDraft} disabled={patch.isPending} />
+          <Button
+            size="sm"
+            disabled={patch.isPending}
+            onClick={() => patch.mutate({ id: c.id, scopes: draft }, { onSuccess: () => setEditing(false) })}
+          >
+            Save scopes
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }

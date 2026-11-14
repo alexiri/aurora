@@ -40,6 +40,7 @@ export function GrantForm({
   appName,
   tools,
   inert = [],
+  unavailable = [],
   customOnly,
   blockUntooled,
   value,
@@ -53,6 +54,8 @@ export function GrantForm({
   tools: Tool[];
   /** Tool ids the grant names that the catalogue no longer has. */
   inert?: string[];
+  /** (FIX-136, D-241) Tools the connection's token cannot serve (`splitByScopes`): listed collapsed, never selectable. */
+  unavailable?: Tool[];
   /** The app allows only custom grants (`app_restrictions.custom_only`, or learned from a 422). */
   customOnly: boolean;
   blockUntooled: boolean;
@@ -178,6 +181,26 @@ export function GrantForm({
             </Field>
           ) : null}
         </div>
+      ) : null}
+
+      {unavailable.length > 0 ? (
+        <details className="rounded-control border border-line px-3 py-2">
+          <summary className="cursor-pointer text-sm font-medium text-ink">
+            Not available with this connection&apos;s token ({unavailable.length})
+          </summary>
+          <p className="mt-1.5 text-xs text-muted">
+            These tools need a scope the token does not have, so they cannot be granted. Reconnect with a token that has it, or
+            edit the token&apos;s scopes on the connection if it does.
+          </p>
+          <ul className="mt-1.5 divide-y divide-line">
+            {unavailable.map((t) => (
+              <li key={t.id} className="space-y-0.5 py-1.5">
+                <span className="text-sm text-ink">{t.name}</span>
+                <span className="block break-words text-xs text-muted">Needs {(t.scopes ?? []).join(" or ")}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       {problem === "empty" ? (

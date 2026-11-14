@@ -176,6 +176,7 @@ describe("tools restricted to a connect method", () => {
     path: `/${id}`,
     methods: ["GET"],
     connect_methods,
+    scopes: [],
     wildcard: false,
   });
   const all = [tool("get_repo", []), tool("get_authenticated_user", ["token", "oauth"]), tool("list_installation_repos", ["github_app"])];

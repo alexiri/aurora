@@ -8,12 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GiveAccessPanel, type GrantSubject } from "@/components/credentials/give-access";
 import { GrantForm } from "@/components/grants/grant-form";
 import { ScopeGroups } from "@/components/grants/scope-groups";
-import { initialGrantValue, type GrantValue, type Tool } from "@/lib/grant-editor";
+import { initialGrantValue, splitByScopes, type GrantValue, type Tool } from "@/lib/grant-editor";
 
 afterEach(cleanup);
 
 const tool = (id: string, name: string, group: "read" | "write", over: Partial<Tool> = {}): Tool => ({
-  id, name, group, host: "indico.example.org", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], connect_methods: [], wildcard: false, ...over,
+  id, name, group, host: "indico.example.org", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], connect_methods: [], scopes: [], wildcard: false, ...over,
 });
 const tools: Tool[] = [
   tool("get_event", "Read an event", "read"),
@@ -40,6 +40,50 @@ function Harness({ customOnly = false, blockUntooled = false, onValue }: { custo
   );
 }
 const radio = (group: string, option: string) => within(screen.getByRole("radiogroup", { name: group })).getByLabelText(option) as HTMLInputElement;
+
+describe("tools the token cannot serve (FIX-136, D-241)", () => {
+  const scoped = [
+    tool("get_event", "Read an event", "read", { scopes: ["read:legacy_api"] }),
+    tool("search_rooms", "Search rooms", "read", { scopes: ["read:everything"] }),
+    tool("create_booking", "Book a room (web API)", "write", { scopes: ["full:everything"] }),
+    tool("get_user", "Get the user", "read"),
+  ];
+
+  it("splits by the connection's known scopes: a tool with no requirement, or with unknown scopes, is never hidden", () => {
+    const ids = (ts: Tool[]) => ts.map((t) => t.id);
+    const s = splitByScopes(scoped, ["read:legacy_api"]);
+    expect(ids(s.usable)).toEqual(["get_event", "get_user"]);
+    expect(ids(s.unavailable)).toEqual(["search_rooms", "create_booking"]);
+    // any-of: one matching scope is enough
+    expect(ids(splitByScopes([tool("x", "X", "read", { scopes: ["a", "b"] })], ["b"]).usable)).toEqual(["x"]);
+    // unknown scopes (empty / null) hide nothing
+    expect(splitByScopes(scoped, []).unavailable).toEqual([]);
+    expect(splitByScopes(scoped, null).unavailable).toEqual([]);
+  });
+
+  it("lists unavailable tools collapsed with the reason, and they are not in the permission groups", () => {
+    const { usable, unavailable } = splitByScopes(scoped, ["read:legacy_api"]);
+    render(
+      <GrantForm
+        appName="Indico"
+        tools={usable}
+        unavailable={unavailable}
+        customOnly
+        blockUntooled={false}
+        value={initialGrantValue(usable, null, true)}
+        onChange={() => {}}
+      />,
+    );
+    const box = screen.getByText(/Not available with this connection's token \(2\)/).closest("details") as HTMLDetailsElement;
+    expect(box.open).toBe(false);
+    expect(within(box).getByText("Search rooms")).toBeTruthy();
+    expect(within(box).getByText("Needs read:everything")).toBeTruthy();
+    expect(within(box).getByText("Needs full:everything")).toBeTruthy();
+    // Not selectable: no access control exists for them.
+    expect(screen.queryByRole("radiogroup", { name: "Access for Search rooms" })).toBeNull();
+    expect(screen.getByRole("radiogroup", { name: "Access for Read an event" })).toBeTruthy();
+  });
+});
 
 describe("GrantForm (controlled)", () => {
   it("starts on Full access without a tool list, and Custom shows Read and Write groups", () => {

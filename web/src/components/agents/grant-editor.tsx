@@ -16,6 +16,7 @@ import {
   initialGrantValue,
   inertToolIds,
   mapGrantError,
+  splitByScopes,
   toolsForMethod,
   type GrantErrors,
   type GrantValue,
@@ -80,7 +81,8 @@ function EditorLoader({
       agentId={agentId}
       connection={connection}
       grant={grant}
-      tools={toolsForMethod(app.data.tools, connection.connect_method)}
+      tools={splitByScopes(toolsForMethod(app.data.tools, connection.connect_method), connection.scopes).usable}
+      unavailable={splitByScopes(toolsForMethod(app.data.tools, connection.connect_method), connection.scopes).unavailable}
       appName={app.data.name}
       restrictions={appRestrictions(restrictions, app.data)}
       onClose={onClose}
@@ -93,6 +95,7 @@ function EditorForm({
   connection,
   grant,
   tools,
+  unavailable,
   appName,
   restrictions,
   onClose,
@@ -101,6 +104,8 @@ function EditorForm({
   connection: Connection;
   grant: ConnectionGrant | null;
   tools: Tool[];
+  /** (FIX-136) Tools the connection's token cannot serve. */
+  unavailable: Tool[];
   appName: string;
   restrictions: { custom_only: boolean; block_untooled: boolean };
   onClose: () => void;
@@ -156,6 +161,7 @@ function EditorForm({
         appName={appName}
         tools={tools}
         inert={inert}
+        unavailable={unavailable}
         customOnly={customOnly}
         blockUntooled={restrictions.block_untooled}
         value={value}

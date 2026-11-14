@@ -33,6 +33,17 @@ export function toolsForMethod(tools: Tool[], method: string | null | undefined)
   return tools.filter((t) => !method || (t.connect_methods ?? []).length === 0 || (t.connect_methods ?? []).includes(method));
 }
 
+/**
+ * Splits a connection's tools by what its token can do (FIX-136, D-241): a tool that declares `scopes` is unavailable when
+ * the connection's scopes are known (non-empty) and hold none of them (the gateway refuses it with `tool_scope_missing`).
+ * Unknown scopes (empty) hide nothing: they are trusted only to refuse, never to widen.
+ */
+export function splitByScopes(tools: Tool[], scopes: string[] | null | undefined): { usable: Tool[]; unavailable: Tool[] } {
+  const have = scopes ?? [];
+  const lacks = (t: Tool) => have.length > 0 && (t.scopes ?? []).length > 0 && !(t.scopes ?? []).some((s) => have.includes(s));
+  return { usable: tools.filter((t) => !lacks(t)), unavailable: tools.filter(lacks) };
+}
+
 /** The tools of a group, its umbrella first (an umbrella exists only where the manifest declares and proves one). */
 export function groupTools(tools: Tool[], g: Group): Tool[] {
   const own = tools.filter((t) => groupOf(t) === g);
