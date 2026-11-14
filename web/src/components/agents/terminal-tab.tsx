@@ -13,7 +13,7 @@
 // OSC 52 write surfaces a "Copy to clipboard" confirmation (C-622); selection copy is the
 // browser's own.
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type RefObject } from "react";
 
 import { GhosttyCore } from "@wterm/ghostty";
 import { Terminal, useTerminal } from "@wterm/react";
@@ -38,6 +38,9 @@ const WASM_URL = "/ghostty-vt-0.5.10.wasm";
  * silently dropped and the shell never sees it.
  */
 const encoder = new TextEncoder();
+
+/** wterm's terminal instance, as `onReady` hands it over (`@wterm/dom` is not a direct dependency). */
+type WTerm = Parameters<NonNullable<ComponentProps<typeof Terminal>["onReady"]>>[0];
 /**
  * `TERMINAL_CHUNK` (`crates/aurora-core/src/limits.rs`): the runner closes the leg on any
  * Binary frame larger than this, so input — a clipboard paste arrives as one `onData`
@@ -176,10 +179,27 @@ export function TerminalPane({
   // True while the view follows the cursor (the person has not scrolled up): new output and resizes re-pin the pane to
   // its bottom. wterm renders the scrollback into the pane but does not keep it pinned, so the pane does (FIX-138).
   const followRef = useRef(true);
+  const wtRef = useRef<WTerm | null>(null);
+  // (Owner 2026-11-14) A full-screen app (claude, vim, less, htop) is on the alternate screen, which has no scrollback.
+  // wterm still renders the shell's history above it, so while it is up the pane is pinned to the app's screen and does
+  // not scroll (CSS `[data-alt-screen]`); the wheel goes to the app instead (`onAltWheel`).
+  const altRef = useRef(false);
+  const [altScreen, setAltScreen] = useState(false);
   const follow = useCallback(() => {
     const el = paneEl.current;
-    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+    const alt = wtRef.current?.bridge?.usingAltScreen() === true;
+    if (alt !== altRef.current) {
+      altRef.current = alt;
+      setAltScreen(alt);
+      if (alt) {
+        followRef.current = true;
+        setScrolledUp(false);
+      }
+    }
+    if (el && (alt || followRef.current)) el.scrollTop = el.scrollHeight;
   }, []);
+  // Wheel lines not yet sent as arrow keys (trackpads send many small deltas).
+  const wheelLines = useRef(0);
   const lastEscape = useRef(0);
   const [left, setLeft] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "connecting" });
@@ -299,6 +319,33 @@ export function TerminalPane({
     // re-runs the effect after the pane's explicit Reconnect.
   }, [agentId, core, paused, write, follow, retryNonce]);
 
+  /**
+   * The wheel over a full-screen app (capture phase on the pane's wrapper, before wterm's own handler). The pane is kept
+   * on the app's screen, so wterm forwards the wheel when the app asked for mouse reports; without them the wheel moves
+   * the app like the arrow keys, as Ghostty and xterm do on the alternate screen ("alternate scroll"). On the normal
+   * screen nothing changes: the wheel scrolls the pane's history.
+   */
+  const onAltWheel = useCallback((e: WheelEvent) => {
+    const core = wtRef.current?.bridge;
+    const el = paneEl.current;
+    if (!core || !el || !core.usingAltScreen()) return;
+    el.scrollTop = el.scrollHeight;
+    if ((core.mouseTracking?.() ?? 0) !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.deltaY === 0) return;
+    const rows = Math.max(1, core.getRows());
+    const lines = e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * rows : e.deltaY / (el.clientHeight / rows);
+    wheelLines.current += lines;
+    const n = Math.trunc(wheelLines.current);
+    if (n === 0) return;
+    wheelLines.current -= n;
+    const app = core.cursorKeysApp();
+    const key = n < 0 ? (app ? "\x1bOA" : "\x1b[A") : app ? "\x1bOB" : "\x1b[B";
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) sendInput(ws, key.repeat(Math.min(Math.abs(n), 5)));
+  }, []);
+
   const onResize = (cols: number, rows: number) => {
     sizeRef.current = { cols, rows };
     requestAnimationFrame(follow);
@@ -416,12 +463,21 @@ export function TerminalPane({
           announceOutput
           scrollbackLines={SCROLLBACK_LINES}
           aria-label="Agent terminal"
+          data-alt-screen={altScreen ? "" : undefined}
           onReady={(wt) => {
+            wtRef.current = wt;
             paneEl.current = wt.element;
             const el = wt.element;
+            // Capture on the wrapper runs before wterm's wheel handler on the pane itself.
+            el.parentElement?.addEventListener("wheel", onAltWheel, { capture: true, passive: false });
             el.addEventListener(
               "scroll",
               () => {
+                // A full-screen app has no history to scroll to: stay on its screen.
+                if (altRef.current) {
+                  if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
+                  return;
+                }
                 const up = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
                 followRef.current = !up;
                 setScrolledUp(up);
@@ -441,7 +497,7 @@ export function TerminalPane({
           onResize={onResize}
           onClipboardWrite={setCopied}
         />
-        {scrolledUp ? (
+        {scrolledUp && !altScreen ? (
           <Button
             type="button"
             variant="outline"

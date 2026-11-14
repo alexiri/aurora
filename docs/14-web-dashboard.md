@@ -1212,7 +1212,12 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     least 18 rem, otherwise the viewport minus the page chrome; 60 % of the viewport below
     768 px), so `autoResize` derives a fixed grid and output scrolls inside the pane's
     scrollback (5,000 lines), never by growing the page. The view follows the cursor; once the
-    person has scrolled up it stays put and a **Jump to latest** button appears. **Keyboard:** Tab
+    person has scrolled up it stays put and a **Jump to latest** button appears. (Owner
+    2026-11-14) While a full-screen app (`claude`, `vim`, `less`: the alternate screen) runs, the
+    pane is pinned to the app's screen and does not scroll (that screen has no history, though
+    the shell's history is still rendered above it) and Jump to latest is hidden; the wheel goes
+    to the app — as mouse reports when it asked for them, otherwise as up/down arrow keys
+    (alternate scroll, as Ghostty and xterm do). **Keyboard:** Tab
     belongs to the shell (completion); Esc, then Tab (within 1.5 s) leaves the terminal for the
     next control and says "Left the terminal." (WCAG 2.1.2); the page says so beside the pane.
     **Open in new window** (`window.open`, `noopener,noreferrer`) opens

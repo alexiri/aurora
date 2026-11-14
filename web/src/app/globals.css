@@ -290,6 +290,11 @@ a {
   }
 }
 
+/* (Owner 2026-11-14) A full-screen app (alternate screen) has no scrollback: the pane stays pinned to its screen. */
+.wterm.term-pane[data-alt-screen] {
+  overflow-y: hidden;
+}
+
 /* The standalone terminal window (`…/agents/<agent>/terminal`): the pane fills the viewport below its title bar. */
 .wterm.term-pane.term-pane-window {
   height: calc(100dvh - 11rem);
