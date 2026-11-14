@@ -166,6 +166,7 @@ pub async fn open(
         window: PREVIEW_STREAM_WINDOW as u32,
         idle_secs: PREVIEW_WS_IDLE_TIMEOUT.as_secs() as u32,
         max_lifetime_secs: PREVIEW_STREAM_LIFETIME.as_secs() as u32,
+        shell: None,
     })
 }
 

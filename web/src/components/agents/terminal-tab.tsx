@@ -21,7 +21,19 @@ import "@wterm/react/css";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
+import { Segmented } from "@/components/ui/segmented";
 import { useSandbox } from "@/lib/api/conversations";
+
+/** (FIX-138, D-246) The shell the next session starts: bash (default) or zsh, remembered per browser and agent. */
+type Shell = "bash" | "zsh";
+const shellKey = (agentId: string) => `aurora.terminal.shell.${agentId}`;
+function readShell(agentId: string): Shell {
+  try {
+    return window.localStorage.getItem(shellKey(agentId)) === "zsh" ? "zsh" : "bash";
+  } catch {
+    return "bash";
+  }
+}
 
 // The vendored, version-named Ghostty WASM (sha256 recorded in scripts/guards/ghostty-wasm.sha256) (`web/public`, served same-origin as
 // `application/wasm`; the CSP's `'wasm-unsafe-eval'` in script-src is what lets it compile —
@@ -196,6 +208,11 @@ export function TerminalPane({
   // The latest measured grid: a reconnect re-opens at the current size, and the first
   // `pty.resize` rides the freshly opened socket.
   const sizeRef = useRef({ cols: 80, rows: 24 });
+  // The shell choice (bash when localStorage is unavailable, e.g. during SSR; the pane renders only after the client-side
+  // core load, so nothing of it is hydrated). Applied to the next session only — the open one keeps running, so changing
+  // it never re-runs the socket effect (a ref feeds the next connect).
+  const [shell, setShell] = useState<Shell>(() => readShell(agentId));
+  const shellRef = useRef<Shell>(shell);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const paused = frozen;
@@ -219,7 +236,8 @@ export function TerminalPane({
           ? { kind: "connecting" }
           : { kind: "reconnecting", attempt: attemptRef.current, max: wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS },
       );
-      ws = new WebSocket(`/v1/agents/${agentId}/terminal`);
+      // bash is the server's default, so only zsh names itself (`?shell=` is an enumeration, 422 otherwise).
+      ws = new WebSocket(`/v1/agents/${agentId}/terminal${shellRef.current === "zsh" ? "?shell=zsh" : ""}`);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
@@ -328,6 +346,26 @@ export function TerminalPane({
 
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Segmented<Shell>
+          label="Shell"
+          value={shell}
+          options={[
+            { value: "bash", label: "bash" },
+            { value: "zsh", label: "zsh" },
+          ]}
+          onChange={(s) => {
+            shellRef.current = s;
+            setShell(s);
+            try {
+              window.localStorage.setItem(shellKey(agentId), s);
+            } catch {
+              // Not remembered; the choice still applies to the next session in this tab.
+            }
+          }}
+        />
+        <span className="text-xs text-muted">Applies to the next session (Reconnect or open a new terminal).</span>
+      </div>
       {status ? (
         <Notice tone="pending" role="status" aria-live="polite">
           {status}

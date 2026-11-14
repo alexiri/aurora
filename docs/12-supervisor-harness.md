@@ -545,9 +545,16 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
 
 ### Terminal (phase 4, P4-TERM, D-161; wire in `16 §W19`)
 
-- On `pty.open { pty_id, window, cols, rows }` from its channel — which only the runner sends,
+- On `pty.open { pty_id, window, cols, rows, shell? }` from its channel — which only the runner sends,
   and only for an API-redeemed terminal grant of the current boot — the supervisor spawns the
-  image's shell (`/bin/sh`, or `$SHELL` if set) under a pseudo-terminal as the agent user
+  person's chosen shell under a pseudo-terminal as the agent user (FIX-138, D-246: `shell` is
+  the enumeration `bash` (default, also when absent) or `zsh`, never a path; the supervisor maps
+  it to the fixed binaries `/bin/bash` and `/usr/bin/zsh` and starts them as an interactive
+  **login** shell, `-l`. A missing zsh falls back to bash; a missing bash — or neither — to
+  `/bin/sh` without `-l`; each fallback prints one line in the pane ("zsh is not installed in
+  this sandbox image; starting bash instead." / "bash and zsh are not installed in this sandbox
+  image; starting sh (no completion or history)."). `$SHELL` of the supervisor is no longer
+  consulted; the PTY's `SHELL` is the chosen binary)
   (uid/gid as the process manager uses), cwd `/workspace`, own session with the
   pseudo-terminal as its controlling terminal (job control works); the supervisor opens both
   ends with `O_NOCTTY` and never acquires a terminal itself (it is PID 1 and a session leader
@@ -557,6 +564,17 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   variable** and minus the boot document: no platform credential, no token, no supervisor
   handle ever appears in a terminal's environment (SEC-01/SEC-34 posture) — the shell has
   exactly the privilege a `process_start` command already has, in a PTY.
+- **`PATH` and interactive defaults (FIX-138).** One `PATH` for both shells, a turn and the
+  terminal: `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin` (the image's
+  `ENV PATH`, `/etc/profile.d/aurora.sh` for bash login shells, `/etc/zsh/zshenv` for zsh, the PTY
+  spawn's environment and the supervisor's spawn default `spawn::IMAGE_PATH`). `/opt/aurora/bin`
+  is the directory reserved for the `claude` and `codex` wrappers (not yet built, below). System-wide **interactive** defaults (aliases `ls`,
+  `ll`, `la`, `l`, `grep`, colours, a prompt `user@<agent handle>:cwd`, history size and
+  de-duplication, zsh `compinit`) live only in the image's system rc files (`/etc/bashrc`,
+  `/etc/zshrc`) — not in the agent's home, so a person's own `~/.bashrc`/`~/.zshrc` still wins —
+  and are read by interactive shells only: agent turns and `bash -c` never see the aliases.
+  *Open (not built in this part):* the harness wrappers' gateway wiring and separate harness state
+  (`CLAUDE_CONFIG_DIR`/`CODEX_HOME` under `/workspace/.aurora/terminal/…`), brief item 1b.
 - `pty.resize { cols, rows }` applies `TIOCSWINSZ`; bytes are relayed with the W18 credit
   machinery (`16 §W19`, tag `0x02`), never logged, never counted beyond byte totals, never
   visible to the harness, the gateway or the loopback proxies. A terminal session is **not**

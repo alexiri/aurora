@@ -3,7 +3,8 @@
 //!
 //! The supervisor accepts `pty.open { pty_id, window, cols, rows }` only for a boot document
 //! that carries the `terminal` capability (the operator's `terminal.enabled`, C-623), spawns
-//! the image shell (`/bin/sh`, or `$SHELL` if set) under a pseudo-terminal as the agent user
+//! the person's chosen shell (FIX-138: bash or zsh as a login shell, fixed paths; `/bin/sh`
+//! only as a last-resort fallback with a notice) under a pseudo-terminal as the agent user
 //! (uid/gid as the process manager uses, only when the supervisor itself is root), cwd
 //! `/workspace`, own process group, and answers `pty.opened` / `pty.refused`. The environment
 //! is the container environment minus every `AURORA_*` variable and minus the boot document
@@ -22,7 +23,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
 
 use aurora_core::limits::{TERMINAL_CHUNK, TERMINAL_STREAM_WINDOW, TERMINALS_PER_SANDBOX};
-use aurora_protocol::runner::{PtyCloseReason, PtyRefuseReason};
+use aurora_protocol::runner::{PtyCloseReason, PtyRefuseReason, PtyShell};
 use aurora_protocol::supervisor::SupervisorToRunner;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -36,12 +37,60 @@ use crate::streams::{ClosedIds, Credit, DATA_QUEUE, Violations};
 /// alive (FIX-091).
 const KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// The shell the PTY runs: the image's `$SHELL` when set and plausible, else `/bin/sh`
-/// (`12 §Terminal`).
-fn shell_of() -> String {
-    match std::env::var("SHELL") {
-        Ok(s) if s.starts_with('/') && !s.contains("..") => s,
-        _ => "/bin/sh".to_owned(),
+/// The fixed shell binaries (FIX-138, `12 §Terminal`): the person's enumerated choice is mapped
+/// to one of these, never to a path from the wire. A parameter of the engine so tests can
+/// point at stand-ins.
+#[derive(Debug, Clone)]
+pub struct ShellPaths {
+    pub bash: std::path::PathBuf,
+    pub zsh: std::path::PathBuf,
+    pub sh: std::path::PathBuf,
+}
+
+impl Default for ShellPaths {
+    fn default() -> Self {
+        Self {
+            bash: "/bin/bash".into(),
+            zsh: "/usr/bin/zsh".into(),
+            sh: "/bin/sh".into(),
+        }
+    }
+}
+
+/// What one PTY executes: the binary, its arguments and an optional one-line notice for the
+/// pane (a fallback happened).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedShell {
+    pub program: std::path::PathBuf,
+    pub args: Vec<String>,
+    pub notice: Option<&'static str>,
+}
+
+impl ShellPaths {
+    /// The choice → binary: bash and zsh run as interactive **login** shells (`-l`); zsh missing
+    /// falls back to bash, bash (or both) missing falls back to `sh` — each with a notice.
+    pub fn resolve(&self, choice: PtyShell) -> ResolvedShell {
+        let have = |p: &std::path::Path| p.is_file();
+        let login = |p: &std::path::Path, notice| ResolvedShell {
+            program: p.to_path_buf(),
+            args: vec!["-l".to_owned()],
+            notice,
+        };
+        match choice {
+            PtyShell::Zsh if have(&self.zsh) => login(&self.zsh, None),
+            PtyShell::Zsh if have(&self.bash) => login(
+                &self.bash,
+                Some("zsh is not installed in this sandbox image; starting bash instead."),
+            ),
+            PtyShell::Bash if have(&self.bash) => login(&self.bash, None),
+            _ => ResolvedShell {
+                program: self.sh.clone(),
+                args: Vec::new(),
+                notice: Some(
+                    "bash and zsh are not installed in this sandbox image; starting sh (no completion or history).",
+                ),
+            },
+        }
     }
 }
 
@@ -185,7 +234,7 @@ pub struct PtyEngine {
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
     task_rx: mpsc::UnboundedReceiver<TaskMsg>,
     task_tx: mpsc::UnboundedSender<TaskMsg>,
-    shell: String,
+    shells: ShellPaths,
     /// The boot document's `terminal` capability (`12 §Terminal`).
     enabled: bool,
     uid: Option<u32>,
@@ -218,6 +267,18 @@ impl PtyEngine {
         cwd: std::path::PathBuf,
         bootstrap: std::path::PathBuf,
     ) -> Arc<PtyHandle> {
+        Self::spawn_with_shells(ends, enabled, uid, cwd, bootstrap, ShellPaths::default())
+    }
+
+    /// [`Self::spawn`] with explicit shell binaries (tests point them at stand-ins).
+    pub fn spawn_with_shells(
+        ends: channel::PtyEnds,
+        enabled: bool,
+        uid: Option<u32>,
+        cwd: std::path::PathBuf,
+        bootstrap: std::path::PathBuf,
+        shells: ShellPaths,
+    ) -> Arc<PtyHandle> {
         let channel::PtyEnds {
             sender,
             inbound,
@@ -232,7 +293,7 @@ impl PtyEngine {
             cmd_rx,
             task_rx,
             task_tx: task_tx.clone(),
-            shell: shell_of(),
+            shells,
             enabled,
             uid,
             cwd,
@@ -363,8 +424,9 @@ impl PtyEngine {
             self.refuse(o.pty_id, PtyRefuseReason::Limit).await;
             return;
         }
+        let resolved = self.shells.resolve(o.shell);
         let pty = match PtySession::spawn(
-            &self.shell,
+            &resolved,
             self.uid,
             &self.cwd,
             &self.bootstrap,
@@ -562,7 +624,7 @@ impl PtySession {
     /// control`). The bootstrap makes its own session, takes the slave as its controlling
     /// terminal and execs the shell in-process, so the shell *is* the session leader.
     fn spawn(
-        shell: &str,
+        shell: &ResolvedShell,
         uid: Option<u32>,
         cwd: &std::path::Path,
         bootstrap: &std::path::Path,
@@ -604,6 +666,9 @@ impl PtySession {
         let extra = [
             ("TERM", "xterm-256color".to_owned()),
             ("COLORTERM", "truecolor".to_owned()),
+            // (FIX-138) The one image `PATH` (harness wrappers included) and the chosen shell.
+            ("PATH", crate::spawn::IMAGE_PATH.to_owned()),
+            ("SHELL", shell.program.to_string_lossy().into_owned()),
         ];
         let mut cmd = crate::spawn::tokio_command(bootstrap, extra);
         for (k, _) in std::env::vars_os() {
@@ -611,8 +676,12 @@ impl PtySession {
                 cmd.env_remove(&k);
             }
         }
-        cmd.arg(crate::pty_exec::SUBCOMMAND)
-            .arg(shell)
+        cmd.arg(crate::pty_exec::SUBCOMMAND);
+        if let Some(n) = shell.notice {
+            cmd.arg("--notice").arg(n);
+        }
+        cmd.arg(&shell.program)
+            .args(&shell.args)
             .stdin(std::process::Stdio::from(slave.try_clone()?))
             .stdout(std::process::Stdio::from(slave.try_clone()?))
             .stderr(std::process::Stdio::from(slave))

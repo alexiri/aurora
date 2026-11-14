@@ -585,6 +585,86 @@ async fn terminal_keep_awake_requires_the_runner_credential() {
     assert_eq!(s.as_u16(), 401, "{v}");
 }
 
+// ---------------------------------------------------------------- shell choice (FIX-138)
+
+/// `?shell=` is an enumeration: `bash`/`zsh` pass, anything else (a path, another shell, an
+/// empty value) is 422 `invalid_shell` before any grant exists; the accepted value is stored
+/// on the grant row (it reaches the runner through the redemption answer, tested below).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shell_query_accepts_only_bash_or_zsh() {
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    let (agent, _sb, _boot) = sandbox_on(&r, "shell-sb", "running").await;
+    for bad in ["fish", "%2Fbin%2Fsh", "", "ZSH", "bash%20-c"] {
+        let s = served::status(
+            &url,
+            &r.cookie,
+            &format!("/v1/agents/{agent}/terminal?shell={bad}"),
+            ORIGIN,
+        )
+        .await;
+        assert_eq!(s, 422, "shell={bad:?}");
+    }
+    assert!(
+        r.grant_rows(agent).await.is_empty(),
+        "no grant for a bad shell"
+    );
+    for (q, want) in [("?shell=zsh", "zsh"), ("?shell=bash", "bash"), ("", "bash")] {
+        sqlx::query("DELETE FROM terminal_stream_grants WHERE agent_id = $1")
+            .bind(agent)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        // The runner endpoint does not resolve in the test host: 502 after the mint.
+        let s = served::status(
+            &url,
+            &r.cookie,
+            &format!("/v1/agents/{agent}/terminal{q}"),
+            ORIGIN,
+        )
+        .await;
+        assert_eq!(s, 502, "{q}");
+        let shell: String =
+            sqlx::query_scalar("SELECT shell FROM terminal_stream_grants WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_one(r.h.pool())
+                .await
+                .unwrap();
+        assert_eq!(shell, want, "{q}");
+    }
+}
+
+/// The redemption answer carries the grant's shell (the runner's `pty.open.shell`).
+#[tokio::test]
+async fn redemption_answer_carries_the_chosen_shell() {
+    let r = term_rig().await;
+    let (agent, sb, boot) = sandbox_on(&r, "redeem-shell", "running").await;
+    let replica: Uuid = sqlx::query_scalar("SELECT id FROM runner_replicas LIMIT 1")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    for shell in ["zsh", "bash"] {
+        let grant = token::generate(TokenPrefix::TerminalStream);
+        sqlx::query(
+            "INSERT INTO terminal_stream_grants (id, agent_id, sandbox_id, boot_id, granted_by, grant_hash, expires_at, shell) \
+             VALUES ($1,$2,$3,$4,$5,$6, now() + interval '30 seconds', $7)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(agent)
+        .bind(sb)
+        .bind(boot)
+        .bind(Uuid::now_v7())
+        .bind(hex(&token::hash(grant.expose())))
+        .bind(shell)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+        let (s, v) = r.redeem(grant.expose(), replica).await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["shell"], json!(shell), "{v}");
+    }
+}
+
 // ---------------------------------------------------------------- redemption (C-617)
 
 /// A grant minted by hand (as the upgrade would) redeems once with `kind: "terminal"`:

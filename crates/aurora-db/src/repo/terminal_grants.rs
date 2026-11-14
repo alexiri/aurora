@@ -17,11 +17,12 @@ pub async fn insert_terminal_grant<'e, E: PgExecutor<'e>>(
     granted_by: Uuid,
     grant_hash: &str,
     expires_at: DateTime<Utc>,
+    shell: &str,
 ) -> Result<(), crate::DbError> {
     sqlx::query(
         "INSERT INTO terminal_stream_grants \
-             (id, agent_id, sandbox_id, boot_id, granted_by, grant_hash, expires_at) \
-           VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             (id, agent_id, sandbox_id, boot_id, granted_by, grant_hash, expires_at, shell) \
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(id)
     .bind(agent)
@@ -30,6 +31,7 @@ pub async fn insert_terminal_grant<'e, E: PgExecutor<'e>>(
     .bind(granted_by)
     .bind(grant_hash)
     .bind(expires_at)
+    .bind(shell)
     .execute(exec)
     .await?;
     Ok(())
@@ -44,6 +46,8 @@ pub struct TerminalGrantRow {
     pub sandbox_id: Uuid,
     pub boot_id: Uuid,
     pub granted_by: Uuid,
+    /// (FIX-138) `bash` | `zsh`.
+    pub shell: String,
 }
 
 /// Consume one grant exactly once (the CAS of `preview_stream_grants::consume_stream_grant`):
@@ -55,7 +59,7 @@ pub async fn consume_terminal_grant<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query_as(
         "UPDATE terminal_stream_grants SET consumed_at = now() \
           WHERE grant_hash = $1 AND consumed_at IS NULL AND expires_at > now() \
-          RETURNING id, agent_id, sandbox_id, boot_id, granted_by",
+          RETURNING id, agent_id, sandbox_id, boot_id, granted_by, shell",
     )
     .bind(grant_hash)
     .fetch_optional(exec)

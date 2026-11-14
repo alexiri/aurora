@@ -46,8 +46,14 @@ enum Command {
     /// TIOCSCTTY, then exec the shell); not an operator command.
     #[command(hide = true, name = "__pty-exec")]
     PtyExec {
+        /// A one-line notice printed on the pty before the shell starts (FIX-138).
+        #[arg(long)]
+        notice: Option<String>,
         /// The shell to exec (`pty_exec::run`).
         shell: String,
+        /// Its arguments (`-l`: a login shell).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 }
 
@@ -72,7 +78,11 @@ async fn main() -> ExitCode {
             .await;
             ExitCode::SUCCESS
         }
-        Command::PtyExec { shell } => aurora_supervisor::pty_exec::run(&shell),
+        Command::PtyExec {
+            notice,
+            shell,
+            args,
+        } => aurora_supervisor::pty_exec::run(&shell, &args, notice.as_deref()),
     }
 }
 

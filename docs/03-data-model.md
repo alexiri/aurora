@@ -1830,6 +1830,7 @@ their share, user or dashboard session goes; the `sessions` retention job's dele
 | grant_hash | text not null unique | SHA-256 of the `auy_` grant (the value is never stored) |
 | expires_at | timestamptz not null | `now() + TERMINAL_GRANT_TTL` (30 s) |
 | consumed_at | timestamptz null | set by the single-use compare-and-set at redemption |
+| shell | text not null default `'bash'` check `bash`/`zsh` | (FIX-138) the person's shell choice (the enumerated `?shell=`, never a path); returned by the redemption answer so the runner's `pty.open` carries it |
 | index | unique `(grant_hash)`; `(expires_at)` | redemption, pruning |
 
 No foreign keys (the rows die young, like `preview_stream_grants`); rows pruned after 24 h. The

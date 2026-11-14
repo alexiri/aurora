@@ -1209,6 +1209,12 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     also the document title) and a pane that fills the window. It is a second, independent shell
     over the same cookie, route and single-use grant as the tab; it counts against the sandbox's
     leg cap (4409 reads "The sandbox's terminal session limit was reached.").
+    (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) above the pane,
+    remembered per browser and agent (`localStorage` key `aurora.terminal.shell.<agent id>`; a
+    server-side preference would need a table for one enum). It applies to the next session — the
+    open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the
+    default and sends no query). If the image lacks the chosen shell the pane prints the
+    supervisor's one-line fallback notice (`12 §Terminal`).
   - **SSH** (phase 5, P4-SSH-1/2, D-239, C-795) — a page of the **Computer** section beside Terminal
     and Previews (`?tab=ssh`), with the same availability rule as Terminal but on `features.ssh`:
     hosted agents only, `can_use`, hidden for BYO agents and non-`can_use` callers; a frozen agent shows

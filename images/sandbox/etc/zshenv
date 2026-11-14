@@ -1,0 +1,3 @@
+# Aurora sandbox image (FIX-138): the one PATH for every zsh (login or not, interactive or not).
+# Keep identical to the image's ENV PATH, /etc/profile.d/aurora.sh and the supervisor's spawn::IMAGE_PATH.
+export PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin

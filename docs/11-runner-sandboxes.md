@@ -674,6 +674,13 @@ checksum-verified release artifact, and the image label `org.aurora.harnesses` l
 runtimes present, e.g. `claude-code,codex,fake`),
 entrypoint `/usr/local/bin/aurora-supervisor run`, user `agent` (uid 1000),
 `WORKDIR /workspace`.
+- (FIX-138, D-246) **Terminal shells and defaults**: `bash` + `bash-completion` and `zsh` are in
+  the OS layer (so every target, `sandbox-min` included, has both); `ripgrep`, `less`, `jq`,
+  `fd-find` are in the base layer. `/etc/profile.d/aurora.sh` (bash login shells) and
+  `/etc/zsh/zshenv` set the one `PATH` — `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin`,
+  also the image's `ENV PATH`; `/etc/bashrc` and `/etc/zshrc` carry the interactive defaults
+  (aliases, `LS_COLORS`, prompt, history, zsh `compinit`) — system files, never the agent's home
+  (`12 §Terminal`). `/opt/aurora/bin` exists for the harness wrappers (not built yet).
 - Durable user-space installs live in the home: `npm config prefix ~/.local`, `pip --user`, `uv tool`; `~/.local/bin` is on `PATH`.
 - No root, no sudo, no package manager usable by the agent.
 
