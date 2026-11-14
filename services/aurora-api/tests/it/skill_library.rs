@@ -153,6 +153,11 @@ impl LibraryGateway for Direct {
             .get("link")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
         let body = resp.bytes().await.unwrap().to_vec();
         if body.len() > r.max_bytes {
             return Err(GatewayError::Upstream(
@@ -162,7 +167,7 @@ impl LibraryGateway for Direct {
         Ok(FetchOk {
             status,
             link,
-            retry_after: None,
+            retry_after,
             body,
         })
     }
@@ -1920,6 +1925,7 @@ async fn refresh_runs_only_for_libraries_with_skills_under_a_lease() {
         id: lib,
         owner: r1,
         head_sha: Some("x"),
+        head_epoch: 0,
         status: "active",
         error: None,
         failures: 0,
@@ -2439,6 +2445,359 @@ async fn sec_83_a_failing_or_removed_library_leaves_pinned_skills_as_they_were()
     assert_eq!(after["projection"], before["projection"]);
     assert_eq!(after["files"], before["files"]);
     assert_eq!(after["agents"], before["agents"]);
+}
+
+/// Adds `dir` of the seeded repository at `sha` to the org tier and returns the skill id.
+async fn add_org_id(w: &W, lib: Uuid, dir: &str, sha: &str) -> Uuid {
+    let (s, v) = w.add_org(lib, dir, sha).await;
+    assert_eq!(s, 201, "{v}");
+    v["id"].as_str().unwrap().parse().unwrap()
+}
+
+/// FIX-096: an approval re-validates the stored proposal like the refresh did (SEC-83): a path
+/// with `..` or more than 50 files is a 422 and the proposal stays pending.
+#[tokio::test]
+async fn approve_revalidates_the_stored_proposal() {
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    let alpha = add_org_id(&w, lib, "alpha", &sha).await;
+    propose_v2(&w, lib).await;
+    w.refresh(lib).await;
+    let p = w.pending(alpha).await;
+    let uid = p["update"]["id"].as_str().unwrap().to_owned();
+    let hash = p["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let url = format!("/v1/skills/{alpha}/library/updates/{uid}/approve");
+    let many: Vec<Value> = (0..51)
+        .map(|i| json!({"path": format!("f{i}.txt"), "content_b64": "", "executable": false}))
+        .collect();
+    for (files, want) in [
+        (
+            json!([{"path": "a/../b", "content_b64": "eA==", "executable": false}]),
+            "path",
+        ),
+        (Value::Array(many), "more than 50 files"),
+        (
+            json!([{"path": "big.txt", "content_b64": "eA==", "executable": false},
+                   {"path": "big.txt", "content_b64": "eA==", "executable": false}]),
+            "twice",
+        ),
+    ] {
+        sqlx::query(
+            "UPDATE skill_library_updates SET proposed = jsonb_set(proposed, '{files}', $2) WHERE id = $1",
+        )
+        .bind(uid.parse::<Uuid>().unwrap())
+        .bind(&files)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+        let (s, v) = w
+            .call(
+                &w.admin,
+                Method::POST,
+                &url,
+                Some(json!({"content_sha256": hash})),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (422, "library_skill_invalid"), "{v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains(want),
+            "{want}: {v}"
+        );
+    }
+    assert_eq!(w.pending(alpha).await["update"]["id"], uid);
+}
+
+/// FIX-096 (D-178 Q-R5-6): a paused library's pending proposals cannot be approved (409
+/// `library_paused`); they can still be rejected, and resuming makes them approvable again.
+#[tokio::test]
+async fn approving_a_paused_librarys_proposal_is_refused_but_rejecting_is_not() {
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    let alpha = add_org_id(&w, lib, "alpha", &sha).await;
+    propose_v2(&w, lib).await;
+    w.refresh(lib).await;
+    let p = w.pending(alpha).await;
+    let uid = p["update"]["id"].as_str().unwrap().to_owned();
+    let hash = p["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let patch = |status: &'static str| {
+        let (w, uri) = (&w, format!("/v1/skill-libraries/{lib}"));
+        async move {
+            w.call(
+                &w.admin,
+                Method::PATCH,
+                &uri,
+                Some(json!({"status": status})),
+            )
+            .await
+        }
+    };
+    assert_eq!(patch("paused").await.0, 200);
+    let approve = format!("/v1/skills/{alpha}/library/updates/{uid}/approve");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &approve,
+            Some(json!({"content_sha256": hash})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "library_paused"), "{v}");
+    assert_eq!(patch("active").await.0, 200);
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &approve,
+            Some(json!({"content_sha256": hash})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // and rejecting works while paused
+    let beta = add_org_id(&w, lib, "beta", &w.git.head("acme/skills", "main")).await;
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("beta/SKILL.md", md("Beta v2", "Beta body v2"))],
+    );
+    w.refresh(lib).await;
+    let p = w.pending(beta).await;
+    let uid = p["update"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(patch("paused").await.0, 200);
+    let (s, _) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &format!("/v1/skills/{beta}/library/updates/{uid}/reject"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+}
+
+/// FIX-096 (D-178 Q-R5-3): browse and add take only the ref's current head and heads the
+/// library recorded; a commit of another branch (unmerged, force-pushed away) is refused.
+#[tokio::test]
+async fn browse_and_add_accept_only_the_current_and_recorded_heads() {
+    let w = world().await;
+    let sha1 = w.seed();
+    let lib = w.library().await;
+    // an unmerged commit on another branch
+    let other = w.git.commit(
+        "acme/skills",
+        "feature",
+        &[put("alpha/SKILL.md", md("Alpha evil", "evil"))],
+    );
+    assert_ne!(other, sha1);
+    let content = |sha: String| {
+        let w = &w;
+        async move {
+            w.call(
+                &w.admin,
+                Method::GET,
+                &format!("/v1/skill-libraries/{lib}/skills/alpha?commit_sha={sha}"),
+                None,
+            )
+            .await
+        }
+    };
+    let (s, v) = content(other.clone()).await;
+    assert_eq!((s, code(&v)), (422, "commit_not_in_library"), "{v}");
+    let (s, v) = w.add_org(lib, "alpha", &other).await;
+    assert_eq!((s, code(&v)), (422, "commit_not_in_library"), "{v}");
+    assert_eq!(w.count("SELECT count(*) FROM skills").await, 0);
+    // the recorded head (taken at create) is accepted even after the head moved
+    let sha2 = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("alpha/SKILL.md", md("Alpha v2", "Alpha body v2"))],
+    );
+    let (s, v) = content(sha1.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    // the current head (never recorded before) is accepted and recorded
+    let (s, v) = content(sha2.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w.add_org(lib, "alpha", &sha2).await;
+    assert_eq!(s, 201, "{v}");
+    // a head that moved away without anything recording it is not accepted any more
+    let sha3 = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("beta/SKILL.md", md("Beta v2", "Beta body v2"))],
+    );
+    let sha4 = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("beta/SKILL.md", md("Beta v3", "Beta body v3"))],
+    );
+    let (s, v) = content(sha4).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w.add_org(lib, "beta", &sha3).await;
+    assert_eq!((s, code(&v)), (422, "commit_not_in_library"), "{v}");
+}
+
+/// FIX-096: an add of an older commit that lands between a pass's head read and its finish must
+/// not be undone by the pass writing its head back (C-577, D-154(d)): the next pass proposes.
+#[tokio::test]
+async fn an_add_of_an_older_commit_during_a_pass_is_not_undone_by_its_finish() {
+    let w = world().await;
+    let sha1 = w.seed();
+    let lib = w.library().await;
+    add_org_id(&w, lib, "alpha", &sha1).await;
+    let sha2 = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("beta/SKILL.md", md("Beta v2", "Beta body v2"))],
+    );
+    w.refresh(lib).await;
+    assert_eq!(
+        w.library_row(lib).await["last_head_sha"],
+        sha2,
+        "the pass recorded the head"
+    );
+    // a pass claims the library and reads its row …
+    sqlx::query("UPDATE skill_libraries SET next_refresh_at = now() - interval '1 second', refresh_lease_until = NULL, lease_owner = NULL WHERE id = $1")
+        .bind(lib)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let owner = Uuid::now_v7();
+    let mut c = w.h.pool().acquire().await.unwrap();
+    let mut claimed = repo::claim_due(&mut c, owner, 4, 300.0).await.unwrap();
+    assert_eq!(claimed.len(), 1);
+    // … an add of the older commit lands meanwhile (clears the head) …
+    let beta = add_org_id(&w, lib, "beta", &sha1).await;
+    assert_eq!(w.library_row(lib).await["last_head_sha"], Value::Null);
+    // … and the pass finishes at the head it read.
+    refresh::refresh_library(&w.h.state, claimed.remove(0), owner).await;
+    assert_eq!(
+        w.library_row(lib).await["last_head_sha"],
+        Value::Null,
+        "the finished pass did not write its head back over the cleared one"
+    );
+    w.refresh(lib).await;
+    assert_eq!(w.pending(beta).await["update"]["kind"], "changed");
+}
+
+/// FIX-096: two libraries of one organization refreshing together never leave more than 4 MiB
+/// of open proposals (sum and insert run under the organization's lock).
+#[tokio::test]
+async fn two_libraries_racing_the_proposal_cap_never_exceed_it() {
+    let w = world().await;
+    let big = |t: &str| md(&format!("{t} big"), &"x".repeat(20_000));
+    w.git.add_repo("acme/skills");
+    let sha = w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("alpha/SKILL.md", md("Alpha", "a")),
+            put("sub/gamma/SKILL.md", md("Gamma", "g")),
+            put("beta/SKILL.md", md("Beta", "b")),
+        ],
+    );
+    let l1 = w.library_at("one", "").await;
+    let l2 = w.library_at("two", "sub").await;
+    add_org_id(&w, l1, "alpha", &sha).await;
+    let beta = add_org_id(&w, l1, "beta", &sha).await;
+    add_org_id(&w, l2, "gamma", &sha).await;
+    // the organization already holds all but ~30 000 bytes of open proposals: one of the two
+    // new ~20 000-byte proposals fits, both do not
+    sqlx::query("INSERT INTO skill_library_updates (id, skill_id, library_id, kind, status, commit_sha, content_sha256, bytes) VALUES ($1,$2,$3,'removed','pending','x','\\x00',$4)")
+        .bind(Uuid::now_v7())
+        .bind(beta)
+        .bind(l1)
+        .bind(4_194_304_i32 - 30_000)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("alpha/SKILL.md", big("Alpha")),
+            put("sub/gamma/SKILL.md", big("Gamma")),
+        ],
+    );
+    sqlx::query("UPDATE skill_libraries SET next_refresh_at = now() - interval '1 second', refresh_lease_until = NULL, lease_owner = NULL")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(refresh::run_once(&w.h.state).await.unwrap(), 2);
+    let total: i64 = w
+        .count("SELECT COALESCE(sum(bytes), 0)::bigint FROM skill_library_updates WHERE status = 'pending'")
+        .await;
+    assert!(total <= 4_194_304, "open proposals total {total} bytes");
+    let proposed = w
+        .count("SELECT count(*) FROM skill_library_updates WHERE status = 'pending' AND kind = 'changed'")
+        .await;
+    assert_eq!(proposed, 1, "exactly one of the two fits");
+}
+
+/// FIX-096: parallel cold browses of one library cost one tree read and one read per SKILL.md.
+#[tokio::test]
+async fn parallel_cold_browses_share_one_read() {
+    let w = world().await;
+    w.seed();
+    let lib = w.library().await;
+    w.git.clear_requests();
+    let uri = format!("/v1/skill-libraries/{lib}/skills");
+    let calls = (0..8).map(|_| w.call(&w.admin, Method::GET, &uri, None));
+    for (s, v) in futures::future::join_all(calls).await {
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["items"].as_array().unwrap().len(), 2);
+    }
+    assert_eq!(w.git.count("/git/trees/"), 1, "one tree read");
+    assert_eq!(w.git.count("/git/blobs/"), 2, "one read per SKILL.md");
+    assert_eq!(w.git.count("/commits/"), 1, "one ref resolution");
+}
+
+/// A gateway whose git host always answers 429 with `Retry-After: 120`.
+struct Throttle;
+
+#[async_trait]
+impl LibraryGateway for Throttle {
+    async fn fetch(&self, _r: &FetchRequest) -> Result<FetchOk, GatewayError> {
+        Ok(FetchOk {
+            status: 429,
+            link: None,
+            retry_after: Some("120".into()),
+            body: Vec::new(),
+        })
+    }
+}
+
+/// FIX-096: a git-host 429 is not a failure of the library: no failure counted, no `error`
+/// status, and the next attempt comes after the host's `Retry-After`.
+#[tokio::test]
+async fn git_host_throttling_is_not_a_failure_and_honours_retry_after() {
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    add_org_id(&w, lib, "alpha", &sha).await;
+    let throttled = w.h.state.clone().with_library_gateway(Arc::new(Throttle));
+    for _ in 0..3 {
+        sqlx::query("UPDATE skill_libraries SET next_refresh_at = now() - interval '1 second', refresh_lease_until = NULL, lease_owner = NULL WHERE id = $1")
+            .bind(lib)
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+        let owner = Uuid::now_v7();
+        let mut c = w.h.pool().acquire().await.unwrap();
+        let mut mine = repo::claim_due(&mut c, owner, 4, 300.0).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        refresh::refresh_library(&throttled, mine.remove(0), owner).await;
+    }
+    let (status, failures, ahead): (String, i32, f64) = sqlx::query_as(
+        "SELECT status, refresh_failures, extract(epoch FROM next_refresh_at - now())::float8
+         FROM skill_libraries WHERE id = $1",
+    )
+    .bind(lib)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((status.as_str(), failures), ("active", 0));
+    assert!((100.0..=130.0).contains(&ahead), "next attempt in {ahead}s");
 }
 
 #[tokio::test]

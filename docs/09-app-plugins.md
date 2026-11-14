@@ -510,7 +510,7 @@ library:                                  # optional, per app: "this app is a gi
     path: "/repos/{repo}/git/blobs/{blob}"
     content: "$.content"
     encoding: "$.encoding"                # base64 | raw (a `raw` endpoint returns the bytes themselves)
-  required_access: read                   # the connection should be read-only (the dashboard warns otherwise)
+  required_access: read                   # the only accepted value (anything else is refused by the linter); the connection should be read-only
 ```
 Optional, per app; **absent = the app cannot serve a library** (no existing package changes). The
 block is **data, not code**: three GET request templates, a ref grammar and JSON-path extractors

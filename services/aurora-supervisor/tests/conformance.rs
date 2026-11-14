@@ -334,7 +334,7 @@ async fn claude_code_live_conforms_when_enabled() {
 // real OpenAI endpoint instead.
 
 use aurora_supervisor::adapters::codex::CodexAdapter;
-use aurora_supervisor::adapters::codex::launcher::codex_bin;
+use aurora_supervisor::adapters::codex::launcher::{ProcessLauncher, codex_bin};
 
 const CODEX: Profile = Profile {
     say: "Reply with exactly the word: pong",
@@ -378,7 +378,8 @@ fn codex_opts(base: &str, case: &str, resume: Option<String>) -> SessionOptions 
 
 #[tokio::test]
 async fn codex_conforms_against_the_mock_responses_upstream() {
-    let bin = codex_bin();
+    // The test (not the release supervisor) may point at another binary.
+    let bin = std::env::var_os("AURORA_CODEX_BIN").map_or_else(codex_bin, Into::into);
     if !bin.exists() {
         eprintln!(
             "skipped: {} not installed (set AURORA_CODEX_BIN)",
@@ -391,7 +392,10 @@ async fn codex_conforms_against_the_mock_responses_upstream() {
     // Resume needs the same CODEX_HOME across sessions of one conversation.
     let shared = std::env::temp_dir().join(format!("p4-har-conf-home-{}", Uuid::now_v7()));
     std::fs::create_dir_all(&shared).unwrap();
-    let adapter = CodexAdapter::default().codex_home(shared.join(".codex"));
+    let adapter = CodexAdapter::with_launcher(std::sync::Arc::new(ProcessLauncher {
+        program: bin.clone(),
+    }))
+    .codex_home(shared.join(".codex"));
     let mk = move |case: &str, resume: Option<String>| codex_opts(&base, case, resume);
     suite_with(&adapter, &CODEX, &mk).await;
 

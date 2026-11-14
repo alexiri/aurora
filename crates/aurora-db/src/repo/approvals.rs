@@ -463,7 +463,9 @@ pub async fn abandon_pending_depending_on(
         }
     };
     for (id, ws) in &rows {
-        notify_tx(&mut *tx, *id, *ws, "expired").await?;
+        // The event follows the status (docs/05 `aurora_approval`): `abandoned`, as on the
+        // freeze path (FIX-122).
+        notify_tx(&mut *tx, *id, *ws, "abandoned").await?;
     }
     Ok(rows)
 }
@@ -502,7 +504,7 @@ pub async fn abandon_unseen(pool: &PgPool, unseen_secs: f64) -> Result<Vec<(Uuid
     .fetch_all(&mut *tx)
     .await?;
     for (id, ws) in &rows {
-        notify_tx(&mut tx, *id, *ws, "expired").await?;
+        notify_tx(&mut tx, *id, *ws, "abandoned").await?;
     }
     tx.commit().await?;
     Ok(rows)

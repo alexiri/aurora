@@ -64,7 +64,7 @@ fn bad(path: &str, msg: &str) -> ApiError {
 pub fn read_failure(e: &ReadError) -> ApiError {
     match e {
         ReadError::TreeTooLarge => ApiError::unprocessable("library_tree_too_large", e.reason()),
-        ReadError::Unreachable(_) => ApiError::bad_gateway(
+        ReadError::Unreachable(_) | ReadError::Throttled(_) => ApiError::bad_gateway(
             "library_unavailable",
             format!(
                 "The repository could not be read: {}.",
@@ -258,6 +258,7 @@ pub async fn create(
         ),
         e => e.into(),
     })?;
+    repo::record_head(&mut tx, row.id, &head).await?;
     let ev = AuditEvent::new(
         AuditActor::from_caller(caller),
         "skill_library.create",
@@ -434,6 +435,9 @@ pub async fn patch(
             ),
             e => e.into(),
         })?;
+    if let Some(h) = p.head_sha {
+        repo::record_head(&mut tx, id, h).await?;
+    }
     let ev = AuditEvent::new(
         AuditActor::from_caller(caller),
         "skill_library.update",
@@ -518,15 +522,80 @@ fn fingerprint(row: &LibraryRow) -> String {
 
 /// The catalogue of the library's current head (cached 5 minutes in memory; nothing is stored).
 pub async fn listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>, ApiError> {
+    if let Some(l) = cached_listing(&state.library, row) {
+        return Ok(l);
+    }
+    // (FIX-096) One cold read per library at a time, under a deadline: twenty members opening
+    // the picker cost one tree read and one read per SKILL.md, not twenty times that.
+    let flight = state.library.flight(row.id);
+    let cold = async {
+        let _turn = flight.lock().await;
+        if let Some(l) = cached_listing(&state.library, row) {
+            return Ok(l);
+        }
+        read_listing(state, row).await
+    };
+    match tokio::time::timeout(BROWSE_DEADLINE, cold).await {
+        Ok(r) => r,
+        Err(_) => Err(ApiError::bad_gateway(
+            "library_unavailable",
+            "The repository could not be read: the git host did not answer in time.",
+        )),
+    }
+}
+
+/// How long a browse may take (reading the tree and up to 200 `SKILL.md` files).
+const BROWSE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+
+async fn record_head(state: &AppState, library: Uuid, sha: &str) -> Result<(), ApiError> {
+    let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+    repo::record_head(&mut c, library, sha).await?;
+    Ok(())
+}
+
+/// (D-178 Q-R5-3) Browse and add accept only the ref's current head and heads this library has
+/// recorded (refresh, browse, create): not a force-pushed or unmerged commit, nor one that only
+/// another repository of the fork network holds. Unknown ids answer 422 `commit_not_in_library`.
+async fn ensure_known_commit(
+    state: &AppState,
+    row: &LibraryRow,
+    reader: &Reader<'_>,
+    commit: &str,
+) -> Result<(), ApiError> {
+    if cached_listing(&state.library, row).is_some_and(|l| l.commit_sha == commit) {
+        return Ok(());
+    }
+    {
+        let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+        if repo::is_recorded_head(&mut c, row.id, commit).await? {
+            return Ok(());
+        }
+    }
+    let head = reader
+        .resolve(row.reference.as_deref())
+        .await
+        .map_err(|e| read_failure(&e))?;
+    record_head(state, row.id, &head).await?;
+    if head == commit {
+        return Ok(());
+    }
+    Err(ApiError::unprocessable(
+        "commit_not_in_library",
+        "This commit is neither the library's current head nor one it has recorded; browse the library again and use the commit it shows.",
+    ))
+}
+
+fn cached_listing(env: &LibraryEnv, row: &LibraryRow) -> Option<Arc<Listing>> {
+    let fp = fingerprint(row);
+    let c = env.cache.lock().ok()?;
+    let e = c.get(&row.id)?;
+    (e.fingerprint == fp && e.at.elapsed() < limits::LIBRARY_BROWSE_CACHE)
+        .then(|| e.listing.clone())
+}
+
+async fn read_listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>, ApiError> {
     let env: &LibraryEnv = &state.library;
     let fp = fingerprint(row);
-    if let Ok(c) = env.cache.lock()
-        && let Some(e) = c.get(&row.id)
-        && e.fingerprint == fp
-        && e.at.elapsed() < limits::LIBRARY_BROWSE_CACHE
-    {
-        return Ok(e.listing.clone());
-    }
     let (block, conn) = read_ctx(state, row).await?;
     let reader = Reader {
         gw: env.gateway.as_ref(),
@@ -539,6 +608,7 @@ pub async fn listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>,
         .resolve(row.reference.as_deref())
         .await
         .map_err(|e| read_failure(&e))?;
+    record_head(state, row.id, &sha).await?;
     let entries = reader.tree(&sha).await.map_err(|e| read_failure(&e))?;
     let cands = content::assemble(&block, &row.path, &entries);
     let truncated = cands.len() > limits::LIBRARY_BROWSE_MAX;
@@ -617,6 +687,7 @@ pub async fn load_for_add(
         conn,
         repo: &row.repo,
     };
+    ensure_known_commit(state, row, &reader, commit).await?;
     let entries = reader.tree(commit).await.map_err(|e| read_failure(&e))?;
     let cands = content::assemble(&block, &row.path, &entries);
     let Some(c) = cands.iter().find(|c| c.dir == dir) else {
@@ -648,12 +719,17 @@ pub async fn skill_content(
         Some(c) => {
             library::check_hex_id(c, "sha")
                 .map_err(|_| bad("/commit_sha", "a full commit id (40 to 64 hex characters)"))?;
+            ensure_known_commit(state, row, &reader, c).await?;
             c.to_owned()
         }
-        None => reader
-            .resolve(row.reference.as_deref())
-            .await
-            .map_err(|e| read_failure(&e))?,
+        None => {
+            let head = reader
+                .resolve(row.reference.as_deref())
+                .await
+                .map_err(|e| read_failure(&e))?;
+            record_head(state, row.id, &head).await?;
+            head
+        }
     };
     let entries = reader.tree(&sha).await.map_err(|e| read_failure(&e))?;
     let cands = content::assemble(&block, &row.path, &entries);

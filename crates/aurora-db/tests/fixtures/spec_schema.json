@@ -761,6 +761,8 @@
       "installation_fingerprint",
       "last_registered_at",
       "name",
+      "previous_token_expires_at",
+      "previous_token_hash",
       "token_hash"
     ],
     "runtime_daily": [
@@ -936,6 +938,7 @@
       "check_requested_at",
       "connection_id",
       "created_by_user_id",
+      "head_epoch",
       "id",
       "label",
       "last_error",
@@ -950,6 +953,11 @@
       "refresh_lease_until",
       "repo",
       "status"
+    ],
+    "skill_library_heads": [
+      "commit_sha",
+      "library_id",
+      "seen_at"
     ],
     "skill_library_updates": [
       "bytes",
@@ -1935,6 +1943,8 @@
       "installation_fingerprint": "text not null",
       "last_registered_at": "timestamptz null",
       "name": "text not null",
+      "previous_token_expires_at": "timestamptz null",
+      "previous_token_hash": "bytea null",
       "token_hash": "bytea"
     },
     "runtime_daily": {
@@ -2110,6 +2120,7 @@
       "check_requested_at": "timestamptz null",
       "connection_id": "uuid null",
       "created_by_user_id": "uuid null",
+      "head_epoch": "integer not null",
       "id": "uuid not null",
       "label": "text not null",
       "last_error": "text null",
@@ -2124,6 +2135,11 @@
       "refresh_lease_until": "timestamptz null",
       "repo": "text not null",
       "status": "text not null"
+    },
+    "skill_library_heads": {
+      "commit_sha": "text",
+      "library_id": "uuid",
+      "seen_at": "timestamptz not null"
     },
     "skill_library_updates": {
       "bytes": "integer not null",

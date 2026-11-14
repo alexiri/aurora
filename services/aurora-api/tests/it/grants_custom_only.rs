@@ -394,11 +394,24 @@ async fn writers_that_remove_access_abandon_exactly_the_dependent_pending_approv
     let other_agent = pend(&w, gw, w.agent2, w.ws, Some(conn)).await;
     let secret_hold = pend(&w, gw, w.agent, w.ws, None).await;
     let narrow = json!({"mode": "custom", "allow_tools": ["get_item"]});
+    let mut l = PgListener::connect_with(w.h.pool()).await.unwrap();
+    l.listen("aurora_approval").await.unwrap();
     let (s, v) = w
         .call(Method::PUT, &w.put(w.agent, conn), Some(narrow))
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(status_of(w.h, held).await, "abandoned");
+    // (FIX-122) The stream/wake event of a revocation-abandoned approval is `abandoned`, the
+    // name the freeze path uses.
+    let mut event = None;
+    while let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_secs(2), l.recv()).await {
+        let p: Value = serde_json::from_str(n.payload()).unwrap();
+        if p["id"] == json!(held) {
+            event = p["event"].as_str().map(str::to_owned);
+            break;
+        }
+    }
+    assert_eq!(event.as_deref(), Some("abandoned"));
     assert_eq!(status_of(w.h, same_agent_other_conn).await, "pending");
     assert_eq!(status_of(w.h, other_agent).await, "pending");
     assert_eq!(status_of(w.h, secret_hold).await, "pending");

@@ -62,6 +62,11 @@ fn unwrap_shell(cmd: &str) -> &str {
     cmd
 }
 
+/// A Codex thread id is a canonical hyphenated UUID.
+pub fn is_thread_id(id: &str) -> bool {
+    id.len() == 36 && uuid::Uuid::parse_str(id).is_ok()
+}
+
 impl StreamMapper {
     pub fn new() -> Self {
         Self::default()
@@ -74,12 +79,25 @@ impl StreamMapper {
 
     pub fn map_line(&mut self, line: &str) -> Mapped {
         let mut out = Mapped::default();
+        if line == super::launcher::OVERLONG_LINE {
+            out.terminal = Some(HarnessEvent::Error {
+                code: "harness_failed".into(),
+                message: "codex produced an output line over the size limit".into(),
+            });
+            return out;
+        }
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return out;
         };
         match v.get("type").and_then(Value::as_str) {
             Some("thread.started") => {
-                if let Some(id) = v.get("thread_id").and_then(Value::as_str) {
+                // The id names rollout files and becomes an argv word: only a thread-id shaped
+                // value (a UUID) is kept, anything else is ignored (FIX-095).
+                if let Some(id) = v
+                    .get("thread_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| is_thread_id(id))
+                {
                     out.events.push(HarnessEvent::SessionRef {
                         session_ref: id.to_owned(),
                     });

@@ -143,6 +143,12 @@ pub enum ManagedKind {
     SecretValue,
     ConnectionCredentials,
     OauthClientSecret,
+    /// (FIX-122) A webhook's signing/bearer secret; owner = the webhook id.
+    WebhookVerification,
+    /// (FIX-122) A channel integration's platform credentials; owner = the integration id.
+    IntegrationCredentials,
+    /// (FIX-122) A dedicated presence's platform credentials; owner = the presence id.
+    PresenceCredentials,
 }
 
 /// A managed secret value that is about to lose its owning row: collected before the delete,
@@ -197,6 +203,84 @@ pub async fn managed_refs(
                 }),
         );
     }
+    out.extend(agent_owned_refs(&mut *conn, org, workspace, None).await?);
+    if workspace.is_none() {
+        // Integrations belong to the org (a workspace delete leaves them).
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, credentials_ref FROM channel_integrations WHERE org_id = $1 ORDER BY id",
+        )
+        .bind(org)
+        .fetch_all(&mut *conn)
+        .await?;
+        out.extend(rows.into_iter().map(|(owner_id, value_ref)| ManagedRef {
+            kind: ManagedKind::IntegrationCredentials,
+            owner_id,
+            org_id: Some(org),
+            workspace_id: None,
+            value_ref,
+        }));
+    }
+    Ok(out)
+}
+
+/// (FIX-122) The webhook secrets and dedicated-presence credentials of the agents of a scope
+/// (`org`, optionally one `workspace`, optionally one `agent`): their rows go with the agent,
+/// so the stored values must be discarded after the commit. Call inside the deleting
+/// transaction, before the delete.
+pub async fn agent_owned_refs(
+    conn: &mut PgConnection,
+    org: Uuid,
+    workspace: Option<Uuid>,
+    agent: Option<Uuid>,
+) -> Result<Vec<ManagedRef>, DbError> {
+    let mut out = Vec::new();
+    let hooks: Vec<(Uuid, Uuid, Uuid, String)> = sqlx::query_as(
+        "SELECT w.id, a.org_id, a.workspace_id, w.verification->>'secret_ref' \
+         FROM webhooks w JOIN agents a ON a.id = w.agent_id \
+         WHERE w.verification->>'secret_ref' IS NOT NULL AND a.org_id = $1 \
+           AND ($2::uuid IS NULL OR a.workspace_id = $2) AND ($3::uuid IS NULL OR a.id = $3) \
+         ORDER BY w.id",
+    )
+    .bind(org)
+    .bind(workspace)
+    .bind(agent)
+    .fetch_all(&mut *conn)
+    .await?;
+    out.extend(
+        hooks
+            .into_iter()
+            .map(|(owner_id, org_id, ws, value_ref)| ManagedRef {
+                kind: ManagedKind::WebhookVerification,
+                owner_id,
+                org_id: Some(org_id),
+                workspace_id: Some(ws),
+                value_ref,
+            }),
+    );
+    let presences: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+        "SELECT p.id, i.org_id, p.credentials_ref \
+         FROM channel_presences p JOIN agents a ON a.id = p.agent_id \
+         JOIN channel_integrations i ON i.id = p.integration_id \
+         WHERE p.credentials_ref IS NOT NULL AND a.org_id = $1 \
+           AND ($2::uuid IS NULL OR a.workspace_id = $2) AND ($3::uuid IS NULL OR a.id = $3) \
+         ORDER BY p.id",
+    )
+    .bind(org)
+    .bind(workspace)
+    .bind(agent)
+    .fetch_all(&mut *conn)
+    .await?;
+    out.extend(
+        presences
+            .into_iter()
+            .map(|(owner_id, org_id, value_ref)| ManagedRef {
+                kind: ManagedKind::PresenceCredentials,
+                owner_id,
+                org_id: Some(org_id),
+                workspace_id: None,
+                value_ref,
+            }),
+    );
     Ok(out)
 }
 

@@ -21,6 +21,9 @@ use uuid::Uuid;
 pub struct LibraryEnv {
     pub gateway: Arc<dyn gateway::LibraryGateway>,
     pub(crate) cache: Mutex<HashMap<Uuid, CachedListing>>,
+    /// One cold listing at a time per library (FIX-096): later browsers wait for the first and
+    /// then read the cache.
+    pub(crate) flights: Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
     /// Identifies this replica as the owner of refresh leases.
     pub replica: Uuid,
 }
@@ -37,6 +40,7 @@ impl LibraryEnv {
         Self {
             gateway,
             cache: Mutex::new(HashMap::new()),
+            flights: Mutex::new(HashMap::new()),
             replica: Uuid::now_v7(),
         }
     }
@@ -45,5 +49,14 @@ impl LibraryEnv {
         if let Ok(mut c) = self.cache.lock() {
             c.remove(&library);
         }
+    }
+
+    /// The single-flight lock of a library's cold listing.
+    pub(crate) fn flight(&self, library: Uuid) -> Arc<tokio::sync::Mutex<()>> {
+        let mut f = self
+            .flights
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f.entry(library).or_default().clone()
     }
 }

@@ -61,7 +61,8 @@ async fn expiry_and_abandon_transitions() {
             .await
             .unwrap();
     assert_eq!(decided, Some(true));
-    // notified `expired` for both
+    // (FIX-122) the event name follows the status: `expired` for the overdue one, `abandoned`
+    // for the orphan (the same name the freeze and dependency-revocation paths use)
     let mut n = 0;
     while n < 2 {
         if let aurora_db::bus::BusEvent::Notification { payload, .. } =
@@ -69,7 +70,13 @@ async fn expiry_and_abandon_transitions() {
                 .await
                 .unwrap()
         {
-            assert_eq!(payload["event"], "expired");
+            let want = if payload["id"] == serde_json::json!(overdue) {
+                "expired"
+            } else {
+                assert_eq!(payload["id"], serde_json::json!(orphan));
+                "abandoned"
+            };
+            assert_eq!(payload["event"], want);
             n += 1;
         }
     }
