@@ -11,8 +11,12 @@
 //! * a shared bot starts its first post in a thread, and every proactive post, with
 //!   "Agent · via Bot".
 //!
-//! Model text is untrusted: it goes out through `Content::untrusted`, so it can't carry
-//! mentions or broadcasts (formatting is escaped as a consequence).
+//! The answer is the agent's own message body: it goes out through `Content::agent_markdown`
+//! (D-226/D-227): its Markdown is kept byte for byte except the four security exceptions (no
+//! inline images, link-scheme allowlist, raw HTML allowlist, typed neutral tokens inert), and a
+//! standalone `@here` is the only broadcast. Long answers are split at Markdown block
+//! boundaries (`sanitize::markdown_chunks`). Everything else the mirror posts (failure lines,
+//! attribution, file names) is platform voice.
 
 use super::inbox::send::{self, Ctx};
 use aurora_channels::Content;
@@ -27,8 +31,10 @@ use serde_json::Value;
 use sqlx::{Connection, PgConnection};
 use std::sync::OnceLock;
 
-/// Raw characters per chunk: `markdown_as_data` can double a text, and the platform limit
-/// (`message_max_chars`) bounds the escaped result.
+/// Raw characters per chunk. `markdown_safe` and the connector's conversions (footnote notes,
+/// alert prefixes, HTML → Markdown, a reopened fence) can lengthen a piece a little, so a chunk
+/// is also capped at half the integration's `message_max_chars`: that margin, not a measured
+/// length, keeps the converted post under the platform limit.
 const CHUNK_MAX: usize = 3_500;
 
 static EXTERNAL_URL: OnceLock<String> = OnceLock::new();
@@ -179,8 +185,11 @@ async fn post_answer(
     let texts = transcript::answer_texts(&mut *conn, t.conversation_id, t.id).await?;
     let answer = texts.join("\n\n");
     let chunk_max = CHUNK_MAX.min((ctx.message_max_chars() / 2).max(200));
-    for (n, chunk) in chunks(&answer, chunk_max).into_iter().enumerate() {
-        let mut text = Content::untrusted(&chunk).text.unwrap_or_default();
+    for (n, chunk) in sanitize::markdown_chunks(&answer, chunk_max)
+        .into_iter()
+        .enumerate()
+    {
+        let mut text = Content::agent_markdown(&chunk).text.unwrap_or_default();
         if n == 0
             && let Some(a) = attribution
         {
@@ -322,46 +331,4 @@ async fn clear_receipt(
         }
     }
     Ok(())
-}
-
-/// Splits at paragraph/line/space boundaries into pieces of at most `max` characters.
-fn chunks(s: &str, max: usize) -> Vec<String> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    let mut rest = s;
-    while rest.chars().count() > max {
-        let cut_at = rest.char_indices().nth(max).map_or(rest.len(), |(i, _)| i);
-        let head = &rest[..cut_at];
-        let split = head
-            .rfind("\n\n")
-            .or_else(|| head.rfind('\n'))
-            .or_else(|| head.rfind(' '))
-            .filter(|i| *i > cut_at / 2)
-            .unwrap_or(cut_at);
-        out.push(rest[..split].trim().to_owned());
-        rest = rest[split..].trim_start();
-    }
-    if !rest.is_empty() {
-        out.push(rest.to_owned());
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::chunks;
-
-    #[test]
-    fn chunks_split_on_boundaries() {
-        assert!(chunks("  ", 10).is_empty());
-        assert_eq!(chunks("short", 10), vec!["short"]);
-        let c = chunks("aaaa bbbb cccc dddd", 9);
-        assert!(c.iter().all(|p| p.chars().count() <= 9), "{c:?}");
-        assert_eq!(c.join(" "), "aaaa bbbb cccc dddd");
-        let long = "x".repeat(25);
-        assert_eq!(chunks(&long, 10).len(), 3);
-    }
 }

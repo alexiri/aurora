@@ -98,6 +98,10 @@ pub fn mention_refs(neutral: &str) -> MentionRefs {
 pub fn render_text(neutral: &str, lk: &Lookups) -> String {
     // The marker is private to this function: text carrying it cannot forge `@here`.
     let cleaned = neutral.replace(HERE, "");
+    // (FIX-142, docs/20 §Rendering) constructs Mattermost lacks are converted first; native
+    // ones pass through byte for byte. Tokens and broadcast words are handled below, on the
+    // converted text.
+    let cleaned = crate::convert::convert(&cleaned);
     let neutral = cleaned.as_str();
     let mut out = String::with_capacity(neutral.len());
     let mut rest = neutral;
@@ -382,6 +386,23 @@ mod tests {
     fn broadcasts_are_defused_but_core_here_is_live() {
         let t = render_text("ping @channel, @all and @here now. @ALL! <@here>", &lk());
         assert_eq!(t, "ping `@channel`, `@all` and `@here` now. `@ALL`! @here");
+    }
+
+    /// (FIX-142) An agent's formatted answer reaches Mattermost as written: native constructs
+    /// byte for byte, the core's `<@here>` live, typed broadcast words defused inside bold.
+    #[test]
+    fn formatted_text_passes_through_and_broadcasts_stay_defused() {
+        let md = "**Funny:** a `insufficient_scope` code\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n";
+        assert_eq!(render_text(md, &lk()), md);
+        assert_eq!(
+            render_text("<@here> **@channel** and *@all* in `@here`", &lk()),
+            "@here **`@channel`** and *`@all`* in `@here`"
+        );
+        // Conversions and the token pass compose: an alert that mentions someone.
+        assert_eq!(
+            render_text("> [!WARNING]\n> ask <@user:u1>\n", &lk()),
+            "> ⚠️ **Warning**\n>\n> ask @alice\n"
+        );
     }
 
     #[test]

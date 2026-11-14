@@ -133,26 +133,34 @@ integration config.
   text too; code spans and fenced blocks are never altered.
 - (phase 5, FIX-142, D-227(c)) **Conversion table.** Native constructs pass
   through byte for byte; the rest is converted as below; nothing is dropped.
-  "native — verify in step 4": FIX-142 step 4 confirms the row against the
-  Mattermost docs and the dev server — `mattermost-preview` 11.7.15 pinned by
-  digest in `scripts/mattermost/setup.sh` (used by `scripts/e2e/mattermost.sh`),
-  the supported version above — and rewrites the row to what it found.
+  Implemented by `connectors/mattermost/src/convert.rs` (a pulldown-cmark offset
+  pass that edits only the ranges below, in `render_text` before the mention and
+  broadcast pass). **Verification status (FIX-142 step 4):** the conversions and
+  the byte-for-byte pass-through are tested (`convert::tests`, `render::tests`,
+  conformance `s18`); that Mattermost 11.7.15 *renders* each "native" row
+  (the pinned `mattermost-preview` image of `scripts/mattermost/setup.sh`) is **not
+  yet confirmed in a browser** — the lane that built this had neither the image nor the
+  disk/CPU headroom to run the dev server. Until it is, the "native" cells are what
+  Mattermost's formatting documentation states; the task-list row's fallback
+  (`☐` / `☑`) is specified but not implemented, to be added only if a rendered post
+  shows the checkboxes missing.
 
   | Construct | Mattermost | Conversion |
   |---|---|---|
-  | Headings, emphasis, strong, strikethrough, inline code, block quotes, rules, nested/ordered lists, hard breaks, autolinks, emoji shortcodes | native — verify in step 4 (each) | — |
-  | Tables (alignment, inline formatting in cells) | native — verify in step 4 | — (a table longer than one post: the core splits it by rows, header row repeated in each post, `13 §5.2`) |
-  | Fenced code with a language | native, highlighted — verify in step 4 | — |
-  | Task lists | verify in step 4 | if not native: `☐` / `☑` list items |
+  | Headings, emphasis, strong, strikethrough, inline code, block quotes, rules, nested/ordered lists, hard breaks, autolinks, emoji shortcodes | native | — |
+  | Tables (alignment, inline formatting in cells) | native | — (a table longer than one post: the core splits it by rows, header row repeated in each post, `13 §5.2`) |
+  | Fenced code with a language | native, highlighted | — |
+  | Task lists | native (`- [ ]` / `- [x]`, passed through); unconfirmed on the dev server | if the check below shows they do not render as checkboxes: `☐` / `☑` list items |
   | Footnotes | conversion | `[1]` at the reference, a "Notes" list at the end of the message |
   | Alerts (`> [!NOTE]` …) | conversion | block quote starting with `ℹ️ **Note**` / `💡 **Tip**` / `❗ **Important**` / `⚠️ **Warning**` / `🛑 **Caution**` |
   | Math `$$…$$`, ```` ```math ````, inline `$…$` | conversion (```` ```latex ```` blocks render when the server enables LaTeX) | ```` ```latex ```` block (renders when enabled, readable code otherwise); inline `$…$` left as is (renders when inline LaTeX is enabled) |
   | Mermaid | conversion | ```` ```mermaid ```` code block |
   | Allowlisted HTML (Mattermost renders no HTML) | conversion | `b`/`strong` → `**`, `i`/`em` → `_`, `s`/`del` → `~~`, `code`/`kbd` → `` ` ``, `br` → hard break, `hr` → `---`, `details`/`summary` → bold summary line + content, `sub`/`sup`/`ins`/`mark`/`small`/`span`/`div`/`p` → their content, HTML lists/tables → Markdown lists/tables |
-  | Link previews | the server may fetch the first URL of a post (`EnableLinkPreviews`) | **open question** (step 4): can a post suppress its preview? If yes, agent posts do; if no, one line in `docs/operator/plugins-and-connectors.md` (Mattermost) says an admin can turn previews off |
+  | Link previews | the server may fetch the first URL of a post (`EnableLinkPreviews`) | the REST API has no per-post switch we know of (not checked against the dev server), so agent posts are not suppressed; `docs/operator/plugins-and-connectors.md` (Mattermost) says an admin can turn previews off |
 
-  The dev server's `MM_*` overrides set no LaTeX option, so step 4 records the
-  server defaults for LaTeX and inline LaTeX next to the math rows.
+  LaTeX is off by default in Mattermost (`EnableLatex`, `EnableInlineLatex`); the dev
+  server's `MM_*` overrides set neither, so ```` ```latex ```` blocks and `$…$` show as
+  readable code/text there and render once an admin enables them.
 - Posts carry `props.aurora_op = <op_marker>`; when `maybe_sent` is true, the
   connector searches the last 50 posts of the target thread/channel for that
   prop before posting.

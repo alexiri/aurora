@@ -192,6 +192,13 @@ design in [docs/13 §5](../13-channels-connectors.md), screens in [docs/14](../1
 Account), make it a member of the team, and copy its access token. Optionally create a
 personal access token of a system administrator: with it Aurora can reply privately to a person
 and register `/aurora`; without it, replies to individuals arrive as direct messages.
+Agent messages keep their formatting in Mattermost (bold, code, tables, lists, quotes, code
+blocks); footnotes, alerts, math and raw HTML are converted to the nearest Mattermost form
+([docs/20 §Rendering](../20-mattermost-connector.md)). Mattermost may fetch a preview of the
+first link in a post (System Console → Site Configuration → Posts → *Enable Link Previews*);
+Aurora cannot turn that off per post, so an administrator who does not want previews of
+whatever an agent links to turns the setting off. Math renders only when an administrator
+enables *Enable Latex Rendering* / *Enable Inline Latex Rendering* (Site Configuration → Posts).
 The Mattermost server must be reachable from the connector host; a server on a private
 network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
 ([docs/20](../20-mattermost-connector.md)), and one behind a private CA needs the CA bundle

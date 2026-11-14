@@ -32,6 +32,7 @@ clap = { workspace = true }
 futures = { workspace = true }
 hmac = { workspace = true }
 percent-encoding = { workspace = true }
+pulldown-cmark = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }

@@ -1,9 +1,12 @@
 //! Neutral content `{ text?, card? }` (docs/13 §4.3).
 //!
-//! Text is a CommonMark subset. Two constructors make the voice explicit:
+//! Text is CommonMark 0.31 + GFM + github.com's additions + GitHub's raw-HTML allowlist
+//! (D-227, `13 §4.3`). Three constructors make the voice explicit:
 //! [`Content::untrusted`] turns model/user/plugin/connector text into inert
-//! data (SEC-18); [`Content::platform`] is for strings authored by the core.
-//! Only [`Content::with_here`] can introduce `<@here>`.
+//! data (SEC-18); [`Content::agent_markdown`] is an agent's own message body, which keeps
+//! its Markdown except for D-227's four security exceptions; [`Content::platform`] is for
+//! strings authored by the core. `<@here>` comes only from the core: [`Content::with_here`],
+//! or a standalone `@here` in an agent's message body ([`Content::agent_markdown`]).
 
 use aurora_core::sanitize;
 use schemars::JsonSchema;
@@ -28,6 +31,22 @@ impl Content {
     pub fn untrusted(raw: &str) -> Self {
         Self {
             text: Some(sanitize::markdown_as_data(raw, MAX_TEXT_CHARS)),
+            card: None,
+        }
+    }
+
+    /// An agent's own message body, for a chat platform (D-226, D-227): turn answers mirrored
+    /// to a thread and `send_message` text, **nothing else** (labels, names, card text, notices,
+    /// approval summaries and other people's text stay [`Content::untrusted`]). The text keeps
+    /// its Markdown byte for byte ([`sanitize::markdown_safe`]: no inline images, link schemes
+    /// `http`/`https`/`mailto`, raw HTML within GitHub's allowlist, typed neutral tokens inert);
+    /// a standalone `@here` becomes the core's `<@here>` broadcast.
+    pub fn agent_markdown(raw: &str) -> Self {
+        Self {
+            text: Some(sanitize::broadcast_here(&sanitize::markdown_safe(
+                raw,
+                MAX_TEXT_CHARS,
+            ))),
             card: None,
         }
     }
