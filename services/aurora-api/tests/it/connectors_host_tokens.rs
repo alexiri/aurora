@@ -259,22 +259,16 @@ async fn bootstrap_applies_bound_tokens_by_name_and_a_rotation_revokes_the_old_o
     let shared = token::generate(TokenPrefix::ConnectorHost).expose().clone();
     let t1 = token::generate(TokenPrefix::ConnectorHost).expose().clone();
     let t2 = token::generate(TokenPrefix::ConnectorHost).expose().clone();
-    let apply = |tok: String| {
-        let shared = shared.clone();
-        async move {
-            let h = Harness::with_config(move |c| {
-                c.bootstrap_connector_host_token = Some(aurora_config::Redacted::new(shared));
-                c.bootstrap_connector_host_tokens = vec![(
-                    "connector-host".to_owned(),
-                    aurora_config::Redacted::new(tok),
-                    vec!["alpha".to_owned()],
-                )];
-            })
-            .await;
-            h
-        }
-    };
-    let h = apply(t1.clone()).await;
+    let (s1, tok1) = (shared.clone(), t1.clone());
+    let h = Harness::with_config(move |c| {
+        c.bootstrap_connector_host_token = Some(aurora_config::Redacted::new(s1));
+        c.bootstrap_connector_host_tokens = vec![(
+            "connector-host".to_owned(),
+            aurora_config::Redacted::new(tok1),
+            vec!["alpha".to_owned()],
+        )];
+    })
+    .await;
     for _ in 0..2 {
         aurora_api::domains::connectors::bootstrap_host_token(&h.state)
             .await
@@ -313,14 +307,7 @@ async fn bootstrap_applies_bound_tokens_by_name_and_a_rotation_revokes_the_old_o
         401,
         "the shared token ends with the first bound one"
     );
-    // Rotation: same name, new token.
-    sqlx::query("UPDATE connector_host_tokens SET name = name")
-        .execute(h.pool())
-        .await
-        .unwrap();
-    let h2 = apply(t2.clone()).await;
-    // A second harness has its own database: replay the rotation on the first one instead.
-    drop(h2);
+    // Rotation: same name, new token (what the next start applies).
     let mut conn = h.pool().acquire().await.unwrap();
     aurora_db::repo::connector_hosts::upsert_bound_token(
         &mut conn,

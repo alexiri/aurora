@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
 import { fmtDate } from "@/components/account/key-table";
-import { ErrorState, Loading } from "@/components/states";
+import { Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -28,7 +28,16 @@ export function HostTokens() {
   const [secret, setSecret] = useState<{ name: string; token: string } | null>(null);
 
   if (q.isPending) return <Loading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
+  if (q.isError) {
+    return (
+      <Notice tone="danger" role="status">
+        Connector host tokens could not be loaded.{" "}
+        <Button variant="outline" onClick={() => void q.refetch()}>
+          Reload tokens
+        </Button>
+      </Notice>
+    );
+  }
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
