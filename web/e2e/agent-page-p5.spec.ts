@@ -73,6 +73,10 @@ async function serious(page: Page) {
     .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
 }
 const rail = (page: Page) => page.getByRole("complementary", { name: "Status" });
+/** The page header (the one holding the agent's h1), and the chat card (the rounded panel around the conversation list). */
+const pageHeader = (page: Page) => page.locator("header", { has: page.getByRole("heading", { level: 1 }) });
+const chatCard = (page: Page) => page.locator('nav[aria-label="Conversations"]').locator("xpath=ancestor::div[contains(@class,'rounded-card')][1]");
+const sizeOf = async (loc: ReturnType<Page["locator"]>) => (await loc.boundingBox())!;
 const fits = (page: Page) => page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight);
 
 test.describe("1280×800", () => {
@@ -160,7 +164,43 @@ test.describe("1280×800", () => {
     await open(page, "light");
     const list =page.getByRole("navigation", { name: "Conversations" });
     await expect(list.getByRole("button", { name: /Waiting on you/ })).toHaveCount(2);
+    // One line in the row (the visual review: it wrapped beside the time).
+    const line = list.getByText("Waiting on you").first();
+    expect((await sizeOf(line)).height).toBeLessThan(20);
   });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`header is one ~56 px row, the card fills the height, the expanded rail pushes the thread (${scheme})`, async ({ page }) => {
+      await page.addInitScript((k) => window.localStorage.setItem(k, "expanded"), KEY);
+      await open(page, scheme);
+      const header = pageHeader(page);
+      const h = await sizeOf(header);
+      expect(h.height, "header height").toBeLessThanOrEqual(64);
+      // Breadcrumb above the name, beside the avatar; switcher and Agent actions on the same row.
+      const crumb = await sizeOf(page.getByRole("navigation", { name: "Breadcrumb" }));
+      const name = await sizeOf(header.getByRole("heading", { level: 1 }));
+      expect(crumb.y + crumb.height, "breadcrumb sits above the name").toBeLessThanOrEqual(name.y + 2);
+      const switcher = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
+      const actions = page.getByRole("button", { name: "Agent actions" });
+      const a = await sizeOf(actions);
+      expect(Math.round(a.width)).toBe(36);
+      expect(Math.round(a.height)).toBe(36);
+      expect(a.x, "actions at the right of the switcher").toBeGreaterThan(switcher.x + switcher.width);
+      const rowMid = (b: { y: number; height: number }) => b.y + b.height / 2;
+      expect(Math.abs(rowMid(a) - rowMid(switcher)), "switcher and actions share a row").toBeLessThanOrEqual(4);
+      expect(switcher.y, "the switcher is inside the header").toBeGreaterThanOrEqual(h.y - 1);
+      expect(switcher.y + switcher.height).toBeLessThanOrEqual(h.y + h.height + 1);
+      // The card reaches the bottom of the window (a small margin) and the page does not scroll.
+      const card = await sizeOf(chatCard(page));
+      expect(800 - (card.y + card.height), "gap under the card").toBeLessThanOrEqual(40);
+      expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
+      // The expanded rail pushes the thread aside at 1280 px: the thread ends where the rail starts.
+      const thread = await sizeOf(page.getByRole("region", { name: "Chat" }));
+      const r = await sizeOf(rail(page).filter({ has: page.getByRole("heading", { name: "Status", level: 2 }) }));
+      expect(thread.x + thread.width).toBeLessThanOrEqual(r.x + 1);
+      await page.screenshot({ path: `${SHOTS}/header-1280-${scheme}.png` });
+    });
+  }
 });
 
 test.describe("1440×900", () => {
@@ -214,4 +254,28 @@ test.describe("phone, 390 px", () => {
     await expect(page.getByRole("dialog", { name: "Status" })).toBeVisible();
     expect(await overflow(page)).toBeLessThanOrEqual(0);
   });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`compact header row, 44 px targets, no page scroll at 390×844 (${scheme})`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await open(page, scheme);
+      const header = pageHeader(page);
+      const h = await sizeOf(header);
+      // One row (back, avatar, name + status, actions) plus the section strip: well under two rows of 56.
+      expect(h.height, "header height").toBeLessThanOrEqual(112);
+      const back = await sizeOf(page.getByRole("link", { name: "Back to agents" }));
+      const name = await sizeOf(header.getByRole("heading", { level: 1 }));
+      const actions = await sizeOf(page.getByRole("button", { name: "Agent actions" }));
+      expect(back.width).toBeGreaterThanOrEqual(44);
+      expect(actions.width).toBeGreaterThanOrEqual(44);
+      expect(actions.height).toBeGreaterThanOrEqual(44);
+      expect(Math.abs(back.y + back.height / 2 - (actions.y + actions.height / 2)), "back and actions share a row").toBeLessThanOrEqual(4);
+      expect(name.y).toBeLessThan(back.y + back.height);
+      const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
+      for (let i = 0; i < (await tabs.count()); i += 1) expect((await sizeOf(tabs.nth(i))).height, `section tab ${i}`).toBeGreaterThanOrEqual(44);
+      expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: `${SHOTS}/phone-header-${scheme}.png` });
+    });
+  }
 });

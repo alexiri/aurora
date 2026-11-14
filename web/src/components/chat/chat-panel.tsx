@@ -4,8 +4,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-/** Below this panel width the expanded status rail overlays the thread instead of pushing it (D-201). */
-export const RAIL_OVERLAY_BELOW = 1024;
+/** Below this window width the expanded status rail overlays the thread instead of pushing it (D-201, owner 2026-11-14). */
+export const RAIL_OVERLAY_BELOW = 1100;
 
 /**
  * The messaging panel (D-102): one card that fills the rest of the viewport below the agent header (at least
@@ -13,7 +13,7 @@ export const RAIL_OVERLAY_BELOW = 1024;
  * the list and the thread are two views and `threadOpen` picks one, with no rail. The page does not scroll: the list,
  * the transcript and the rail scroll inside the panel.
  *
- * `rail` is given whether it should overlay (panel narrower than 1024 px); while an expanded rail overlays, the list
+ * `rail` is given whether it should overlay (window narrower than 1100 px); while an expanded rail overlays, the list
  * and the thread are inert so focus stays in the rail.
  */
 export function ChatPanel({
@@ -32,25 +32,25 @@ export function ChatPanel({
   railExpanded?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState<number | null>(null);
+  const [windowWidth, setWindowWidth] = useState<number | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el || !rail) return;
-    setWidth(el.clientWidth);
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
-    ro.observe(el);
-    return () => ro.disconnect();
+    // The window's width decides (not the panel's): at 1280 px the expanded rail pushes the thread aside, like the board.
+    const measure = () => setWindowWidth(window.innerWidth);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, [rail]);
-  // Unknown width (no layout yet, jsdom) pushes rather than overlays.
-  const overlay = width !== null && width > 0 && width < RAIL_OVERLAY_BELOW;
+  // Unknown width (no layout yet, jsdom reports 1024 but renders nothing) pushes rather than overlays.
+  const overlay = windowWidth !== null && windowWidth > 0 && windowWidth < RAIL_OVERLAY_BELOW;
   const covered = overlay && railExpanded;
   const inert = covered ? ({ inert: true } as object) : {};
   return (
     <div
       ref={ref}
       className={cn(
-        "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-14rem)]",
+        "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-7.5rem)]",
         className,
       )}
     >

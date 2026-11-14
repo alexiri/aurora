@@ -83,6 +83,7 @@ export function Tabs({
   idBase,
   className,
   overflow = "scroll",
+  tabClassName,
 }: {
   items: TabItem[];
   value: string;
@@ -93,6 +94,8 @@ export function Tabs({
   className?: string;
   /** `scroll` (default): the strip scrolls within itself. `menu`: what does not fit moves into a More menu. */
   overflow?: "scroll" | "menu";
+  /** Extra classes for every tab button (and its measuring copy), e.g. a 44 px touch height below `md`. */
+  tabClassName?: string;
 }) {
   const auto = useId().replace(/:/g, "");
   const base = idBase ?? auto;
@@ -183,7 +186,7 @@ export function Tabs({
             aria-controls={tabPanelId(base, t.value)}
             tabIndex={selected ? 0 : -1}
             onClick={() => onValueChange(t.value)}
-            className={tabClass(variant, selected, !useMenu)}
+            className={cn(tabClass(variant, selected, !useMenu), tabClassName)}
           >
             {t.label}
           </button>
@@ -193,7 +196,7 @@ export function Tabs({
   );
   if (!useMenu) return tablist;
 
-  const moreClass = cn(tabClass(variant, false, false), "gap-1");
+  const moreClass = cn(tabClass(variant, false, false), "gap-1", tabClassName);
   return (
     <div ref={wrapRef} className={cn("relative flex w-full min-w-0 max-w-full items-end", variant === "underline" && "border-b border-line")}>
       {/* The wrapper draws the underline, so it runs under the More button too. */}
@@ -230,7 +233,7 @@ export function Tabs({
         className="pointer-events-none invisible absolute left-0 top-0 -z-10 flex h-0 gap-1 overflow-hidden"
       >
         {items.map((t) => (
-          <span key={t.value} data-measure-tab className={tabClass(variant, t.value === value, false)}>
+          <span key={t.value} data-measure-tab className={cn(tabClass(variant, t.value === value, false), tabClassName)}>
             {t.label}
           </span>
         ))}

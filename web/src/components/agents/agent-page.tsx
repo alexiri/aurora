@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
@@ -8,9 +9,8 @@ import { ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MoreIcon } from "@/components/ui/icons";
+import { ChevronLeftIcon, MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
-import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useSandbox } from "@/lib/api/conversations";
@@ -126,54 +126,68 @@ export function AgentPage() {
   return (
     // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
     <div className="min-w-0 space-y-2">
-      <PageHeader
-        compact
-        breadcrumb={[{ label: "Agents", href: `${base}/agents` }, { label: agent.name }]}
-        title={
-          <span className="flex min-w-0 items-center gap-3">
+      {/* One line at md and up (breadcrumb above the name beside the avatar · section switcher · Agent actions); on a phone
+          one compact row (back, avatar, name + status, actions) with the section switcher as the row under it (14 §Agent page). */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 md:flex-nowrap md:gap-x-4">
+        <div className="order-1 flex min-w-0 flex-1 items-center gap-2 md:gap-3">
+          <Link href={`${base}/agents`} aria-label="Back to agents" className="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:text-ink md:hidden">
+            <ChevronLeftIcon className="size-5" />
+          </Link>
+          <span className="shrink-0 md:hidden">
+            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={32} />
+          </span>
+          <span className="hidden shrink-0 md:block">
             <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={40} />
-            <span className="min-w-0 truncate">{agent.name}</span>
           </span>
-        }
-        description={
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-muted">@{agent.handle}</span>
-            {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
-            {byo ? <Badge>{agent.kind}</Badge> : null}
-            {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
-            {byo ? null : <SandboxPill agentId={agent.id} />}
-          </span>
-        }
-        actions={
-          <>
-            {chatPage ? (
-              <Button type="button" variant="outline" size="sm" className="min-h-11 md:hidden" onClick={() => setStatusOpen(true)}>
-                Status
-              </Button>
-            ) : null}
-            <Tabs
-              items={sections.map((s) => ({ value: s.id, label: s.label }))}
-              value={sectionId}
-              onValueChange={goSection}
-              label="Agent sections"
-              idBase="agent-section"
-              overflow="menu"
-            />
-            {freezeInMenu && freezeProps ? <AgentFreeze {...freezeProps} inMenu menuExtra={deleteItem} /> : null}
-            {deleteOnlyMenu ? (
-              <Menu modal={false}>
-                <MenuTrigger asChild>
-                  <Button variant="ghost" size="sm" aria-label="Agent actions" className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
-                    <MoreIcon width={20} height={20} />
-                  </Button>
-                </MenuTrigger>
-                <MenuContent align="end">{deleteItem}</MenuContent>
-              </Menu>
-            ) : null}
-          </>
-        }
-        className="mb-2"
-      />
+          <div className="min-w-0">
+            <nav aria-label="Breadcrumb" className="hidden text-xs leading-4 text-muted md:block">
+              <Link href={`${base}/agents`} className="hover:text-ink hover:underline">
+                Agents
+              </Link>{" "}
+              <span aria-hidden="true">/</span>
+            </nav>
+            <div className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-x-3">
+              <h1 className="min-w-0 truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
+              <span className="flex items-center gap-2 text-sm text-ink-2">
+                <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
+                {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
+                {byo ? <Badge>{agent.kind}</Badge> : null}
+                {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
+                {byo ? null : <SandboxPill agentId={agent.id} />}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="order-2 flex shrink-0 items-center gap-2 md:order-3">
+          {chatPage ? (
+            <Button type="button" variant="outline" size="sm" className="min-h-11 md:hidden" onClick={() => setStatusOpen(true)}>
+              Status
+            </Button>
+          ) : null}
+          {freezeInMenu && freezeProps ? <AgentFreeze {...freezeProps} inMenu menuExtra={deleteItem} /> : null}
+          {deleteOnlyMenu ? (
+            <Menu modal={false}>
+              <MenuTrigger asChild>
+                <Button variant="outline" size="sm" aria-label="Agent actions" className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+                  <MoreIcon width={20} height={20} />
+                </Button>
+              </MenuTrigger>
+              <MenuContent align="end">{deleteItem}</MenuContent>
+            </Menu>
+          ) : null}
+        </div>
+        <div className="order-3 w-full min-w-0 md:order-2 md:w-[27rem] md:shrink">
+          <Tabs
+            items={sections.map((s) => ({ value: s.id, label: s.label }))}
+            value={sectionId}
+            onValueChange={goSection}
+            label="Agent sections"
+            idBase="agent-section"
+            overflow="menu"
+            tabClassName="max-md:min-h-11 max-md:px-1.5"
+          />
+        </div>
+      </header>
       {/* The banner of a frozen agent, full width under the header (and the non-owner's read-only copy of it). */}
       {freezeProps && !freezeInMenu ? <AgentFreeze {...freezeProps} /> : null}
       {freezeProps && canOwn ? (

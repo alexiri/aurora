@@ -11,6 +11,7 @@ import { useDecideAction } from "@/lib/api/action-approvals";
 import { countdown, isAlreadyDecided, useDecide, useNow } from "@/lib/api/approvals";
 import { approvalAnchorId } from "@/components/chat/approval-card";
 import { formatDuration } from "@/lib/chat/layout";
+import { cn } from "@/lib/utils";
 
 import { decisionBadge, sandboxLook, type AgentStatus, type NeedsItem, type OpenTurn } from "./status-data";
 
@@ -28,10 +29,11 @@ export function showApprovalInConversation(approvalId: string): boolean {
 }
 
 /** A part's heading inside the expanded rail and the sheet (the collapsed strip shows only the icon). */
-export function PartHeading({ icon, children, id }: { icon: ReactNode; children: ReactNode; id: string }) {
+export function PartHeading({ icon, children, id, pending = false }: { icon: ReactNode; children: ReactNode; id: string; pending?: boolean }) {
   return (
     <h3 id={id} className="flex items-center gap-2 text-label font-semibold uppercase tracking-label text-muted">
-      <span aria-hidden="true" className="inline-flex">
+      {/* Needs you carries its icon on a `pending-soft` tile (the board's Needs-you heading). */}
+      <span aria-hidden="true" className={cn("inline-flex", pending && "size-6 items-center justify-center rounded-md bg-pending-soft text-pending-ink")}>
         {icon}
       </span>
       {children}

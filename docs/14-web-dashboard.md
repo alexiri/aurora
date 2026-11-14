@@ -381,7 +381,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).
-  - **Header**, one line that wraps: 40 px avatar; "Agents /" breadcrumb above
+  - **Header**, one row of about 56 px from 768 px up (it does not wrap; the
+    chat card below fills the rest of the window height); on a phone one
+    compact row (back arrow, 32 px avatar, name with the state under it, the
+    44 px Status and Agent actions buttons) with the section switcher as a
+    44 px-tall strip under it, like the board "A · Phone": 40 px avatar; "Agents /" breadcrumb above
     the name (20 px Space Grotesk 600) and `@handle` (mono, `muted`); for a hosted
     agent the sandbox state as a `StatusDot` (labels and failure tooltip as in
     the FIX-025 rule above); on the right the **section switcher** (segmented
@@ -442,9 +446,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     primitive) with the same items and "Open the status panel"; the other icons
     expand the rail at their part. The choice is stored per browser (as the
     theme, never sent to the API); unset, the rail starts expanded at a viewport
-    of 1440 px or more and collapsed below. While the chat panel is narrower than
-    1024 px the expanded rail overlays the thread (focus-trapped, Esc closes)
-    instead of pushing it.
+    of 1440 px or more and collapsed below. The expanded rail **pushes** the
+    thread aside, as on the board, at a window width of 1100 px or more (so at
+    1280 px the thread narrows to about 440 px); **below a 1100 px window
+    width** it overlays the thread instead (focus-trapped, Esc closes). Owner,
+    2026-11-14 (it was: below a 1024 px chat-panel width, which made the rail
+    overlay at 1280 px).
   - **Below 768 px**: no rail. Under the header, approvers with pending items see
     a full-width `pending` banner "N approvals waiting" (44 px), and the header
     has a "Status" button; both open the five parts in a sheet (`Dialog`). The

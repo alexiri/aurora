@@ -39,7 +39,7 @@ function StatusParts({ ctx, idPrefix, onShow }: { ctx: RailContext; idPrefix: st
   const activityHref = `${ctx.base}/activity?agent=${encodeURIComponent(ctx.agentId)}`;
   const section = (id: PartId, icon: ReactNode, title: ReactNode, body: ReactNode) => (
     <section aria-labelledby={`${idPrefix}-${id}`} id={`${idPrefix}-part-${id}`} className="space-y-2 scroll-mt-2">
-      <PartHeading id={`${idPrefix}-${id}`} icon={icon}>
+      <PartHeading id={`${idPrefix}-${id}`} icon={icon} pending={id === "needs"}>
         {title}
       </PartHeading>
       {body}
@@ -178,6 +178,8 @@ export function StatusRail({
       <button ref={expandRef} type="button" aria-label="Expand status panel" onClick={() => expandAt(null)} className={iconButton}>
         <ChevronLeftIcon width={20} height={20} />
       </button>
+      {/* The board's divider between the expand control and the five part icons. */}
+      <hr aria-hidden="true" className="my-1 w-8 border-0 border-t border-line" />
       {status.canApprove ? (
         <Popover open={needsOpen} onOpenChange={setNeedsOpen}>
           <PopoverTrigger asChild>
@@ -191,7 +193,12 @@ export function StatusRail({
             </button>
           </PopoverTrigger>
           <PopoverContent side="left" align="start" aria-label="Needs you" className="space-y-3">
-            <h3 className="font-display text-sm font-semibold text-ink">Needs you</h3>
+            <h3 className="flex items-center gap-2 text-label font-semibold uppercase tracking-label text-muted">
+              <span aria-hidden="true" className="inline-flex size-6 items-center justify-center rounded-md bg-pending-soft text-pending-ink">
+                <CheckCircleIcon width={16} height={16} />
+              </span>
+              Needs you
+            </h3>
             <NeedsYouList
               needs={status.needs}
               loading={status.needsLoading}

@@ -144,7 +144,7 @@ export function FreezeControl({
         // Non-modal: a modal menu aria-hides the rest of the page while its controls stay focusable (axe).
         <Menu modal={false}>
           <MenuTrigger asChild>
-            <Button variant="ghost" size="sm" aria-label={`${SUBJECT_LABEL[subject][0].toUpperCase()}${SUBJECT_LABEL[subject].slice(1)} actions`} className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+            <Button variant="outline" size="sm" aria-label={`${SUBJECT_LABEL[subject][0].toUpperCase()}${SUBJECT_LABEL[subject].slice(1)} actions`} className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
               <MoreIcon width={20} height={20} />
             </Button>
           </MenuTrigger>

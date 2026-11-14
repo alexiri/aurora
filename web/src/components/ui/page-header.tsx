@@ -51,8 +51,7 @@ export function PageHeader({
             <h1 className="min-w-0 font-display text-xl font-semibold leading-7 text-ink">{title}</h1>
             {description ? <div className="text-sm text-ink-2">{description}</div> : null}
           </div>
-          {/* min-w-0 max-w-full: a wide control (the agent page's section switcher) scrolls inside itself instead of widening the page. */}
-          {actions ? <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div> : null}
+          {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
         </div>
       </header>
     );

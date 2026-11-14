@@ -61,7 +61,7 @@ export function ConversationRow({
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{conversationTitle(c)}</span>
         {waiting ? (
-          <StatusDot tone="pending" className="text-pending-ink">
+          <StatusDot tone="pending" className="whitespace-nowrap text-pending-ink">
             Waiting on you
           </StatusDot>
         ) : isWorking(c) ? (
