@@ -4662,6 +4662,7 @@ export interface components {
              *     banner or the operator docs. `None`-absent on responses serialised before this field.
              */
             ownerless_orgs?: components["schemas"]["OwnerlessOrg"][];
+            previews?: null | components["schemas"]["OverviewPreviews"];
         };
         /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
         AdminStorage: {
@@ -7306,6 +7307,19 @@ export interface components {
             agent: components["schemas"]["AgentRef"];
             /** Format: uuid */
             skill_id: string;
+        };
+        /**
+         * @description (FIX-148, C-841) `previews` of `GET /v1/admin/overview`: the relay replicas the API has
+         *     seen (the rows of `GET /v1/admin/relays`: last seen within 15 minutes).
+         */
+        OverviewPreviews: {
+            /**
+             * Format: date-time
+             * @description Newest `last_seen_at` among them; absent with no replica.
+             */
+            last_seen_at?: string | null;
+            /** Format: int64 */
+            relay_replicas: number;
         };
         /** @description (FIX-050, C-630) One ownerless organization of the admin overview. */
         OwnerlessOrg: {

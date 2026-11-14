@@ -143,6 +143,19 @@ pub struct AdminOverview {
     /// banner or the operator docs. `None`-absent on responses serialised before this field.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ownerless_orgs: Vec<OwnerlessOrg>,
+    /// (FIX-148, C-841) The Previews line: present only when `previews.enabled`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previews: Option<OverviewPreviews>,
+}
+
+/// (FIX-148, C-841) `previews` of `GET /v1/admin/overview`: the relay replicas the API has
+/// seen (the rows of `GET /v1/admin/relays`: last seen within 15 minutes).
+#[derive(Serialize, ToSchema)]
+pub struct OverviewPreviews {
+    pub relay_replicas: i64,
+    /// Newest `last_seen_at` among them; absent with no replica.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<DateTime<Utc>>,
 }
 
 /// (FIX-050, C-630) One ownerless organization of the admin overview.
