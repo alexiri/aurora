@@ -1,0 +1,22 @@
+externalUrl: http://localhost:4154
+image: {registry: localhost/aurora-audit4, tag: local, pullPolicy: Never}
+postgres: {enabled: true}
+ingress: {enabled: true, className: nginx}
+podDisruptionBudget: {enabled: false}
+api: {replicas: 1}
+gateway: {replicas: 1}
+hookhost: {replicas: 1}
+web: {replicas: 1}
+runner: {replicas: 1}
+devIdp: {enabled: true, allowAnyHint: true}
+relay: {enabled: true, domain: previews.auditfour.example.test}
+terminal: {enabled: true}
+config:
+  auth:
+    signup_mode: open
+    org_creation: anyone
+    instance_admins: ["audit4-admin@example.test"]
+  email: {log_links: true}
+  previews: {enabled: true}
+  hosted: {enabled: true, allow_fake_harness: true, idle_stop_secs: 30}
+  runner: {max_sandboxes: 4}

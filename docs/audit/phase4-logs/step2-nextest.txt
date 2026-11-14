@@ -1,0 +1,22 @@
+Step 2 (AUDIT-004, audited commit 1f77f68f38d39c1322ef2b2ecccbdce6c85a9ff3)
+
+Command:
+  NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 DATABASE_URL=postgres://aurora:aurora@127.0.0.1:55432/aurora \
+  nice -n 10 cargo nextest run --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted \
+    --no-fail-fast --message-format libtest-json-plus
+Summary line:
+  Summary [1285.269s] 2400 tests run: 2400 passed (55 slow), 1 skipped   (wall 21m26s, 76 binaries)
+Failed: 0. Skipped: 1 (aurora-crypto::crypto$print_fixture, #[ignore]).
+
+passed-tests.txt = names of every `{"type":"test","event":"ok"}` event of the libtest-json-plus stream
+(format `<crate>::<binary>$<test path>`, e.g. `aurora-api::it$plugins_upgrade::...`), sorted, 2400 lines.
+The known flake plugins_upgrade::major_without_impact_activates_automatically_with_an_audit_row passed in the run.
+Doctests are not run by nextest (not part of this count).
+
+Passed per crate (test count):
+aurora-api 1100; aurora-channels 13; aurora-cli 29; aurora-client 6; aurora-config 66; aurora-conformance-connector 18;
+aurora-connector-fake 6; aurora-connector-host 11; aurora-connector-mattermost 53; aurora-connector-sdk 8; aurora-core 46;
+aurora-counters 17; aurora-crypto 18; aurora-db 41; aurora-gateway 321; aurora-hookhost 17; aurora-hook-wit 1;
+aurora-llm 51; aurora-plugin-sdk 4; aurora-policy 21; aurora-protocol 34; aurora-registry 85; aurora-relay 73;
+aurora-runner 107; aurora-secrets 34; aurora-sqlclass 5; aurora-summary 14; aurora-supervisor 184; aurora-testkit 17.
+(sum 2400)
