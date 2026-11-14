@@ -510,12 +510,22 @@ async fn process_table_is_bounded_and_concurrent_starts_respect_max_running() {
         let id = pm.start(&format!("q{i}"), "true", None);
         assert!(id.is_ok(), "{id:?}");
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(
-        pm.record_count() <= MAX_EXITED_RECORDS + 20,
-        "{} records",
-        pm.record_count()
-    );
+    // Pruning runs inside `start` and spares records whose exit is not reported yet, so how many
+    // survive the loop depends on how far the drain got (a fixed 500 ms sleep was flaky on a
+    // loaded CI runner: 88 records). Once the reports drain, the next start prunes to the cap:
+    // keep starting quick processes until it does. An unbounded table never gets there and
+    // fails at the deadline.
+    let bounded = timeout(T, async {
+        while pm.record_count() > MAX_EXITED_RECORDS + 1 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            while pm.running_ids().len() >= 8 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            pm.start("prune-probe", "true", None).unwrap();
+        }
+    })
+    .await;
+    assert!(bounded.is_ok(), "{} records", pm.record_count());
     // N+1 concurrent starts of long-running processes: at most max_running (16) succeed.
     let (pm, _rx) = procs(d.path());
     let mut joins = Vec::new();
