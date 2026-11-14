@@ -104,7 +104,7 @@ reference names them (TOML-style keys, e.g. `hosted:
 | `database.allowSharedLogin` | bool | `false` | the explicit, **not recommended** opt-in to the gateway sharing the main database login (every privilege the API has). Mutually exclusive with the pair (`helm` fails); with `postgres.enabled` it switches the automatic role off | never in production |
 | `database.cidrs` / `.port` | CIDR list / int | `[]` / `5432` | NetworkPolicy egress to an **external** database (ignored when `postgres.enabled`) | external DB on a private range |
 | `postgres.enabled` | bool | `false` | bundled single-node Postgres 16, **evaluation only**; its StatefulSet/Service/PVC are pre-install hook resources, so `helm uninstall` leaves them (NOTES.txt has the cleanup commands) | never in production ([install-helm §Database](operator/install-helm.md#database)) |
-| `postgres.image` / `.storage` / `.storageClass` | image / quantity / class | `postgres:16` / `5Gi` / `""` | the evaluation database's image, PVC size and class | evaluation only |
+| `postgres.image` / `.storage` / `.storageClass` | image / quantity / class | `postgres:16` pinned by digest (FIX-103) / `5Gi` / `""` | the evaluation database's image, PVC size and class | evaluation only |
 | `postgres.initScriptsConfigMap` | ConfigMap name | `""` | `*.sql`/`*.sh` run once on an empty data dir (the gateway role is created by the chart; an init script is for other objects, or for the explicit role pair) | evaluation |
 
 ## Workloads

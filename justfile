@@ -91,6 +91,10 @@ clean-lane worktree *flags:
 # that lacks AURORA_TEST_DATABASE_URL/.env is in progress.
 clean-testkit:
     podman ps -a -q --filter name='^aurora-testkit-' | xargs -r podman rm -f -t 1
+    # (FIX-103) Leaked per-test databases of killed runs live in the shared server: the testkit itself
+    # reaps `aurora_test_<uuid>` databases with no connection older than 2 h (aurora_testkit::template::
+    # reap_leaked) once per test process. To reap now, run any testkit test, e.g.
+    #   DATABASE_URL=postgres://aurora:aurora@127.0.0.1:55432/aurora cargo test -p aurora-testkit --test testkit cleanup_drops_database
 
 # Drop build artefacts not used for DAYS days (cargo-sweep), else document-and-stop. Never touches other worktrees.
 clean-stale days="14":

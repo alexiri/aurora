@@ -225,3 +225,107 @@ async fn mock_upstream_serves_json_and_records() {
     assert_eq!(received.len(), 1);
     assert_eq!(received[0].url.path(), "/v1/ping");
 }
+
+/// A name of the `aurora_test_<uuid v7 simple>` shape whose embedded creation time is `age_ms` old.
+#[allow(clippy::expect_used)]
+fn aged_db_name(age_ms: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as u64;
+    let tail = uuid::Uuid::now_v7().simple().to_string();
+    format!("aurora_test_{:012x}{}", now - age_ms, &tail[12..])
+}
+
+#[allow(clippy::expect_used)]
+async fn database_exists(server: &str, name: &str) -> bool {
+    let mut conn = sqlx::PgConnection::connect(server).await.expect("connect");
+    let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM pg_database WHERE datname = $1")
+        .bind(name)
+        .fetch_one(&mut conn)
+        .await
+        .expect("query");
+    n == 1
+}
+
+#[tokio::test]
+async fn a_leaked_database_older_than_the_ttl_is_reaped_and_fresh_or_connected_ones_are_not() {
+    // FIX-103: a killed run leaves `aurora_test_<uuid>` databases that `Drop` never removed.
+    let anchor = TestDb::new().await;
+    let server = anchor.server_url().to_owned();
+    let ttl = aurora_testkit::template::LEAKED_DB_REAP_AFTER.as_millis() as u64;
+    let old = aged_db_name(ttl + 60_000);
+    let fresh = aged_db_name(1_000);
+    let old_connected = aged_db_name(ttl + 120_000);
+    let mut admin = sqlx::PgConnection::connect(&server).await.expect("connect");
+    for n in [&old, &fresh, &old_connected] {
+        sqlx::query(&format!("CREATE DATABASE \"{n}\""))
+            .execute(&mut admin)
+            .await
+            .expect("create leaked db");
+    }
+    // One old database has a live session: it must survive.
+    let held =
+        sqlx::PgConnection::connect(&anchor.url().replacen(anchor.name(), &old_connected, 1))
+            .await
+            .expect("connect to the old connected db");
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as u64;
+    let dropped = aurora_testkit::template::reap_leaked(&server, now_ms)
+        .await
+        .expect("reap");
+    assert!(
+        dropped >= 1,
+        "expected the old leaked database to be reaped"
+    );
+    assert!(
+        !database_exists(&server, &old).await,
+        "old leaked db must be reaped"
+    );
+    assert!(
+        database_exists(&server, &fresh).await,
+        "a fresh db must stay"
+    );
+    assert!(
+        database_exists(&server, &old_connected).await,
+        "a database with a connection must stay"
+    );
+    assert!(
+        database_exists(&server, anchor.name()).await,
+        "the live TestDb must stay"
+    );
+
+    held.close().await.expect("close");
+    for n in [&fresh, &old_connected] {
+        sqlx::query(&format!("DROP DATABASE IF EXISTS \"{n}\" WITH (FORCE)"))
+            .execute(&mut admin)
+            .await
+            .expect("cleanup");
+    }
+    anchor.cleanup().await.expect("cleanup anchor");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_clones_and_reaps_do_not_fail_each_other() {
+    // FIX-103: clones hold the reap lock shared, reaps exclusive. Run both at once, repeatedly; every
+    // clone must succeed and every reap must either run or report that it skipped.
+    let anchor = TestDb::new().await;
+    let server = anchor.server_url().to_owned();
+    let clones = futures::future::join_all((0..6).map(|_| TestDb::try_new()));
+    let reaps = futures::future::join_all(
+        (0..4).map(|_| aurora_testkit::template::reap_templates(&server)),
+    );
+    let (clones, reaps) = tokio::join!(clones, reaps);
+    for c in clones {
+        let db = c.expect("a clone failed while reaps ran");
+        assert!(db.name().starts_with("aurora_test_"));
+        db.cleanup().await.expect("cleanup clone");
+    }
+    for r in reaps {
+        r.expect("a reap errored while clones ran");
+    }
+    anchor.cleanup().await.expect("cleanup anchor");
+}

@@ -159,6 +159,28 @@ for t in touched:
 ' "$@"
 }
 
+# (FIX-103) aurora-testkit and every workspace crate that (transitively) depends on it, one per line.
+testkit_closure() {
+  cargo metadata --no-deps --format-version 1 | python3 -I -c '
+import json, sys
+pk = {p["name"]: p for p in json.load(sys.stdin)["packages"]}
+rdeps = {}
+for p in pk.values():
+    for d in p["dependencies"]:
+        if d["name"] in pk:
+            rdeps.setdefault(d["name"], set()).add(p["name"])
+seen, stack = set(), ["aurora-testkit"]
+while stack:
+    c = stack.pop()
+    for r in sorted(rdeps.get(c, ())):
+        if r not in seen and not r.startswith("aurora-e2e-"):
+            seen.add(r)
+            stack.append(r)
+seen.add("aurora-testkit")
+print("\n".join(sorted(seen)))
+'
+}
+
 have_nextest() { cargo nextest --version >/dev/null 2>&1; }
 
 # One line, never deletes anything: target/ past 60 GB.
@@ -208,7 +230,9 @@ plan_fixtures() {
     done
   fi
   [ "$fixtures_needed" -eq 1 ] || return 0
-  [ -f plugins/fixtures/dist/fixture-hooks.aurora-plugin ] && fixtures_needed=0
+  # (FIX-103) an `A && B` as the last command returned 1 exactly when the fixtures were missing, and
+  # `set -e` then killed the gate (and `--dry-run`) before it printed the test plan.
+  if [ -f plugins/fixtures/dist/fixture-hooks.aurora-plugin ]; then fixtures_needed=0; fi
 }
 
 run_fixtures() {
@@ -257,7 +281,7 @@ if [ "${#files[@]}" -eq 0 ]; then
 fi
 
 crates=() web_src=() web_tests=()
-web_changed=0 workspace_wide=0 e2e_note=0 schema_check=0 migrations_changed=0
+web_changed=0 workspace_wide=0 e2e_note=0 schema_check=0 migrations_changed=0 guards_needed=0 fixtures_changed=0
 for f in ${files[@]+"${files[@]}"}; do
   case "$f" in
     crates/aurora-db/migrations/*|docs/03-data-model.md) schema_check=1 ;;
@@ -291,7 +315,17 @@ for f in ${files[@]+"${files[@]}"}; do
       [ -n "$name" ] && crates+=("$name")
       ;;
     tests/e2e-gateway/*|tests/e2e-hosted/*) e2e_note=1 ;;
-    *) ;; # docs, scripts, deploy, plugins, images, schemas, justfile, .github, …
+    # (FIX-103) Fixture sources feed services/aurora-api/tests/it/connect.rs (built fixtures) and the plugin
+    # tests: select aurora-api. The built packages are plugins/fixtures/dist (gitignored).
+    plugins/*|scripts/fixtures/*)
+      name="$(cargo_name services/aurora-api)"
+      [ -n "$name" ] && crates+=("$name")
+      fixtures_changed=1
+      ;;
+    # (FIX-103) The architecture guards read the chart, the images, the workflows and the guards themselves:
+    # a change there runs scripts/guards/run-all.sh (it was never part of the default scope).
+    deploy/*|images/*|.github/*|justfile|scripts/*) guards_needed=1 ;;
+    *) ;; # docs, schemas, …
   esac
 done
 if [ "${#crates[@]}" -gt 0 ]; then
@@ -304,8 +338,14 @@ fi
 test_crates=(${crates[@]+"${crates[@]}"})
 test_notes=()
 if [ "$migrations_changed" -eq 1 ]; then
-  test_crates+=(aurora-db aurora-api)
-  test_notes+=("aurora-db/migrations changed → also test aurora-db and aurora-api")
+  # (FIX-103) Every suite that builds its database from the migrator goes through aurora-testkit (gateway,
+  # supervisor, runner, …): select aurora-testkit and its whole reverse-dependency closure.
+  mapfile -t testkit_users < <(testkit_closure) || die "cargo metadata failed — cannot expand the migration scope"
+  test_crates+=(aurora-db aurora-api ${testkit_users[@]+"${testkit_users[@]}"})
+  test_notes+=("aurora-db/migrations changed → also test aurora-db, aurora-api and everything built on aurora-testkit: ${testkit_users[*]:-}")
+fi
+if [ "$fixtures_changed" -eq 1 ]; then
+  test_notes+=("fixture sources changed (plugins/, scripts/fixtures/) → aurora-api tests run against rebuilt fixtures")
 fi
 if [ "${#test_crates[@]}" -gt 0 ]; then
   mapfile -t test_crates < <(printf '%s\n' "${test_crates[@]}" | sort -u)
@@ -386,7 +426,10 @@ else
     [ "${#web_tests[@]}" -gt 0 ] && echo "  web: npx vitest run ${web_tests[*]}"
     [ "${#web_src[@]}" -gt 0 ] && echo "  web: npx vitest related ${web_src[*]}"
   fi
-  if [ "$TESTS_ONLY" -eq 1 ] && [ "$workspace_wide" -eq 0 ] && [ "${#crates[@]}" -eq 0 ]; then
+  if [ "$guards_needed" -eq 1 ] && [ "$CLIPPY_ONLY" -eq 0 ]; then
+    echo "  bash scripts/guards/run-all.sh   (deploy/, images/, .github/, scripts/ or justfile changed: the guards read them)"
+  fi
+  if [ "$TESTS_ONLY" -eq 1 ] && [ "$workspace_wide" -eq 0 ] && [ "${#crates[@]}" -eq 0 ] && [ "$guards_needed" -eq 0 ]; then
     echo "  (nothing to test: no crate or workspace-wide file in the changed set; the full suite remains CI's job)"
   fi
 fi
@@ -466,6 +509,10 @@ else
       fi
     fi
     run_web
+  fi
+  if [ "$guards_needed" -eq 1 ] && [ "$CLIPPY_ONLY" -eq 0 ]; then
+    phase "architecture guards (bash scripts/guards/run-all.sh; deploy/images/guards/workflows changed)" \
+      bash scripts/guards/run-all.sh
   fi
 fi
 

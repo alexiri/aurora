@@ -76,6 +76,21 @@ const TEMPLATE_REAP_AFTER: Duration = Duration::from_secs(24 * 3600);
 /// Age after which an abandoned in-flight build is reaped.
 const WIP_REAP_AFTER: Duration = Duration::from_secs(3600);
 
+/// (FIX-103) Age after which a leaked per-test database (`aurora_test_<uuid v7 simple>`, left by a
+/// killed run: `Drop` never ran) with no connections is reaped. The age is read from the name: a v7
+/// uuid starts with its 48-bit millisecond creation time. A test run is minutes, never hours.
+pub const LEAKED_DB_REAP_AFTER: Duration = Duration::from_secs(2 * 3600);
+
+/// (FIX-103) Advisory-lock key of the clone/reap protocol: a clone holds it **shared** while its
+/// `CREATE DATABASE … TEMPLATE` runs (Postgres refuses to copy a template that another session is
+/// dropping), a reap holds it **exclusive**. It is deliberately not the template *build* lock, which a
+/// builder of another migration set holds for the whole migration run: clones of an existing template
+/// must not wait for that.
+const REAP_LOCK: &str = "aurora_test_reap";
+
+/// How long a reap waits for in-flight clones (each takes well under a second) before skipping.
+const REAP_LOCK_WAIT: Duration = Duration::from_secs(10);
+
 /// `false` only when `AURORA_TEST_TEMPLATE_DB` is set to a falsy value
 /// (`0`, `false`, `no`, `off`) — the documented kill switch.
 pub fn template_enabled() -> bool {
@@ -125,6 +140,13 @@ fn template_name(hash: &str) -> String {
 /// process builds while the rest wait and then clone); every call after that
 /// is one catalog lookup plus a filesystem-speed clone.
 pub async fn ensure_template(server_url: &str) -> anyhow::Result<&'static str> {
+    // (FIX-103) Once per process, best effort: reap leaked per-test databases of killed runs.
+    static LEAK_REAP: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    LEAK_REAP
+        .get_or_init(|| async {
+            let _ = reap_leaked(server_url, now_millis()).await;
+        })
+        .await;
     // &'static leaked names are unique per hash; the set is tiny (one string
     // per distinct migration set the process ever saw — one in practice).
     let hash = migration_set_hash();
@@ -214,8 +236,148 @@ async fn build_locked(
         return Ok(leak_name(name));
     }
     let name = rebuild_template(server_url, lock_conn, hash).await?;
-    reap_stale_templates(lock_conn).await;
+    // Other migration sets' templates: exclusive against in-flight clones (FIX-103).
+    if lock_reap_exclusive(lock_conn).await {
+        reap_stale_templates(lock_conn).await;
+        unlock_reap_exclusive(lock_conn).await;
+    }
     Ok(leak_name(name))
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Take the reap lock exclusively (waits for in-flight clones up to [`REAP_LOCK_WAIT`]); `false`
+/// when it could not be had, in which case the caller skips its reap — reaping is best effort.
+async fn lock_reap_exclusive(conn: &mut PgConnection) -> bool {
+    let wait = format!("SET lock_timeout = '{}ms'", REAP_LOCK_WAIT.as_millis());
+    if sqlx::query(&wait).execute(&mut *conn).await.is_err() {
+        return false;
+    }
+    let got = sqlx::query("SELECT pg_advisory_lock(hashtext($1))")
+        .bind(REAP_LOCK.to_owned())
+        .execute(&mut *conn)
+        .await
+        .is_ok();
+    let _ = sqlx::query("RESET lock_timeout").execute(&mut *conn).await;
+    got
+}
+
+async fn unlock_reap_exclusive(conn: &mut PgConnection) {
+    let _ = sqlx::query("SELECT pg_advisory_unlock(hashtext($1))")
+        .bind(REAP_LOCK.to_owned())
+        .execute(&mut *conn)
+        .await;
+}
+
+/// Decide whether `name` is a leaked per-test database (`aurora_test_` + 32 hex of a v7 uuid) older
+/// than [`LEAKED_DB_REAP_AFTER`] at `now_ms`. Pure. Template databases (`aurora_test_template_…`) and
+/// anything of another shape are never matched.
+pub(crate) fn leaked_db_is_old(name: &str, now_ms: u64) -> bool {
+    let Some(hex) = name.strip_prefix("aurora_test_") else {
+        return false;
+    };
+    if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    let Ok(created_ms) = u64::from_str_radix(&hex[..12], 16) else {
+        return false;
+    };
+    now_ms.saturating_sub(created_ms) >= LEAKED_DB_REAP_AFTER.as_millis() as u64
+}
+
+/// (FIX-103) Drop leaked per-test databases and their gateway test roles: names of the
+/// `aurora_test_<uuid>` shape whose creation time (in the uuid) is older than
+/// [`LEAKED_DB_REAP_AFTER`] **and** that have no connection. Takes the reap lock exclusively (waiting
+/// out in-flight clones), and only when there is something to reap. Returns the number of databases
+/// dropped. Never touches the `aurora` database or any name outside the test namespace.
+pub async fn reap_leaked(server_url: &str, now_ms: u64) -> anyhow::Result<usize> {
+    let mut conn = PgConnection::connect(server_url)
+        .await
+        .context("connecting to test server to reap leaked databases")?;
+    let names: Vec<(String,)> =
+        sqlx::query_as("SELECT datname FROM pg_database WHERE datname LIKE $1")
+            .bind("aurora\\_test\\_%")
+            .fetch_all(&mut conn)
+            .await
+            .context("listing test databases")?;
+    let leaked: Vec<String> = names
+        .into_iter()
+        .map(|(n,)| n)
+        .filter(|n| leaked_db_is_old(n, now_ms))
+        .collect();
+    let roles: Vec<(String,)> =
+        sqlx::query_as("SELECT rolname FROM pg_roles WHERE rolname LIKE $1")
+            .bind("aurora\\_test\\_gw\\_%")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap_or_default();
+    let old_roles: Vec<String> = roles
+        .into_iter()
+        .map(|(n,)| n)
+        .filter(|n| {
+            n.strip_prefix("aurora_test_gw_")
+                .is_some_and(|hex| leaked_db_is_old(&format!("aurora_test_{hex}"), now_ms))
+        })
+        .collect();
+    if leaked.is_empty() && old_roles.is_empty() {
+        conn.close().await.ok();
+        return Ok(0);
+    }
+    if !lock_reap_exclusive(&mut conn).await {
+        conn.close().await.ok();
+        return Ok(0);
+    }
+    let mut dropped = 0;
+    for name in &leaked {
+        // No connection at all, then a plain DROP (no FORCE): a session that arrives meanwhile makes
+        // the DROP fail, which is the right outcome.
+        let busy: Result<(i64,), _> =
+            sqlx::query_as("SELECT count(*) FROM pg_stat_activity WHERE datname = $1")
+                .bind(name)
+                .fetch_one(&mut conn)
+                .await;
+        if !matches!(busy, Ok((0,))) {
+            continue;
+        }
+        if sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\""))
+            .execute(&mut conn)
+            .await
+            .is_ok()
+        {
+            dropped += 1;
+            eprintln!("aurora-testkit: reaped leaked test database `{name}`");
+        }
+    }
+    for role in &old_roles {
+        // Fails harmlessly while the role still has privileges in a live database.
+        let _ = sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
+            .execute(&mut conn)
+            .await;
+    }
+    unlock_reap_exclusive(&mut conn).await;
+    conn.close().await.ok();
+    Ok(dropped)
+}
+
+/// Reap templates of other migration sets (and abandoned in-flight builds) that are past their grace
+/// period, exclusive against in-flight clones. Normally this runs after a template build; exposed so
+/// the clone/reap protocol can be exercised directly. Returns `false` when the reap lock was not had.
+pub async fn reap_templates(server_url: &str) -> anyhow::Result<bool> {
+    let mut conn = PgConnection::connect(server_url)
+        .await
+        .context("connecting to test server to reap templates")?;
+    let ok = lock_reap_exclusive(&mut conn).await;
+    if ok {
+        reap_stale_templates(&mut conn).await;
+        unlock_reap_exclusive(&mut conn).await;
+    }
+    conn.close().await.ok();
+    Ok(ok)
 }
 
 /// Create, migrate, stamp, seal and rename the template. Caller holds the
@@ -370,12 +532,24 @@ pub async fn clone_from_template(
     template: &str,
     name: &str,
 ) -> anyhow::Result<()> {
-    sqlx::query(&format!(
+    // (FIX-103) Shared against reaps, which take the same lock exclusively: a reap never drops a template
+    // while a clone is copying it. Clones do not exclude each other.
+    sqlx::query("SELECT pg_advisory_lock_shared(hashtext($1))")
+        .bind(REAP_LOCK.to_owned())
+        .execute(&mut *admin)
+        .await
+        .context("taking the clone lock")?;
+    let cloned = sqlx::query(&format!(
         "CREATE DATABASE \"{name}\" TEMPLATE \"{template}\""
     ))
-    .execute(admin)
+    .execute(&mut *admin)
     .await
-    .context("cloning test database from template")?;
+    .context("cloning test database from template");
+    let _ = sqlx::query("SELECT pg_advisory_unlock_shared(hashtext($1))")
+        .bind(REAP_LOCK.to_owned())
+        .execute(&mut *admin)
+        .await;
+    cloned?;
     Ok(())
 }
 
@@ -421,6 +595,27 @@ mod tests {
             reap_decision(&old, HASH, NOW),
             Some("stale in-flight template")
         );
+    }
+
+    #[test]
+    fn leaked_database_names_are_aged_by_their_uuid_timestamp() {
+        let ttl = LEAKED_DB_REAP_AFTER.as_millis() as u64;
+        let created: u64 = 1_800_000_000_000;
+        let name = format!("aurora_test_{created:012x}{}", "ab".repeat(10));
+        assert_eq!(name.len(), "aurora_test_".len() + 32);
+        assert!(!leaked_db_is_old(&name, created + ttl - 1));
+        assert!(leaked_db_is_old(&name, created + ttl));
+        // Only the exact shape: templates, the dev database, short or non-hex names are never matched.
+        assert!(!leaked_db_is_old("aurora", created + 10 * ttl));
+        assert!(!leaked_db_is_old(
+            "aurora_test_template_00000000000000ff_1",
+            created + 10 * ttl
+        ));
+        assert!(!leaked_db_is_old("aurora_test_abc", created + 10 * ttl));
+        assert!(!leaked_db_is_old(
+            &format!("aurora_test_{}", "z".repeat(32)),
+            created + 10 * ttl
+        ));
     }
 
     #[test]

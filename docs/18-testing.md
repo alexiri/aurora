@@ -881,9 +881,15 @@ hatch, not the loop).
 plan lists each added crate and the dependency that pulled it in), so a change
 in `aurora-core`, `aurora-db` or `aurora-protocol` can no longer pass while
 `aurora-api` or `aurora-gateway` stop compiling; the e2e crates are never
-pulled in. Tests stay on the directly touched crates, plus `aurora-db` and
-`aurora-api` when `crates/aurora-db/migrations/**` changed (migrations change
-behaviour everywhere). Tests run under `cargo nextest` when it is installed
+pulled in. Tests stay on the directly touched crates, plus `aurora-db`,
+`aurora-api` and the **reverse-dependency closure of `aurora-testkit`** (gateway,
+supervisor, …: they build their databases from the same migrator) when
+`crates/aurora-db/migrations/**` changed (migrations change behaviour
+everywhere); `plugins/**` and `scripts/fixtures/**` select `aurora-api` (the
+`connect::` tests run against built fixtures); a change under `deploy/`,
+`images/`, `.github/`, `scripts/` or `justfile` runs
+`bash scripts/guards/run-all.sh` (the guards read the chart, the images and the
+workflows; FIX-103). Tests run under `cargo nextest` when it is installed
 (same tests as `cargo test`, one process each; **doctests are skipped** —
 run `cargo test --doc -p <crate>` or `just test` for them), else `cargo test`.
 Inner-loop clippy drops `--all-features` unless a touched crate defines
@@ -894,7 +900,17 @@ The gate prints one line when `target/` exceeds 60 GB (`just clean-stale`);
 it never deletes anything. Test databases are cloned from a migration
 template (VEL-003) whose provenance stamp is a `COMMENT ON DATABASE`, so a
 clone has exactly the schema of the `AURORA_TEST_TEMPLATE_DB=0` path (a
-testkit test asserts it); `AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
+testkit test asserts it). **Leaked databases (FIX-103):** a killed run leaves its
+`aurora_test_<uuid>` databases (`Drop` never ran); the testkit reaps those with no
+connection older than two hours (the v7 uuid carries the creation time) once per test
+process, and `just clean-testkit` says how to trigger it. Clones hold the advisory lock
+`aurora_test_reap` **shared** while `CREATE DATABASE … TEMPLATE` runs; reaps (leaked
+databases, other migration sets' templates) hold it **exclusive** and skip when it cannot
+be had, so a reap never drops a template under a clone (its own key, not the template
+build lock, which a builder of another migration set holds for a whole migration run).
+`scripts/e2e/llm.sh` is a **manual** gate (live-gated, not in CI): it rebuilds the
+sandbox images on every run unless `SKIP_IMAGE_BUILD=1`.
+`AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
 pool (default 5 — 2 starves 20 `aurora-api` tests, see
 `docs/ops/build-performance.md` §7).
 
