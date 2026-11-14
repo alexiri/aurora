@@ -8,7 +8,7 @@ use aurora_core::sanitize;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_db::authz;
 use aurora_db::repo::{link_requests, user_links, users};
-use aurora_protocol::connector::Sender;
+use aurora_protocol::connector::{Sender, Space};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -90,31 +90,71 @@ pub async fn resolve_person(
     }
 }
 
-/// Creates a `link_requests` row and tells the person (privately) where to sign in.
+/// A person is prompted to link at most once per this long (FIX-112; docs/13 §5.9).
+pub const LINK_PROMPT_INTERVAL_SECS: f64 = 10.0 * 60.0;
+
+type RefusalKey = (Uuid, Uuid, String);
+static REFUSALS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<RefusalKey, std::time::Instant>>,
+> = std::sync::OnceLock::new();
+
+/// Whether the "you can't talk to this agent yet" notice should go out now: at most one per
+/// (integration, agent, person) per [`LINK_PROMPT_INTERVAL_SECS`] (FIX-112); records it when it
+/// returns `true`. Per replica and not persisted: a restart only repeats a notice once.
+pub fn refusal_due(integration: Uuid, agent: Uuid, person: &str) -> bool {
+    let map = REFUSALS.get_or_init(Default::default);
+    let Ok(mut m) = map.lock() else { return true };
+    let now = std::time::Instant::now();
+    let interval = std::time::Duration::from_secs_f64(LINK_PROMPT_INTERVAL_SECS);
+    if m.len() > 10_000 {
+        m.retain(|_, t| now.duration_since(*t) < interval);
+    }
+    let key = (integration, agent, person.to_owned());
+    match m.get(&key) {
+        Some(t) if now.duration_since(*t) < interval => false,
+        _ => {
+            m.insert(key, now);
+            true
+        }
+    }
+}
+
+/// Creates a `link_requests` row and tells the person (privately) where to sign in. A person who
+/// already has an unexpired, unused request made within [`LINK_PROMPT_INTERVAL_SECS`] gets neither
+/// a new row nor another message (a `listen=all` channel or a hostile member cannot flood DMs).
 #[allow(clippy::too_many_arguments)]
 pub async fn send_link_prompt(
     state: &AppState,
     ctx: &Ctx,
     conn: &mut PgConnection,
     sender: &Sender,
-    space_ref: &str,
+    space: &Space,
     thread_ref: &str,
     user_ref: &str,
     platform_email: Option<&str>,
+    platform_display_name: Option<&str>,
     dedupe: String,
 ) -> Result<(), InboxError> {
     let hint = platform_email.map(str::trim).filter(|e| !e.is_empty());
+    let shown = platform_display_name
+        .map(sanitize::label)
+        .filter(|n| !n.is_empty());
     let tok = token::generate(TokenPrefix::Invitation);
-    link_requests::insert(
+    let created = link_requests::insert_throttled(
         &mut *conn,
         ctx.id(),
         user_ref,
         &token::hash(tok.expose()),
         LINK_TTL_SECS,
+        LINK_PROMPT_INTERVAL_SECS,
         hint,
+        shown.as_deref(),
     )
     .await
     .retry()?;
+    if created.is_none() {
+        return Ok(());
+    }
     let url = format!(
         "{}/link/channel?token={}",
         state.config.external_url.trim_end_matches('/'),
@@ -124,7 +164,7 @@ pub async fn send_link_prompt(
         "To work with agents here, link your Aurora account: {url} (the link works once, for 30 minutes)."
     );
     send::private(
-        conn, ctx, sender, space_ref, thread_ref, user_ref, &text, dedupe,
+        conn, ctx, sender, space, thread_ref, user_ref, &text, dedupe,
     )
     .await
     .retry()
@@ -147,6 +187,28 @@ pub async fn owner_names(state: &AppState, ctx: &Ctx) -> Result<String, InboxErr
     } else {
         names.join(", ")
     })
+}
+
+/// The five bytes (40 bits) a typed approval code encodes (the inverse of the base32 of
+/// `cards::approval_code`), so the database can find the approval by `sha256(id)[..5]` instead of
+/// the caller scanning a page of pending approvals. `None` for anything that is not a code.
+pub fn approval_code_prefix(typed: &str) -> Option<[u8; 5]> {
+    let mut bits: u64 = 0;
+    let mut n = 0;
+    for ch in typed.chars().filter(char::is_ascii_alphanumeric) {
+        let v = match ch.to_ascii_uppercase() {
+            c @ 'A'..='Z' => c as u64 - 'A' as u64,
+            c @ '2'..='7' => c as u64 - '2' as u64 + 26,
+            _ => return None,
+        };
+        bits = (bits << 5) | v;
+        n += 1;
+    }
+    if n != 8 {
+        return None;
+    }
+    let b = bits.to_be_bytes();
+    Some([b[3], b[4], b[5], b[6], b[7]])
 }
 
 /// Whether a typed code names this approval (case-insensitive, spaces and dashes ignored).

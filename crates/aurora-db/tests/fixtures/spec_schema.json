@@ -196,6 +196,7 @@
       "key"
     ],
     "channel_cards": [
+      "addressee_ref",
       "id",
       "integration_id",
       "message_ref",
@@ -454,6 +455,7 @@
       "expires_at",
       "id",
       "integration_id",
+      "platform_display_name",
       "platform_email_hint",
       "platform_user_ref",
       "token_hash",

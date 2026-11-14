@@ -4,9 +4,11 @@
 use crate::domains::channels::capability_enabled;
 use crate::domains::connectors::ops::{self, NewOp};
 use aurora_channels::{Capability, CapabilitySet, Content};
-use aurora_core::ApiError;
+use aurora_core::{ApiError, sanitize};
 use aurora_db::repo::channel_integrations::IntegrationRow;
-use aurora_protocol::connector::{MessagePostOp, OutFile, ReactionOp, Sender, StatusOp, Target};
+use aurora_protocol::connector::{
+    MessagePostOp, OutFile, ReactionOp, Sender, Space, StatusOp, Target,
+};
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -168,14 +170,31 @@ pub async fn say(
     .await
 }
 
+/// What a private notice sent as a DM says about the space it concerns (docs/13 §4.5), or
+/// `None` when the DM already *is* that space (FIX-128). Only ever the space's human label: a raw
+/// space id (`<#space:ID>`, a Mattermost DM's `user1__user2` name) is meaningless to people.
+pub fn notice_prefix(space: &Space) -> Option<String> {
+    let label: String = sanitize::label(&space.label)
+        .chars()
+        .filter(|c| !matches!(c, '<' | '>'))
+        .collect();
+    let label = label.trim();
+    match space.kind.as_str() {
+        "dm" => None,
+        _ if label.is_empty() => None,
+        "group_dm" => Some(format!("In your group message with {label}:")),
+        _ => Some(format!("In #{label}:")),
+    }
+}
+
 /// A platform-voice message for one person: ephemeral where the platform has it, otherwise a
-/// DM that names the space it concerns (docs/13 §4.5).
+/// DM that names the space it concerns unless it is sent in that very DM (docs/13 §4.5).
 #[allow(clippy::too_many_arguments)]
 pub async fn private(
     conn: &mut PgConnection,
     ctx: &Ctx,
     sender: &Sender,
-    space_ref: &str,
+    space: &Space,
     thread_ref: &str,
     user_ref: &str,
     text: &str,
@@ -184,7 +203,7 @@ pub async fn private(
     use aurora_channels::capability::PrivateNotice;
     let (target, ephemeral_to, text) = match ctx.caps.private_notice() {
         PrivateNotice::Ephemeral => (
-            space_target(space_ref, thread_ref),
+            space_target(&space.reference, thread_ref),
             Some(user_ref.to_owned()),
             text.to_owned(),
         ),
@@ -193,10 +212,10 @@ pub async fn private(
                 user_ref: user_ref.to_owned(),
             },
             None,
-            format!(
-                "In {}: {text}",
-                aurora_channels::content::space_mention(space_ref)
-            ),
+            match notice_prefix(space) {
+                Some(p) => format!("{p} {text}"),
+                None => text.to_owned(),
+            },
         ),
     };
     post(

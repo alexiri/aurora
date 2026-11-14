@@ -8393,6 +8393,73 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/channel-links/preview": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "The chat account a sign-in link token would bind (FIX-112). Session only.",
+        "operationId": "previewChannelLink",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "description": "The `aui_…` token from the sign-in link.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkPreview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -24910,9 +24977,14 @@
       "ConfirmLinkRequest": {
         "type": "object",
         "required": [
-          "token"
+          "token",
+          "platform_user_ref"
         ],
         "properties": {
+          "platform_user_ref": {
+            "type": "string",
+            "description": "The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is\nrefused (422 `link_reference_mismatch`) when it is not the token's chat account."
+          },
           "token": {
             "type": "string",
             "description": "The `aui_…` token from the sign-in link."
@@ -29554,6 +29626,51 @@
           "allow",
           "blocked"
         ]
+      },
+      "LinkPreview": {
+        "type": "object",
+        "description": "`GET /channel-links/preview?token=`: the chat account a sign-in link would bind (docs/13 §5.9).",
+        "required": [
+          "integration_id",
+          "connector_id",
+          "tenant_label",
+          "platform_user_ref",
+          "expires_at"
+        ],
+        "properties": {
+          "connector_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "platform_display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the platform called the person when the link was requested, if known."
+          },
+          "platform_email_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The email the platform asserted, if any (a hint, never an authorization)."
+          },
+          "platform_user_ref": {
+            "type": "string",
+            "description": "The platform's reference for the person (what the confirm request repeats)."
+          },
+          "tenant_label": {
+            "type": "string"
+          }
+        }
       },
       "LinkSelf": {
         "type": "object",

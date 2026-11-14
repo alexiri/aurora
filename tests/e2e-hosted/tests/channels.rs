@@ -435,13 +435,16 @@ async fn s3_verified_email_autolink_vs_signin_link() {
         .api
         .post(
             "/v1/channel-links/confirm",
-            json!({"token": "aui_notarealtoken"}),
+            json!({"token": "aui_notarealtoken", "platform_user_ref": "U2"}),
         )
         .await;
     assert_eq!(s, 410, "bogus token: {v}");
     let (s, v) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": u2_link}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": u2_link, "platform_user_ref": "U2"}),
+        )
         .await;
     assert!(s == 200 || s == 201, "confirm: {s} {v}");
     let method: String = sqlx::query_scalar(
@@ -455,14 +458,20 @@ async fn s3_verified_email_autolink_vs_signin_link() {
     // Single use.
     let (s, v) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": u2_link}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": u2_link, "platform_user_ref": "U2"}),
+        )
         .await;
     assert_eq!(s, 410, "link reuse: {v}");
     // The first link request (for U1) was superseded by the auto-link; confirming it is
     // idempotent for the same user and must not create a second link.
     let (s, _) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": link_msg}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": link_msg, "platform_user_ref": "U1"}),
+        )
         .await;
     assert!(s == 200 || s == 201 || s == 410, "{s}");
     assert_eq!(w.count(links).await, 2);

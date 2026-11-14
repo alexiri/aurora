@@ -880,6 +880,7 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/space-bindings/{id}", G::WsOwn, false),
     r("GET", "/v1/me/channel-links", G::Auth, true),
     r("DELETE", "/v1/me/channel-links/{id}", G::Auth, true),
+    r("GET", "/v1/channel-links/preview", G::Auth, true),
     r("POST", "/v1/channel-links/confirm", G::Auth, true),
     r("GET", "/v1/me/dm-defaults", G::Auth, true),
     r("PUT", "/v1/me/dm-defaults", G::Auth, true),
@@ -1316,7 +1317,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/agents/{agent}/presences") => {
             json!({"integration_id": Uuid::now_v7(), "mode": "shared"})
         }
-        ("POST", "/v1/channel-links/confirm") => json!({"token": "aui_matrix"}),
+        ("POST", "/v1/channel-links/confirm") => {
+            json!({"token": "aui_matrix", "platform_user_ref": "U1"})
+        }
         ("PUT", "/v1/me/dm-defaults") => {
             json!({"integration_id": Uuid::now_v7(), "agent_id": fx.agent})
         }
@@ -1333,6 +1336,9 @@ async fn fire(h: &Harness, fx: &Fx, row: &Row, p: P) -> (u16, Value) {
     let mut uri = fill(row.p, fx);
     if row.p.ends_with("/memories/search") {
         uri.push_str("?q=matrix");
+    }
+    if row.p == "/v1/channel-links/preview" {
+        uri.push_str("?token=aui_matrix");
     }
     let method = Method::from_bytes(row.m.as_bytes()).unwrap();
     let body = (matches!(method, Method::POST | Method::PUT | Method::PATCH)

@@ -109,6 +109,50 @@ pub async fn list_pending_undecidable_for(
     .await?)
 }
 
+/// FIX-112: pending approvals the user may decide whose chat code (`sha256(id)[..5]`, the five
+/// bytes `code_prefix` decodes from) matches, found in SQL: the newest approval is as reachable as
+/// the oldest, whatever else is pending.
+pub async fn list_pending_by_code(
+    pool: &PgPool,
+    user: Uuid,
+    code_prefix: &[u8],
+    limit: i64,
+) -> Result<Vec<ApprovalRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "{SELECT} WHERE a.status = 'pending' AND {} \
+         AND substring(sha256(uuid_send(a.id)) from 1 for 5) = $2 \
+         ORDER BY a.created_at ASC, a.id ASC LIMIT $3",
+        may_decide()
+    ))
+    .bind(user)
+    .bind(code_prefix)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// [`list_pending_undecidable_for`] narrowed to one chat code (FIX-112).
+pub async fn list_pending_undecidable_by_code(
+    pool: &PgPool,
+    user: Uuid,
+    code_prefix: &[u8],
+    limit: i64,
+) -> Result<Vec<ApprovalRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "{SELECT} WHERE a.status = 'pending' \
+         AND {MEMBER_ONLY} \
+         AND NOT {} \
+         AND substring(sha256(uuid_send(a.id)) from 1 for 5) = $2 \
+         ORDER BY a.created_at ASC, a.id ASC LIMIT $3",
+        crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
+    ))
+    .bind(user)
+    .bind(code_prefix)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// `MAY_DECIDE` plus conversation visibility (phase 1, RFE-009): an approval naming a direct
 /// conversation the user cannot see is neither visible nor decidable.
 fn may_decide() -> String {

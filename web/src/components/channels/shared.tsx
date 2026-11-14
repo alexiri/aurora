@@ -16,6 +16,7 @@ const CHANNEL_MESSAGES: Record<string, string> = {
   mode_unsupported: "This connector does not support that mode.",
   link_expired: "This link has expired or was already used. Ask for a new one in the chat.",
   already_linked: "That chat account is already linked to another Aurora user.",
+  link_reference_mismatch: "That is not the chat account this link was made for. Ask for a new link in the chat.",
   agent_not_reachable: "You cannot reach that agent from this integration.",
   stale_revision: "This request changed in the meantime. The latest version has been loaded.",
   stale_manifest: "The connector announced a different manifest. The latest version has been loaded; review it again.",

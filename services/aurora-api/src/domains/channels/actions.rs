@@ -145,15 +145,24 @@ impl Click<'_> {
 
     async fn link_prompt(&self) -> Result<(), ApiError> {
         let tok = token::generate(TokenPrefix::Invitation);
-        link_requests::insert(
-            &self.state.pool,
+        let mut conn = self.state.pool.acquire().await.map_err(DbError::from)?;
+        // FIX-112: at most one prompt per person per 10 minutes.
+        if link_requests::insert_throttled(
+            &mut conn,
             self.integ.id,
             &self.ev.clicker_ref,
             &token::hash(tok.expose()),
             LINK_TTL_SECS,
+            super::inbox::LINK_PROMPT_INTERVAL_SECS,
+            None,
             None,
         )
-        .await?;
+        .await?
+        .is_none()
+        {
+            return Ok(());
+        }
+        drop(conn);
         let url = format!(
             "{}/link/channel?token={}",
             self.state.config.external_url.trim_end_matches('/'),
@@ -444,10 +453,10 @@ impl Click<'_> {
                     .await?
                     .ok_or_else(gone)?;
                 // The menu was DMed to one person; only they may set their own default.
-                let mine = format!("{}{}", cards::DM_PREFIX, self.ev.clicker_ref);
-                let learned_elsewhere = !card.space_ref.starts_with(cards::DM_PREFIX);
+                // FIX-112: the addressee recorded at posting, not `space_ref` (which a click
+                // replaces with the learned DM channel); a card without one fails closed.
                 if card.integration_id != self.integ.id
-                    || (!learned_elsewhere && card.space_ref != mine)
+                    || card.addressee_ref.as_deref() != Some(self.ev.clicker_ref.as_str())
                 {
                     return refuse("forbidden", "This menu was not sent to you.");
                 }

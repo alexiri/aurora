@@ -485,8 +485,8 @@ then settled (`message.update`, or a new message without `edits`).
 
 On `aurora_approval created` for an approval naming a conversation with thread
 links: post a card into the most recently used thread link (`dedupe_key =
-approval:<id>`, `channel_cards` row): header "Approval needed", summary title
-and fields, context (agent, rule, expiry), buttons Approve/Deny (and
+approval:<id>`, `channel_cards` row): header "Approval needed", summary title,
+context (agent, rule, expiry), buttons Approve/Deny (and
 Approve all / Deny all for batches with total > 1); (phase 2, RFE-012) the context
 line says "needs an approver", and a click or `approve <code>` by a linked user
 who is not `can_approve` is refused with an ephemeral "Only approvers can decide
@@ -498,6 +498,14 @@ approval)"; it settles on approval ("Approved by X — <agent> will be told"), d
 expiry and, if the grant is never used, "approval window ended" (an edit of the settled card, no
 new post). The reminder of `07 §Park and resume` is not a card (e-mail and push only).
 Clicker authorization is unchanged (`§5.5`).
+
+**What a card shows (D-192, owner decision Q-R5-9).** A card in a **shared**
+space (a channel or group message: every member sees it, including people who
+cannot use the agent) carries the title, the agent, the rule and the expiry
+only. The request's details (summary fields: method, host, path, body keys)
+are on the dashboard page the card links to, and only a `direct` conversation
+(one person and the agent) carries them on the card itself. Approvers who want
+them in chat can ask for the approval by DM (`approve <code>` answers privately).
 
 ### 5.7 Presence lifecycle
 
@@ -537,7 +545,18 @@ phase 1 (RFE-001) the sign-in link is the default and only automatic path**:
   (OIDC, `04`), the page shows the integration, the platform account's
   handle/display name and the platform email hint if any, and the person
   **confirms explicitly** → `POST /v1/channel-links/confirm` (session-only)
-  creates the user link (`method = sign_in_link`). The confirming user must be
+  creates the user link (`method = sign_in_link`). (FIX-112) The page learns
+  the chat account from `GET /v1/channel-links/preview?token=` (session-only;
+  same member rule as confirming, 410 for an unknown, used or expired token),
+  the confirm request repeats the platform user reference shown and is refused
+  (422 `link_reference_mismatch`, nothing consumed) if it does not match the
+  token, and the token leaves the address bar at once (kept in `sessionStorage`
+  across the sign-in round trip; the login return URL never carries it). An
+  unexpired, unused link request for the same (integration, platform user) made
+  within the last 10 minutes is reused: **a prompt is sent at most once per 10
+  minutes per person** (no new row, no new message), whether the trigger was a
+  message, a command or a button; a refusal notice ("you can't talk to X yet")
+  is likewise sent at most once per person and agent per 10 minutes. The confirming user must be
   an active member of the integration's org (else 403 `not_org_member`; the
   link-request is not consumed). The token is single use and expires after 30
   min.

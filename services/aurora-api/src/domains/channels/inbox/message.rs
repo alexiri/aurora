@@ -18,8 +18,8 @@ use aurora_db::repo::conversations::{self as convs, NewConversation};
 use aurora_db::repo::space_bindings::{self, BindingRow};
 use aurora_db::repo::turns::{self, Created};
 use aurora_db::repo::{
-    attachments, channel_integrations as integrations, connectors, dm_defaults, reach_grants,
-    thread_links, user_links,
+    attachments, channel_integrations as integrations, channel_ops, connectors, dm_defaults,
+    reach_grants, thread_links, user_links,
 };
 use aurora_db::{DbError, authz};
 use aurora_protocol::connector::{
@@ -157,10 +157,11 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
                 &ctx,
                 &mut conn,
                 &routed.sender,
-                &m.space.reference,
+                &m.space,
                 reply_thread,
                 &m.author.reference,
                 m.author.email.as_deref(),
+                Some(&m.author.display_name),
                 format!("link:{}", row.event_id),
             )
             .await?;
@@ -270,6 +271,7 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
             &ctx,
             &routed,
             &m,
+            &row.event_id,
             conversation.id,
             agent.workspace_id,
             &mut attachment_ids,
@@ -503,10 +505,11 @@ async fn route(
                     ctx,
                     &mut conn,
                     &sender,
-                    &m.space.reference,
+                    &m.space,
                     reply_thread,
                     &m.author.reference,
                     m.author.email.as_deref(),
+                    Some(&m.author.display_name),
                     format!("link:{}", event_id),
                 )
                 .await?;
@@ -729,22 +732,26 @@ async fn refuse(
         }
         Some(g) => Some(g.id),
     };
-    let mut conn = pool.acquire().await.retry()?;
-    send::private(
-        &mut conn,
-        ctx,
-        &r.sender,
-        &m.space.reference,
-        reply_thread,
-        &m.author.reference,
-        &format!(
-            "Sorry, you can't talk to {} yet. I've asked its owners to let you in.",
-            sanitize::label(&r.agent.name)
-        ),
-        format!("refusal:{}", row.event_id),
-    )
-    .await
-    .retry()?;
+    // FIX-112: one notice per person and agent per 10 minutes (a new request always gets one).
+    let due = speaker::refusal_due(iid, r.agent.id, &m.author.reference);
+    if notify || due {
+        let mut conn = pool.acquire().await.retry()?;
+        send::private(
+            &mut conn,
+            ctx,
+            &r.sender,
+            &m.space,
+            reply_thread,
+            &m.author.reference,
+            &format!(
+                "Sorry, you can't talk to {} yet. I've asked its owners to let you in.",
+                sanitize::label(&r.agent.name)
+            ),
+            format!("refusal:{}", row.event_id),
+        )
+        .await
+        .retry()?;
+    }
     if notify && let Some(grant) = grant {
         notify_owners(state, ctx, r, grant, &label).await?;
     }
@@ -869,12 +876,31 @@ async fn fetch_context(
 
 type FailedFile = (String, String, i64, String);
 
+/// The dedupe key of the `file.fetch` for file `index` of an event: the first attempt whose op did
+/// not end `failed`/`dropped` (a timed-out fetch is dropped, and a retry must be able to ask again).
+async fn file_fetch_key(
+    pool: &sqlx::PgPool,
+    event_id: &str,
+    index: usize,
+) -> Result<String, InboxError> {
+    const ATTEMPTS: usize = 8;
+    for attempt in 0..ATTEMPTS {
+        let key = format!("file:{event_id}:{index}:{attempt}");
+        match channel_ops::by_dedupe_key(pool, &key).await.retry()? {
+            Some(op) if matches!(op.status.as_str(), "failed" | "dropped") => {}
+            _ => return Ok(key),
+        }
+    }
+    Ok(format!("file:{event_id}:{index}:{ATTEMPTS}"))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn fetch_files(
     state: &AppState,
     ctx: &send::Ctx,
     r: &Routed,
     m: &MessagePosted,
+    event_id: &str,
     conversation: Uuid,
     workspace: Uuid,
     bound: &mut Vec<Uuid>,
@@ -918,6 +944,9 @@ async fn fetch_files(
             failed.push(fail(quota::FAILURE_REASON));
             continue;
         }
+        // FIX-112: a stable key per (event, file): a retried event gets the earlier fetch's
+        // attachment back instead of creating a second one and orphaning the first.
+        let dedupe_key = file_fetch_key(&state.pool, event_id, i).await?;
         let res = ops::call_correlated(
             state,
             NewOp {
@@ -930,7 +959,7 @@ async fn fetch_files(
                     "max_bytes": limit,
                     "conversation_id": conversation,
                 }),
-                dedupe_key: None,
+                dedupe_key: Some(dedupe_key),
             },
             ops::wait_for("file.fetch"),
         )

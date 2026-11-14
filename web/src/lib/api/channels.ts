@@ -207,10 +207,23 @@ export function useUnlinkMine() {
   });
 }
 
+/** The chat account a sign-in link token would bind (shown before the person confirms). */
+export function useChannelLinkPreview(token: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["channel-link-preview", token] as const,
+    queryFn: () => unwrap(api.GET("/v1/channel-links/preview", { params: { query: { token: token! } } })),
+    enabled: enabled && !!token,
+    retry: false,
+    staleTime: Infinity,
+  });
+}
+
 export function useConfirmChannelLink() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (token: string) => unwrap(api.POST("/v1/channel-links/confirm", { body: { token } })),
+    // The request repeats the platform user the page showed; the server refuses a mismatch.
+    mutationFn: (v: { token: string; platform_user_ref: string }) =>
+      unwrap(api.POST("/v1/channel-links/confirm", { body: v })),
     onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.myLinks }),
   });
 }

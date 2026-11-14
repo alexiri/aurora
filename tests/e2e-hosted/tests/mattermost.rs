@@ -583,7 +583,10 @@ impl W {
         let token = wait_link(&self.alice, 60).await;
         let (s, v) = self
             .api
-            .post("/v1/channel-links/confirm", json!({"token": token}))
+            .post(
+                "/v1/channel-links/confirm",
+                json!({"token": token, "platform_user_ref": self.alice.id}),
+            )
             .await;
         assert!(s == 200 || s == 201, "confirm: {s} {v}");
         assert_eq!(self.links().await, 1);

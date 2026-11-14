@@ -1303,6 +1303,8 @@ presence-level ownership).
 | expires_at | timestamptz | 30 min |
 | used_at | timestamptz null; user_id uuid null | |
 | platform_email_hint | citext null | (phase 1, RFE-001) email the platform asserted for the person; only pre-fills the sign-in (`login_hint`) and the confirm page; never authorizes |
+| platform_display_name | text null | (FIX-112) the person's display name on the platform when the request was made; shown on the confirm page, never authorizes |
+| index | | `(integration_id, platform_user_ref, created_at desc)`: the "at most one prompt per 10 minutes per person" lookup |
 
 ### `thread_links`
 | Column | Type | Notes |
@@ -1392,6 +1394,7 @@ Posted interactive messages, so they can be updated/settled.
 | post_op_id | uuid not null | |
 | space_ref, thread_ref | text not null | |
 | message_ref | text null | filled from the op result |
+| addressee_ref | text null | (FIX-112) the platform user a card was DMed to; survives `space_ref` being replaced by the learned DM channel, and is what the DM-menu click is checked against |
 | state | text CHECK in (`posting`,`posted`,`settled`,`failed`) | |
 
 ### `action_token_uses`

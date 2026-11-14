@@ -30,6 +30,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(patch_binding, delete_binding))
         .routes(routes!(my_links))
         .routes(routes!(delete_my_link))
+        .routes(routes!(preview_link))
         .routes(routes!(confirm_link))
         .routes(routes!(list_dm_defaults, set_dm_default))
         .routes(routes!(list_reach))
@@ -350,11 +351,26 @@ async fn delete_my_link(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The chat account a sign-in link token would bind (FIX-112). Session only.
+#[utoipa::path(get, path = "/channel-links/preview", operation_id = "previewChannelLink", tag = "channels",
+    params(LinkPreviewParams),
+    responses((status = 200, body = LinkPreview), (status = 403, body = ErrorEnvelope),
+        (status = 410, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn preview_link(
+    c: SessionCaller,
+    State(s): State<AppState>,
+    Query(p): Query<LinkPreviewParams>,
+) -> Result<Json<LinkPreview>, ApiError> {
+    Ok(Json(links::preview(&s, &c, &p.token).await?))
+}
+
 /// Confirm a sign-in link token for the signed-in user (C-36). Session only.
 #[utoipa::path(post, path = "/channel-links/confirm", operation_id = "confirmChannelLink", tag = "channels",
     request_body = ConfirmLinkRequest,
     responses((status = 200, body = UserLink), (status = 404, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 410, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 410, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn confirm_link(
     c: SessionCaller,
