@@ -72,6 +72,10 @@ function ConnectForm({
   const [values, setValues] = useState<FieldValues>(() => defaultValues(first?.fields ?? []));
   const [scopes, setScopes] = useState<string[]>(first?.default_scopes ?? []);
   const [access, setAccess] = useState(first?.access_levels[0]?.id ?? "");
+  // (FIX-133, D-240) What agents may do through the connection: only offered for an app that has write tools, not on a
+  // reconnect (which keeps the connection's own choice). Read only is the recommended default.
+  const hasWriteTools = app.tools.some((t) => t.group === "write");
+  const [connAccess, setConnAccess] = useState<"read" | "write">("read");
   const [clientId, setClientId] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
@@ -118,6 +122,7 @@ function ConnectForm({
         ...(clientId ? { oauth_client_id: clientId } : {}),
         ...(instanceBound && instanceId ? { instance_id: instanceId } : {}),
         ...(access ? { access_level: access } : {}),
+        ...(hasWriteTools && !reconnect ? { access: connAccess } : {}),
         ...(reconnect ? { reconnect_connection_id: reconnect } : {}),
       });
       if (res.kind === "redirect") {
@@ -261,6 +266,27 @@ function ConnectForm({
               <legend className="mb-1 text-sm font-medium text-ink">Requested scopes</legend>
               <ScopeGroups scopes={method.scopes} selected={scopes} onChange={setScopes} disabled={busy} />
             </fieldset>
+          ) : null}
+          {hasWriteTools && !reconnect ? (
+            <ChoiceCards
+              legend="What may agents do with this connection?"
+              value={connAccess}
+              onChange={setConnAccess}
+              options={[
+                {
+                  value: "read",
+                  label: "Read only",
+                  badge: "Recommended",
+                  description:
+                    "Agents can look things up but never change anything: Aurora blocks every write operation, whatever the token or the grants allow. You can change this later on the connection.",
+                },
+                {
+                  value: "write",
+                  label: "Read and write",
+                  description: "Agents may also make changes, as far as the grants you give them allow.",
+                },
+              ]}
+            />
           ) : null}
           {method.kind === "oauth2" && method.client_key ? (
             <Field id="cm-client" label="OAuth client" hint="Leave on automatic to use the most specific enabled client.">

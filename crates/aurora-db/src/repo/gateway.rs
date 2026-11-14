@@ -684,6 +684,8 @@ pub struct AppConnectionRow {
     pub instance_id: Option<Uuid>,
     /// (FIX-123, D-214) The `connect[]` method the connection was made with; null = unknown.
     pub connect_method: Option<String>,
+    /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools.
+    pub access: String,
 }
 
 /// An `active` app instance visible to an org, as the gateway needs it (D-74).
@@ -719,7 +721,7 @@ pub async fn app_connections(
 ) -> Result<Vec<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id, connect_method \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access \
          FROM app_connections \
          WHERE org_id = $1 AND (workspace_id IS NULL OR workspace_id = $2) \
            AND app_id = ANY($3) AND status IN ('active', 'disabled', 'reauth_required') \
@@ -743,7 +745,7 @@ pub async fn app_connection_by_id(
 ) -> Result<Option<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id, connect_method \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access \
          FROM app_connections \
          WHERE id = $1 AND org_id = $2 AND (workspace_id IS NULL OR workspace_id = $3)",
     )
@@ -764,7 +766,7 @@ pub async fn app_connection_in_org(
 ) -> Result<Option<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id, connect_method \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access \
          FROM app_connections WHERE id = $1 AND org_id = $2",
     )
     .bind(id)

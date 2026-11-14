@@ -146,6 +146,12 @@ function EditorForm({
 
   return (
     <form onSubmit={submit} className="space-y-4" aria-label={`Access to ${connection.label}`}>
+      {connection.access === "read" ? (
+        <Notice tone="pending" role="status">
+          Read-only connection: Aurora blocks every write tool through it, whatever you choose below. Change it on the
+          connection.
+        </Notice>
+      ) : null}
       <GrantForm
         appName={appName}
         tools={tools}

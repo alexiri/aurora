@@ -341,6 +341,18 @@ facts of the approved manifest, copied into the snapshot, and apply **below** th
   override it, and it applies under every grant mode and to hand-written rules alike. It
   does not apply at CONNECT time (no credential is injected there) and does not affect
   requests to the same host without that connection as the winning credential.
+- **Read-only connections** (phase 5, FIX-133, D-240, C-740). A connection's `access` is `read`
+  or `write` (`03 §app_connections`; default `write`). For a request whose winning credential
+  is a `read` connection, the scope verdict is `block` **before any rule is consulted**, like
+  `block_untooled`, unless the request's `tool_id` is a tool of the app's `read` group: a write
+  tool, and a request that matches no catalogue tool (it cannot be proven a read), is refused
+  (403 `blocked_by_policy`, `details.reason = "read_only_connection"`; reason
+  `read_only_connection` in the trace and request log, trace `via = read_only_blocked`). Order
+  within the two pre-rule checks: `block_untooled` first, then read-only. No grant, rule or
+  approval overrides it; it applies under every grant mode, to hand-written rules, and not at
+  CONNECT time. It works for any app with a read/write split and does not rely on the vendor.
+  The effective view and the simulator evaluate it too. Grants of a read-only connection are
+  shown with a "Read-only connection" note (`14`).
 - **Composition.** The restrictions only tighten: they combine with grants, rules,
   approvals, governance and the Default Rule by the usual strictness order (`block` wins), never
   add an allow, and never change a custom grant's compilation (rules 1–3 above already block

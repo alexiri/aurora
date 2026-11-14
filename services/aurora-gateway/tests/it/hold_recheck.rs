@@ -215,6 +215,7 @@ async fn start(pool: sqlx::PgPool) -> Env {
         tenant_host: None,
         instance_id: None,
         connect_method: None,
+        access: "write".into(),
     };
     let conn_id = conn.id;
     let mut ws = ScopePolicyRows {

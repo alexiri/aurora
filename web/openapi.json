@@ -32175,6 +32175,13 @@
           "method_id"
         ],
         "properties": {
+          "access": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools\n(the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the\nconnection's current value."
+          },
           "access_level": {
             "type": [
               "string",
@@ -32316,11 +32323,16 @@
           "scopes",
           "missing_scopes",
           "metadata",
+          "access",
           "created_at",
           "updated_at",
           "injecting"
         ],
         "properties": {
+          "access": {
+            "type": "string",
+            "description": "(FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools\n(the gateway blocks write tools and untooled requests through it, whatever the grants say)."
+          },
           "app_id": {
             "type": "string"
           },
@@ -39596,11 +39608,16 @@
                 "scopes",
                 "missing_scopes",
                 "metadata",
+                "access",
                 "created_at",
                 "updated_at",
                 "injecting"
               ],
               "properties": {
+                "access": {
+                  "type": "string",
+                  "description": "(FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools\n(the gateway blocks write tools and untooled requests through it, whatever the grants say)."
+                },
                 "app_id": {
                   "type": "string"
                 },
@@ -42213,6 +42230,13 @@
       "PatchConnectionRequest": {
         "type": "object",
         "properties": {
+          "access": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it."
+          },
           "label": {
             "type": [
               "string",

@@ -56,6 +56,9 @@ pub enum BlockReason {
     /// (P4-GRANTS, D-123) The winning connection's app is `block_untooled` and no catalogue tool
     /// matched the request; decided before any rule.
     AppUntooledBlocked,
+    /// (FIX-133, D-240) The winning connection is read-only and the request is a write tool or
+    /// matches no catalogue tool; decided before any rule.
+    ReadOnlyConnection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +169,8 @@ pub enum Via {
     Nothing,
     /// (P4-GRANTS, D-123) `block_untooled` decided before any rule was consulted.
     AppUntooledBlocked,
+    /// (FIX-133, D-240) `ReadOnlyConnection` decided before any rule was consulted.
+    ReadOnlyBlocked,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -253,6 +258,21 @@ fn blocks_untooled(f: &RequestFacts) -> bool {
         )
 }
 
+/// (FIX-133, D-240) The winning credential is a read-only connection and the request is not a
+/// read tool: a write tool, or no catalogue tool at all (an untooled request cannot be proven a
+/// read). Not at `CONNECT` time (nothing is injected into a tunnel).
+fn blocks_read_only(f: &RequestFacts) -> bool {
+    !f.connect_time
+        && matches!(
+            f.winning_credential,
+            Some(crate::facts::Credential::Connection {
+                read_only: true,
+                ..
+            })
+        )
+        && (f.tool_id.is_none() || f.tool_tags.write)
+}
+
 fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> ScopeResult {
     let mut considered = Vec::with_capacity(p.ordered_rules.len());
     let finish = |considered, matched, via, verdict, hit| ScopeResult {
@@ -274,6 +294,17 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
             Via::AppUntooledBlocked,
             Some(Verdict::Block {
                 reason: BlockReason::AppUntooledBlocked,
+            }),
+            None,
+        );
+    }
+    if blocks_read_only(f) {
+        return finish(
+            Vec::new(),
+            None,
+            Via::ReadOnlyBlocked,
+            Some(Verdict::Block {
+                reason: BlockReason::ReadOnlyConnection,
             }),
             None,
         );

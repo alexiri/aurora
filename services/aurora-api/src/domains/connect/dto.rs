@@ -17,6 +17,10 @@ pub struct ConnectRequest {
     pub fields: BTreeMap<String, String>,
     pub oauth_client_id: Option<Uuid>,
     pub access_level: Option<String>,
+    /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+    /// (the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the
+    /// connection's current value.
+    pub access: Option<String>,
     pub reconnect_connection_id: Option<Uuid>,
     /// A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's
     /// `default_host`.

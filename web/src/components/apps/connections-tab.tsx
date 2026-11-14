@@ -64,6 +64,7 @@ function ConnectionRow({
           <span className="font-mono text-xs text-muted">{c.app_id}</span>
           <Badge tone={bad ? "danger" : c.status === "active" ? "accent" : "neutral"}>{STATUS_LABEL[c.status] ?? c.status}</Badge>
           {customOnly ? <Badge>Custom access only</Badge> : null}
+          {c.access === "read" ? <Badge tone="accent">Read-only</Badge> : null}
           {c.instance ? (
             <Badge className="font-mono normal-case tracking-normal" title={`Self-hosted instance: ${c.instance.label}`}>
               {c.instance.host}
@@ -75,6 +76,17 @@ function ConnectionRow({
             {c.status === "active" ? (
               <Button size="sm" variant="outline" aria-label={`Access to ${c.label}`} onClick={() => setAccessOpen(true)}>
                 Access
+              </Button>
+            ) : null}
+            {c.status === "active" || c.status === "disabled" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={patch.isPending}
+                aria-label={c.access === "read" ? `Allow writes through ${c.label}` : `Make ${c.label} read-only`}
+                onClick={() => patch.mutate({ id: c.id, access: c.access === "read" ? "write" : "read" })}
+              >
+                {c.access === "read" ? "Allow writes" : "Make read-only"}
               </Button>
             ) : null}
             {org && ws && c.status !== "orphaned" ? (

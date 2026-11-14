@@ -269,6 +269,9 @@ struct Ctx<'a> {
     /// The registered self-hosted instance being connected (D-74); `None` = `default_host` or an
     /// app without `instances`.
     instance: Option<InstanceRow>,
+    /// (FIX-133, D-240) `read` | `write` requested for the connection (validated); `None` = `write`
+    /// for a new connection, unchanged for a reconnect.
+    access: Option<String>,
 }
 
 #[derive(Default)]
@@ -348,6 +351,7 @@ impl Ctx<'_> {
             client_id: client,
             instance_id: self.instance.as_ref().map(|i| i.id),
             access_level: level,
+            access: self.access.clone(),
             pkce_verifier: None,
             reconnect: self.reconnect.as_ref().map(|r| r.id),
             continuation: None,
@@ -478,6 +482,7 @@ impl Ctx<'_> {
             instance_id: self.instance.as_ref().map(|i| i.id),
             credential_keys: &keys,
             connect_method: Some(method_id),
+            access: self.access.as_deref(),
         };
         let old = match self.write(caller, &n).await {
             Ok(o) => o,
@@ -702,6 +707,11 @@ pub async fn start(
         .find(|c| c.id() == req.method_id)
         .ok_or_else(|| invalid("/method_id", "unknown connect method"))?;
     let instance = resolve_instance(state, app, &t, req.instance_id, reconnect.as_ref()).await?;
+    let access = match req.access.as_deref() {
+        None => None,
+        Some(a @ ("read" | "write")) => Some(a.to_owned()),
+        Some(_) => return Err(invalid("/access", "must be read or write")),
+    };
     let ctx = Ctx {
         state,
         snap: &snap,
@@ -711,6 +721,7 @@ pub async fn start(
         t,
         reconnect,
         instance,
+        access,
     };
     match method {
         Connect::Fields(f) => {
@@ -1033,6 +1044,7 @@ async fn run_callback(
         t,
         reconnect,
         instance,
+        access: flow.access.clone(),
     };
     let client_row = match flow.client_id {
         Some(id) => aurora_db::repo::oauth_clients::get(&state.pool, id).await?,

@@ -222,6 +222,7 @@ fn conn(w: &World, app: &str, path: &str, tenant: Option<&str>) -> AppConnection
         tenant_host: tenant.map(str::to_owned),
         instance_id: None,
         connect_method: None,
+        access: "write".into(),
     }
 }
 
@@ -1368,6 +1369,67 @@ fn derived_custom(c: &AppConnectionRow) -> Vec<(Uuid, Value)> {
                    "targets":[{"type":"connection","id":c.id}]}),
         ),
     ]
+}
+
+/// FIX-133 (D-240): a read-only connection allows the app's read tools and blocks its write tools
+/// and untooled requests under a `full` grant; an existing (`write`) connection is unchanged.
+#[tokio::test]
+async fn read_only_connection_blocks_write_and_untooled_even_under_a_full_grant() {
+    let (env, ..) = start(
+        indico_like(false, false),
+        &[("c1", r#"{"tok":"RO-TOKEN"}"#)],
+        |w| {
+            let mut c = conn(w, "demo", "c1", None);
+            c.access = "read".into();
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    let r = get(&env, "/items", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer RO-TOKEN"),
+        "{}",
+        r.body
+    );
+    for (method, path) in [("POST", "/items"), ("GET", "/anything/else")] {
+        let r = send(&env, method, path, "", "{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert_eq!(r.code(), "blocked_by_policy");
+        let v: Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(
+            v["error"]["details"]["reason"], "read_only_connection",
+            "{method} {path}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("RO-TOKEN"));
+    }
+}
+
+#[tokio::test]
+async fn a_write_connection_is_unchanged_by_the_read_only_check() {
+    let (env, ..) = start(
+        indico_like(false, false),
+        &[("c1", r#"{"tok":"RW-TOKEN"}"#)],
+        |w| {
+            let c = conn(w, "demo", "c1", None); // access = write, as every existing connection
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    let r = send(&env, "POST", "/items", "", "{}").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer RW-TOKEN"),
+        "{}",
+        r.body
+    );
 }
 
 #[tokio::test]

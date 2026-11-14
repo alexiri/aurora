@@ -61,6 +61,9 @@ pub struct Connection {
     /// (FIX-123, D-214) The `connect[]` method id the connection was made with; `null` when
     /// unknown (rows older than the column of an app with several methods).
     pub connect_method: Option<String>,
+    /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+    /// (the gateway blocks write tools and untooled requests through it, whatever the grants say).
+    pub access: String,
     /// The registered instance of an instance-bound app; `null` for `default_host` and other apps.
     pub instance: Option<InstanceRef>,
     pub credentials_expires_at: Option<DateTime<Utc>>,
@@ -136,6 +139,7 @@ impl Connection {
             tenant_host: r.tenant_host,
             oauth_client_id: r.oauth_client_id,
             connect_method: r.connect_method,
+            access: r.access,
             instance,
             credentials_expires_at: r.credentials_expires_at,
             connected_by: r.connected_by.map(|id| ConnectedBy {
@@ -192,4 +196,6 @@ pub struct PatchConnectionRequest {
     pub label: Option<String>,
     /// `active` | `disabled`.
     pub status: Option<String>,
+    /// (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it.
+    pub access: Option<String>,
 }

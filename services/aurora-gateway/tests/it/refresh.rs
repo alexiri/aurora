@@ -169,6 +169,7 @@ async fn fixture(kind: &str, token_url: &str, refresh: &str) -> Fx {
         tenant_host: None,
         instance_id: None,
         connect_method: None,
+        access: "write".into(),
     };
     Fx {
         db,

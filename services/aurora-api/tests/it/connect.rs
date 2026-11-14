@@ -566,6 +566,87 @@ async fn a_connection_records_its_connect_method_and_a_reconnect_rewrites_it() {
     assert_eq!(v["connection"]["connect_method"], "api_key");
 }
 
+/// (FIX-133, D-240) A connection is `write` unless connected read-only; a reconnect without `access`
+/// keeps it; the connection can be changed afterwards with `PATCH`; anything else is a 400.
+#[tokio::test]
+async fn a_connection_can_be_read_only_from_connect_time_and_changed_later() {
+    let w = world(None).await;
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t1"});
+    // Default: write.
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["access"], "write");
+    // An unknown value is refused before anything is stored.
+    b["access"] = json!("admin");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+    // Read-only from the start.
+    b["access"] = json!("read");
+    b["fields"] = json!({"api_token": "t2"});
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["access"], "read");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    let stored: String = sqlx::query_scalar("SELECT access FROM app_connections WHERE id = $1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored, "read");
+    // A reconnect that does not say keeps it.
+    b.as_object_mut().unwrap().remove("access");
+    b["fields"] = json!({"api_token": "t3"});
+    b["reconnect_connection_id"] = json!(id);
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["access"], "read");
+    // PATCH changes it; a bad value is refused.
+    let path = format!("/v1/connections/{id}");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"access": "write"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["access"], "write");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"access": "everything"})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+}
+
 #[tokio::test]
 async fn connect_records_credential_key_names_and_a_reconnect_clears_a_major_upgrade_flip() {
     let w = world(None).await;

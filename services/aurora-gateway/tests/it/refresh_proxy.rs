@@ -209,6 +209,7 @@ fn conn(w: &World, app: &str, path: &str, tenant: Option<&str>) -> AppConnection
         tenant_host: tenant.map(str::to_owned),
         instance_id: None,
         connect_method: None,
+        access: "write".into(),
     }
 }
 
@@ -344,6 +345,7 @@ async fn start_with(
         tenant_host: None,
         instance_id: None,
         connect_method: None,
+        access: "write".into(),
     };
     let prov = Arc::new(Mutex::new(Provider {
         calls: 0,

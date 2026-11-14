@@ -1530,6 +1530,17 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   (Phase 5, FIX-147) **Requested scopes** are the shared `ScopeGroups` (`PermissionGroups` with
   On / Off rows): grouped Read / Write by `scope.access`, a group-wide On / Off and a control per
   scope, not a flat checkbox list.
+  (Phase 5, FIX-133, D-240, C-740) For an app that has write tools, every connect method also asks
+  **"What may agents do with this connection?"** (`ChoiceCards`): **Read only** (Recommended,
+  preselected: "Agents can look things up but never change anything: Aurora blocks every write
+  operation, whatever the token or the grants allow") or **Read and write**; the choice is sent as
+  `access`. A reconnect does not ask (it keeps the connection's value). Apps with only read tools
+  do not ask. The Connections list shows a **Read-only** badge and a **Make read-only** /
+  **Allow writes** button (`PATCH access`); the agent's grant editor for a read-only connection
+  starts with the note "Read-only connection: Aurora blocks every write tool through it, whatever
+  you choose below." Each method's description says what the vendor enforces itself (GitHub App
+  installation tokens and fine-grained personal access tokens can be read-only at GitHub; a
+  classic OAuth app's `repo` scope cannot) while Aurora's block applies to all of them.
   Tokens only, both themes, no horizontal scroll at 390 px (`ws-app-connect` in the axe and narrow
   route suites).
 - **Approval notifications (phase 2, RFE-011a)**: `approvals/stream` drives (1) the

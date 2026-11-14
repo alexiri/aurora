@@ -192,6 +192,7 @@ async fn start(pool: sqlx::PgPool) -> Env {
         tenant_host: None,
         instance_id: None,
         connect_method: None,
+        access: "write".into(),
     };
     let mut ws = ScopePolicyRows {
         default_action: "block".into(),

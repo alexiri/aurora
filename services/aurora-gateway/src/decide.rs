@@ -488,6 +488,21 @@ impl PolicyHandler {
                 })),
                 "app_untooled_blocked",
             )),
+            // (FIX-133, D-240) Decided before any rule: the connection is read-only.
+            Verdict::Block {
+                reason: BlockReason::ReadOnlyConnection,
+            } => Some((
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "blocked_by_policy",
+                    "This connection is read-only: it allows only the app's read tools, and this request is not one of them. No rule can allow it.".to_owned(),
+                )
+                .with_details(json!({
+                    "reason": "read_only_connection", "method": method, "path": path,
+                    "manage_url": policy_url
+                })),
+                "read_only_connection",
+            )),
             Verdict::Block {
                 reason: BlockReason::DefaultDenied,
             } => Some((
@@ -859,7 +874,10 @@ impl PolicyHandler {
             truncated,
             app_id: ctx.app_id.clone(),
             tool_id: ctx.tool_id.clone(),
-            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            tool_tags: tool
+                .zip(app_match.as_ref())
+                .map(|(t, m)| apps::tool_tags(m.app, t))
+                .unwrap_or_default(),
             winning_credential: winner.as_ref().map(Cand::credential),
             is_llm_host: rv.is_llm_host,
             identity: fi,
@@ -1911,7 +1929,10 @@ impl DbSession {
             truncated,
             app_id: ctx.app_id.clone(),
             tool_id: ctx.tool_id.clone(),
-            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            tool_tags: tool
+                .zip(app)
+                .map(|(t, a)| apps::tool_tags(a, t))
+                .unwrap_or_default(),
             winning_credential: Some(cred),
             is_llm_host: false,
             identity: fi,

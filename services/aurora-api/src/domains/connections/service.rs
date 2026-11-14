@@ -175,6 +175,16 @@ pub async fn patch(
             ));
         }
     };
+    let access = match req.access.as_deref() {
+        None => None,
+        Some(a @ ("read" | "write")) => (row.access != a).then_some(a),
+        Some(_) => {
+            return Err(ApiError::invalid_request(
+                "Invalid access.",
+                vec![FieldError::new("/access", "must be read or write")],
+            ));
+        }
+    };
     let label = req.label.as_deref().map(str::trim);
     let action = match req.status.as_deref() {
         Some("disabled") if row.status != "disabled" => "connection.disable",
@@ -182,7 +192,7 @@ pub async fn patch(
         _ => "connection.update",
     };
     let mut tx = crate::audit::begin(state).await?;
-    repo::update(&mut *tx, row.id, label, status).await?;
+    repo::update(&mut *tx, row.id, label, status, access).await?;
     if status == Some("disabled") {
         // (FIX-084) A held request that would use this credential must not be released.
         approvals::abandon_pending_depending_on(
@@ -202,7 +212,7 @@ pub async fn patch(
         caller,
         action,
         &updated,
-        serde_json::json!({"from_status": row.status}),
+        serde_json::json!({"from_status": row.status, "from_access": row.access, "to_access": access}),
     );
     crate::audit::commit_critical(tx, &ev).await?;
     Ok(updated)

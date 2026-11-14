@@ -50,6 +50,8 @@ pub struct ConnCand {
     /// both `false` until then, which only matters for lanes that never evaluate policy).
     pub custom_only: bool,
     pub block_untooled: bool,
+    /// (FIX-133, D-240) `access = read`: only the app's read tools pass through this connection.
+    pub read_only: bool,
 }
 
 impl ConnCand {
@@ -79,6 +81,8 @@ impl ConnCand {
             reauth_required: r.status == "reauth_required",
             custom_only: false,
             block_untooled: false,
+            // Fail closed: anything but the known `write` reads as read-only.
+            read_only: r.access != "write",
         })
     }
 
@@ -101,6 +105,7 @@ impl ConnCand {
             scope: self.scope,
             custom_only: self.custom_only,
             block_untooled: self.block_untooled,
+            read_only: self.read_only,
         }
     }
 }
@@ -383,10 +388,16 @@ pub fn identify_tool_in<'a>(
     })
 }
 
-pub fn tool_tags(t: &ToolItem) -> ToolTags {
+pub fn tool_tags(app: &AppEntry, t: &ToolItem) -> ToolTags {
     ToolTags {
         graphql: t.graphql.is_some(),
         git: t.git.is_some(),
+        // (FIX-133) The group the catalogue lists the tool in.
+        write: app
+            .tools
+            .as_ref()
+            .and_then(|g| g.write.as_ref())
+            .is_some_and(|g| g.items.iter().any(|i| i.id == t.id)),
     }
 }
 

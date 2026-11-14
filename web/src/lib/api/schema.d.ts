@@ -5334,6 +5334,12 @@ export interface components {
             url?: string | null;
         };
         ConnectRequest: {
+            /**
+             * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+             *     (the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the
+             *     connection's current value.
+             */
+            access?: string | null;
             access_level?: string | null;
             fields?: {
                 [key: string]: string;
@@ -5377,6 +5383,11 @@ export interface components {
         };
         /** @description A connection. Credentials are never returned (SEC-12). */
         Connection: {
+            /**
+             * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+             *     (the gateway blocks write tools and untooled requests through it, whatever the grants say).
+             */
+            access: string;
             app_id: string;
             app_version: string;
             /**
@@ -7605,6 +7616,11 @@ export interface components {
         };
         Page_Connection: {
             items: {
+                /**
+                 * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+                 *     (the gateway blocks write tools and untooled requests through it, whatever the grants say).
+                 */
+                access: string;
                 app_id: string;
                 app_version: string;
                 /**
@@ -8319,6 +8335,8 @@ export interface components {
             listen?: null | components["schemas"]["Listen"];
         };
         PatchConnectionRequest: {
+            /** @description (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it. */
+            access?: string | null;
             label?: string | null;
             /** @description `active` | `disabled`. */
             status?: string | null;
