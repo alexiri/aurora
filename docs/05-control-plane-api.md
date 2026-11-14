@@ -362,7 +362,7 @@ claim-based and safe to run everywhere.
 | Approval e-mail notification (phase 2, RFE-011a, `07 §Approvals`): pending approvals older than `APPROVAL_NOTIFY_DELAY` without a live surface → e-mail to deciders | every 10 s | claims (`approval_notifications`) |
 | Approval watcher heartbeat (phase 2, RFE-011a): each replica upserts `approval_watchers` for its open approvals SSE/long-poll connections; stale rows pruned | every 15 s | idempotent |
 | Approval expiry: `pending` past `deadline + 30 s` → `expired` (phase 5 (D-138, moved from phase 4), RFE-011b: a **parked** approval expires at `deadline`, nobody holds it); pending rows of gateway instances unseen for 60 s → `abandoned` (phase 4: **never** `parked` rows) | every 10 s | idempotent updates |
-| Approval resume window (phase 5 (D-138, moved from phase 4), RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder | every 10 s | idempotent updates, claims (`approval_push_claims`) |
+| Approval resume window (phase 5 (D-138, moved from phase 4), RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder (C-828: e-mail claimed in `approval_notifications` with `stage = 'reminder'`, push in `approval_push_claims`); runs whatever `approvals.park.enabled` says now (D-264(b)) | every 10 s | idempotent updates, claims (`approval_notifications`, `approval_push_claims`) |
 | Web Push delivery (phase 5 (D-138, moved from phase 4), RFE-011b, `07 §Web Push`): on `aurora_approval created` + `APPROVAL_PUSH_DELAY`, deciders with a live subscription and no watcher; failure handling, subscription disabling, retired-VAPID-key destruction (`PUSH_VAPID_RETIRE`) | event + every 10 s catch-up; daily | claims (`approval_push_claims`) |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
@@ -663,6 +663,7 @@ by `id`, never by `host` alone.
 | PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation, expect_revision }` (FIX-109: rollback replaces the current draft, so it needs the draft revision the caller last read; 409 `stale_revision` otherwise) |
 | GET `…/policy/generations` | S/K | history |
+| GET `/v1/policy/approval-limits` | S/K | (phase 5, P4-011B, D-265(d), C-829) any signed-in user: the live approval bounds `{ timeout_secs, max_timeout_secs, park: { enabled, threshold_secs, max_timeout_secs, resume_window_secs } }` for the rule editor and the grant ask timeout; not on the unauthenticated `/v1/instance` |
 | GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft; (phase 2, RFE-025) includes `rule_applies_to_all_agents` (`07 §Injection selection`) |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
@@ -676,25 +677,27 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/workspaces/{ws}/approvals?status=` | S/K | (phase 5, P5-AGENT-1, C-700) optional `agent_id`: only that agent's approvals, applied in the query with the visibility predicate; another workspace's or an unknown agent gives an empty page (as on `action-approvals`) |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
 | GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
-| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 5 (D-138, moved from phase 4), RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at` (never the fingerprint or salt) |
-| POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
+| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 5 (D-138, moved from phase 4), RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at`, `consumed_at` (never the fingerprint or salt; C-822); the decision, its follow-up and its audit row are one transaction (C-823, C-824) || POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
 | GET `/v1/workspaces/{ws}/action-approvals`; POST `/v1/action-approvals/{id}/decision` | S/K | |
 
 ### Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134)
 Own-resources only: every route acts on the caller's subscriptions; another user's subscription
 is 404. 404 `push_unavailable` on all of them while `push.enabled = false`. Writes are best-effort
-audited (`push_subscription.create|delete`).
+audited (`push_subscription.create|update|delete|move`, C-838). Contracts C-830..C-834 (P4-011B).
 
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/push/config` | S | `{ available, vapid_public_key, vapid_key_id, allowed_hosts }` for the browser's `pushManager.subscribe` (the key is public) |
-| GET `/v1/me/push-subscriptions` | S | the caller's devices: `{ id, label, show_details, paused, state: "active"\|"paused"\|"disabled"\|"expired"\|"stale_key", this_session, created_at, last_success_at }` — never the endpoint or keys |
-| POST `/v1/me/push-subscriptions` | SO | `{ endpoint, keys: { p256dh, auth }, expiration_time?, label?, show_details?, vapid_key_id }` → 201 `PushSubscription`; 422 `push_endpoint_not_allowed` (not https, host not in `push.allowed_endpoint_hosts`, over 2 048 chars), `push_keys_invalid` (`p256dh` not a 65-byte P-256 point, `auth` not 16 bytes), `push_subscription_limit_reached`, 409 `push_key_stale` (the `vapid_key_id` is retired: re-fetch `config`); an endpoint already registered by another user is **moved** to the caller and its session |
+| GET `/v1/push/config` | S | `{ available, vapid_public_key, allowed_hosts }` for the browser's `pushManager.subscribe` (the key is public; (P4-011B spec batch, D-266(d), C-830) no key id: the browser compares public keys, which works for generated and operator-managed keys alike) |
+| GET `/v1/me/push-subscriptions` | S | the caller's devices: `{ id, label, show_details, paused, state: "active"\|"paused"\|"disabled"\|"expired"\|"stale_key", this_session, created_at, last_success_at, last_failure_at }` — never the endpoint or keys (C-831) |
+| POST `/v1/me/push-subscriptions` | SO | `{ endpoint, keys: { p256dh, auth }, expiration_time?, label?, show_details?, vapid_public_key, rebind? }` → 201 `PushSubscription` (200 when the endpoint already belonged to the caller: its session is re-bound); 422 `push_endpoint_not_allowed` (`details.reason`: `not_https`, `host_not_allowed`, `too_long` over `PUSH_ENDPOINT_MAX`, `userinfo`, `ip_literal`), `push_keys_invalid` (`p256dh` not a 65-byte P-256 point, `auth` not 16 bytes), 409 `push_subscription_limit_reached`, 409 `push_key_stale` (`vapid_public_key` is not the active key: re-fetch `config`); an endpoint already registered by another user is **moved** to the caller and its session — except with `rebind: true`, which (D-266(c)) only re-binds an endpoint already registered to the caller and otherwise answers 404 `push_subscription_not_found` and creates nothing |
 | PATCH/DELETE `/v1/me/push-subscriptions/{id}` | SO | `{ label?, show_details?, paused? }`; DELETE is idempotent |
-| POST `/v1/me/push-subscriptions/{id}/test` | SO | sends a `test` push (`PUSH_TEST_PER_HOUR` 3 per user); 202, the outcome appears in the device state |
+| POST `/v1/me/push-subscriptions/{id}/test` | SO | sends a `test` push (`PUSH_TEST_PER_HOUR` 3 per user, then 429 `push_test_rate_limited` with `Retry-After`); 202, the outcome appears in the device state |
 
-CLI (operator): `aurora-api push rotate-vapid`, `aurora-api push status` (key ids and dates,
-subscription counts by state and host; never key material).
+CLI (operator): `aurora-api push rotate-vapid [--dry-run]`, `aurora-api push status [--json]` (mode,
+key ids and dates, subscription counts by state and host; never key material; C-833). (P4-011B spec
+batch, D-266(c)) Session revocation (sign-out, sign out others, an administrator's revocation,
+deactivation) deletes the session's subscriptions in the same transaction; `GET /v1/instance`
+gains `features.push: bool` (C-830).
 
 ### Agents and sandboxes
 | Method & path | Auth | Purpose |

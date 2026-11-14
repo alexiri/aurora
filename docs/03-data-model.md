@@ -1545,7 +1545,23 @@ context credential at mint** (`gateway_credentials.trace_context`, same CHECK, s
 | resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 5 (RFE-011b, D-138) |
 | indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 5 (RFE-011b, D-138) |
 
-The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status.
+The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status. (P4-011B spec batch, D-265) Migration `20261201000220_approval_park.sql` (block `000220..229`, P4-011B-1) adds these columns, the CHECK `(parked = (fp_salt IS NOT NULL)) AND (parked = (fingerprint IS NOT NULL))`, the three partial indexes and the gateway role's column grants (`SELECT` on the listed columns, `UPDATE (resume_state, consumed_at)` added to its existing `UPDATE` columns); `resume_state` moves to `revoked` by the API only (C-826).
+
+#### `request_log` (approval references; phase 5, P4-011B, D-265(a))
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_id | uuid null | the approval a request was held, parked or resumed under (no FK, ledger table); set by every hold, park and grant consumption (C-827) | 5 (P4-011B) |
+| resumed | bool not null default false | true when a parked approval's grant was consumed by this request | 5 (P4-011B) |
+| decision | (existing CHECK) | gains `approval_parked` (a parked refusal and its identical repeats) | 5 (P4-011B) |
+
+Migration `20261201000221_request_log_approval.sql` (P4-011B-1) adds both columns to the partitioned parent (inherited by every partition) and replaces the decision CHECK with the widened one. The gateway role's existing `INSERT` on `request_log` covers the new columns.
+
+#### `approval_notifications` (reminder stage; phase 5, P4-011B, D-265(b))
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| stage | text not null default `initial` CHECK in (`initial`,`reminder`) | pk part: the primary key becomes `(approval_id, user_id, stage)`; the parked reminder e-mail (`07 §Park and resume`) is its own idempotent claim | 5 (P4-011B) |
+
+Migration `20261201000222_approval_notification_stage.sql` (P4-011B-2): add the column (existing rows become `initial`), drop and re-create the primary key.
 
 #### `approval_push_claims` (new table; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
@@ -1588,7 +1604,7 @@ Absent when the operator supplies the key through `push.vapid.private_key_env` (
 | created_at | timestamptz not null default now() | | 5 (RFE-011b, D-138) |
 | index | `(user_id)`, `(session_id)` | delivery and cascade | 5 (RFE-011b, D-138) |
 
-The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades).
+The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades). (P4-011B spec batch, D-266(c)) Sign-out, "sign out other sessions", an administrator's revocation and deactivation delete the session's `push_subscriptions` rows in the revoking transaction (the cascade only covers deleted session rows). The sealed secrets (`webpush.vapid`, `webpush.subscription`) are always in the `inline` store (D-266(b)). Migration `20261201000223_web_push.sql` (P4-011B-3) creates `webpush_vapid_keys`, `push_subscriptions` and `approval_push_claims` together; the partial unique index `webpush_vapid_keys (status) WHERE status = 'active'` enforces one active key.
 
 #### `app_instances` (base path; phase 5, FIX-145, D-231)
 | Planned column | Type | Notes | Phase |

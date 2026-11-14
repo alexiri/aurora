@@ -343,11 +343,15 @@ its `reason` is `mint_rejected` the adapter reports `provider_auth` instead (the
 credential, not the gateway, is at fault), with the gateway code kept in the message.
 Errors inside a 200 stream (an event-stream exception, an SSE `error` event) are classified
 by the adapter from the event's error type with the same table (D-260(d)).
-(phase 5 (D-138, moved from phase 4), RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: the supervisor
-shows it as an activity line ("waiting for approval") and never maps it to `gateway_refused` as a
-terminal error; a turn that ends normally after it is `done`. No adapter changes: the refusal
-arrives as the HTTP response of the agent's own tool call, and the platform preamble
-(`10 §Agent instructions`) tells the agent how to behave. Harness-level tool-failure counters
+(phase 5 (D-138, moved from phase 4), RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: a turn
+that ends normally after it is `done`. (P4-011B spec batch, D-264(a)(c); corrects the earlier text,
+which had the supervisor turn it into an activity line) The supervisor never sees it: the refusal
+arrives as the HTTP response of the agent's own tool call, inside the harness, and the platform
+preamble (`10 §Agent instructions`) tells the agent how to behave; the person sees the
+`approval.pending { parked: true }` transcript event the API appends. The harness's **own** model
+requests never park (requests to governed LLM endpoints are held, `07` *Which approvals park* 6), so
+`approval_parked` can never reach the provider-error mapping above and needs no entry in it. No
+adapter changes. Harness-level tool-failure counters
 (`TOOL_CONSECUTIVE_FAILURES`) apply to platform tools only and do not see it. Resuming is a new
 turn, so no harness needs a "suspend" capability and none is added to the adapter contract.
 

@@ -190,14 +190,20 @@ is created with its text (one promotion per follow-up, fenced by
 - **Approval resume follow-up** (phase 5 (D-138, moved from phase 4), RFE-011b, `07 §Park and resume`): when a parked
   approval is approved or denied the API creates, in the origin conversation, a **system
   follow-up**: a `joining` row steered into the origin turn if it is still running and the
-  harness can steer, else a new `queued` turn with `speaker_kind = system` (door `approval`,
-  no speaker, so `user`/`group` identities never match, D-131), exactly the mechanism by which an
-  action-approval outcome reaches an agent. Its text is composed by the platform from the
+  harness can steer, else a new `queued` turn with `speaker_kind = system` (door `{ "kind":
+  "system", "ref": "approval:<id>" }` — (P4-011B spec batch, D-264(e)) the door vocabulary is
+  closed, the "`approval`" door named here earlier was an error; no speaker, so `user`/`group`
+  identities never match, D-131), exactly the mechanism by which an action-approval outcome
+  reaches an agent. It is written in the deciding transaction, and one decision transaction
+  writes one follow-up per conversation however many of its parked approvals it decides (C-824). Its text is composed by the platform from the
   approval's sanitized summary (never model or request text), states the decision, who made it
   and, for an approval, the single-use window in which to repeat the identical request. It is
   created only if the agent is not effectively frozen and the conversation still exists; the
   sandbox is woken by the normal due-work arms (a parked approval is not a keep-awake reason,
-  `11`). An expired parked approval produces a `notice` and no turn.
+  `11`). An expired parked approval produces a `notice` and no turn. (D-264(d), C-826)
+  Deleting the conversation or the agent, and bumping `harness_session_epoch` (harness switch,
+  redaction with `reset_session`), abandon the conversation's pending parked approvals and revoke
+  its ready grants in the same transaction: a fresh session cannot repeat the exact request.
 - **Send now** (`POST /v1/turns/{id}/send-now`): sets
 `send_now_requested_at`; delivered as `turn.send_now` (harness moves the
 blocking tool to the background if it declares `background_tool`).

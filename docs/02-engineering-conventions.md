@@ -321,6 +321,9 @@ overridden by the named configuration key (`15`).
 | `PUSH_SUBSCRIPTIONS_PER_USER` / `PUSH_TEST_PER_HOUR` | (phase 5 (D-138, moved from phase 4), RFE-011b) 10 devices per user / 3 test pushes per user per hour | — | 05, 07 |
 | `PUSH_TTL_MAX` / `PUSH_PAYLOAD_MAX` | (phase 5 (D-138, moved from phase 4), RFE-011b) 24 h push-service TTL cap (≥ 60 s) / 1 KiB payload before encryption | — | 07, 16 |
 | `PUSH_VAPID_RETIRE` | (phase 5 (D-138, moved from phase 4), RFE-011b) 30 days a retired VAPID key stays usable for the subscriptions that reference it | — | 07, 08 |
+| `PARK_FOLLOWUP_LINES_MAX` | (phase 5, P4-011B spec batch, D-264(e)) 10 approvals listed in one resume follow-up, then "…and N more" (C-824) | — | 07, 10 |
+| `PUSH_RETRY_MAX` / `PUSH_DISABLE_AFTER_FAILURES` | (phase 5, P4-011B spec batch) 3 tries within 60 s for a 429/5xx answer / 5 consecutive failures disable a subscription (C-834) | — | 07, 16 |
+| `PUSH_ENDPOINT_MAX` / `PUSH_VAPID_JWT_TTL` | (phase 5, P4-011B spec batch) 2 048-character subscription endpoint URL (422 `push_endpoint_not_allowed`) / 1 h VAPID JWT `exp`, reused per (key, audience) until 5 min before (C-831, C-833) | — | 05, 16 |
 | `STORAGE_SNAPSHOT_MAX_AGE` | (FIX-126) 1 h: the Storage pages (`GET /admin/storage`, `GET /orgs/{org}/storage`) are served from a shared snapshot at most this old; a stale or missing one is recomputed once under a lock, the daily attachment sweep and the Refresh buttons recompute it too | — | 05, 10, 14 |
 | `SCIM_RATE` | (phase 4, P4-GRP-2) 600 requests / min per token, burst 120 (class `management`; `scim.rate_per_minute`) | `scim.rate_per_minute` | 04, 05, 16 |
 | `SCIM_BODY_MAX` / `SCIM_MAX_PATCH_OPS` / `SCIM_MAX_MEMBERS_PER_REQUEST` | (phase 4, P4-GRP-2) 1 MiB / 100 operations / 1 000 members | — | 04, 16 |

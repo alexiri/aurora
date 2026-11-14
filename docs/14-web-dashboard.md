@@ -580,7 +580,8 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
 lists the person's groups per organization (read-only) and the effective role with its
 source. (phase 5 (D-138, moved from phase 4), RFE-011b) **Notifications**: the in-tab notification and e-mail switches
-and the Web Push device list (*Key flows*). (phase 4, P4-IDP-1) **Roles from your
+and the Web Push device list (*Key flows*) — (P4-011B spec batch, C-836) one section of the Profile
+page, where the in-tab and e-mail switches already live; no new route. (phase 4, P4-IDP-1) **Roles from your
 sign-in**: each IdP role value and what it granted. (phase 4, P4-ONB-2) "Show the tour
 again" and "Show the getting-started guide again".
 
@@ -1237,7 +1238,12 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   where Web Push exists only for a site added to the Home Screen: the page shows that instruction and
   the app serves a static `/manifest.webmanifest` (`display: standalone`, icons from the brand
   folder, no tokens). On every dashboard load the page compares the device's `vapid_key_id` with
-  `config` and, if the key was rotated, re-subscribes silently and removes the old registration;
+  `config` and, if the key was rotated, re-subscribes silently and removes the old registration
+  ((P4-011B spec batch, D-266(c)(d), C-836) precisely: only in a browser holding the local opt-in
+  marker; it compares the browser subscription's `applicationServerKey` with
+  `config.vapid_public_key`, and when the server no longer lists this browser for the current
+  session it re-binds it with `rebind: true` — a 404 clears the marker and shows the opt-in card
+  again, so a different person signing in never inherits the device);
   **signing out** removes this device's subscription first (best effort; the server-side session
   binding ends delivery regardless, `07 §Web Push`). The in-tab notification above keeps working and
   is what a user with the tab open sees (the server does not push to a user with a live watcher).
@@ -1251,6 +1257,12 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
     close, accept `data.url` **only** if it is a same-origin path starting with `/o/` (no scheme, no
     `//`, no backslash) else go to `/`, focus an existing Aurora window and navigate it, else open one.
     `pushsubscriptionchange` does nothing (the page re-syncs on its next load).
+    (P4-011B spec batch, D-267(a), C-835, SEC-102) It is registered **only** by the Turn-on
+    gesture (never on page load for a person who has not opted in) and unregistered when this
+    browser's registration is removed; it also has no `importScripts` and no `clients.claim`, and a
+    web test fails if the file gains any of `fetch` listeners, `caches`, `importScripts` or network
+    calls. The CSP of `proxy.ts` gains `worker-src 'self'` and `manifest-src 'self'`; nothing else
+    loosens. Notification texts are C-835's. Offline caching is out of scope.
 - **Parked approvals (phase 5 (D-138, moved from phase 4), RFE-011b)**: the Approvals page, the inline approval in the chat
   and the workspace overview mark a parked approval with a **"Parked"** chip and the line "The agent
   has stopped waiting. If you approve, it will be told and can repeat this exact request once within
@@ -1260,6 +1272,14 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   revoked grant (freeze) shows "Revoked". The transcript shows `approval.pending` with the chip and
   the platform follow-up message (door chip "Approval") when the agent resumes. Held approvals look
   as before. Everything follows §Visual design (tokens, primitives, both themes, 390 px).
+  (P4-011B spec batch, D-264, D-265(d), C-836) The "Approval" chip is derived from the follow-up's
+  door `{ kind: "system", ref: "approval:…" }`; a parked approval abandoned by a revocation shows
+  "No longer needed", a revoked grant "Revoked" with the cause from its notice. The rule editor's
+  and the grant dialog's *Approval timeout* take their bounds from `GET /v1/policy/approval-limits`
+  and, while parking is on, add the hint "Above <threshold> the agent stops waiting and is told when
+  you decide (up to <max>)"; simulate and the effective view show "parks" or "clamped to <max>".
+  Admin › Approvals renders the `approvals.park.*` settings through SET-5's section form; Admin ›
+  Overview shows "Web Push: off \| on (generated key, N devices) \| on (operator key)".
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
   catalogue, connections, secrets, network patterns), conditions, modifiers,

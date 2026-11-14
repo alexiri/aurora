@@ -22,6 +22,7 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 3. **P5-CHAT-0** design boards + `docs/14` (owner reviews before P5-CHAT-2).
 4. Specs/briefs for the rows with none, in the owner's order (D-235(c)): **P4-LLM, P4-SSH-1/2, P4-011B** first; then P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK.
 
+Done 2026-11-14: specs merged for SPEC-SETTINGS (SET-1..SET-5), P4-SSH (P4-SSH-1/2), P4-LLM (P4-LLM-1..6), P4-011B (P4-011B-1..5); owner answers D-235, D-268. Still to spec: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK; P5-CHAT-0 boards.
 Done 2026-11-14: step 0 of FIX-142 (46bbf084), FIX-145 (f8fb415b), FIX-146 (c8aa4cb5). SPEC-SETTINGS' owner questions answered (D-235(a)/(b)); P5-CERN-ADDONS uses the gateway lane (D-235(d)).
 5. Perf budgets on an idle machine (carried from phase 4).
 
