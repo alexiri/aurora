@@ -280,7 +280,7 @@ a {
   max-width: 100%;
   /* (FIX-138) A bounded height: `autoResize` derives a fixed grid from it, so output scrolls inside the pane's
      scrollback instead of growing the page (at least ~16 rows). On phones a fixed share of the viewport. */
-  height: max(18rem, calc(100dvh - 22rem));
+  height: max(18rem, calc(100dvh - 25rem));
   overflow-y: auto;
 }
 
@@ -292,7 +292,7 @@ a {
 
 /* The standalone terminal window (`…/agents/<agent>/terminal`): the pane fills the viewport below its title bar. */
 .wterm.term-pane.term-pane-window {
-  height: calc(100dvh - 8rem);
+  height: calc(100dvh - 11rem);
   border-radius: 0;
 }
 

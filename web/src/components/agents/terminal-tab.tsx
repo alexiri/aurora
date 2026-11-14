@@ -13,7 +13,7 @@
 // OSC 52 write surfaces a "Copy to clipboard" confirmation (C-622); selection copy is the
 // browser's own.
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { GhosttyCore } from "@wterm/ghostty";
 import { Terminal, useTerminal } from "@wterm/react";
@@ -182,6 +182,13 @@ export function TerminalPane({
   // The pane element, for "Jump to latest": set when wterm is ready.
   const paneEl = useRef<HTMLElement | null>(null);
   const [scrolledUp, setScrolledUp] = useState(false);
+  // True while the view follows the cursor (the person has not scrolled up): new output and resizes re-pin the pane to
+  // its bottom. wterm renders the scrollback into the pane but does not keep it pinned, so the pane does (FIX-138).
+  const followRef = useRef(true);
+  const follow = useCallback(() => {
+    const el = paneEl.current;
+    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+  }, []);
   const lastEscape = useRef(0);
   const [left, setLeft] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "connecting" });
@@ -257,6 +264,8 @@ export function TerminalPane({
         // text control, `pty.resize`, is browser → runner) — ignore, never parse as text.
         if (typeof ev.data === "string") return;
         write(new Uint8Array(ev.data as ArrayBuffer));
+        // After wterm has laid the new output out (it renders on the next frame), keep the bottom in view.
+        requestAnimationFrame(() => requestAnimationFrame(follow));
       };
       ws.onclose = (ev) => {
         if (disposed || wsRef.current !== ws) return;
@@ -301,10 +310,11 @@ export function TerminalPane({
     };
     // `write` is stable (`useTerminal`'s callback is `useCallback(..., [])`); `retryNonce`
     // re-runs the effect after the pane's explicit Reconnect.
-  }, [agentId, core, paused, write, retryNonce]);
+  }, [agentId, core, paused, write, follow, retryNonce]);
 
   const onResize = (cols: number, rows: number) => {
     sizeRef.current = { cols, rows };
+    requestAnimationFrame(follow);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ kind: "pty.resize", pty_id: 0, cols, rows }));
     }
@@ -442,7 +452,15 @@ export function TerminalPane({
           onReady={(wt) => {
             paneEl.current = wt.element;
             const el = wt.element;
-            el.addEventListener("scroll", () => setScrolledUp(el.scrollHeight - el.scrollTop - el.clientHeight > 40), { passive: true });
+            el.addEventListener(
+              "scroll",
+              () => {
+                const up = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
+                followRef.current = !up;
+                setScrolledUp(up);
+              },
+              { passive: true },
+            );
           }}
           onData={(data) => {
             if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -464,6 +482,7 @@ export function TerminalPane({
             className="absolute bottom-3 right-4 shadow-pop"
             onClick={() => {
               const el = paneEl.current;
+              followRef.current = true;
               if (el) el.scrollTop = el.scrollHeight;
               setScrolledUp(false);
               ref.current?.focus();
