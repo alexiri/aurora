@@ -117,7 +117,7 @@ uuid = { version = "1.22", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
 croner = "3"
-toml = "0.9"
+toml = "1.2"
 graphql-parser = "0.4"
 mail-parser = "1.0"
 regex = "1"
