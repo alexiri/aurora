@@ -1310,7 +1310,14 @@ Rule: `07 §Park and resume` and `§Web Push`, `06 §Parking and grants` and §G
   - **Home sync.** `render_inputs.links: [{ name: string, app_id: string, connection_id: uuid }]`: one entry per active connection of a `secret_link` app the agent holds a grant on (the set of `apps[].accounts`). The supervisor writes `~/.aurora/links.json` (`0600`, removed when empty): `[{ name, app, url: "https://<connection_id>.link.aurora.internal/" }]`.
   - **Gateway.**
     - Admission: `<connection_id>.link.aurora.internal` (gateway-CA leaf), `GET`/`HEAD` only (405 otherwise), after policy, grants, approvals and Read only.
-    - Forwarding: the request goes to the stored URL exactly. The agent's path and query are ignored, and only `Accept`, `If-None-Match`, `If-Modified-Since` and `Range` are forwarded.
+    - Forwarding: the request goes to the stored URL exactly. The agent's path and query are ignored, and only `Accept` is forwarded upstream.
+    - **Cache** (owner, 2026-11-14).
+      - **What is kept:** a successful (`200`), complete upstream body is kept in the serving gateway replica's memory for `SECRET_LINK_CACHE_TTL` (300 s). It is keyed by connection id and credential version, so a reconnect never serves the old link's body.
+      - **When it is used:** every request passes the full admission first (grant, policy, approvals, Read only), and only then is it answered from the cache. Each cached answer is still a request-log row, with `cache: hit`.
+      - **Bounds:** the total size is bounded by `SECRET_LINK_CACHE_MAX_BYTES` (64 MiB per replica, least recently used evicted). Never on disk; errors and partial bodies are never cached.
+      - **Upstream headers are overridden:** `Cache-Control: no-store` from the upstream does not prevent caching, because the cache is private to that connection's admitted callers.
+      - **Dropped on:** reconnect, disable or delete of the connection, and on credential revocation.
+      - **What the agent gets:** a gateway `ETag` (a hash of the body) and `Age`. An `If-None-Match` matching the cached `ETag` gets `304` without contacting the upstream.
     - Redirects: ≤ 3, `https` only, guard and policy per hop, never returned.
     - Response: streamed and capped at `SECRET_LINK_RESPONSE_MAX` (20 MiB); `Set-Cookie`/`Location` dropped.
     - Errors: 404 `link_not_found`, 403 `link_destination_refused`, 502 `upstream_echoed_credential` (needles: the URL and its path-with-query, raw and percent-encoded).

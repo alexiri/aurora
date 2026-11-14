@@ -50,7 +50,7 @@ The mechanism is generic (`secret_link`), so a later package (private RSS/Atom f
   - a server on a private network works only where the instance admin allows that range (`gateway.allowed_private`).
 - **Agent snippet** (≤ 2,000 chars):
   - the calendars are listed in `~/.aurora/links.json` (`name`, `app`, `url`);
-  - `curl` the listed `url` to a file;
+  - `curl` the listed `url` to a file **once** per task and work on that file: re-downloading within 5 minutes returns the gateway's cached copy anyway;
   - expand recurrences with a pinned `uv run --with icalendar==<pin> --with recurring-ical-events==<pin> python - …` recipe that prints `start–end | title | location` between two dates in the person's time zone;
   - "Busy" entries without titles mean a busy-only publication;
   - `link_not_found` means the link was unpublished or reset, so ask the person to reconnect with the new link.
@@ -89,7 +89,7 @@ The mechanism is generic (`secret_link`), so a later package (private RSS/Atom f
   - The connection must exist and be of a `secret_link` app.
   - It must be granted to the calling agent. Policy, grants, approvals, Read-only (FIX-133) and the request log apply as to any tool request, with the tool taken from the manifest.
   - Methods: `GET` and `HEAD` only (else 405). The agent's path and query are ignored.
-  - Forwarded agent headers are an allowlist: `Accept`, `If-None-Match`, `If-Modified-Since`, `Range`. Never cookies, `Authorization` or proxy headers.
+  - Only the agent's `Accept` header is forwarded upstream. Never cookies, `Authorization`, proxy headers, `Range` or conditional headers.
 - **The upstream request:**
   - It goes to the stored URL exactly: scheme, host, port, path, query.
   - The **destination guard** applies on every request (resolved address; private ranges only under `allowed_private`; cloud metadata, link-local and Aurora's own addresses never).
@@ -101,6 +101,16 @@ The mechanism is generic (`secret_link`), so a later package (private RSS/Atom f
   - Upstream 404/410 become 404 `link_not_found`; guard or policy refusals become 403 `link_destination_refused`.
   - The echo check (FIX-104) uses the stored URL and its path-with-query, raw and percent-encoded, as needles; a match gives 502 `upstream_echoed_credential`.
 - **Logs and traces:** the request log, approval summaries, traces (SEC-88) and every error carry the synthetic host, the connection id and the real **host** only. The real path and query appear nowhere.
+- **Cache** (owner, 2026-11-14: "cache the results for a bit … so that we don't hit the server if the agent keeps downloading it"):
+  - **What is kept:** a complete `200` body, in the replica's memory, for `SECRET_LINK_CACHE_TTL` = 300 s. It is keyed by `(connection_id, credential version)`; the lane uses whatever already changes on reconnect, such as the credential's `updated_at` or a secret version.
+  - **Bound:** `SECRET_LINK_CACHE_MAX_BYTES` = 64 MiB per replica, least recently used evicted. A body over the response cap is never cached.
+  - **Order:** admission (grant, policy, approvals, Read only) runs **before** the lookup, every time.
+  - **Logging:** a hit is a request-log row with `cache: hit`, and the span says so.
+  - **Upstream headers:** the upstream's `Cache-Control: no-store` (Google sends it) is overridden, because the cache is private to the connection's admitted callers.
+  - **Not cached:** errors, redirects and cut bodies.
+  - **Dropped on:** reconnect, disable or delete of the connection, and credential revocation, by subscribing to the gateway's existing connection-change signal (the lane names it).
+  - **What the agent gets:** `ETag` (a hash of the body) and `Age`. `If-None-Match` matching the cached `ETag` gets `304` with no upstream call.
+  - **No disk and no shared store:** a multi-replica gateway just fetches once per replica.
 
 **Dashboard.**
 - The `fields` form already renders `name` and the `secret` URL.
@@ -128,7 +138,15 @@ A secret-link credential is a destination fixed by the person:
   - an ungranted agent → refused;
   - a read-only connection works;
   - `HEAD` works and `POST` → 405;
-  - the agent's path, query and a `Cookie`/`Authorization` header are not forwarded, and `If-None-Match` is;
+  - the agent's path, query, `Cookie`, `Authorization`, `Range` and `If-None-Match` headers are not forwarded upstream;
+  - cache:
+    - two `GET`s within the TTL make one upstream call, and the second is logged `cache: hit` with `Age`;
+    - after the TTL, a new upstream call;
+    - `If-None-Match` with the gateway `ETag` → `304`, with no upstream call;
+    - an ungranted agent is refused while the body is cached;
+    - reconnect (new URL) and delete each drop the entry, so the next request goes to the new URL or is refused;
+    - an error or a cut body is not cached;
+    - filling past `SECRET_LINK_CACHE_MAX_BYTES` evicts the least recently used entry;
   - a redirect is followed (≤ 3) and never shown;
   - a redirect to `http` or to a private address is refused;
   - an org block rule on the real host blocks;
@@ -163,7 +181,7 @@ A secret-link credential is a destination fixed by the person:
   - `services/aurora-gateway` (new `link` module and its dispatch from the decision path);
   - the API connect path for `secret_link` and the home-sync `links` input;
   - `services/aurora-supervisor` (`links.json`);
-  - `crates/aurora-core/src/limits.rs` (one constant);
+  - `crates/aurora-core/src/limits.rs` (three constants: response cap, cache TTL, cache size);
   - the docs above.
 - The registry manifest and the gateway's per-app decision are `p5-apps` hot files (PHASE5-PLAN): run it in that lane after its queue, or when the Orchestrator frees those files.
 - No migration: the credential and metadata live in existing columns. If the home sync needs a schema change, report it first.
