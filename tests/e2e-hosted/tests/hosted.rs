@@ -1901,7 +1901,7 @@ async fn s13_terminal_shells_complete_alias_colour_and_resolve_the_wrappers() {
         "bash -c 'type ll'; echo rc=$?\r",               // 8: a turn's shell never sees the alias
         "echo history-probe\r",                          // 9
         "\u{1b}[A",                                      // 10: Up recalls it
-        "echo auroravars=$(env | grep -c '^AURORA_')\r", // 11
+        "echo bootvars=$(env | grep -c '^AURORA_BOOT')\r", // 11
         "\r",                                            // 12
     ];
     for (shell, tag) in [("/bin/bash", "bash"), ("/usr/bin/zsh", "zsh")] {
@@ -1959,8 +1959,8 @@ async fn s13_terminal_shells_complete_alias_colour_and_resolve_the_wrappers() {
             step(10)
         );
         assert!(
-            step(11).contains("auroravars=0"),
-            "{tag}: AURORA_* in the terminal: {}",
+            step(11).contains("bootvars=0"),
+            "{tag}: the boot document in the terminal: {}",
             step(11)
         );
     }
@@ -2078,8 +2078,8 @@ default_model = "say"
     let env_part = out.split("--- env").nth(1).unwrap_or_default();
     assert!(!env_part.contains(SEED), "the key is in the terminal env");
     assert!(
-        !env_part.lines().any(|l| l.starts_with("AURORA_")),
-        "AURORA_* in the terminal env: {env_part}"
+        !env_part.lines().any(|l| l.starts_with("AURORA_BOOT")),
+        "the boot document in the terminal env: {env_part}"
     );
 
     let run = process_output(
