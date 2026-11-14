@@ -36,6 +36,10 @@ impl ScimType {
     }
 }
 
+/// Response extension carrying the `scimType` of a [`ScimError`] to the error-log middleware.
+#[derive(Debug, Clone, Copy)]
+pub struct ScimTypeMark(pub Option<&'static str>);
+
 #[derive(Serialize)]
 struct Body {
     schemas: [&'static str; 1],
@@ -156,6 +160,7 @@ impl ScimError {
 
 impl IntoResponse for ScimError {
     fn into_response(self) -> Response {
+        let scim_type_str = self.scim_type.as_str();
         let b = Body {
             schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"],
             status: self.status.as_u16().to_string(),
@@ -163,6 +168,9 @@ impl IntoResponse for ScimError {
             detail: self.detail,
         };
         let mut r = (self.status, axum::Json(b)).into_response();
+        // For the per-org error log (`record_scim_error`): the SCIM type survives as a
+        // response extension (never the `detail`).
+        r.extensions_mut().insert(ScimTypeMark(scim_type_str));
         // The wire format is `application/scim+json` (16 §W15 Transport).
         r.headers_mut().insert(
             header::CONTENT_TYPE,

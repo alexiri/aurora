@@ -107,7 +107,32 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
             };
             match take(&state, &[charge(token_key(row.id))], true).await {
                 Ok(()) => {
+                    let method = req.method().as_str().to_owned();
+                    let resource = resource_label(req.uri().path());
+                    let live = row.is_live(chrono::Utc::now());
+                    let org = row.org_id;
                     let mut res = next.run(req).await;
+                    // The per-org error log (`/scim/status` `errors`): authenticated requests
+                    // only (the token's org is known; the 401 and the 429 are not logged: the
+                    // 401 has no org and both are counted by metrics). Best effort, sanitized
+                    // (method, resource kind, status, scimType: no body, token, detail or
+                    // id), and bounded by the token bucket above.
+                    let status = res.status().as_u16();
+                    if live && status >= 400 && status != 401 && status != 429 {
+                        let scim_type = res
+                            .extensions()
+                            .get::<super::error::ScimTypeMark>()
+                            .and_then(|m| m.0);
+                        super::management::record_scim_error(
+                            &state,
+                            org,
+                            &method,
+                            resource,
+                            i64::from(status),
+                            scim_type,
+                        )
+                        .await;
+                    }
                     // Remember the resolved token for the extractor (it re-reads; the row may
                     // have died in between, which the extractor then reports).
                     res.extensions_mut().insert(row);
@@ -137,6 +162,20 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
         // the limiter.
         RateResolve::Error => next.run(req).await,
     }
+}
+
+/// The resource kind of a `/scim/v2` path (`Users`, `Groups`, …): never an id.
+fn resource_label(path: &str) -> &'static str {
+    path.split('/')
+        .find_map(|s| match s {
+            "Users" => Some("Users"),
+            "Groups" => Some("Groups"),
+            "ServiceProviderConfig" => Some("ServiceProviderConfig"),
+            "ResourceTypes" => Some("ResourceTypes"),
+            "Schemas" => Some("Schemas"),
+            _ => None,
+        })
+        .unwrap_or("")
 }
 
 enum RateResolve {

@@ -526,7 +526,7 @@ pub async fn status(
     let errors: Vec<ErrorRow> = sqlx::query_as(
         "SELECT created_at, COALESCE(metadata ->> 'method', ''), \
                     COALESCE(metadata ->> 'resource', ''), \
-                    COALESCE((metadata ->> 'status')::int, 0), \
+                    COALESCE((metadata ->> 'status')::bigint, 0), \
                     metadata ->> 'scim_type' \
              FROM audit_log WHERE org_id = $1 AND action = 'scim.error' \
              ORDER BY created_at DESC LIMIT $2",
