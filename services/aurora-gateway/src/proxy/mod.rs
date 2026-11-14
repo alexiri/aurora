@@ -427,16 +427,16 @@ impl Proxy {
         response_headers: http::HeaderMap,
     ) -> Response<Body> {
         let (method, path) = (p.method, p.path);
-        let (prefix, ended, _) =
+        let (prefix, truncated, _) =
             crate::decide::buffer_prefix(p.body, crate::ldap::MAX_REQUEST_BODY).await;
-        let mut resp = if ended {
-            crate::ldap::run(self.upstream.ldap(), cfg, &method, &path, &prefix).await
-        } else {
+        let mut resp = if truncated {
             guidance::response(&ApiError::new(
                 http::StatusCode::PAYLOAD_TOO_LARGE,
                 "ldap_request_invalid",
                 "The search request is larger than 16 KiB.",
             ))
+        } else {
+            crate::ldap::run(self.upstream.ldap(), cfg, &method, &path, &prefix).await
         };
         if let Some(h) = hook
             && let Some(replacement) = h.on_response(resp.status(), resp.headers())

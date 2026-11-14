@@ -1333,7 +1333,11 @@ impl PolicyHandler {
                 hook: Some(hook),
                 response_headers,
                 retry,
-                ldap: None,
+                // (D-251) Only a request that won a granted connection of an LDAP app carries
+                // the block: the lane is a capability the grant confers, not open egress.
+                ldap: crate::ldap::is_ldap_host(&host)
+                    .then(|| m.app.ldap.clone())
+                    .flatten(),
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
@@ -1430,33 +1434,22 @@ impl PolicyHandler {
 #[async_trait::async_trait]
 impl RequestHandler for PolicyHandler {
     async fn handle(&self, req: PipelineRequest) -> Outcome {
-        let (identity, port) = (req.identity.clone(), req.port);
         let outcome = self.handle_with(req, None).await;
         match outcome {
-            // (D-251) An admitted request on an LDAP app's synthetic host carries the approved
-            // `ldap` block; the proxy translates it instead of forwarding. No block found (the
-            // snapshot changed under the request, a host of no LDAP app) fails closed.
-            Outcome::Forward(mut p) if crate::ldap::is_ldap_host(&p.host) => {
-                let cfg = match self.resolver.resolve(&identity, &p.host, port).await {
-                    Ok(rv) => rv
-                        .registry
-                        .as_ref()
-                        .and_then(|l| apps::identify_app(l, &p.host, port, &p.path))
-                        .and_then(|m| m.app.ldap.clone()),
-                    Err(_) => None,
-                };
-                if cfg.is_none() {
-                    let err = ApiError::bad_gateway(
-                        "ldap_unavailable",
-                        "No directory is configured for this host.",
-                    );
-                    if let Some(h) = p.hook.take() {
-                        h.on_error(&err);
-                    }
-                    return Outcome::Respond(guidance::response(&err));
+            // (D-251) A request on an LDAP app's synthetic host is answered by the LDAP lane
+            // only when it won a granted connection of that app (then it carries the approved
+            // `ldap` block). Anything else on that host — no connection, no grant, a host of no
+            // LDAP app — is never forwarded and never reaches a directory.
+            Outcome::Forward(mut p) if crate::ldap::is_ldap_host(&p.host) && p.ldap.is_none() => {
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "ldap_no_connection",
+                    "This agent has no granted connection for this directory.",
+                );
+                if let Some(h) = p.hook.take() {
+                    h.on_error(&err);
                 }
-                p.ldap = cfg;
-                Outcome::Forward(p)
+                Outcome::Respond(guidance::response(&err))
             }
             o => o,
         }
