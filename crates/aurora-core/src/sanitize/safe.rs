@@ -153,8 +153,8 @@ fn break_image_openers(s: &str) -> String {
 
 /// Math is opaque to the Markdown parser but not to a platform with LaTeX off, where `$…$` is
 /// prose: no image opener and no `](` link joint survives in it. A space does it without
-/// changing the math (LaTeX ignores it; a backslash would be a LaTeX error on Mattermost with
-/// inline LaTeX on — checked on 11.7.15, FIX-142 step 4).
+/// changing the math (LaTeX ignores it; a backslash would be a LaTeX error on a chat platform with
+/// inline LaTeX on — checked on the pinned dev server, `docs/20`, FIX-142 step 4).
 fn tame_math(s: &str) -> String {
     let s = s.replace("![", "! [").replace("](", "] (");
     // A URL in math cannot be a link, and a server that reads raw text would fetch it (D-270):
@@ -767,7 +767,7 @@ fn autolink_label(url: &str) -> String {
 /// Edits for a run of prose text `src[start..end]` (outside code): image openers broken
 /// (`![` → `!\[`), link joints the parser did not form broken (`](` → `]\(`) and definition
 /// look-alikes at a line start broken (`[x]:` → `[x]\:`) — a platform with a looser dialect
-/// (Mattermost: a destination with spaces, a definition after a paragraph line) would form what
+/// (a destination with spaces, a definition after a paragraph line: `docs/20`) would form what
 /// the parser did not — and, outside links, bare URLs made labelled links (D-270).
 fn prose_edits(
     src: &str,
@@ -849,8 +849,8 @@ fn row_pipes(line: &str) -> Vec<usize> {
 }
 
 /// GFM drops the cells of a body row beyond the header's width — the parser shows nothing of their
-/// content — but Mattermost renders them (an image, a URL it fetches, an `@channel`: checked on
-/// 11.7.15). The pipe that would start an extra cell, and every one after it, is escaped, so the
+/// content — but a chat platform renders them (an image, a URL it fetches, an `@channel`: checked on
+/// the pinned dev server, `docs/20`). The pipe that would start an extra cell, and every one after it, is escaped, so the
 /// rest of the row is text of the last cell and every other rewrite reaches it.
 fn table_excess_edits(
     src: &str,
