@@ -52,7 +52,11 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
   if (settled) {
     const label = st.status === "expired" ? "Expired" : st.status === "approve" ? "Approved" : "Denied";
     return (
-      <div id={approvalAnchorId(id)} tabIndex={-1} role="status" className="flex max-w-chat-card flex-wrap items-center gap-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel px-3 py-2 text-sm text-ink">
+      <div
+        id={approvalAnchorId(id)}
+        tabIndex={-1}
+        role="status"
+        className="flex max-w-chat-card flex-wrap items-center gap-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel px-3 py-2 text-sm text-ink">
         <Badge tone={st.status === "approve" ? "accent" : st.status === "deny" ? "danger" : "neutral"}>
           {label}
           {st.by ? ` by ${st.by}` : ""}
@@ -62,7 +66,10 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
     );
   }
   return (
-    <div id={approvalAnchorId(id)} tabIndex={-1} className="max-w-chat-card space-y-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent">
+    <div
+      id={approvalAnchorId(id)}
+      tabIndex={-1}
+      className="max-w-chat-card space-y-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent">
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone="pending">Held</Badge>
         <p className="font-semibold text-pending-ink">Approval requested</p>

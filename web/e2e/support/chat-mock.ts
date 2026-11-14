@@ -170,9 +170,15 @@ export async function openChat(page: Page, scheme: "light" | "dark", fx: Fixture
   await mockChat(page, fx);
   await page.emulateMedia({ colorScheme: scheme });
   await page.goto(`${AGENT_ROUTE}${query}`);
-  await page.getByRole("tab", { name: "Chat" }).click();
+  // Wait on real conditions (no sleeps): the Chat tab is enabled before it is clicked, and a `?c=` selection is
+  // reflected in the list before a spec acts on it.
+  const chatTab = page.getByRole("tab", { name: "Chat" });
+  await expect(chatTab).toBeEnabled();
+  await chatTab.click();
   // (below 768 px the list is hidden while a thread is open: wait for it to exist, not to be visible)
   await page.locator('nav[aria-label="Conversations"]').waitFor({ state: "attached" });
+  const selected = new URLSearchParams(query.replace(/^\?/, "")).get("c");
+  if (selected) await expect(page.locator('nav[aria-label="Conversations"] [aria-current="true"]')).toHaveCount(1);
   await page.waitForLoadState("networkidle");
   await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
   expect(errors, "the chat page threw").toEqual([]);

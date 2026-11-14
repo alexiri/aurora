@@ -68,5 +68,7 @@ export const MoreIcon = make(<><path d="M5 12h.01M12 12h.01M19 12h.01"/></>);
 export const CopyIcon = make(<><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></>);
 export const ArrowLeftIcon = make(<><path d="M19 12H5M11 6l-6 6 6 6"/></>);
 export const SearchIcon = make(<><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></>);
-export const StopIcon = make(<><rect x="6" y="6" width="12" height="12" rx="2"/></>);
+export const ReplyIcon = make(<><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 016 6v3"/></>);
+export const ArrowDownIcon = make(<><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></>);
+export const StopIcon =make(<><rect x="6" y="6" width="12" height="12" rx="2"/></>);
 export const CalendarIcon = make(<><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></>);

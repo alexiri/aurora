@@ -46,11 +46,7 @@ export function ConversationRow({
       type="button"
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
-      className={cn(
-        "flex min-h-14 w-full items-center gap-3 rounded-control px-2.5 py-2 text-left hover:bg-subtle",
-        selected && "bg-subtle",
-      )}
-    >
+      className={cn("flex min-h-14 w-full items-center gap-3 rounded-control px-2.5 py-2 text-left hover:bg-subtle", selected && "bg-subtle")}>
       {memberDirect ? (
         <Avatar name={c.direct_user?.display_name || "?"} tintKey={c.direct_user?.id} size={36} />
       ) : (
@@ -114,7 +110,14 @@ export function ConversationList({
   const { mine, others, memberDirects } = groups;
   const rows = (items: Conversation[]) =>
     items.map((c) => (
-      <ConversationRow key={c.id} conversation={c} selected={selectedId === c.id} now={now} onSelect={() => onSelect(c.id)} waiting={waitingIds?.has(c.id) ?? false} />
+      <ConversationRow
+        key={c.id}
+        conversation={c}
+        selected={selectedId === c.id}
+        now={now}
+        onSelect={() => onSelect(c.id)}
+        waiting={waitingIds?.has(c.id) ?? false}
+      />
     ));
   const empty = !mine && others.length === 0 && memberDirects.length === 0;
   return (
@@ -142,7 +145,11 @@ export function ConversationList({
         onValueChange={(v) => onArchivedChange(v === "archived")}
         className="w-full [&>button]:flex-1 [&>button]:justify-center [&>button]:min-h-11 md:[&>button]:min-h-9"
       />
-      <div role="tabpanel" id={`chat-list-panel-${archived ? "archived" : "active"}`} aria-labelledby={`chat-list-tab-${archived ? "archived" : "active"}`} className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
+      <div
+        role="tabpanel"
+        id={`chat-list-panel-${archived ? "archived" : "active"}`}
+        aria-labelledby={`chat-list-tab-${archived ? "archived" : "active"}`}
+        className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
         {status}
         {empty && !status ? (
           <p className="px-2 py-3 text-sm text-muted">
