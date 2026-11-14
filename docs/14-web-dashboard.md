@@ -1530,6 +1530,15 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   (Phase 5, FIX-147) **Requested scopes** are the shared `ScopeGroups` (`PermissionGroups` with
   On / Off rows): grouped Read / Write by `scope.access`, a group-wide On / Off and a control per
   scope, not a flat checkbox list.
+  (Phase 5, FIX-136, D-241, C-741) **Permissions follow the token.** For a `fields` method that
+  declares scopes the window asks **"Which scopes did you give this token?"** (`Segmented`: *Detect
+  read scopes* — the default where the method has read probes — or *I will tick them*, a
+  `ScopeGroups` list); the Connections card shows the declared scopes "as you declared" with
+  **Edit scopes** (`PATCH scopes`). `GrantForm` (Access tab and Give agents access) takes the tools
+  the connection's known scopes cannot serve out of its groups and lists them in a collapsed
+  **"Not available with this connection's token (n)"** section with "Needs <scope>"; they cannot
+  be selected. Unknown scopes hide nothing.
+
   (Phase 5, FIX-133, D-240, C-740) For an app that has write tools, every connect method also asks
   **"What may agents do with this connection?"** (`ChoiceCards`): **Read only** (Recommended,
   preselected: "Agents can look things up but never change anything: Aurora blocks every write

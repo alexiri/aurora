@@ -70,6 +70,33 @@ Indico (or Indico discards an old one), requests fail with an upstream 401 until
 | `read:everything` | Read anything you can see in Indico through the extended read tools | extended |
 | `full:everything` | **Opt-in, off by default, listed last.** Extended write: recurring bookings, cancellations, favorites, event preparation — Indico's internal endpoints, which may change between versions (extended write tools) | extended |
 
+### Which tools need which scope, and what you will see
+
+Every tool names the scopes it needs, and Aurora compares them with the scopes your connection has:
+the scopes Indico granted (OAuth), or, for a **personal API token**, the scopes you say it has ("Which
+scopes did you give this token?" when connecting: Aurora checks the read ones with one harmless read
+request each, never the write ones; you can change the list later on the connection, "as you declared").
+
+- A tool whose scopes the connection lacks is **not offered**: the grant forms list it collapsed under
+  "Not available with this connection's token", with the scope it needs, and the agent is refused with
+  `tool_scope_missing` (nothing is sent to Indico) if it tries.
+- If the connection's scopes are unknown (a token with none declared), nothing is hidden or refused; Indico
+  answers 403 as before. Declared scopes only ever *remove* tools: they never widen what a token can do.
+
+| Tool group | Needs one of |
+|---|---|
+| Who is connected | `read:user` |
+| Official API, read: events, timetables, rooms, bookings (names end *(official API)* or have no suffix) | `read:legacy_api` |
+| Official API, write: *Book a room: one slot (official API)* | `write:legacy_api` |
+| Indico web API, read: search, favorites, room search by free time, my bookings, user search (*(Indico web API)*) | `read:everything` or `full:everything` |
+| Indico web API, write: *Book a room: recurring, with all options*, cancellations, favorites, event preparation | `full:everything` |
+
+*Official API* is Indico's documented HTTP API; *Indico web API* are the internal endpoints Indico's own
+pages use, which may change between Indico versions. The near-identical names tell them apart: *Book a
+room: one slot* (official) against *Book a room: recurring, with all options* (web API); *Find a room by
+name* / *Read rooms and their bookings* (official) against *List all rooms with details* / *Search rooms
+free in a time slot* (web API).
+
 `read:everything` and `full:everything` do **not** include the two `legacy_api` scopes: tick both
 if you want both tiers. The connect form pre-ticks only `read:user` and `read:legacy_api`; Indico has
 no narrower write scope for its extended endpoints, so `full:everything` stays an explicit choice

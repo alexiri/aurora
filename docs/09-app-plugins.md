@@ -170,6 +170,18 @@ metadata:                       # stored in clear, non-secret
     - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.zendesk.com" }
   probe: { … }                  # optional, names the account
 ```
+**Tool scopes (FIX-136, D-241, C-741).** `tools[].scopes: [scope ids]` (any of; absent = no
+requirement) names the scopes a tool needs; each must be declared by one of the app's connect
+methods (`oauth2` `scopes`, or a `fields` method's new `scopes`), else `tool_scope_unknown`. A
+`fields` method may declare `scopes: [{ scope, name, access }]` (the scopes a pasted token may
+carry; the connect form asks "Which scopes did you give this token?", stored as the connection's
+`scopes`, editable later) and `probe_scopes: { <scope>: { method: GET, url } }` (a read probe per
+**read** scope, prefilling the declaration with the ones the token passes; write scopes are never
+probed, `probe_scope_write`; duplicates `duplicate_scope`; unknown scope `probe_scope_unknown`;
+non-GET `probe_scope_method`). The gateway refuses a tool whose scopes the connection's **known**
+scopes lack with `tool_scope_missing` (`07 §Tool scopes`); unknown (empty) scopes refuse nothing.
+No new column: `app_connections.scopes` already holds them (`03`).
+
 **Read only (FIX-133, D-240, C-740).** Independent of any method's `access_levels`, a connection's
 `access` (`read` | `write`) is Aurora's: for an app with a `tools.read`/`tools.write` split every
 connect method's window asks Read only / Read and write, and the gateway lets only `tools.read`

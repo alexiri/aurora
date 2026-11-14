@@ -101,6 +101,10 @@ struct Connection {
     #[serde(default)]
     oauth_client: serde_json::Map<String, Value>,
     tenant_host: Option<String>,
+    /// (FIX-136, D-241) The scopes the connection has (granted by OAuth, or declared for a pasted
+    /// token); a tool that needs others is refused with `tool_scope_missing`. Empty = unknown.
+    #[serde(default)]
+    scopes: Vec<String>,
     /// (D-74) The connection is bound to a registered app instance with this host: requests to
     /// exactly this host are served by the app's `{instance}` host entries, any other host is
     /// refused by the instance guard.
@@ -373,6 +377,21 @@ fn execute(
     if let Some(r) = refusal {
         if let Some(o) = obs.as_object_mut() {
             o.insert("refused".into(), r);
+        }
+        return Ok(obs);
+    }
+
+    // (FIX-136, D-241) The token cannot serve the tool: refused before injection.
+    if let Some(t) = tool
+        && !t.scopes.is_empty()
+        && !c.connection.scopes.is_empty()
+        && !t.scopes.iter().any(|s| c.connection.scopes.contains(s))
+    {
+        if let Some(o) = obs.as_object_mut() {
+            o.insert(
+                "refused".into(),
+                json!({ "code": "tool_scope_missing", "needs": t.scopes }),
+            );
         }
         return Ok(obs);
     }
