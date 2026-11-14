@@ -40,8 +40,34 @@ Logs: summary lines only under `docs/audit/phase4-logs/`; raw logs were kept out
 | 4 | `playwright test --project mocked` (the CI form; superset of stage4-routes, stage4-axe, onboarding, fix-027-selectors, shell-theme, stage2-narrow, smoke, chat-v2; `next dev` :4100) | 0 | **538 passed**, 0 failed | 7m42s |
 | 4 | `AURORA_E2E_PROD=1 playwright test` (production project, :4110) | 0 | 5 passed (`terminal.prod.spec.ts`, CSP header) | 35s |
 
+| 8 | `bash scripts/e2e/m1.sh` | 0 | 1 passed | 3m00s |
+| 8 | `FRONTDOOR=1 bash scripts/e2e/gateway.sh` | 0 | nginx :8091 + haproxy :8092 front doors up; 24 passed (1 + 2 `frontdoor` + 17 + 4), 0 failed | 5m33s |
+| 8 | `AURORA_TEST_PODMAN=1 AURORA_E2EH_PREFIX=audit4-e2eh bash scripts/e2e/hosted.sh` | 0 | **15 passed** | 23m23s |
+| 8 | same with `AURORA_E2EH_FULL_IMAGE=1` | 0 | **15 passed**, 0 skipped | 21m06s |
+| 8 | `AURORA_TEST_PODMAN=1 bash scripts/e2e/channels.sh` | 0 | 6 passed | 11m13s |
+| 8 | `bash scripts/conformance.sh target/debug/aurora-connector-fake` / `bash scripts/conformance.sh` | 0 / 0 | 17 passed each (+1 unit) | 25s / 2s |
+| 8 | `bash scripts/conformance.sh --mattermost` | 0 | 17 passed | 1m58s |
+| 8 | `AURORA_TEST_PODMAN=1 bash scripts/e2e/mattermost.sh` | 0 | 5 passed | 8m31s |
+| 8 | `AURORA_TEST_PODMAN=1 AURORA_TEST_LLM=1 bash scripts/e2e/llm.sh` | 0 | scenario smoke 4 passed, hosted `l1`, `l2` passed (2) | 4m05s |
+| 8 | `UPGRADE_STRICT=1 UPGRADE_BASE=a2d921ff… (phase-3 exit) bash scripts/e2e/upgrade.sh`, run 1 and 2 (and a third with `KEEP=1`) | **1** | **35 passed, 3 failed** (`restart minted a new boot`, `restarted sandbox runs the HEAD image`, `restart_to_update still set after restart`), deterministic; 38 → 67 migrations all success | 6m39s / 2m53s |
+| 8 | `UPGRADE_STRICT=1 UPGRADE_BASE=baabe11f bash scripts/e2e/upgrade.sh` (phase-0 base) | **1** | 32 passed, 4 failed (the three above + `after restart the request did not reach the upstream (TLS path broken)`) | 6m10s |
+| 8 | diagnostic only: the same p3 run with `sleep 100` added before the restart POST (edit reverted, not committed) | 0 | **38 passed, 0 failed** | ~5m |
+
+Step 8 e2e notes (all runs: load ≤ 7 on 16 CPUs, `uptime` in the summaries): see F-1 for the upgrade failure.
+Upgrade base: `phase3-exit.md` names `a2d921ff` as its audited commit (it never ran an upgrade from it; `upgrade.sh` gained phase-1+
+base support in FIX-024), so it was used as the "phase-3 exit commit"; the phase-0 base `baabe11f` was run for comparison.
+FIX-123 (paired apps): `upgrade.sh` seeds memory, schedule, secret, a second agent and a conversation — no `github-app`/`aws-role`
+connection data — so the paired-apps data move was **not** exercised by it (the 29 added migrations applied clean).
+`gateway.sh` took the host lock; no suite ran concurrently with another.
+
 Steps 1–4 notes: `docs/audit/phase4-logs/step2-nextest.txt` (per-crate counts; `passed-tests.txt` lists the 2400
 passed names, format `crate::binary$path`, parsed from nextest's libtest-json-plus stream). The known flake
 `plugins_upgrade::major_without_impact_…` passed. `first-run` and `no-default-model` need the kind stack (step 8, kind part).
 Step 3: the `secrets migrate` round trip is the 13 `secrets_migrate` tests (inline → Vault → inline, racing migrators, CAS);
 the manual walk of `docs/operator/vault.md` §4 was not repeated this phase.
+
+## Open findings (run lane)
+
+| # | Severity | Finding | Evidence | Candidate fix |
+|---|----------|---------|----------|---------------|
+| F-1 | medium (exit-criterion command fails as run) | `UPGRADE_STRICT=1 UPGRADE_BASE=a2d921ff… bash scripts/e2e/upgrade.sh` exits 1, deterministic over 3 runs (35/3); with the phase-0 base 32/4. Everything up to the restart is green (migrations 38→67, old supervisor + new runner/api turn, data readable, TLS). After `POST /v1/agents/{id}/restart` (202) the sandbox **keeps its boot and its old container/image**. Cause (from the code): the old runner replica cannot retire (the script stops the API first: `retire failed: transport: error sending request`), `sandboxes.owner_replica_id` still points at it, `claim_stops` only claims `owner_replica_id = <this replica>`, and `take_over` waits until the old replica's `last_seen_at` is older than `REPLICA_ONLINE_THRESHOLD` (90 s). With a 100 s sleep before the restart POST the same run passes 38/0. So after an upgrade (or any runner crash) restart/park/stop of its sandboxes is deferred up to 90 s, and `upgrade.sh` assumes it is immediate (it passed that way in phase 3: AUDIT-003 36/0 on the phase-0 base) | `8-upgrade-p3*.log` summary lines in the table above; `crates/aurora-db/src/repo/sandboxes.rs` `take_over`/`claim_stops`; `crates/aurora-core/src/limits.rs:175` | Decide: either `upgrade.sh` polls (≥ 100 s deadline) for the new boot, or the runner retires its replica when the API is unreachable at shutdown / the new replica of the same runner id takes over at once; document the ≤ 90 s window in `docs/15 §Upgrades` |
