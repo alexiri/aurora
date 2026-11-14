@@ -148,7 +148,7 @@ matrix:
     | `upload` | `POST /v1/conversations/{id}/attachments`, avatar/skill-file/plugin uploads | 20 / min, burst 5 |
     | `simulate` | `POST …/policy/simulate`, `GET /v1/agents/{agent}/effective` | 20 / min, burst 5 |
     | `search` | `GET …/memories/search` and any future search route | 30 / min, burst 10 |
-    | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict) | 6 / hour, burst 2 |
+    | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict); (phase 5, SET-1, SET-4) `GET /v1/admin/settings/export`, `POST /v1/admin/settings/email/test` | 6 / hour, burst 2 |
     | `telemetry` | (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces` (instead of `write`, so browser telemetry never spends the budget of real writes) | 60 / min, burst 20 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
 
@@ -304,6 +304,7 @@ caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhil
 | `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired"|"abandoned" }` (FIX-109: `abandoned` for an approval ended by a freeze, by the revocation of what it depended on (FIX-084) or by a gateway that went away, with the status of the same name (FIX-122), and the gateways wake a held request on `decided`, `expired` and `abandoned`; the dashboard treats it like `expired` and shows its own copy) | gateway & API → gateways, API (cards, SSE, long-polls) |
 | `aurora_gateway_invalidate` | `{ "scope": "org"|"workspace"|"agent"|"credential"|"connection"|"user"|"all", "id"?: uuid }` (phase 4, P4-GRP-1: `user`, id = the user; drops the cached identities of that speaker) | API → gateways |
 | `aurora_registry` | `{ "hash": content_hash, "contract": int }` | API → gateways, API replicas (hook hosts have no DB connection and poll `/internal/v1/registry/active` every 60 s and on cache miss) |
+| `aurora_settings` | (phase 5, SET-1, D-236(f)) `{ "section", "generation" }` | API (after a committed settings write, Helm mirroring or CLI reset) → API replicas, gateways: re-read that section, validate the merged view, swap (`15 §Instance settings`); a gateway then drops the caches the section feeds (scope `all` for `governance`, `llm`, `limits`, `secrets`) |
 | `aurora_secret_origin` | `{ "secret_id", "status" }` | gateway (origin preflight/backstop) → API (audit, owner notice, dashboard) |
 | `aurora_auth_revoked` | `{ "kind": "session"|"api_key"|"user", "id" }`; (phase 4, P4-GRP-1) `{ "kind": "access", "id": user_id \| null, "org_id" }`: the user's (or, with `id` null, every user of the org's) effective access changed (`04 §Groups`) | API → API replicas, gateways (replicas re-authorize that user's open SSE streams and long-polls; a stream the user may no longer open is closed with a final `access.changed`; gateways ignore it, they use the `user`/`workspace`/`org` scopes) |
 
@@ -467,6 +468,7 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
 | (phase 2, RFE-025) Workspace BYO posture change | `workspace` |
 | (phase 2, RFE-025) BYO source list / require-context change of an agent | `agent` |
+| (phase 5, SET-1) Instance settings change of `governance`, `llm`, `limits` or `secrets` | (`aurora_settings` instead: each gateway reloads the section and then flushes as for `all`) |
 | Snapshot activation | (`aurora_registry` instead) |
 
 ## Route catalogue
@@ -528,7 +530,7 @@ OpenAPI document and the phase tags (FIX-119).
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
 | GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`; phase 2, RFE-025: includes `byo.{posture, source_cidrs, require_context_credentials}`; phase 3, RFE-013: `agent_tokens.max_age_days`); non-compliant LLM secrets of the org |
-| GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only |
+| GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only; (phase 5, SET-2) the effective `governance` and `llm` settings (helm or dashboard), each clamp naming its setting (C-783) |
 
 ### Workspaces
 | Method & path | Auth | Purpose |
@@ -813,8 +815,18 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 |---|---|---|
 | GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (phase 5, D-138, P4-S3) |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable; (phase 4, P4-IDP-1, D-139) each user carries `idp_roles: { provider, values, synced_at, granted: [...] }`; claim-derived instance-admin flags cannot be changed here (409 `managed_by_idp`) |
-| GET `/v1/admin/identity` | IA | (phase 4, P4-IDP-1) per provider the role claim settings and mapping table, read-only (from the Helm values; no secrets) |
-| GET/PUT `/v1/admin/placement` | IA | (phase 4, P4-ONB-1, D-140) the new-user placement (`04 §New-user placement`); PUT validates org/workspace ids, roles, template and starter grants (credentials of the default org only) and is audited; `GET …/placement/preview?template=&sample=` renders a template for a typed sample or the caller's profile (D-151) (C-520..C-529) |
+| GET `/v1/admin/identity` | IA | (phase 4, P4-IDP-1) per provider the role claim settings and mapping table, read-only (from the Helm values; no secrets); (phase 5, SET-4) superseded by the `sign_in` settings section, kept read-only until SET-4 removes it with the Identity page |
+| GET `/v1/admin/settings` | IA | (phase 5, SET-1, D-236, C-771) the settings index: per section its generation, last writer and counts of locked / dashboard keys; plus every locked key with its Helm key (the Admin › Settings banner) |
+| GET `/v1/admin/settings/{section}` | IA | (phase 5, SET-1, C-772) one section: every key's effective value, source (`helm` \| `dashboard` \| `default`), lock, Helm key and default; keyed-list entries with their own source; secrets only as "set"; 404 `setting_section_unknown`. `export` and `import` are not section ids |
+| PUT `/v1/admin/settings/{section}` | IA | (phase 5, SET-1, C-773) replace the section's dashboard values (`{ generation, values }`); session with re-authentication within 600 s (412 `reauth_required`); 409 `stale_revision` / `setting_locked`, 400 `setting_unknown`, 422 `settings_invalid` / `setting_requires_deployment`; security-critical audit `instance_settings.update` with the diff; notifies `aurora_settings` and e-mails every instance admin |
+| POST `/v1/admin/settings/{section}/preview` | IA | (phase 5, SET-1, C-774) the same body as PUT, nothing written: the diff, the keys that loosen, the organizations whose effective values change, warnings |
+| GET `/v1/admin/settings/export` | IA | (phase 5, SET-1, C-775) the dashboard values of every (or the listed) section as YAML or JSON, no secret values; `export` rate class |
+| POST `/v1/admin/settings/import` | IA | (phase 5, SET-1, C-776) a settings document: `dry_run` returns the per-section diff, otherwise all its sections are applied in one transaction (generations checked, re-authentication, `instance_settings.import` critical audit) |
+| GET `/v1/admin/settings/governance/orgs` | IA | (phase 5, SET-2, C-778) where organizations stand against the instance floors: effective LLM / egress / open-lane / BYO postures, stricter-than-minimum and clamped keys per org (metadata only, paginated) |
+| POST `/v1/admin/settings/llm/endpoint-test` | IA | (phase 5, SET-3, C-779) reachability probe of one endpoint entry as typed (no credential sent) |
+| POST `/v1/admin/settings/sign_in/provider-test` | IA | (phase 5, SET-4, C-780) OIDC discovery of one provider entry as typed: issuer match and endpoints, no sign-in |
+| POST `/v1/admin/settings/email/test` | IA | (phase 5, SET-4, C-781) send a test e-mail to the caller with the effective or the proposed e-mail settings; `export` rate class |
+| GET/PUT `/v1/admin/placement` | IA | (phase 4, P4-ONB-1, D-140) the new-user placement (`04 §New-user placement`; (phase 5, SET-4) the sign-up mode it shows read-only is the `sign_in` setting, linked); PUT validates org/workspace ids, roles, template and starter grants (credentials of the default org only) and is audited; `GET …/placement/preview?template=&sample=` renders a template for a typed sample or the caller's profile (D-151) (C-520..C-529) |
 | GET `/v1/admin/setup` | IA | (phase 4, P4-ONB-2, D-141) setup-wizard status per step (roles, placement, LLM endpoints incl. `default_model`, runners, gateway), each `ok` \| `warning` \| `todo` with a reason code |
 | GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); (phase 4, P4-GRANTS) `impact` also carries `grants_to_convert` (count, by app and workspace) for an upgrade that introduces `grants.custom_only`, and approval then converts them atomically (`09 §10`, reason `converts_grants`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |

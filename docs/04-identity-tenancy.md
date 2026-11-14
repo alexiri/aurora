@@ -23,7 +23,9 @@ Instance ── instance admins (user flag) · plugins · trusted keys · connec
 
 ## Sign-up and organization creation
 
-Configuration `auth.signup_mode`:
+Configuration `auth.signup_mode` ((phase 5, SET-4) with `auth.org_creation` an instance setting
+edited on Admin › Sign-in unless the configuration sets it; applied from the next sign-in or org
+creation):
 
 | Mode | Behaviour |
 |------|-----------|
@@ -167,6 +169,17 @@ interface"); stored in the database, audited):
   workspace and agent counts — and each workspace's name, slug, personal marker and
   agent count (C-733). Never members' names, conversations, agents' configuration,
   credentials or any other content.
+- (phase 5, SPEC-SETTINGS, D-195(b), D-236) **Instance settings**: instance admins edit
+  the instance-wide settings on Admin › Settings (`15 §Instance settings`): governance and
+  BYO floors, LLM endpoints, sign-in and OIDC providers, e-mail, secret stores, agent and
+  operational defaults and limits. Every write needs a **session** (never an API key) with a
+  re-authentication within 600 s (as account deletion; 412 `reauth_required`), is
+  security-critical audited with a before/after diff (§Audit) and is e-mailed to every
+  instance admin; a key the deployment configuration sets is locked (409 `setting_locked`,
+  SEC-89). **Break-glass** (D-238(b)): this e-mail list (`auth.instance_admins`) stays in the
+  configuration and keeps granting the flag at sign-in, a provider defined in Helm keeps
+  working whatever the stored settings say, and `aurora-api settings reset` restores any
+  section from a shell on the deployment.
 
 ## Authentication
 
@@ -226,7 +239,16 @@ the e-mail), `jit`
 (optional: `{ org_slug, role: member|admin, workspace_slugs: [] }`; phase 2, RFE-012: optional `workspace_role: member|approver`, default `member`).
 (phase 1, RFE-004) At least one provider MUST be configured, or startup fails
 (`no_oidc_provider`) unless the development IdP is enabled
-(*Development and end-to-end sign-in* below). Provider-specific MFA/step-up is
+(*Development and end-to-end sign-in* below).
+(phase 5, SET-4, D-235(b), D-237) **Providers are an instance setting** (section `sign_in`,
+keyed list `auth.oidc_providers` by `id`): providers the configuration defines are locked and
+shown "Managed by Helm"; instance admins add, edit and remove others on Admin › Sign-in with
+the same fields, the client secret entered once and sealed (`instance_setting`, `08 §1`), never
+shown again. "At least one provider" counts both sources: startup refuses a merged view with
+none, and a write that would remove the last one is refused (422 `last_oidc_provider`). A
+provider's `id` cannot change once saved (`user_identities.provider_id` refers to it; removing
+a provider leaves its identities, which cannot sign in until a provider with that id returns);
+the preview names the identities affected. The provider registry is rebuilt live. Provider-specific MFA/step-up is
 the IdP's concern; Aurora requests `prompt=login&max_age=0` only for
 re-authentication (below) and never assumes an `acr`/`amr` claim.
 
@@ -294,7 +316,12 @@ the token to **Aurora roles**.
 **Configuration** (per provider in `auth.oidc_providers[]`, `15`; set in the **Helm
 values** (`config.auth.oidc_providers`) like the rest of the provider, never editable in
 the dashboard, because it can create instance admins and owners; the dashboard only
-shows it, read-only):
+shows it, read-only — (phase 5, SET-4, D-235(b), D-237(g)) superseded: the mappings are part
+of a provider and editable with it on Admin › Sign-in for providers not defined in Helm. Because
+a mapping can create instance admins and owners, a change that adds or widens a mapping to
+`instance_admin` or an org `owner`, or widens a JIT block, is flagged as a loosening in the
+preview and confirmed before saving, and SEC-90's re-authentication, critical audit and admin
+e-mail apply; the values a mapping grants are validated as today):
 
 ```yaml
 auth:
@@ -411,6 +438,10 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
   `Path=/`, `Secure` when the external URL is https. Stored hashed in
   `sessions`. (phase 4, P4-PRV-2) It is **host-only: it never has a `Domain`
   attribute** (an invariant, `§Preview access`), so no other host, preview hostnames included, ever receives it.
+- (phase 5, SET-4) `auth.session_idle_secs` / `auth.session_absolute_secs` are instance
+  settings: a shorter value applies to existing sessions at their next request
+  (the expiry is the earlier of the stored one and the one the new value gives), a longer one
+  only to sessions created afterwards.
 - Idle expiry `SESSION_IDLE`, absolute `SESSION_ABSOLUTE`. Revocation is
   immediate (every request reads the session row; a 30 s in-process cache keyed
   by token hash is allowed, flushed on sign-out by `NOTIFY`).
@@ -1253,6 +1284,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Groups (phase 4, P4-GRP-1) | `group.create\|update\|delete`, `group_member.add\|remove`, `group_access.set\|remove` (emitted as written; `§Groups`) |
 | SCIM (phase 4, P4-GRP-2) | `scim_token.create\|revoke`, `scim.update`; membership and group changes made by the IdP are the ordinary `member.add\|update\|remove` and `group*` rows with `metadata.via = "scim"` (`§SCIM`) |
 | Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015); (phase 5, D-234) `admin.org.delete`, `admin.workspace.delete` |
+| Instance settings (phase 5, SET-1, D-236, C-777) | `instance_settings.update` (dashboard), `instance_settings.import`, `instance_settings.reset` (CLI, source `cli`); instance-level rows (`org_id` null), `metadata.change` = per key `{ key, entry_id?, before, after }` with secret fields as `"(secret changed)"` and each value truncated at `SETTINGS_AUDIT_VALUE_MAX`. The Helm mirroring row `instance_settings.helm_sync` is a best-effort system row (it never changes an effective value) |
 | Channels | `channel_integration.create\|update\|delete\|autolink_enable\|autolink_disable` (RFE-001), `user_link.create\|delete` |
 | Data erasure and reassignment | `conversation.delete`, `transcript_event.redact`, `memory.redact`, `automation.reassign` (RFE-021) |
 

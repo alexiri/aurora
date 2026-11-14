@@ -72,6 +72,56 @@ reference names them (TOML-style keys, e.g. `hosted:
 {enabled_harnesses:
 ["claude-code"]}`).
 
+## Instance settings and Helm locks (phase 5, SET-1, D-195(c), D-236..D-238)
+
+Not built yet (SET-1 and the section briefs SET-2..SET-5, FIX-124). From then on most of the
+`config.*` keys that tune behaviour — governance and BYO floors, LLM endpoints, sign-in and OIDC
+providers, e-mail, secret stores, agent and hosted defaults, approvals, retention, skills, SCIM,
+preview and terminal caps, API rate-limit tuning and `allowed_private` — are **instance settings**
+edited on Admin › Settings. The full list, by section and Admin page, is
+[15 §Instance settings](15-deployment-operations.md#instance-settings-phase-5-spec-settings-d-236d-238-sec-89-sec-90).
+
+For each of those keys the values file is **optional**:
+
+- **Unset** (the chart's default): the key is edited in the dashboard; its default is the
+  application's (the *Default* column of `15`), never the chart's.
+- **Set** under `config.*` (or through the chart value that renders it): the setting is
+  **locked** — the dashboard shows "Configured in Helm (`config.<key>`)" and no edit control, and
+  the API refuses changes (409 `setting_locked`). Lists lock as a whole, except the keyed lists
+  `auth.oidc_providers` and `secrets.stores` (per entry `id`; the `vault.*` store is one such
+  entry) and `ratelimit.api.classes` (per class).
+- **Removed later** from the values file: the setting moves to the dashboard **with the value
+  Helm had** (the API keeps a copy of every locked value), so a `helm upgrade` that drops a key
+  never silently reverts it.
+
+**Upgrading an existing install changes nothing**: every key your values file sets stays locked;
+the release notes and a banner on Admin › Settings list them. To hand a key to the dashboard,
+delete it from the values file and upgrade.
+
+Chart rules that keep this meaningful (SET-1, D-237(c)/(d)):
+
+- `values.yaml` renders **no default for a movable key**: its `config` block keeps only
+  infrastructure keys (`server.*`, binds, `telemetry.log_level`); movable keys appear only as
+  comments with their documented default. The `config.hosted.enabled` example line is removed
+  (the application default is the same), and the chart value `scim.ratePerMinute` defaults to
+  unset (rendered as `config.scim.rate_per_minute` only when you set it; the application default is
+  600). A chart guard renders the defaults and fails if any key of the movable-key list appears in
+  `aurora.toml`.
+- `terminal.enabled` and `scim.enabled` keep rendering their wiring (runner :4108 listener and
+  NetworkPolicy flows; the `/scim` edge route) and render the Helm-only keys
+  `config.terminal.available` / `config.scim.available` instead of mirroring the feature switch.
+  The dashboard switch defaults to that value — the chart switch on still means the feature is on —
+  and an admin can turn it off (or on again) live; it cannot be turned on while the chart switch is
+  off.
+- Secrets never move into values: dashboard-entered secrets are sealed in the database's inline
+  store. A secret supplied through the environment (`client_secret_env` + `api.extraEnv`,
+  `AURORA_SMTP_PASSWORD`) locks that field, as before.
+
+What stays a Helm value or configuration-only key in any case: secrets and key rings, the database,
+binds, ingress and Services, certificates, the runner and sandbox configuration (sizes and
+`runner.max_sandboxes` included; D-235(a)), previews' switch and domain, counters, telemetry,
+`push.*`, `blobs.*`, `auth.instance_admins` (the break-glass list) and every development switch.
+
 ## Global
 
 | Value | Type / values | Default | What it does | Set it when / details |
@@ -144,7 +194,11 @@ Renders a `hashicorp-vault` store into the api **and** a gateway-specific
 `aurora-gateway.toml`; the store is additive — with `vault.enabled: false`
 nothing is rendered and the inline store stays the default. Full setup:
 [vault.md](operator/vault.md), keys: `15 §Configuration reference`
-(`secrets.stores[]`).
+(`secrets.stores[]`). (phase 5, FIX-124 on SET-1) Stores are also instance settings: a store
+rendered from `vault.*` is a locked entry of the keyed list `secrets.stores` (and `vault.makeDefault`
+locks `secrets.default_store`); with `vault.enabled: false` stores are added on Admin › Secret
+stores. The Kubernetes-auth token projection (`vault.auth.audience`, `.tokenExpirationSeconds`) and
+`vault.auth.approle.existingSecret` stay chart values in either case.
 
 | Value | Type / values | Default | What it does | Set it when / details |
 |---|---|---|---|---|
@@ -225,8 +279,8 @@ The generic per-service keys `<svc>.replicas`, `.resources`, `.nodeSelector`, `.
 
 | Value | Type / values | Default | What it does | Set it when / details |
 |---|---|---|---|---|
-| `scim.enabled` | bool | `false` | the instance switch for the SCIM plane (P4-GRP-2, SEC-72): `true` routes `/scim` to the API in the Ingress and the HTTPRoute; `false` renders no `/scim` route and the API answers 404 for the whole surface | directory sync (IdP → Aurora provisioning; [15 §SCIM directory sync](15-deployment-operations.md)) |
-| `scim.ratePerMinute` | int | `600` | `[scim] rate_per_minute`: the per-SCIM-token limit (burst is a fifth of it) | an IdP that syncs in large bursts |
+| `scim.enabled` | bool | `false` | the instance switch for the SCIM plane (P4-GRP-2, SEC-72): `true` routes `/scim` to the API in the Ingress and the HTTPRoute; `false` renders no `/scim` route and the API answers 404 for the whole surface | directory sync (IdP → Aurora provisioning; [15 §SCIM directory sync](15-deployment-operations.md)). (phase 5, SET-5, D-237(d)) It renders `config.scim.available`; the SCIM switch itself becomes an instance setting defaulting to it |
+| `scim.ratePerMinute` | int | `600` | `[scim] rate_per_minute`: the per-SCIM-token limit (burst is a fifth of it). (phase 5, SET-5) Default becomes unset, and a set value locks the setting (otherwise edit it on Admin › Settings › Directory sync) | an IdP that syncs in large bursts |
 
 ## Plugin packages
 
@@ -268,7 +322,7 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.externalEgress.cidr` / `.except` | CIDR / list | `0.0.0.0/0` / private ranges | external egress (OIDC, SMTP, LLM endpoints, push services) for api/gateway/hookhost/connectors; `except` carves private ranges out (they need explicit rules) | lock egress down |
 | `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; must also be in `gateway.allowed_private`) | private LLM endpoints |
 | `networkPolicy.connectorHostExtraEgress` | raw NP `egress` entries | `[]` | appended to the connector host's policy (a chat platform on a private range) | private Mattermost |
-| `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): the single switch — it renders `config.terminal.enabled` (mirrored; set `config.terminal.enabled` only when you want it to agree explicitly — both set and unequal fails the render, and `config.terminal.enabled=true` alone fails too, because only the top-level switch renders the chart wiring), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) stay `config.terminal.*` keys | the Terminal tab is wanted |
+| `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): the single switch — it renders `config.terminal.enabled` (mirrored; set `config.terminal.enabled` only when you want it to agree explicitly — both set and unequal fails the render, and `config.terminal.enabled=true` alone fails too, because only the top-level switch renders the chart wiring), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) stay `config.terminal.*` keys. (phase 5, SET-5, D-237(d)) It renders `config.terminal.available` instead of mirroring the feature switch, which becomes an instance setting defaulting to it | the Terminal tab is wanted |
 
 ## Development IdP
 
@@ -323,6 +377,8 @@ feature:
   - `networkPolicy.telemetryTo` — list of raw NetworkPolicy `to` entries, default `[]`. Rendered into the egress of every exporting workload (api, gateway, hookhost, runner, relay, connector host, connector Deployments; never the sandboxes namespace) so they can reach the OTLP collector named by `config.telemetry.otlp_endpoint`; the default-deny policies block it otherwise. Set it whenever an endpoint is set; with an endpoint and an empty `telemetryTo` the chart's `NOTES.txt` warns.
   - web workload environment: `AURORA_TRACING_SAMPLE_RATIO` is rendered **only when `config.telemetry.otlp_endpoint` is set**, with the value of `config.telemetry.sample_ratio` (default `1.0`). The dashboard's root layout reads it at request time; absent, the dashboard loads no tracing code and posts nothing. Not a chart value of its own: it follows the two config keys (`15 §Configuration reference`).
   - kind dev only: `deploy/kind/values-tracing.yaml` (used by `deploy/dev/kind-dev.sh up --tracing`) sets the endpoint to the dev Jaeger's OTLP/HTTP port 4318 and `telemetryTo` to it.
+
+- instance settings (phase 5, SET-1, SET-5; [§Instance settings and Helm locks](#instance-settings-and-helm-locks-phase-5-set-1-d-195c-d-236d-238)): `scim.ratePerMinute` default changes to unset; `terminal.enabled` and `scim.enabled` render `config.terminal.available` / `config.scim.available` instead of the feature switch; `values.yaml`'s `config` block loses `hosted.enabled`; a chart guard (`scripts/guards/settings-chart.sh`) checks that the default render contains no movable key. No new chart value.
 
 Until a feature's chart work merges, set its `config.*` keys directly (the
 chart passes `config` through verbatim).
