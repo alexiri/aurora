@@ -695,10 +695,10 @@ mod token_url_tests {
     /// (D-231) A refresh token goes to the registration's own address, base path included.
     #[test]
     fn instance_token_url_carries_the_base_path() {
-        let b = Some(InstanceBase::new("its.cern.ch", Some("/jira")));
+        let b = Some(InstanceBase::new("its.cern.ch", Some("/wiki")));
         assert_eq!(
             instance_token_url("https://{instance}/rest/oauth2/latest/token", b).ok(),
-            Some("https://its.cern.ch/jira/rest/oauth2/latest/token".to_owned())
+            Some("https://its.cern.ch/wiki/rest/oauth2/latest/token".to_owned())
         );
         assert!(
             instance_token_url(

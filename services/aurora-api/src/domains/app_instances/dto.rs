@@ -27,7 +27,7 @@ pub struct AppInstance {
     pub package_id: String,
     pub app_id: String,
     pub host: String,
-    /// (C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root.
+    /// (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root.
     pub base_path: Option<String>,
     /// `https://<host><base_path>`: how the registration is named everywhere.
     pub base_url: String,
@@ -84,8 +84,8 @@ pub struct CreateAppInstanceRequest {
     pub app_id: String,
     /// A lower-case DNS name: no port, path, userinfo or IP literal.
     pub host: String,
-    /// (C-731, D-231) Only if the app is served under a path: `/jira` for
-    /// `https://its.cern.ch/jira`. Normalized (`/jira/` = `/jira`, `""` and `/` = none); cannot be
+    /// (C-731, D-231) Only if the app is served under a path: `/wiki` for
+    /// `https://its.cern.ch/wiki`. Normalized (`/wiki/` = `/wiki`, `""` and `/` = none); cannot be
     /// changed later.
     #[serde(default)]
     pub base_path: Option<String>,

@@ -1,7 +1,7 @@
 //! Self-hosted app instances: the base path of a registration and the one place `{instance}`
 //! resolves to a URL (D-74, D-231, `09 §3.4 Instance-bound hosts`).
 //!
-//! A registration is a host plus an optional base path (`its.cern.ch` + `/jira`). Everything a
+//! A registration is a host plus an optional base path (`its.cern.ch` + `/wiki`). Everything a
 //! manifest writes as `https://{instance}/…` means `https://<host><base_path>/…` for that
 //! registration; the gateway judges manifest paths on the **app path**, the request path with the
 //! base path removed.
@@ -83,7 +83,7 @@ pub fn normalize_base_path(raw: &str) -> Result<Option<String>, BasePathError> {
 }
 
 /// Do two registrations on one host overlap? Either has no base path (it covers every path), they
-/// are equal, or one is a segment prefix of the other (`/jira` overlaps `/jira/x`, not `/jira2`).
+/// are equal, or one is a segment prefix of the other (`/wiki` overlaps `/wiki/x`, not `/wiki2`).
 #[must_use]
 pub fn overlaps(a: Option<&str>, b: Option<&str>) -> bool {
     match (a, b) {
@@ -102,7 +102,7 @@ pub fn covers(base: Option<&str>, path: &str) -> bool {
     }
 }
 
-/// The app path: `path` with the base path removed (`/jira/rest/api/2/myself` →
+/// The app path: `path` with the base path removed (`/wiki/rest/api/2/myself` →
 /// `/rest/api/2/myself`; the base path itself → `/`). `path` must be covered by `base`.
 #[must_use]
 pub fn app_path<'a>(base: Option<&str>, path: &'a str) -> &'a str {
@@ -185,20 +185,20 @@ mod tests {
 
     #[test]
     fn normalizes_and_validates() {
-        assert_eq!(normalize_base_path("/jira/"), Ok(Some("/jira".into())));
+        assert_eq!(normalize_base_path("/wiki/"), Ok(Some("/wiki".into())));
         assert_eq!(normalize_base_path("/"), Ok(None));
         assert_eq!(normalize_base_path(""), Ok(None));
-        assert_eq!(normalize_base_path("/Jira"), Ok(Some("/Jira".into())));
+        assert_eq!(normalize_base_path("/Wiki"), Ok(Some("/Wiki".into())));
         assert_eq!(
             normalize_base_path("/a/b.c_d~e-f"),
             Ok(Some("/a/b.c_d~e-f".into()))
         );
         assert_eq!(
-            normalize_base_path("jira"),
+            normalize_base_path("wiki"),
             Err(BasePathError::NoLeadingSlash)
         );
         assert_eq!(
-            normalize_base_path("//jira"),
+            normalize_base_path("//wiki"),
             Err(BasePathError::EmptySegment)
         );
         assert_eq!(
@@ -224,7 +224,7 @@ mod tests {
             Err(BasePathError::BadCharacter)
         );
         assert_eq!(
-            normalize_base_path("/jira:8080"),
+            normalize_base_path("/wiki:8080"),
             Err(BasePathError::BadCharacter)
         );
         assert_eq!(
@@ -246,31 +246,31 @@ mod tests {
     #[test]
     fn overlap_is_a_segment_prefix() {
         assert!(overlaps(None, None));
-        assert!(overlaps(None, Some("/jira")));
-        assert!(overlaps(Some("/jira"), None));
-        assert!(overlaps(Some("/jira"), Some("/jira")));
-        assert!(overlaps(Some("/jira"), Some("/jira/x")));
-        assert!(overlaps(Some("/jira/x"), Some("/jira")));
-        assert!(!overlaps(Some("/jira"), Some("/jira2")));
-        assert!(!overlaps(Some("/jira"), Some("/confluence")));
-        assert!(!overlaps(Some("/jira"), Some("/JIRA")));
+        assert!(overlaps(None, Some("/wiki")));
+        assert!(overlaps(Some("/wiki"), None));
+        assert!(overlaps(Some("/wiki"), Some("/wiki")));
+        assert!(overlaps(Some("/wiki"), Some("/wiki/x")));
+        assert!(overlaps(Some("/wiki/x"), Some("/wiki")));
+        assert!(!overlaps(Some("/wiki"), Some("/wiki2")));
+        assert!(!overlaps(Some("/wiki"), Some("/docs")));
+        assert!(!overlaps(Some("/wiki"), Some("/WIKI")));
     }
 
     #[test]
     fn covers_and_app_path() {
         assert!(covers(None, "/anything"));
-        assert!(covers(Some("/jira"), "/jira"));
-        assert!(covers(Some("/jira"), "/jira/rest/api/2/myself"));
-        assert!(!covers(Some("/jira"), "/jira2/rest"));
-        assert!(!covers(Some("/jira"), "/JIRA/rest"));
-        assert!(!covers(Some("/jira"), "/rest/api/2/myself"));
-        assert!(!covers(Some("/jira"), "/"));
+        assert!(covers(Some("/wiki"), "/wiki"));
+        assert!(covers(Some("/wiki"), "/wiki/rest/api/2/myself"));
+        assert!(!covers(Some("/wiki"), "/wiki2/rest"));
+        assert!(!covers(Some("/wiki"), "/WIKI/rest"));
+        assert!(!covers(Some("/wiki"), "/rest/api/2/myself"));
+        assert!(!covers(Some("/wiki"), "/"));
         assert_eq!(
-            app_path(Some("/jira"), "/jira/rest/api/2/myself"),
+            app_path(Some("/wiki"), "/wiki/rest/api/2/myself"),
             "/rest/api/2/myself"
         );
-        assert_eq!(app_path(Some("/jira"), "/jira"), "/");
-        assert_eq!(app_path(Some("/jira"), "/jira/"), "/");
+        assert_eq!(app_path(Some("/wiki"), "/wiki"), "/");
+        assert_eq!(app_path(Some("/wiki"), "/wiki/"), "/");
         assert_eq!(app_path(None, "/a/b"), "/a/b");
     }
 
@@ -281,31 +281,31 @@ mod tests {
         assert_eq!(pick("/a/b/c"), Some(Some("/a/b")));
         assert_eq!(pick("/a/x"), Some(Some("/a")));
         assert_eq!(pick("/z"), Some(None));
-        let only = [Some("/jira")];
+        let only = [Some("/wiki")];
         assert!(select(&only, "/z", |b| *b).is_none());
     }
 
     #[test]
     fn resolves_the_placeholder_to_host_and_base_path() {
-        let b = InstanceBase::new("its.cern.ch", Some("/jira"));
-        assert_eq!(b.base_url(), "https://its.cern.ch/jira");
+        let b = InstanceBase::new("its.cern.ch", Some("/wiki"));
+        assert_eq!(b.base_url(), "https://its.cern.ch/wiki");
         assert_eq!(
             b.resolve("https://{instance}/rest/api/2/serverInfo")
                 .as_deref(),
-            Some("https://its.cern.ch/jira/rest/api/2/serverInfo")
+            Some("https://its.cern.ch/wiki/rest/api/2/serverInfo")
         );
         assert_eq!(
             b.resolve("https://{instance}").as_deref(),
-            Some("https://its.cern.ch/jira")
+            Some("https://its.cern.ch/wiki")
         );
         assert_eq!(
             b.resolve("https://{instance}?x=1").as_deref(),
-            Some("https://its.cern.ch/jira?x=1")
+            Some("https://its.cern.ch/wiki?x=1")
         );
-        let plain = InstanceBase::new("gitlab.example.com", None);
+        let plain = InstanceBase::new("forge.example.com", None);
         assert_eq!(
             plain.resolve("https://{instance}/oauth/token").as_deref(),
-            Some("https://gitlab.example.com/oauth/token")
+            Some("https://forge.example.com/oauth/token")
         );
         // fail closed
         for bad in [

@@ -29,7 +29,7 @@ pub struct ConnectionRow {
     /// The registered self-hosted instance (D-74); null for `default_host` and other apps.
     pub instance_id: Option<Uuid>,
     pub instance_host: Option<String>,
-    /// (FIX-145, D-231) The registration's base path (`/jira`); null = served at the host root.
+    /// (FIX-145, D-231) The registration's base path (`/wiki`); null = served at the host root.
     pub instance_base_path: Option<String>,
     pub instance_label: Option<String>,
     pub credentials_expires_at: Option<DateTime<Utc>>,

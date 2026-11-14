@@ -71,7 +71,7 @@ pub struct Request {
     /// package's egress list resolves to (D-74). Absent: `{instance}` resolves to nothing.
     #[serde(default)]
     pub instance_host: Option<String>,
-    /// (C-249, D-231) The registration's base path (`/jira`); absent = none. Informational for
+    /// (C-249, D-231) The registration's base path (`/wiki`); absent = none. Informational for
     /// hooks that build URLs: egress stays per host, `{instance}` in it is still a host.
     #[serde(default)]
     pub instance_base_path: Option<String>,

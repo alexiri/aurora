@@ -248,7 +248,7 @@ fn probe_message(
         expected,
     } = *ctx;
     let hint =
-        format!("If {app} is served under a path, such as https://{host}/jira, enter it in Path.");
+        format!("If {app} is served under a path, such as https://{host}/wiki, enter it in Path.");
     match (reason, status) {
         ("unexpected_status", Some(404)) => match base_path {
             Some(b) => format!(

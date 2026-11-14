@@ -223,16 +223,16 @@ mod tests {
         use uuid::Uuid;
         let a = Uuid::now_v7();
         let h = "its.cern.ch";
-        let g = |on, path| instance_guard(Some(a), Some(h), Some("/jira"), on, h, path);
-        assert!(g(None, "/jira/rest/api/2/myself").is_ok());
-        assert!(g(Some(a), "/jira/rest/api/2/myself").is_ok());
-        assert!(g(None, "/jira").is_ok());
+        let g = |on, path| instance_guard(Some(a), Some(h), Some("/wiki"), on, h, path);
+        assert!(g(None, "/wiki/rest/api/2/myself").is_ok());
+        assert!(g(Some(a), "/wiki/rest/api/2/myself").is_ok());
+        assert!(g(None, "/wiki").is_ok());
         for p in [
             "/rest/api/2/myself",
-            "/jira2/rest",
-            "/JIRA/rest",
+            "/wiki2/rest",
+            "/WIKI/rest",
             "/",
-            "/confluence/x",
+            "/docs/x",
         ] {
             assert_eq!(
                 g(None, p),

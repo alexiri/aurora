@@ -109,7 +109,7 @@ struct Connection {
     /// exactly this host are served by the app's `{instance}` host entries, any other host is
     /// refused by the instance guard.
     instance_host: Option<String>,
-    /// (D-231) The registration's base path (`/jira`): requests to `instance_host` are served by the
+    /// (D-231) The registration's base path (`/wiki`): requests to `instance_host` are served by the
     /// instance only under it, and the manifest is matched on the path below it (the app path).
     instance_base_path: Option<String>,
     /// The app the instance belongs to; defaults to the snapshot's only instance-bound app.
