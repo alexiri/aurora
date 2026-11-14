@@ -255,10 +255,16 @@ specified here is the contract.
   `skills_dir` = the pinned version's skills directory when it has one, else none (skills
   are then listed in `AGENTS.md`).
 - **State.** `CODEX_HOME` points into the agent's home (`~/.codex`); sessions live there
-  and are what `purge_session` deletes (idempotent: the rollout files of one session id).
+  and are what `purge_session` deletes (idempotent: exactly the rollout files named
+  `rollout-<timestamp>-<id>.jsonl` of one session id). Codex keeps its rollouts and its
+  configuration under one home, so the file is **re-rendered and verified (read back) immediately
+  before every `codex exec`**: what the agent wrote there between turns is gone (SEC-66). A thread
+  id from `thread.started` is kept only when it is a UUID; stdout lines are read with a 16 MiB
+  bound and a longer line fails the turn (`harness_failed`); the release supervisor reads no
+  binary override from the environment.
   No `auth.json` is ever written and ChatGPT-account sign-in is never offered.
-- **Configuration the adapter renders** (per session start, into `CODEX_HOME/config.toml`
-  owned by Aurora and overwritten on every start): a model provider whose `base_url` is the
+- **Configuration the adapter renders** (before every turn, into `CODEX_HOME/config.toml`
+  owned by Aurora and overwritten each time): a model provider whose `base_url` is the
   endpoint base URL of `ModelChoice`, `wire_api` from the chosen dialect, `env_key =
   OPENAI_API_KEY`; `model`; the reasoning effort from a version-pinned table (`low`,
   `medium`, `high`; `max` maps to the highest the CLI accepts); approvals set to "never"

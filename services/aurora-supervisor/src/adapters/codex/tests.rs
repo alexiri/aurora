@@ -339,3 +339,101 @@ async fn purge_deletes_only_the_named_session_and_is_idempotent() {
     a.purge_session(&dir, "sess-A").await.unwrap();
     a.purge_session(&dir, "never-existed").await.unwrap();
 }
+
+/// FIX-095 / SEC-66: the agent owns the workspace, so the file is rendered again before every
+/// spawn; whatever it wrote between turns is gone.
+#[tokio::test]
+async fn config_is_rendered_again_before_every_turn() {
+    let dir = tmp("rerender");
+    let home = dir.join(".codex");
+    let a = CodexAdapter::with_launcher(Arc::new(Mock::new(TEXT)));
+    let mut s = a.start_session(opts(&dir, None)).await.unwrap();
+    let rendered = std::fs::read_to_string(home.join("config.toml")).unwrap();
+    assert!(rendered.contains("https://gw/v1"));
+    let evil = rendered.replace("https://gw/v1", "https://evil.example/v1");
+    std::fs::write(home.join("config.toml"), &evil).unwrap();
+    // A planted link in its place is replaced too, not followed.
+    std::fs::remove_file(home.join("config.toml")).unwrap();
+    let target = dir.join("elsewhere.toml");
+    std::fs::write(&target, "keep").unwrap();
+    std::os::unix::fs::symlink(&target, home.join("config.toml")).unwrap();
+    drain(s.run_turn(turn("hi")).await.unwrap()).await;
+    let now = std::fs::read_to_string(home.join("config.toml")).unwrap();
+    assert_eq!(now, rendered);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+}
+
+#[tokio::test]
+async fn a_thread_id_that_is_not_a_uuid_is_not_stored() {
+    let dir = tmp("badref");
+    let a = CodexAdapter::with_launcher(Arc::new(Mock::new(
+        r#"{"type":"thread.started","thread_id":"x"}
+{"type":"turn.completed","usage":{}}"#,
+    )));
+    let mut s = a.start_session(opts(&dir, None)).await.unwrap();
+    let ev = drain(s.run_turn(turn("hi")).await.unwrap()).await;
+    assert!(
+        !ev.iter()
+            .any(|e| matches!(e, HarnessEvent::SessionRef { .. }))
+    );
+    assert_eq!(s.session_ref(), None);
+}
+
+#[tokio::test]
+async fn purge_of_a_short_reference_leaves_longer_ids_that_end_with_it() {
+    let dir = tmp("purge-short");
+    let day = dir.join(".codex/sessions/2026/11/10");
+    std::fs::create_dir_all(&day).unwrap();
+    let longer =
+        day.join("rollout-2026-11-10T06-10-38-01a1c3dc-f235-78e1-920f-5c889ce01480-1.jsonl");
+    let exact = day.join("rollout-2026-11-10T06-10-39-1.jsonl");
+    for p in [&longer, &exact] {
+        std::fs::write(p, "x").unwrap();
+    }
+    let a = CodexAdapter::with_launcher(Arc::new(Mock::new(TEXT)));
+    a.purge_session(&dir, "1").await.unwrap();
+    assert!(longer.exists());
+    assert!(!exact.exists());
+}
+
+/// A 64 MiB single line: the reader buffers at most the bound, reports the line as over-long,
+/// and the turn ends with one terminal error, never a success.
+#[tokio::test]
+async fn an_overlong_line_is_discarded_and_fails_the_turn() {
+    use tokio::io::AsyncWriteExt as _;
+    let (mut w, r) = tokio::io::duplex(64 * 1024);
+    let (tx, rx) = mpsc::channel::<String>(8);
+    let reader = tokio::spawn(launcher::forward_lines(r, 1024 * 1024, tx));
+    let writer = tokio::spawn(async move {
+        let chunk = vec![b'a'; 1024 * 1024];
+        for _ in 0..64 {
+            w.write_all(&chunk).await.unwrap();
+        }
+        w.write_all(b"\n").await.unwrap();
+        w.write_all(b"{\"type\":\"turn.completed\",\"usage\":{}}\n")
+            .await
+            .unwrap();
+    });
+    let abort = Notify::new();
+    let (etx, mut erx) = mpsc::channel(8);
+    let session_ref = Arc::new(StdMutex::new(None));
+    let end = timeout(
+        Duration::from_secs(30),
+        drive(rx, &etx, &session_ref, &abort),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(&end, HarnessEvent::Error { code, .. } if code == "harness_failed"),
+        "{end:?}"
+    );
+    assert!(erx.try_recv().is_err());
+    drop(erx);
+    reader.abort();
+    let _ = writer.await;
+}
+
+#[test]
+fn the_release_supervisor_reads_no_binary_override_from_the_environment() {
+    assert_eq!(launcher::codex_bin(), PathBuf::from(launcher::DEFAULT_BIN));
+}

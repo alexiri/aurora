@@ -14,9 +14,70 @@ use crate::harness::HarnessError;
 /// Default install location (`images/sandbox/Containerfile`).
 pub const DEFAULT_BIN: &str = "/opt/aurora/harness/codex/codex";
 
-/// The binary the adapter runs (`AURORA_CODEX_BIN` overrides the image location, for tests).
+/// The binary the adapter runs: always the image location. Tests build
+/// `ProcessLauncher { program }` themselves; the release supervisor reads no override from the
+/// environment (FIX-095).
 pub fn codex_bin() -> PathBuf {
-    std::env::var_os("AURORA_CODEX_BIN").map_or_else(|| DEFAULT_BIN.into(), Into::into)
+    DEFAULT_BIN.into()
+}
+
+/// The longest stdout line read (one JSONL event). A longer line is discarded without being
+/// buffered and replaced by [`OVERLONG_LINE`].
+pub const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Delivered in place of a line longer than the bound; the stream mapper turns it into a failed
+/// turn, never a success. (A raw NUL cannot occur in the CLI's JSON output.)
+pub const OVERLONG_LINE: &str = "\0aurora:line-too-long";
+
+/// Reads `\n`-terminated lines holding at most `max` bytes each in memory; an over-long line is
+/// skipped to its end and reported as [`OVERLONG_LINE`]. Returns when the reader ends, errors or
+/// `out` is closed.
+pub async fn forward_lines<R: tokio::io::AsyncRead + Unpin>(
+    reader: R,
+    max: usize,
+    out: mpsc::Sender<String>,
+) {
+    let mut r = BufReader::new(reader);
+    let mut line: Vec<u8> = Vec::new();
+    let mut overlong = false;
+    loop {
+        let Ok(chunk) = r.fill_buf().await else {
+            return;
+        };
+        if chunk.is_empty() {
+            // EOF: a final unterminated line still counts.
+            if !overlong && !line.is_empty() {
+                let _ = out.send(String::from_utf8_lossy(&line).into_owned()).await;
+            } else if overlong {
+                let _ = out.send(OVERLONG_LINE.to_owned()).await;
+            }
+            return;
+        }
+        let (take, ended) = chunk
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or((chunk.len(), false), |i| (i, true));
+        if !overlong {
+            if line.len() + take > max {
+                overlong = true;
+                line = Vec::new(); // release what was buffered
+            } else {
+                line.extend_from_slice(&chunk[..take]);
+            }
+        }
+        r.consume(take + usize::from(ended));
+        if ended {
+            let msg = if overlong {
+                OVERLONG_LINE.to_owned()
+            } else {
+                String::from_utf8_lossy(&std::mem::take(&mut line)).into_owned()
+            };
+            overlong = false;
+            if out.send(msg).await.is_err() {
+                return;
+            }
+        }
+    }
 }
 
 /// A running `codex exec`: its stdout lines and a kill switch. The prompt has been written to
@@ -77,14 +138,7 @@ impl Launcher for ProcessLauncher {
             let _ = stdin.shutdown().await;
         });
         let (out_tx, out_rx) = mpsc::channel::<String>(256);
-        tokio::spawn(async move {
-            let mut r = BufReader::new(stdout).lines();
-            while let Ok(Some(l)) = r.next_line().await {
-                if out_tx.send(l).await.is_err() {
-                    break;
-                }
-            }
-        });
+        tokio::spawn(forward_lines(stdout, MAX_LINE_BYTES, out_tx));
         tokio::spawn(async move {
             let mut r = BufReader::new(stderr).lines();
             while let Ok(Some(l)) = r.next_line().await {
