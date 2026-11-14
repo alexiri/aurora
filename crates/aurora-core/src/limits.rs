@@ -141,7 +141,7 @@ pub const LIBRARY_REFRESH_CONCURRENCY: usize = 4;
 pub const LIBRARY_CHECK_NOW_INTERVAL: Duration = Duration::from_secs(60);
 pub const LIBRARY_BROWSE_CACHE: Duration = Duration::from_secs(5 * 60);
 pub const LIBRARY_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
-// Addon sources (phase 5, P5-ASRC, D-164; docs/02 §Limits, docs/22).
+// Addon sources (phase 5, P5-ASRC, D-250; docs/02 §Limits, docs/22).
 /// The `aurora-addons.yaml` manifest (download cap; a bigger body is refused before parsing).
 pub const ADDON_MANIFEST_MAX: usize = MIB;
 /// Addon entries per manifest and versions per addon.

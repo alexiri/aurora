@@ -428,6 +428,7 @@ The project's built-in publisher key (`aurora`) is compiled in and never stored.
 | key_fingerprint | text not null | sha256 of the key, `sha256:<12 hex>`; shown prominently at registration and re-confirm |
 | new_key_fingerprint | text null | the new fingerprint while `status = signing_key_changed` |
 | manifest_digest | text not null | sha256 of the last accepted manifest bytes; polls compare before parsing |
+| manifest | jsonb not null | the last accepted manifest as parsed (repo info, addons, versions): the dashboard reads it, never the live source; "removed upstream" is derived from it |
 | update_interval | text not null default `1d` CHECK in (`6h`,`12h`,`1d`,`1w`,`2w`,`1mo`,`never`) | the instance setting `plugins.addon_sources.update_interval` seeds it; `never` = manual checks only |
 | status | text not null default `ok` CHECK in (`ok`,`check_failed`,`signing_key_changed`) | `check_failed` keeps serving the last known state |
 | check_failed_at, check_failed_reason | timestamptz null, text null (≤ 200) | sanitized reason; never a URL query or body text |

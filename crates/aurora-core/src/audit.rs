@@ -69,7 +69,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "plugin.supersede",
     "trusted_key.create",
     "trusted_key.revoke",
-    // Addon sources (phase 5, P5-ASRC, D-164, SEC-86)
+    // Addon sources (phase 5, P5-ASRC, D-250, SEC-86)
+    "addon.ingest",
     "addon_source.add",
     "addon_source.check",
     "addon_source.remove",

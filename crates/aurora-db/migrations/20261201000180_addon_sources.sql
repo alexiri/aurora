@@ -1,4 +1,4 @@
--- 03 §3 addon sources (P5-ASRC, D-164): third-party app-package repositories.
+-- 03 §3 addon sources (P5-ASRC, D-250): third-party app-package repositories.
 
 CREATE TABLE addon_sources (
     id                  uuid PRIMARY KEY,
@@ -11,6 +11,9 @@ CREATE TABLE addon_sources (
     key_fingerprint     text NOT NULL,
     new_key_fingerprint text,
     manifest_digest     text NOT NULL,
+    -- The last accepted manifest as parsed (repo info, addons, versions): the dashboard reads
+    -- this, never the live source, and "removed upstream" is derived from it.
+    manifest            jsonb NOT NULL,
     update_interval     text NOT NULL DEFAULT '1d'
         CHECK (update_interval IN ('6h', '12h', '1d', '1w', '2w', '1mo', 'never')),
     status              text NOT NULL DEFAULT 'ok'

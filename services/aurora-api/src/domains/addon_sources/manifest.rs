@@ -1,8 +1,8 @@
 //! The addon-repo manifest (`aurora-addons.yaml`, `api: 1`): strict parse and limits
-//! (P5-ASRC, D-164; the format is documented in `docs/22-addon-repos.md`).
+//! (P5-ASRC, D-250; the format is documented in `docs/22-addon-repos.md`).
 
 use aurora_core::limits::{ADDON_ADDONS_MAX, ADDON_MANIFEST_MAX, ADDON_VERSIONS_MAX, PACKAGE_MAX};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
@@ -33,7 +33,7 @@ impl ManifestError {
 }
 
 /// One version of one addon.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct AddonVersion {
     /// https URL of the `.aurora-plugin` archive.
     pub package: String,
@@ -48,7 +48,7 @@ pub struct AddonVersion {
 }
 
 /// One addon of the repo.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Addon {
     pub id: String,
     pub name: String,
@@ -160,9 +160,14 @@ pub fn parse(bytes: &[u8]) -> Result<Manifest, ManifestError> {
     if !aurora_registry::manifest::valid_id(&raw.publisher) {
         return Err(bad("publisher must match [a-z][a-z0-9_-]{1,47}"));
     }
-    let key = raw.signing_key.trim();
-    aurora_crypto::parse_public_key_b64(key)
-        .map_err(|_| bad("signing_key must be a base64 ed25519 public key"))?;
+    if raw.publisher == aurora_registry::signature::PROJECT_PUBLISHER {
+        return Err(bad("publisher `aurora` is reserved for the project"));
+    }
+    // One spelling per key (FIX-107, SEC-15): a package's signature names its key in the
+    // canonical spelling, so the key is stored in it too.
+    let canonical = aurora_registry::signature::canonicalize_key_id(&raw.signing_key)
+        .ok_or_else(|| bad("signing_key must be a base64 ed25519 public key"))?;
+    let key = canonical.as_str();
     if let Some(d) = &raw.signing_key_description {
         if d.trim().is_empty() || d.chars().count() > 80 {
             return Err(bad("signing_key_description must be 1-80 characters"));
@@ -301,7 +306,45 @@ pub fn normalize_url(raw: &str) -> Result<String, ManifestError> {
     if lower.ends_with("/aurora-addons.yaml") {
         return Ok(raw.trim_end_matches('/').to_owned());
     }
+    if let Some(url) = forge_raw_url(raw) {
+        return Ok(url);
+    }
     Ok(format!("{}/aurora-addons.yaml", raw.trim_end_matches('/')))
+}
+
+/// A GitHub or GitLab repository page URL as the raw URL of its manifest: the repo page itself
+/// answers HTML, the manifest is a raw file (`github.com/o/r` →
+/// `raw.githubusercontent.com/o/r/HEAD/aurora-addons.yaml`; `gitlab…/g/r` →
+/// `gitlab…/g/r/-/raw/HEAD/aurora-addons.yaml`; a `/tree/<ref>[/dir]` page keeps its ref and dir).
+fn forge_raw_url(raw: &str) -> Option<String> {
+    let rest = &raw[8..];
+    let (host, path) = rest.split_once('/')?;
+    let path = path.split(['?', '#']).next()?.trim_end_matches('/');
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let host_l = host.to_ascii_lowercase();
+    if host_l == "github.com" && segs.len() >= 2 {
+        let (owner, repo) = (segs[0], segs[1].trim_end_matches(".git"));
+        let (git_ref, dir) = match segs.get(2) {
+            Some(&"tree") if segs.len() >= 4 => (segs[3], segs[4..].join("/")),
+            None => ("HEAD", String::new()),
+            _ => return None,
+        };
+        let dir = if dir.is_empty() {
+            dir
+        } else {
+            format!("{dir}/")
+        };
+        return Some(format!(
+            "https://raw.githubusercontent.com/{owner}/{repo}/{git_ref}/{dir}aurora-addons.yaml"
+        ));
+    }
+    if host_l.starts_with("gitlab.") && segs.len() >= 2 && !segs.contains(&"-") {
+        return Some(format!(
+            "https://{host}/{}/-/raw/HEAD/aurora-addons.yaml",
+            segs.join("/")
+        ));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -372,6 +415,27 @@ mod tests {
             normalize_url("https://raw.example/cern/addons/aurora-addons.yaml").unwrap(),
             "https://raw.example/cern/addons/aurora-addons.yaml"
         );
+        // A repository page of a forge is not the manifest: its raw URL is.
+        for (pasted, raw) in [
+            (
+                "https://github.com/cern/addons",
+                "https://raw.githubusercontent.com/cern/addons/HEAD/aurora-addons.yaml",
+            ),
+            (
+                "https://github.com/cern/addons.git",
+                "https://raw.githubusercontent.com/cern/addons/HEAD/aurora-addons.yaml",
+            ),
+            (
+                "https://github.com/cern/addons/tree/v2/apps?x=1",
+                "https://raw.githubusercontent.com/cern/addons/v2/apps/aurora-addons.yaml",
+            ),
+            (
+                "https://gitlab.cern.ch/g/sub/addons",
+                "https://gitlab.cern.ch/g/sub/addons/-/raw/HEAD/aurora-addons.yaml",
+            ),
+        ] {
+            assert_eq!(normalize_url(pasted).unwrap(), raw, "{pasted}");
+        }
         for u in ["http://x.example/a", "https://u:p@x.example/a", "ftp://x"] {
             assert!(
                 matches!(normalize_url(u), Err(ManifestError::UrlRefused)),

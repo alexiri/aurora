@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! P5-ASRC (D-164, SEC-86, C-590..C-609): addon sources against an in-process source
+//! P5-ASRC (D-250, SEC-86, C-590..C-609): addon sources against an in-process source
 //! server (wiremock) reached through the guarded client's test override. Real Postgres.
 
 use aurora_api::domains::addon_sources;
@@ -313,7 +313,7 @@ async fn registration_is_tofu_over_the_manifest_key() {
         .unwrap();
     assert_eq!(key, PackageBuilder::key_id(&w.key));
 
-    // The first addon version is ingested but never auto-activated (D-164(b)).
+    // The first addon version is ingested but never auto-activated (D-250(b)).
     let pkg: (String, String) =
         sqlx::query_as("SELECT package_id, status FROM plugin_packages WHERE source = 'addon'")
             .fetch_one(w.h.pool())
@@ -557,7 +557,10 @@ async fn unreachable_source_fails_cleanly_and_keeps_state() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    // (C-596) a failed check is a result, not an error: the source keeps serving its last state.
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(_v["status"], "failed", "{_v}");
+    assert!(_v["check_failed_reason"].as_str().is_some(), "{_v}");
 
     let v = w.get(&format!("/v1/admin/addon-sources/{sid}")).await.1;
     assert_eq!(v["status"], "check_failed");
@@ -697,6 +700,12 @@ async fn the_poll_job_claims_due_sources_and_audits_scheduled() {
         ],
     )
     .await;
+    // Registration scheduled the first check a day out (1d ± 10 %): nothing is due yet.
+    assert_eq!(addon_sources::poll_once(&w.h.state).await.unwrap(), 0);
+    sqlx::query("UPDATE addon_sources SET next_check_at = now() - interval '1 minute'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
     let n = addon_sources::poll_once(&w.h.state).await.unwrap();
     assert_eq!(n, 1);
     let n: i64 = sqlx::query_scalar(
@@ -809,4 +818,371 @@ async fn min_core_above_the_running_core_is_listed_but_not_ingested() {
             .await
             .unwrap();
     assert_eq!(n, 0, "not ingested");
+}
+
+/// (C-607) A first registration does not pull the whole history: the newest ingestable version
+/// only; later checks ingest every newer version.
+#[tokio::test]
+async fn registration_ingests_the_newest_version_only() {
+    let w = W::new().await;
+    w.publish(
+        "acme",
+        &[
+            ("1.0.0", signed(&yaml("acme", "1.0.0", &[HOST]), &w.key)),
+            ("1.5.0", signed(&yaml("acme", "1.5.0", &[HOST]), &w.key)),
+            ("2.0.0", signed(&yaml("acme", "2.0.0", &[HOST]), &w.key)),
+        ],
+    )
+    .await;
+    let (s, v) = w
+        .send(
+            Method::POST,
+            "/v1/admin/addon-sources",
+            Some(json!({"url": format!("{}/repo", w.base)})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let held: Vec<String> = sqlx::query_scalar(
+        "SELECT version FROM plugin_packages WHERE source = 'addon' ORDER BY version",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(held, vec!["2.0.0"]);
+    // The listing is newest first and marks nothing as "update available" (2.0.0 is held).
+    let versions = v["addons"][0]["versions"].as_array().unwrap();
+    assert_eq!(versions[0]["version"], "2.0.0");
+    assert!(
+        versions.iter().all(|x| x["update_available"] == false),
+        "{v}"
+    );
+    assert_eq!(versions[0]["installed_version"], "2.0.0");
+}
+
+async fn invalid_rows(w: &W) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT version, status, status_reason FROM plugin_packages
+         WHERE source = 'addon' AND status = 'invalid' ORDER BY version",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap()
+}
+
+/// SEC-86: a package must be signed by **the source's own key** — not by another key trusted for
+/// the same publisher, not by the project key — carry the repo's publisher and the listed id and
+/// version; a failing version is stored `invalid` with the reason and not retried, the others go on.
+#[tokio::test]
+async fn a_package_must_be_signed_by_the_sources_own_key_and_carry_its_identity() {
+    let w = W::new().await;
+    w.register().await;
+    let sid = w.source_id().await;
+    // Another key an admin trusts for the same publisher (e.g. added by hand).
+    let other = generate_signing_key().unwrap();
+    let (s, v) = w
+        .send(
+            Method::POST,
+            "/v1/admin/trusted-keys",
+            Some(json!({"publisher": "acme", "name": "someone else",
+                "public_key": PackageBuilder::key_id(&other)})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+
+    let wrong_id = yaml("acme", "5.0.0", &[HOST]).replace("id: acme,", "id: other_app,");
+    w.publish(
+        "acme",
+        &[
+            ("1.0.0", signed(&yaml("acme", "1.0.0", &[HOST]), &w.key)),
+            // trusted for acme, but not the source's key
+            ("2.0.0", signed(&yaml("acme", "2.0.0", &[HOST]), &other)),
+            // the source's key, another publisher
+            ("3.0.0", signed(&yaml("evil", "3.0.0", &[HOST]), &w.key)),
+            // the source's key, but a version the manifest does not list under this name
+            ("4.0.0", signed(&yaml("acme", "4.0.1", &[HOST]), &w.key)),
+            // the source's key, another package id
+            ("5.0.0", signed(&wrong_id, &w.key)),
+            // fine
+            ("6.0.0", signed(&yaml("acme", "6.0.0", &[HOST]), &w.key)),
+        ],
+    )
+    .await;
+    let (s, v) = w
+        .send(
+            Method::POST,
+            &format!("/v1/admin/addon-sources/{sid}/check"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let reasons: std::collections::BTreeMap<String, String> = v["failed_versions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["version"].as_str().unwrap().to_owned(),
+                f["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    for (ver, code) in [
+        ("2.0.0", "signer_not_source_key"),
+        ("3.0.0", "publisher_mismatch"),
+        ("4.0.0", "identity_mismatch"),
+        ("5.0.0", "identity_mismatch"),
+    ] {
+        assert!(
+            reasons.get(ver).is_some_and(|r| r.starts_with(code)),
+            "{ver}: {reasons:?}"
+        );
+    }
+    assert_eq!(v["ingested"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["ingested"][0]["version"], "6.0.0");
+    // Nothing partial survives: the failing versions are `invalid` rows with a short code …
+    let bad = invalid_rows(&w).await;
+    assert_eq!(bad.len(), 4, "{bad:?}");
+    assert!(
+        bad.iter()
+            .all(|(_, st, why)| st == "invalid" && why.is_some()),
+        "{bad:?}"
+    );
+    // … and are not retried: the next check has nothing to say about them.
+    let (s, v) = w
+        .send(
+            Method::POST,
+            &format!("/v1/admin/addon-sources/{sid}/check"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["failed_versions"].as_array().unwrap().len(), 0, "{v}");
+    assert_eq!(v["status"], "up_to_date");
+}
+
+/// A source cannot ship a package id somebody else owns (here an uploaded package).
+#[tokio::test]
+async fn a_package_id_owned_by_another_source_is_refused() {
+    let w = W::new().await;
+    sqlx::query(
+        "INSERT INTO plugin_packages (id, package_id, version, contract, publisher, digest,
+            signer_key_id, manifest, permissions, source, status)
+         VALUES ($1, 'taken', '1.0.0', 1, 'acme', 'd1', 'k', '{}', '{}', 'upload', 'disabled')",
+    )
+    .bind(Uuid::now_v7())
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let y = yaml("acme", "2.0.0", &[HOST]).replace("id: acme,", "id: taken,");
+    w.publish("taken", &[("2.0.0", signed(&y, &w.key))]).await;
+    let (s, v) = w
+        .send(
+            Method::POST,
+            "/v1/admin/addon-sources",
+            Some(json!({"url": format!("{}/repo", w.base)})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let bad = invalid_rows(&w).await;
+    assert_eq!(bad.len(), 1, "{bad:?}");
+    assert_eq!(bad[0].2.as_deref(), Some("package_id_taken"));
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM plugin_packages WHERE source = 'addon' AND status <> 'invalid'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, 0);
+}
+
+/// (C-600) The plugins list names the source and flags the version in use when the repository
+/// lists a newer one; updates never activate on their own — approving the new version does.
+#[tokio::test]
+async fn update_badges_follow_the_repository_and_updates_never_auto_activate() {
+    let w = W::new().await;
+    let (s, v) = w.register().await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let sid = w.source_id().await;
+    let first: Uuid = sqlx::query_scalar("SELECT id FROM plugin_packages WHERE version = '1.0.0'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .send(
+            Method::POST,
+            &format!("/v1/admin/plugins/{first}/approve"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    // No badge while the repository has nothing newer.
+    let (_, v) = w.get("/v1/admin/plugins").await;
+    let row = &v["items"][0];
+    assert_eq!(row["status"], "active");
+    assert_eq!(row["source_name"], "Acme addons");
+    assert_eq!(row["update_available"], false);
+
+    // A newer version is listed; the check ingests it as pending_approval, nothing activates.
+    w.publish(
+        "acme",
+        &[
+            ("1.0.0", signed(&yaml("acme", "1.0.0", &[HOST]), &w.key)),
+            ("1.1.0", signed(&yaml("acme", "1.1.0", &[HOST]), &w.key)),
+        ],
+    )
+    .await;
+    let (s, v) = w
+        .send(
+            Method::POST,
+            &format!("/v1/admin/addon-sources/{sid}/check"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "updated");
+    assert_eq!(v["ingested"][0]["status"], "pending_approval");
+    let (_, v) = w.get("/v1/admin/plugins").await;
+    let by_version = |ver: &str| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["version"] == ver)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        by_version("1.0.0")["status"],
+        "active",
+        "an update never activates itself"
+    );
+    assert_eq!(by_version("1.0.0")["update_available"], true);
+    assert_eq!(by_version("1.1.0")["status"], "pending_approval");
+
+    // Clicking Update = the ordinary approval: the new version activates, the badge goes.
+    let new_id = by_version("1.1.0")["id"].as_str().unwrap().to_owned();
+    let (s, v) = w
+        .send(
+            Method::POST,
+            &format!("/v1/admin/plugins/{new_id}/approve"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, v) = w.get("/v1/admin/plugins?status=active").await;
+    assert_eq!(v["items"][0]["version"], "1.1.0");
+    assert_eq!(v["items"][0]["update_available"], false);
+
+    // The source view: installed version, nothing left to update, nothing removed upstream.
+    let (_, v) = w.get(&format!("/v1/admin/addon-sources/{sid}")).await;
+    assert_eq!(v["addons"][0]["versions"][0]["installed_version"], "1.1.0");
+    assert_eq!(v["removed_upstream"].as_array().unwrap().len(), 0);
+
+    // A version the repository drops is listed as removed upstream and keeps working.
+    w.publish(
+        "acme",
+        &[("1.1.0", signed(&yaml("acme", "1.1.0", &[HOST]), &w.key))],
+    )
+    .await;
+    let (s, _) = w
+        .send(
+            Method::POST,
+            &format!("/v1/admin/addon-sources/{sid}/check"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, v) = w.get(&format!("/v1/admin/addon-sources/{sid}")).await;
+    assert_eq!(
+        v["removed_upstream"],
+        json!([{"package_id": "acme", "version": "1.0.0"}]),
+        "{v}"
+    );
+}
+
+/// (C-608) Every audited action of the feature is in the security-critical set, and the rows are
+/// really written critical (committed with the change).
+#[tokio::test]
+async fn the_addon_actions_are_security_critical_and_written_with_the_change() {
+    for a in [
+        "addon_source.add",
+        "addon_source.update",
+        "addon_source.remove",
+        "addon_source.check",
+        "addon.ingest",
+    ] {
+        assert!(
+            aurora_core::audit::SECURITY_CRITICAL_ACTIONS.contains(&a),
+            "{a} is not security-critical"
+        );
+    }
+    let w = W::new().await;
+    w.register().await;
+    let sid = w.source_id().await;
+    w.send(
+        Method::PATCH,
+        &format!("/v1/admin/addon-sources/{sid}"),
+        Some(json!({"update_interval": "1w"})),
+    )
+    .await;
+    w.send(
+        Method::POST,
+        &format!("/v1/admin/addon-sources/{sid}/check"),
+        None,
+    )
+    .await;
+    let actions: std::collections::BTreeSet<String> =
+        sqlx::query_scalar("SELECT action FROM audit_log WHERE action LIKE 'addon%'")
+            .fetch_all(w.h.pool())
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+    for a in [
+        "addon_source.add",
+        "addon_source.update",
+        "addon_source.check",
+        "addon.ingest",
+    ] {
+        assert!(actions.contains(a), "{a} missing: {actions:?}");
+    }
+    // The check row of a successful run names its trigger.
+    let trigger: String = sqlx::query_scalar(
+        "SELECT metadata->>'trigger' FROM audit_log WHERE action = 'addon_source.check'
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(trigger, "manual");
+}
+
+/// The default schedule of a new source is the instance's configured interval; the route's own
+/// value wins; the Interval enum is enforced.
+#[tokio::test]
+async fn a_new_source_starts_with_the_configured_interval() {
+    let w = W::new().await;
+    w.publish(
+        "acme",
+        &[("1.0.0", signed(&yaml("acme", "1.0.0", &[HOST]), &w.key))],
+    )
+    .await;
+    let (s, v) = w
+        .send(
+            Method::POST,
+            "/v1/admin/addon-sources",
+            Some(json!({"url": format!("{}/repo", w.base), "update_interval": "fortnightly"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    let (s, v) = w
+        .send(
+            Method::POST,
+            "/v1/admin/addon-sources",
+            Some(json!({"url": format!("{}/repo", w.base)})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert_eq!(v["update_interval"], "1d", "the config default");
 }

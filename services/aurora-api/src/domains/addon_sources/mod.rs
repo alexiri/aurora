@@ -1,8 +1,11 @@
-//! Addon sources (P5-ASRC, D-164): registration (TOFU), the shared check path, and the
-//! poll job. Trust model: the manifest's `signing_key` is the anchor — registration stores
-//! it in a `trusted_keys` row, checks verify packages against it, a changed key flags the
-//! source for an admin's re-confirm and never auto-trusts (SEC-86).
+//! Addon sources (P5-ASRC, D-250): registration (TOFU), the shared check path, and the poll job.
+//!
+//! Trust model: the manifest's `signing_key` is the anchor — registration stores it in a
+//! `trusted_keys` row, every package must be signed by exactly that key, a changed key flags the
+//! source for an admin's re-confirm and never auto-trusts (SEC-86). Packages from a source are
+//! ordinary packages in every other respect and never activate on first sight.
 
+pub mod dto;
 pub mod fetch;
 pub mod manifest;
 pub mod poll;
@@ -11,19 +14,36 @@ pub use routes::router;
 
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::domains::plugins::{ingest, service};
-use aurora_core::ids;
-use aurora_core::{ApiError, sanitize};
-use aurora_db::repo::addon_sources as repo;
-use aurora_db::repo::addon_sources::AddonSourceRow;
-use aurora_db::repo::plugins::PackageRow;
+use crate::domains::plugins::dto::PluginPackage;
+use crate::domains::plugins::ingest::{self, AddonExpect};
+use crate::domains::plugins::service;
+use aurora_core::{ApiError, ids, sanitize};
+use aurora_db::repo::addon_sources::{self as repo, AddonSourceRow};
+use aurora_db::repo::plugins::{self as plugins_repo, NewPackage, PackageRow};
 use aurora_registry::manifest::parse_semver;
+use dto::{
+    AddonEntry, AddonRepoInfo, AddonSource, AddonSourceCheckAll, AddonSourceCheckResult,
+    AddonSourcePreview, AddonVersion, FailedVersion, RemovedUpstream,
+};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
-/// Interval seconds for the owner's enum (`update_interval`).
+/// `(major, minor, patch, is_release)`: the derived tuple order is the semver order.
+type Semver = (u64, u64, u64, bool);
+
+/// The interval values of the owner's enum.
+pub const INTERVALS: [&str; 7] = ["6h", "12h", "1d", "1w", "2w", "1mo", "never"];
+
+/// Whether `v` is one of [`INTERVALS`].
+#[must_use]
+pub fn valid_interval(v: &str) -> bool {
+    INTERVALS.contains(&v)
+}
+
+/// Interval seconds for the owner's enum (`None` for `never`).
 #[must_use]
 pub fn interval_secs(interval: &str) -> Option<i64> {
     match interval {
@@ -33,7 +53,6 @@ pub fn interval_secs(interval: &str) -> Option<i64> {
         "1w" => Some(7 * 24 * 3600),
         "2w" => Some(14 * 24 * 3600),
         "1mo" => Some(30 * 24 * 3600),
-        "never" => None,
         _ => None,
     }
 }
@@ -44,14 +63,12 @@ fn jitter(id: Uuid) -> f64 {
     1.0 + n
 }
 
-fn next_in_secs(interval: &str, id: Uuid) -> i64 {
-    match interval_secs(interval) {
-        Some(s) => ((s as f64) * jitter(id)) as i64,
-        None => 365 * 24 * 3600, // `never`: far in the future; manual checks still work
-    }
+/// Seconds until the next scheduled check, `None` for `never` (no schedule: manual only).
+fn next_in_secs(interval: &str, id: Uuid) -> Option<i64> {
+    interval_secs(interval).map(|s| ((s as f64) * jitter(id)) as i64)
 }
 
-/// The per-replica lease owner id (random per process, like the library refresh).
+/// The per-process lease owner id (random per call, like the library refresh).
 static OWNER: AtomicU64 = AtomicU64::new(0);
 
 fn lease_owner() -> Uuid {
@@ -79,16 +96,15 @@ fn refused(e: manifest::ManifestError) -> ApiError {
     }
 }
 
-/// `refused` for the routes module.
-pub fn refused_public(e: manifest::ManifestError) -> ApiError {
-    refused(e)
-}
-
-/// The sanitized reason of a manifest error (used by failure paths that only store
-/// `check_failed_reason`).
-#[allow(dead_code)]
-fn manifest_error_reason(e: &manifest::ManifestError) -> String {
-    e.reason()
+/// The sanitized one-sentence reason of a failed fetch or parse, for `check_failed_reason`.
+fn reason_of(e: &ApiError) -> String {
+    e.details()
+        .and_then(|d| d.get("reason"))
+        .and_then(Value::as_str)
+        .map_or_else(
+            || sanitize::one_line(e.message(), 200),
+            |r| sanitize::one_line(r, 200),
+        )
 }
 
 fn fetcher(state: &AppState) -> fetch::Fetcher<'_> {
@@ -96,253 +112,417 @@ fn fetcher(state: &AppState) -> fetch::Fetcher<'_> {
 }
 
 /// Fetch, size-check and parse the manifest (the shared first step of every path).
-/// `Ok` carries the parsed manifest and the raw bytes; `Err` is already the mapped
-/// `ApiError` (413 / 422s of C-599).
-async fn fetch_manifest(
-    state: &AppState,
-    url: &str,
-) -> Result<(manifest::Manifest, Vec<u8>), ApiError> {
-    let f = fetcher(state);
-    let bytes = f.manifest(url).await.map_err(refused)?;
-    let m = manifest::parse(&bytes).map_err(refused)?;
-    Ok((m, bytes))
+async fn fetch_manifest(state: &AppState, url: &str) -> Result<manifest::Manifest, ApiError> {
+    let bytes = fetcher(state).manifest(url).await.map_err(refused)?;
+    manifest::parse(&bytes).map_err(refused)
 }
 
-/// `fetch_manifest` for the routes module.
-pub async fn fetch_manifest_public(
-    state: &AppState,
-    url: &str,
-) -> Result<(manifest::Manifest, Vec<u8>), ApiError> {
-    fetch_manifest(state, url).await
+fn semver_of(v: &str) -> Option<Semver> {
+    parse_semver(v)
 }
 
-/// Fetch a package archive (routes module: registration).
-pub async fn fetch_package(
-    state: &AppState,
-    url: &str,
-) -> Result<Vec<u8>, manifest::ManifestError> {
-    fetcher(state).package(url).await
+/// The newest of `(version, semver)` pairs.
+fn newest(rows: impl Iterator<Item = (String, Semver)>) -> Option<(String, Semver)> {
+    rows.max_by_key(|(_, s)| *s)
 }
 
-/// `core_supports` for the routes module.
-pub fn core_supports_public(min_core: Option<&str>) -> Result<(), &'static str> {
-    core_supports(min_core)
-}
-
-/// sha256 hex of `bytes` compared case-insensitively against `expected`.
-pub fn digest_matches(bytes: &[u8], expected: &str) -> bool {
-    use sha2::{Digest, Sha256};
-    let d = Sha256::digest(bytes);
-    let mut s = String::with_capacity(64);
-    use std::fmt::Write;
-    for b in d {
-        let _ = write!(s, "{b:02x}");
-    }
-    s.eq_ignore_ascii_case(expected)
-}
-
-/// `is_newer` for the routes module.
-pub async fn is_newer_public(
-    state: &AppState,
-    package_id: &str,
-    candidate: (u64, u64, u64, bool),
-) -> Result<bool, ApiError> {
-    is_newer(state, package_id, candidate).await
-}
-
-/// The DTO-facing view of one addon entry with install state.
-pub struct AddonView {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub versions: Vec<VersionView>,
-}
-
-pub struct VersionView {
-    pub version: String,
-    pub min_core: Option<String>,
-    pub ingestable: bool,
-    pub not_ingestable_reason: Option<String>,
-    pub installed_version: Option<String>,
-    pub update_available: bool,
-}
-
+/// Whether this core can run a version that needs `min_core`: `Err("core_too_new")` when not.
 fn core_supports(min_core: Option<&str>) -> Result<(), &'static str> {
-    let Some(mc) = min_core else {
+    let Some(mc) = min_core.and_then(parse_semver) else {
         return Ok(());
     };
-    let Some((maj, min, _, _)) = parse_semver(mc) else {
-        return Ok(());
-    };
-    let running = parse_semver(env!("CARGO_PKG_VERSION")).map_or((0, 0, 0, false), |v| v);
-    if (running.0, running.1) >= (maj, min) {
+    let running = parse_semver(env!("CARGO_PKG_VERSION")).unwrap_or((0, 0, 0, true));
+    if (running.0, running.1, running.2) >= (mc.0, mc.1, mc.2) {
         Ok(())
     } else {
         Err("core_too_new")
     }
 }
 
-/// Per-addon view state for a source (or a preview: `installed` empty).
-pub fn addon_views(m: &manifest::Manifest, installed: &BTreeMap<String, String>) -> Vec<AddonView> {
-    m.addons
+/// What the instance holds of the packages of a manifest, from any source (package ids are
+/// unique across the instance): the active version and every non-invalid version.
+#[derive(Default, Debug)]
+struct Installed {
+    active: Option<String>,
+    all: Vec<(String, Semver)>,
+}
+
+impl Installed {
+    fn newest(&self) -> Option<(String, Semver)> {
+        newest(self.all.iter().cloned())
+    }
+}
+
+async fn installed_state(
+    state: &AppState,
+    package_ids: &[String],
+) -> Result<BTreeMap<String, Installed>, ApiError> {
+    let mut out: BTreeMap<String, Installed> = BTreeMap::new();
+    for (pid, version, status) in repo::package_versions(&state.pool, package_ids).await? {
+        let e = out.entry(pid).or_default();
+        if status == "active" {
+            e.active = Some(version.clone());
+        }
+        if let Some(s) = semver_of(&version) {
+            e.all.push((version, s));
+        }
+    }
+    Ok(out)
+}
+
+fn versions_desc(a: &manifest::Addon) -> Vec<(&String, &manifest::AddonVersion, Semver)> {
+    let mut v: Vec<_> = a
+        .versions
         .iter()
-        .map(|a| AddonView {
-            id: a.id.clone(),
-            name: a.name.clone(),
-            description: a.description.clone(),
-            versions: a
-                .versions
-                .iter()
-                .map(|(v, ver)| {
-                    let ingestable = core_supports(ver.min_core.as_deref()).is_ok();
-                    let not_ingestable_reason = core_supports(ver.min_core.as_deref())
-                        .err()
-                        .map(str::to_owned);
-                    let newest_installed = installed.get(&a.id);
-                    let newer = newest_installed
-                        .and_then(|iv| Some((parse_semver(iv)?, parse_semver(v)?)))
-                        .is_some_and(|(i, u)| semver_newer(u, i));
-                    VersionView {
-                        version: v.clone(),
-                        min_core: ver.min_core.clone(),
-                        ingestable,
-                        not_ingestable_reason,
-                        installed_version: newest_installed.cloned(),
-                        update_available: newer,
-                    }
-                })
-                .collect(),
+        .filter_map(|(k, ver)| semver_of(k).map(|s| (k, ver, s)))
+        .collect();
+    v.sort_by(|a, b| b.2.cmp(&a.2));
+    v
+}
+
+fn entry_views(
+    addons: &[manifest::Addon],
+    installed: &BTreeMap<String, Installed>,
+) -> Vec<AddonEntry> {
+    addons
+        .iter()
+        .map(|a| {
+            let inst = installed.get(&a.id);
+            let newest_ingested = inst.and_then(Installed::newest);
+            let installed_version = inst
+                .and_then(|i| i.active.clone())
+                .or_else(|| newest_ingested.as_ref().map(|(v, _)| v.clone()));
+            AddonEntry {
+                id: a.id.clone(),
+                name: a.name.clone(),
+                description: a.description.clone(),
+                versions: versions_desc(a)
+                    .into_iter()
+                    .map(|(v, ver, s)| {
+                        let gate = core_supports(ver.min_core.as_deref());
+                        AddonVersion {
+                            version: v.clone(),
+                            min_core: ver.min_core.clone(),
+                            ingestable: gate.is_ok(),
+                            not_ingestable_reason: gate.err().map(str::to_owned),
+                            installed_version: installed_version.clone(),
+                            update_available: newest_ingested.as_ref().is_some_and(|(_, n)| s > *n),
+                        }
+                    })
+                    .collect(),
+            }
         })
         .collect()
 }
 
-/// `(major, minor, patch, pre)` newer-than (pre-releases sort first, as `parse_semver` does).
-fn semver_newer(a: (u64, u64, u64, bool), b: (u64, u64, u64, bool)) -> bool {
-    (a.3, a.0, a.1, a.2) > (b.3, b.0, b.1, b.2)
+/// The versions of `a` a check ingests now: every ingestable version newer than the newest one
+/// the instance holds (ascending); the newest ingestable one when the instance holds none (a
+/// first registration does not pull the whole history). Versions this source stored `invalid`
+/// are not retried.
+fn candidates<'a>(
+    a: &'a manifest::Addon,
+    inst: Option<&Installed>,
+    invalid: &BTreeSet<(String, String)>,
+) -> Vec<(&'a String, &'a manifest::AddonVersion)> {
+    let held = inst.and_then(Installed::newest);
+    let mut ok: Vec<_> = versions_desc(a)
+        .into_iter()
+        .filter(|(_, ver, _)| core_supports(ver.min_core.as_deref()).is_ok())
+        .filter(|(v, _, _)| !invalid.contains(&(a.id.clone(), (*v).clone())))
+        .collect();
+    ok.reverse(); // ascending
+    match held {
+        Some((_, n)) => ok
+            .into_iter()
+            .filter(|(_, _, s)| *s > n)
+            .map(|(v, ver, _)| (v, ver))
+            .collect(),
+        None => ok
+            .into_iter()
+            .next_back()
+            .map(|(v, ver, _)| vec![(v, ver)])
+            .unwrap_or_default(),
+    }
 }
 
-/// Newer than the newest ingested version of `package_id` (all sources, not just this
-/// one: a package id is globally unique).
-async fn is_newer(
+/// sha256 hex of `bytes`.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(64);
+    for b in Sha256::digest(bytes) {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// The short reason a failed ingest is reported and stored with (`code: message` of the first
+/// violation, or the error's own message).
+fn ingest_reason(e: &ApiError) -> String {
+    let first = e
+        .details()
+        .and_then(|d| d.get("violations"))
+        .and_then(Value::as_array)
+        .and_then(|v| v.first());
+    match first {
+        Some(v) => {
+            let code = v.get("code").and_then(Value::as_str).unwrap_or("invalid");
+            let msg = v.get("message").and_then(Value::as_str).unwrap_or("");
+            sanitize::one_line(&format!("{code}: {msg}"), 200)
+        }
+        None => sanitize::one_line(e.message(), 200),
+    }
+}
+
+/// Store a version that failed signature, digest, identity or lint as an `invalid` package row
+/// with the reason (nothing of the archive is kept): the dashboard shows it, the next check does
+/// not retry it, and nothing partial survives.
+async fn store_invalid(
     state: &AppState,
+    source: &AddonSourceRow,
     package_id: &str,
-    candidate: (u64, u64, u64, bool),
-) -> Result<bool, ApiError> {
-    let rows = aurora_db::repo::plugins::list_by_status(
-        &state.pool,
-        &[
-            "pending_approval",
-            "active",
-            "superseded",
-            "rejected",
-            "disabled",
-        ],
+    version: &str,
+    digest: &str,
+    reason: &str,
+) -> Result<(), ApiError> {
+    // `status_reason` is a short code (≤ 64 characters); the sentence lives in `violations`.
+    let code: String = reason
+        .split(':')
+        .next()
+        .unwrap_or("invalid")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        .take(64)
+        .collect();
+    let violations = json!([{ "code": code, "message": reason }]);
+    let mut c = state
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    plugins_repo::insert_package(
+        &mut c,
+        &NewPackage {
+            id: ids::new_id(),
+            package_id,
+            version,
+            contract: 0,
+            publisher: &source.publisher,
+            digest,
+            signer_key_id: "unsigned",
+            manifest: &json!({}),
+            permissions: &json!({}),
+            violations: &violations,
+            source: "addon",
+            source_id: Some(source.id),
+            status: "invalid",
+            status_reason: Some(&code),
+            approved_now: false,
+        },
     )
     .await?;
-    Ok(rows
-        .into_iter()
-        .filter(|r| r.package_id == package_id)
-        .filter_map(|r| parse_semver(&r.version))
-        .all(|v| semver_newer(candidate, v)))
+    Ok(())
 }
 
-/// Ingest one archive through the ordinary pipeline with `Source::Addon`: fetch (≤ 1
-/// redirect), digest-check **before** parsing, then the ordinary ingest (the package must
-/// verify against the source's `trusted_keys` row inside the pipeline). `Ok(Err)` carries
-/// a sanitized per-version failure reason that never blocks the other versions.
+/// Fetch and ingest one listed version. `Ok(Err(reason))` is a per-version failure that never
+/// blocks the other versions (stored `invalid` when the archive itself is at fault; a network
+/// failure is transient and stores nothing).
 async fn ingest_version(
     state: &AppState,
     source: &AddonSourceRow,
     actor: &AuditActor,
-    version: &manifest::AddonVersion,
+    package_id: &str,
+    version: &str,
+    ver: &manifest::AddonVersion,
 ) -> Result<Result<PackageRow, String>, ApiError> {
-    let bytes = match fetcher(state).package(&version.package).await {
+    let bytes = match fetcher(state).package(&ver.package).await {
         Ok(b) => b,
         Err(e) => return Ok(Err(e.reason())),
     };
-    if !digest_matches(&bytes, &version.sha256) {
-        return Ok(Err(
-            "the package digest does not match the manifest".to_owned()
-        ));
+    let actual = sha256_hex(&bytes);
+    // The digest is the integrity anchor: nothing is parsed before it matches the manifest.
+    if !actual.eq_ignore_ascii_case(&ver.sha256) {
+        let reason = "digest_mismatch: the archive does not match the manifest's sha256";
+        store_invalid(
+            state,
+            source,
+            package_id,
+            version,
+            &ver.sha256.to_ascii_lowercase(),
+            reason,
+        )
+        .await?;
+        return Ok(Err(reason.to_owned()));
     }
-    // A version that fails validation (signature, linter, limits) is reported per version
-    // and never fails the whole check (C-607).
-    match ingest::ingest_for_source(state, &bytes, source, actor).await {
+    let expect = AddonExpect {
+        source,
+        package_id,
+        version,
+    };
+    match ingest::ingest_for_source(state, &bytes, &expect, actor).await {
         Ok(row) => Ok(Ok(row)),
-        Err(e) => Ok(Err(sanitize::one_line(&e.message(), 200))),
+        Err(e) if e.status().is_server_error() => Err(e),
+        Err(e) => {
+            let reason = ingest_reason(&e);
+            store_invalid(state, source, package_id, version, &actual, &reason).await?;
+            Ok(Err(reason))
+        }
     }
 }
 
-/// The full check of one source: fetch manifest, compare digest, ingest newer versions.
-/// Shared by the scheduled poll and the manual buttons (`trigger` lands in the audit row).
-/// The caller holds the source's lease.
+/// What a check ingested and what it could not.
+#[derive(Default)]
+pub struct Ingestion {
+    pub ingested: Vec<PackageRow>,
+    pub failed: Vec<(String, String, String)>,
+}
+
+/// Ingest what `m` lists and the instance lacks (see [`candidates`]); the caller holds the lease
+/// (or is registering).
+async fn ingest_listed(
+    state: &AppState,
+    source: &AddonSourceRow,
+    actor: &AuditActor,
+    m: &manifest::Manifest,
+) -> Result<Ingestion, ApiError> {
+    let ids: Vec<String> = m.addons.iter().map(|a| a.id.clone()).collect();
+    let installed = installed_state(state, &ids).await?;
+    let invalid: BTreeSet<(String, String)> = repo::invalid_versions(&state.pool, source.id)
+        .await?
+        .into_iter()
+        .collect();
+    let mut out = Ingestion::default();
+    for a in &m.addons {
+        for (v, ver) in candidates(a, installed.get(&a.id), &invalid) {
+            match ingest_version(state, source, actor, &a.id, v, ver).await? {
+                Ok(row) => out.ingested.push(row),
+                Err(reason) => out.failed.push((a.id.clone(), v.clone(), reason)),
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The accepted manifest as stored on the source row.
+fn stored_manifest(m: &manifest::Manifest) -> Value {
+    json!({ "key_description": m.signing_key_description, "addons": m.addons })
+}
+
+fn stored_addons(row: &AddonSourceRow) -> Vec<manifest::Addon> {
+    row.manifest
+        .get("addons")
+        .and_then(|a| serde_json::from_value(a.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// The result of a check of one source.
+pub struct CheckOutcome {
+    /// `updated` | `up_to_date` | `failed`.
+    pub status: &'static str,
+    pub ingestion: Ingestion,
+    pub check_failed_reason: Option<String>,
+}
+
+impl CheckOutcome {
+    fn failed(reason: String) -> Self {
+        Self {
+            status: "failed",
+            ingestion: Ingestion::default(),
+            check_failed_reason: Some(reason),
+        }
+    }
+}
+
+/// Record a failed check: the source keeps serving its last known state, the reason is stored
+/// (sanitized) and the failure is a security-critical `addon_source.check` row.
+async fn fail_check(
+    state: &AppState,
+    source: &AddonSourceRow,
+    trigger: &str,
+    actor: &AuditActor,
+    reason: &str,
+    new_fingerprint: Option<&str>,
+) -> Result<(), ApiError> {
+    let status = if new_fingerprint.is_some() {
+        "signing_key_changed"
+    } else {
+        "check_failed"
+    };
+    let reason = sanitize::one_line(reason, 200);
+    let mut tx = audit::begin(state).await?;
+    repo::finish_check(
+        &mut *tx,
+        &repo::CheckDone {
+            id: source.id,
+            owner: source.lease_owner.unwrap_or_default(),
+            status,
+            reason: Some(reason.clone()),
+            new_key_fingerprint: new_fingerprint.map(str::to_owned),
+            manifest_digest: None,
+            manifest: None,
+            next_in_secs: aurora_core::limits::ADDON_FAILURE_BACKOFF.as_secs() as i64,
+        },
+    )
+    .await?;
+    let mut meta = json!({ "trigger": trigger, "reason": reason });
+    if let Some(n) = new_fingerprint {
+        meta["old"] = json!(source.key_fingerprint);
+        meta["new"] = json!(n);
+    }
+    let ev = AuditEvent::new(actor.clone(), "addon_source.check", Outcome::Failure)
+        .target("addon_source", source.id)
+        .metadata(meta);
+    audit::commit_critical(tx, &ev).await?;
+    Ok(())
+}
+
+/// The full check of one source: fetch the manifest, refuse a changed key, ingest what is new.
+/// Shared by the scheduled poll and the manual buttons (`trigger` lands in the audit row); the
+/// caller holds the source's lease and this releases it with the outcome.
 pub async fn check_source(
     state: &AppState,
     source: &AddonSourceRow,
     trigger: &str,
     actor: &AuditActor,
-) -> Result<(String, Vec<PackageRow>, Vec<(String, String, String)>), ApiError> {
-    let fetched = fetch_manifest(state, &source.url).await;
-    let (m, _bytes) = match fetched {
-        Ok(v) => v,
+) -> Result<CheckOutcome, ApiError> {
+    let m = match fetch_manifest(state, &source.url).await {
+        Ok(m) => m,
         Err(e) => {
-            let reason = e
-                .details()
-                .and_then(|d| d.get("reason"))
-                .and_then(Value::as_str)
-                .unwrap_or("the manifest could not be fetched")
-                .to_owned();
-            finish_failure(state, source, &reason, None).await?;
-            audit::record(
-                state,
-                AuditEvent::new(actor.clone(), "addon_source.check", Outcome::Failure)
-                    .target("addon_source", source.id)
-                    .metadata(json!({"trigger": trigger, "reason": reason})),
-            );
-            return Err(e);
+            let reason = reason_of(&e);
+            fail_check(state, source, trigger, actor, &reason, None).await?;
+            return Ok(CheckOutcome::failed(reason));
         }
     };
-    // Key change: flag, refuse everything, wait for the admin (C-595).
+    // Key change: flag, ingest nothing, wait for the admin (C-595).
     let fp = manifest::key_fingerprint(&m.signing_key);
     if fp != source.key_fingerprint {
-        finish_failure(state, source, "signing_key_changed", Some(&fp)).await?;
-        audit::record(
+        fail_check(
             state,
-            AuditEvent::new(actor.clone(), "addon_source.check", Outcome::Failure)
-                .target("addon_source", source.id)
-                .metadata(json!({"trigger": trigger, "reason": "signing_key_changed",
-                    "old": source.key_fingerprint, "new": fp})),
-        );
-        return Ok(("failed".to_owned(), Vec::new(), Vec::new()));
+            source,
+            trigger,
+            actor,
+            "signing_key_changed",
+            Some(&fp),
+        )
+        .await?;
+        return Ok(CheckOutcome::failed("signing_key_changed".to_owned()));
     }
-    let actor = actor.clone();
-    let mut ingested = Vec::new();
-    let mut failed: Vec<(String, String, String)> = Vec::new();
-    let mut any_new = false;
-    let views = m.addons.clone();
-    for a in &views {
-        for (v, ver) in &a.versions {
-            let Some(sem) = parse_semver(v) else { continue };
-            if core_supports(ver.min_core.as_deref()).is_err() {
-                continue;
-            }
-            if !is_newer(state, &a.id, sem).await? {
-                continue;
-            }
-            any_new = true;
-            match ingest_version(state, source, &actor, ver).await? {
-                Ok(row) => ingested.push(row),
-                Err(reason) => failed.push((a.id.clone(), v.clone(), reason)),
-            }
-        }
+    if m.publisher != source.publisher {
+        let reason = "the manifest's publisher changed";
+        fail_check(state, source, trigger, actor, reason, None).await?;
+        return Ok(CheckOutcome::failed(reason.to_owned()));
     }
-    let status = if any_new { "updated" } else { "up_to_date" };
-    // The check result and its audit row land together (addon_source.check is
-    // security-critical: `04 §Audit`).
+    let ingestion = ingest_listed(state, source, actor, &m).await?;
+    let status = if ingestion.ingested.is_empty() {
+        "up_to_date"
+    } else {
+        "updated"
+    };
+    // The check outcome and its audit row land together (`addon_source.check` is
+    // security-critical, `04 §Audit`).
     let ev = AuditEvent::new(actor.clone(), "addon_source.check", Outcome::Success)
         .target("addon_source", source.id)
         .metadata(json!({"trigger": trigger, "status": status,
-            "ingested": ingested.len(), "failed_versions": failed.len()}));
+            "ingested": ingestion.ingested.len(), "failed_versions": ingestion.failed.len()}));
     let mut tx = audit::begin(state).await?;
     repo::finish_check(
         &mut *tx,
@@ -353,50 +533,23 @@ pub async fn check_source(
             reason: None,
             new_key_fingerprint: None,
             manifest_digest: Some(m.digest.clone()),
-            next_in_secs: next_in_secs(&source.update_interval, source.id),
+            manifest: Some(stored_manifest(&m)),
+            next_in_secs: next_in_secs(&source.update_interval, source.id)
+                .unwrap_or(365 * 24 * 3600),
         },
     )
     .await?;
     audit::commit_critical(tx, &ev).await?;
-    Ok((status.to_owned(), ingested, failed))
+    Ok(CheckOutcome {
+        status,
+        ingestion,
+        check_failed_reason: None,
+    })
 }
 
-async fn finish_failure(
-    state: &AppState,
-    source: &AddonSourceRow,
-    reason: &str,
-    new_fp: Option<&str>,
-) -> Result<(), ApiError> {
-    let status = if new_fp.is_some() {
-        "signing_key_changed"
-    } else {
-        "check_failed"
-    };
-    let mut c = state
-        .pool
-        .acquire()
-        .await
-        .map_err(aurora_db::DbError::from)?;
-    repo::finish_check(
-        &mut c,
-        &repo::CheckDone {
-            id: source.id,
-            owner: source.lease_owner.unwrap_or_default(),
-            status,
-            reason: Some(sanitize::one_line(reason, 200)),
-            new_key_fingerprint: new_fp.map(str::to_owned),
-            manifest_digest: None,
-            next_in_secs: aurora_core::limits::ADDON_FAILURE_BACKOFF.as_secs() as i64,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-/// The scheduled poll: claim due sources under their lease and check them.
+/// The scheduled poll: claim due sources under their lease and check them. Returns how many
+/// sources this tick checked.
 pub async fn poll_once(state: &AppState) -> Result<usize, ApiError> {
-    let interval = state.config.plugins.addon_sources.update_interval.clone();
-    let _ = interval;
     let owner = lease_owner();
     let mut c = state
         .pool
@@ -413,278 +566,31 @@ pub async fn poll_once(state: &AppState) -> Result<usize, ApiError> {
     drop(c);
     let n = claimed.len();
     for source in claimed {
-        let s = state.clone();
         let actor = AuditActor::system("addon-source-poll");
-        let res = check_source(&s, &source, "scheduled", &actor).await;
-        if let Err(e) = res {
+        if let Err(e) = check_source(state, &source, "scheduled", &actor).await {
             tracing::warn!(source = %source.id, error = %e.message(), "addon source check failed");
+            release(state, &source).await;
         }
     }
     Ok(n)
 }
 
-/// Registration payload validated against the config enum.
-pub fn valid_interval(v: &str) -> bool {
-    matches!(v, "6h" | "12h" | "1d" | "1w" | "2w" | "1mo" | "never")
-}
-
-/// One audited transaction: source row + `trusted_keys` row (C-593).
-pub struct Registration {
-    pub source: AddonSourceRow,
-    pub key: aurora_db::repo::plugins::TrustedKeyRow,
-}
-
-pub async fn register(
-    state: &AppState,
-    actor: &AuditActor,
-    admin: Uuid,
-    url: &str,
-    update_interval: &str,
-) -> Result<Registration, ApiError> {
-    let url = manifest::normalize_url(url).map_err(refused)?;
-    if !valid_interval(update_interval) {
-        return Err(ApiError::invalid_request(
-            "Invalid update interval.",
-            vec![aurora_core::FieldError::new(
-                "/update_interval",
-                "must be one of 6h, 12h, 1d, 1w, 2w, 1mo, never",
-            )],
-        ));
+/// Free the lease of a check that ended without writing its outcome.
+async fn release(state: &AppState, source: &AddonSourceRow) {
+    if let (Some(owner), Ok(mut c)) = (source.lease_owner, state.pool.acquire().await) {
+        let _ = repo::release_lease(&mut c, source.id, owner).await;
     }
-    if repo::get_by_url(&state.pool, &url).await?.is_some() {
-        return Err(ApiError::conflict(
-            "addon_source_exists",
-            "This source is already registered.",
-        ));
-    }
-    let (m, bytes) = fetch_manifest(state, &url).await?;
-    let fp = manifest::key_fingerprint(&m.signing_key);
-    let publisher = m.publisher.clone();
-    let key_name = format!("{} signing key", m.name);
-    let signing_key = m.signing_key.clone();
-
-    let mut tx = audit::begin(state).await?;
-    let key = aurora_db::repo::plugins::insert_trusted_key(
-        &mut *tx,
-        ids::new_id(),
-        &publisher,
-        &key_name,
-        &signing_key,
-        admin,
-    )
-    .await
-    .map_err(|e| {
-        aurora_db::conflict_code(e, &[("trusted_keys_public_key_key", "addon_key_exists")])
-    })?;
-    let source = repo::insert(
-        &mut *tx,
-        &repo::NewSource {
-            id: ids::new_id(),
-            name: &m.name,
-            url: &url,
-            homepage: m.homepage.as_deref(),
-            contact: m.contact.as_deref(),
-            publisher: &publisher,
-            signing_key: &signing_key,
-            key_fingerprint: &fp,
-            manifest_digest: &m.digest,
-            update_interval,
-            created_by: admin,
-        },
-    )
-    .await
-    .map_err(|e| {
-        aurora_db::conflict_code(e, &[("addon_sources_url_key", "addon_source_exists")])
-    })?;
-    let _ = bytes;
-    let ev = AuditEvent::new(actor.clone(), "addon_source.add", Outcome::Success)
-        .target("addon_source", source.id)
-        .metadata(json!({"url": url, "publisher": publisher,
-            "key_fingerprint": fp, "addons": m.addons.len()}));
-    audit::commit_critical(tx, &ev).await?;
-    Ok(Registration { source, key })
 }
 
-/// Source DTO builder (C-590): row + manifest-derived views + install state.
-pub async fn to_dto(state: &AppState, r: &AddonSourceRow) -> Result<Value, ApiError> {
-    let (m, _bytes) = match fetch_manifest(state, &r.url).await {
-        Ok(v) => v,
-        Err(_) => {
-            // Last known state keeps serving even when the source is unreachable right now:
-            // render from the stored columns without live manifest data.
-            return Ok(json!({
-                "id": r.id, "name": r.name, "url": r.url,
-                "homepage": r.homepage, "contact": r.contact,
-                "publisher": r.publisher, "key_fingerprint": r.key_fingerprint,
-                "new_key_fingerprint": r.new_key_fingerprint,
-                "manifest_digest": r.manifest_digest,
-                "update_interval": r.update_interval,
-                "status": r.status,
-                "check_failed_at": r.check_failed_at,
-                "check_failed_reason": r.check_failed_reason,
-                "last_checked_at": r.last_checked_at,
-                "addons": [], "addon_count": 0, "removed_upstream": [],
-                "created_at": r.created_at, "updated_at": r.updated_at,
-            }));
-        }
-    };
-    let installed_map: BTreeMap<String, String> = repo::newest_ingested(&state.pool, r.id)
-        .await?
-        .into_iter()
-        .collect();
-    // "removed upstream": packages of this source whose package_id is no longer in the manifest.
-    let stored = repo::packages_of(&state.pool, r.id).await?;
-    let mut removed: Vec<String> = stored
-        .iter()
-        .map(|(p, _, _)| p.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .filter(|p| !m.addons.iter().any(|a| &a.id == p))
-        .collect();
-    removed.sort();
-    let views = addon_views(&m, &installed_map);
-    let addons: Vec<Value> = views
-        .iter()
-        .map(|a| {
-            json!({
-                "id": a.id, "name": a.name, "description": a.description,
-                "versions": a.versions.iter().map(|v| json!({
-                    "version": v.version, "min_core": v.min_core,
-                    "ingestable": v.ingestable,
-                    "not_ingestable_reason": v.not_ingestable_reason,
-                    "installed_version": v.installed_version,
-                    "update_available": v.update_available,
-                })).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-    let addon_count: usize = addons
-        .iter()
-        .map(|a| a["versions"].as_array().map_or(0, Vec::len))
-        .sum();
-    Ok(json!({
-        "id": r.id, "name": r.name, "url": r.url,
-        "homepage": r.homepage, "contact": r.contact,
-        "publisher": r.publisher, "key_fingerprint": r.key_fingerprint,
-        "new_key_fingerprint": r.new_key_fingerprint,
-        "manifest_digest": r.manifest_digest,
-        "update_interval": r.update_interval,
-        "status": r.status,
-        "check_failed_at": r.check_failed_at,
-        "check_failed_reason": r.check_failed_reason,
-        "last_checked_at": r.last_checked_at,
-        "addons": addons, "addon_count": addon_count,
-        "removed_upstream": removed,
-        "created_at": r.created_at, "updated_at": r.updated_at,
-    }))
-}
-
-/// Removal (C-597): refused while packages are active; packages stay.
-pub async fn remove(state: &AppState, actor: &AuditActor, id: Uuid) -> Result<(), ApiError> {
-    let r = repo::get(&state.pool, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Addon source not found."))?;
-    let mut tx = audit::begin(state).await?;
-    if repo::has_active(&mut *tx, id).await? {
-        return Err(ApiError::conflict(
-            "addon_source_active",
-            "Packages of this source are active; remove or disable them first.",
-        ));
-    }
-    let (_ingested, active) = repo::package_counts(&mut *tx, id).await?;
-    repo::delete(&mut *tx, id).await?;
-    let ev = AuditEvent::new(actor.clone(), "addon_source.remove", Outcome::Success)
-        .target("addon_source", id)
-        .metadata(json!({"url": r.url, "packages_kept": _ingested, "active": active}));
-    audit::commit_critical(tx, &ev).await?;
-    Ok(())
-}
-
-/// Interval update (C-594).
-pub async fn update_interval_for(
-    state: &AppState,
-    actor: &AuditActor,
-    id: Uuid,
-    interval: &str,
-) -> Result<AddonSourceRow, ApiError> {
-    if !valid_interval(interval) {
-        return Err(ApiError::invalid_request(
-            "Invalid update interval.",
-            vec![aurora_core::FieldError::new(
-                "/update_interval",
-                "must be one of 6h, 12h, 1d, 1w, 2w, 1mo, never",
-            )],
-        ));
-    }
-    let r = repo::get(&state.pool, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Addon source not found."))?;
-    let mut tx = audit::begin(state).await?;
-    repo::update_interval(&mut *tx, id, interval).await?;
-    let ev = AuditEvent::new(actor.clone(), "addon_source.update", Outcome::Success)
-        .target("addon_source", id)
-        .metadata(json!({"change": "interval", "interval": format!("{} → {}", r.update_interval, interval)}));
-    audit::commit_critical(tx, &ev).await?;
-    Ok(repo::get(&state.pool, id).await?.unwrap_or(r))
-}
-
-/// Key re-confirm (C-595): update the source and its `trusted_keys` row together.
-pub async fn confirm_key(
-    state: &AppState,
-    actor: &AuditActor,
-    id: Uuid,
-    new_key_fingerprint: &str,
-) -> Result<AddonSourceRow, ApiError> {
-    let r = repo::get(&state.pool, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Addon source not found."))?;
-    if r.status != "signing_key_changed" {
-        return Err(ApiError::conflict(
-            "addon_key_not_changed",
-            "This source's signing key has not changed.",
-        ));
-    }
-    let (m, _bytes) = fetch_manifest(state, &r.url).await?;
-    let fp = manifest::key_fingerprint(&m.signing_key);
-    if fp != new_key_fingerprint || fp != manifest::key_fingerprint(&m.signing_key) {
-        return Err(ApiError::conflict(
-            "addon_key_changed_again",
-            "The manifest's signing key changed again; re-review it.",
-        ));
-    }
-    let old_fp = r.key_fingerprint.clone();
-    let mut tx = audit::begin(state).await?;
-    // The trusted key row of this source's publisher (identified by the old key bytes).
-    let keys = aurora_db::repo::plugins::all_trusted_keys(&mut *tx).await?;
-    let key = keys
-        .iter()
-        .find(|k| k.public_key == r.signing_key)
-        .ok_or_else(|| ApiError::internal("The source's trusted key row is missing."))?;
-    aurora_db::repo::plugins::update_trusted_key_public_key(&mut *tx, key.id, &m.signing_key)
-        .await?;
-    repo::confirm_key(&mut *tx, id, &m.signing_key, &fp, &m.digest).await?;
-    let ev = AuditEvent::new(actor.clone(), "addon_source.update", Outcome::Success)
-        .target("addon_source", id)
-        .metadata(json!({"change": "signing_key_confirmed", "old": old_fp, "new": fp}));
-    audit::commit_critical(tx, &ev).await?;
-    Ok(repo::get(&state.pool, id).await?.unwrap_or(r))
-}
-
-/// The plugins list joins source names for provenance (C-600).
-pub async fn source_names(state: &AppState) -> Result<BTreeMap<Uuid, String>, ApiError> {
-    Ok(repo::list(&state.pool)
-        .await?
-        .into_iter()
-        .map(|r| (r.id, r.name))
-        .collect())
-}
-
-/// Manual check of one source (C-596): lease-protected, synchronous.
+/// Manual check of one source (C-596): the same path under the same lease, synchronous.
 pub async fn check_now(
     state: &AppState,
     actor: &AuditActor,
     id: Uuid,
-) -> Result<(String, Vec<PackageRow>, Vec<(String, String, String)>), ApiError> {
+) -> Result<AddonSourceCheckResult, ApiError> {
+    if repo::get(&state.pool, id).await?.is_none() {
+        return Err(ApiError::not_found("Addon source not found."));
+    }
     let owner = lease_owner();
     let mut c = state
         .pool
@@ -705,21 +611,20 @@ pub async fn check_now(
         )
     })?;
     drop(c);
-    let mut source = source;
-    source.lease_owner = Some(owner);
     let out = check_source(state, &source, "manual", actor).await;
     if out.is_err() {
-        // The check recorded its failure (or could not run): make sure the lease is free.
-        if let Ok(mut c) = state.pool.acquire().await {
-            let _ = repo::release_lease(&mut c, id, owner).await;
-        }
+        release(state, &source).await;
     }
-    out
+    result_dto(state, &source, out?).await
 }
 
-/// Manual check of every source (check-all, C-596): sequential, a failure never blocks.
-pub async fn check_all(state: &AppState, actor: &AuditActor) -> Result<Vec<Value>, ApiError> {
-    let mut out = Vec::new();
+/// Manual check of every source (C-596): sequential, a failing or busy source never blocks the
+/// others.
+pub async fn check_all(
+    state: &AppState,
+    actor: &AuditActor,
+) -> Result<AddonSourceCheckAll, ApiError> {
+    let mut items = Vec::new();
     for r in repo::list(&state.pool).await? {
         let owner = lease_owner();
         let mut c = state
@@ -735,38 +640,383 @@ pub async fn check_all(state: &AppState, actor: &AuditActor) -> Result<Vec<Value
         )
         .await?;
         drop(c);
-        let Some(mut source) = claimed else {
-            out.push(json!({"source_id": r.id, "status": "failed",
-                "check_failed_reason": "busy", "ingested": [], "failed_versions": []}));
+        let Some(source) = claimed else {
+            items.push(AddonSourceCheckResult {
+                source_id: r.id,
+                status: "failed".to_owned(),
+                ingested: Vec::new(),
+                failed_versions: Vec::new(),
+                check_failed_reason: Some("busy".to_owned()),
+            });
             continue;
         };
-        source.lease_owner = Some(owner);
         match check_source(state, &source, "manual", actor).await {
-            Ok((status, ingested, failed)) => {
-                out.push(json!({"source_id": source.id, "status": status,
-                    "ingested": ingested.iter().map(|p| json!({"id": p.id,
-                        "package_id": p.package_id, "version": p.version, "status": p.status}))
-                        .collect::<Vec<_>>(),
-                    "failed_versions": failed.iter().map(|(p, v, r)| json!({
-                        "package_id": p, "version": v, "reason": r})).collect::<Vec<_>>(),
-                    "check_failed_reason": Value::Null}));
-            }
+            Ok(out) => items.push(result_dto(state, &source, out).await?),
             Err(e) => {
-                if let Ok(mut c) = state.pool.acquire().await {
-                    let _ = repo::release_lease(&mut c, source.id, owner).await;
-                }
-                out.push(json!({"source_id": source.id, "status": "failed",
-                    "check_failed_reason": sanitize::one_line(e.message(), 200),
-                    "ingested": [], "failed_versions": []}));
+                release(state, &source).await;
+                items.push(AddonSourceCheckResult {
+                    source_id: source.id,
+                    status: "failed".to_owned(),
+                    ingested: Vec::new(),
+                    failed_versions: Vec::new(),
+                    check_failed_reason: Some(sanitize::one_line(e.message(), 200)),
+                });
             }
         }
     }
-    Ok(out)
+    Ok(AddonSourceCheckAll { items })
 }
 
-/// The `PluginPackage` DTO for a freshly ingested row (used by check results).
-pub async fn package_dto(state: &AppState, row: PackageRow) -> Result<Value, ApiError> {
-    let dto = service::to_dto(state, row).await?;
-    serde_json::to_value(dto)
-        .map_err(|_| ApiError::internal("The package DTO could not be serialized."))
+async fn result_dto(
+    state: &AppState,
+    source: &AddonSourceRow,
+    out: CheckOutcome,
+) -> Result<AddonSourceCheckResult, ApiError> {
+    let mut ingested: Vec<PluginPackage> = Vec::with_capacity(out.ingestion.ingested.len());
+    for row in out.ingestion.ingested {
+        ingested.push(service::to_dto(state, row).await?);
+    }
+    Ok(AddonSourceCheckResult {
+        source_id: source.id,
+        status: out.status.to_owned(),
+        ingested,
+        failed_versions: out
+            .ingestion
+            .failed
+            .into_iter()
+            .map(|(package_id, version, reason)| FailedVersion {
+                package_id,
+                version,
+                reason,
+            })
+            .collect(),
+        check_failed_reason: out.check_failed_reason,
+    })
+}
+
+/// What registering a manifest does, without doing it (C-592).
+pub async fn preview(state: &AppState, pasted: &str) -> Result<AddonSourcePreview, ApiError> {
+    let url = manifest::normalize_url(pasted).map_err(refused)?;
+    if repo::get_by_url(&state.pool, &url).await?.is_some() {
+        return Err(ApiError::conflict(
+            "addon_source_exists",
+            "This source is already registered.",
+        ));
+    }
+    let m = fetch_manifest(state, &url).await?;
+    let ids: Vec<String> = m.addons.iter().map(|a| a.id.clone()).collect();
+    let installed = installed_state(state, &ids).await?;
+    let none = BTreeSet::new();
+    let packages_new = m
+        .addons
+        .iter()
+        .map(|a| candidates(a, installed.get(&a.id), &none).len())
+        .sum();
+    Ok(AddonSourcePreview {
+        url,
+        repo: AddonRepoInfo {
+            name: m.name.clone(),
+            description: m.description.clone(),
+            homepage: m.homepage.clone(),
+            contact: m.contact.clone(),
+        },
+        publisher: m.publisher.clone(),
+        key_fingerprint: manifest::key_fingerprint(&m.signing_key),
+        key_description: m.signing_key_description.clone(),
+        addons: entry_views(&m.addons, &installed),
+        packages_new,
+    })
+}
+
+/// The registered source and what its first ingestion produced (C-593).
+pub struct Registration {
+    pub source: AddonSourceRow,
+    pub ingestion: Ingestion,
+}
+
+/// Register a source: one audited transaction creates the `addon_sources` row and the
+/// `trusted_keys` row for the manifest's key (TOFU: the admin saw the fingerprint in the
+/// preview), then the listed packages are ingested — each in its own transaction, a failing
+/// version never rolls the registration back.
+pub async fn register(
+    state: &AppState,
+    actor: &AuditActor,
+    admin: Uuid,
+    pasted: &str,
+    update_interval: &str,
+) -> Result<Registration, ApiError> {
+    let url = manifest::normalize_url(pasted).map_err(refused)?;
+    if !valid_interval(update_interval) {
+        return Err(bad_interval());
+    }
+    if repo::get_by_url(&state.pool, &url).await?.is_some() {
+        return Err(ApiError::conflict(
+            "addon_source_exists",
+            "This source is already registered.",
+        ));
+    }
+    let m = fetch_manifest(state, &url).await?;
+    let fp = manifest::key_fingerprint(&m.signing_key);
+    let id = ids::new_id();
+    let manifest_json = stored_manifest(&m);
+
+    let mut tx = audit::begin(state).await?;
+    plugins_repo::insert_trusted_key(
+        &mut *tx,
+        ids::new_id(),
+        &m.publisher,
+        &format!("{} signing key", m.name),
+        &m.signing_key,
+        admin,
+    )
+    .await
+    .map_err(|e| {
+        aurora_db::conflict_code(e, &[("trusted_keys_public_key_key", "addon_key_exists")])
+    })?;
+    let source = repo::insert(
+        &mut *tx,
+        &repo::NewSource {
+            id,
+            name: &m.name,
+            url: &url,
+            homepage: m.homepage.as_deref(),
+            contact: m.contact.as_deref(),
+            publisher: &m.publisher,
+            signing_key: &m.signing_key,
+            key_fingerprint: &fp,
+            manifest_digest: &m.digest,
+            manifest: &manifest_json,
+            update_interval,
+            first_check_in_secs: next_in_secs(update_interval, id),
+            created_by: admin,
+        },
+    )
+    .await
+    .map_err(|e| {
+        aurora_db::conflict_code(e, &[("addon_sources_url_key", "addon_source_exists")])
+    })?;
+    let ev = AuditEvent::new(actor.clone(), "addon_source.add", Outcome::Success)
+        .target("addon_source", source.id)
+        .metadata(
+            json!({"url": url, "publisher": m.publisher, "key_fingerprint": fp,
+            "update_interval": update_interval, "addons": m.addons.len()}),
+        );
+    audit::commit_critical(tx, &ev).await?;
+
+    let ingestion = ingest_listed(state, &source, actor, &m).await?;
+    Ok(Registration { source, ingestion })
+}
+
+fn bad_interval() -> ApiError {
+    ApiError::invalid_request(
+        "Invalid update interval.",
+        vec![aurora_core::FieldError::new(
+            "/update_interval",
+            "must be one of 6h, 12h, 1d, 1w, 2w, 1mo, never",
+        )],
+    )
+}
+
+/// The `AddonSource` of a row, from its stored manifest (never a live fetch: the last known
+/// state keeps serving when the source is unreachable).
+pub async fn source_dto(state: &AppState, r: &AddonSourceRow) -> Result<AddonSource, ApiError> {
+    let addons = stored_addons(r);
+    let ids: Vec<String> = addons.iter().map(|a| a.id.clone()).collect();
+    let installed = installed_state(state, &ids).await?;
+    let entries = entry_views(&addons, &installed);
+    let addon_count = entries.len();
+    let listed: BTreeSet<(String, String)> = addons
+        .iter()
+        .flat_map(|a| a.versions.keys().map(|v| (a.id.clone(), v.clone())))
+        .collect();
+    let removed_upstream = repo::packages_of(&state.pool, r.id)
+        .await?
+        .into_iter()
+        .filter(|(p, v, _)| !listed.contains(&(p.clone(), v.clone())))
+        .map(|(package_id, version, _)| RemovedUpstream {
+            package_id,
+            version,
+        })
+        .collect();
+    Ok(AddonSource {
+        id: r.id,
+        name: r.name.clone(),
+        url: r.url.clone(),
+        homepage: r.homepage.clone(),
+        contact: r.contact.clone(),
+        publisher: r.publisher.clone(),
+        key_fingerprint: r.key_fingerprint.clone(),
+        key_description: r
+            .manifest
+            .get("key_description")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        update_interval: r.update_interval.clone(),
+        status: r.status.clone(),
+        check_failed_at: r.check_failed_at,
+        check_failed_reason: r.check_failed_reason.clone(),
+        new_key_fingerprint: r.new_key_fingerprint.clone(),
+        last_checked_at: r.last_checked_at,
+        manifest_digest: r.manifest_digest.clone(),
+        addons: entries,
+        addon_count,
+        removed_upstream,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    })
+}
+
+/// Removal (C-597): refused while packages are active; the packages stay, polling stops.
+pub async fn remove(state: &AppState, actor: &AuditActor, id: Uuid) -> Result<(), ApiError> {
+    let r = repo::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Addon source not found."))?;
+    let mut tx = audit::begin(state).await?;
+    if repo::has_active(&mut *tx, id).await? {
+        return Err(ApiError::conflict(
+            "addon_source_active",
+            "Packages of this source are active; disable or reject them first.",
+        ));
+    }
+    let (kept, _active) = repo::package_counts(&mut *tx, id).await?;
+    repo::delete(&mut *tx, id).await?;
+    let ev = AuditEvent::new(actor.clone(), "addon_source.remove", Outcome::Success)
+        .target("addon_source", id)
+        .metadata(json!({"url": r.url, "packages_kept": kept}));
+    audit::commit_critical(tx, &ev).await?;
+    Ok(())
+}
+
+/// Interval update (C-594).
+pub async fn update_interval_for(
+    state: &AppState,
+    actor: &AuditActor,
+    id: Uuid,
+    interval: &str,
+) -> Result<AddonSourceRow, ApiError> {
+    if !valid_interval(interval) {
+        return Err(bad_interval());
+    }
+    let r = repo::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Addon source not found."))?;
+    let mut tx = audit::begin(state).await?;
+    repo::update_interval(&mut *tx, id, interval, next_in_secs(interval, id)).await?;
+    let ev = AuditEvent::new(actor.clone(), "addon_source.update", Outcome::Success)
+        .target("addon_source", id)
+        .metadata(json!({"change": "interval",
+            "interval": format!("{} → {}", r.update_interval, interval)}));
+    audit::commit_critical(tx, &ev).await?;
+    Ok(repo::get(&state.pool, id).await?.unwrap_or(r))
+}
+
+/// Key re-confirm (C-595): the source and its `trusted_keys` row move to the new key together.
+pub async fn confirm_key(
+    state: &AppState,
+    actor: &AuditActor,
+    id: Uuid,
+    new_key_fingerprint: &str,
+) -> Result<AddonSourceRow, ApiError> {
+    let r = repo::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Addon source not found."))?;
+    if r.status != "signing_key_changed" {
+        return Err(ApiError::conflict(
+            "addon_key_not_changed",
+            "This source's signing key has not changed.",
+        ));
+    }
+    let m = fetch_manifest(state, &r.url).await?;
+    let fp = manifest::key_fingerprint(&m.signing_key);
+    // The admin confirms the fingerprint they saw; if the manifest moved on, they re-review.
+    if fp != new_key_fingerprint {
+        return Err(ApiError::conflict(
+            "addon_key_changed_again",
+            "The manifest's signing key changed again; re-review it.",
+        ));
+    }
+    if m.publisher != r.publisher {
+        return Err(ApiError::unprocessable(
+            "addon_manifest_invalid",
+            "The manifest's publisher changed; register the source again.",
+        ));
+    }
+    let old_fp = r.key_fingerprint.clone();
+    let mut tx = audit::begin(state).await?;
+    let keys = plugins_repo::all_trusted_keys(&mut *tx).await?;
+    let key = keys
+        .iter()
+        .find(|k| k.public_key == r.signing_key && k.revoked_at.is_none())
+        .ok_or_else(|| {
+            ApiError::conflict(
+                "addon_key_revoked",
+                "The source's trusted key was revoked; register the source again.",
+            )
+        })?;
+    plugins_repo::update_trusted_key_public_key(&mut *tx, key.id, &m.signing_key)
+        .await
+        .map_err(|e| {
+            aurora_db::conflict_code(e, &[("trusted_keys_public_key_key", "addon_key_exists")])
+        })?;
+    repo::confirm_key(
+        &mut *tx,
+        id,
+        &m.signing_key,
+        &fp,
+        &m.digest,
+        &stored_manifest(&m),
+    )
+    .await?;
+    let ev = AuditEvent::new(actor.clone(), "addon_source.update", Outcome::Success)
+        .target("addon_source", id)
+        .metadata(json!({"change": "signing_key_confirmed", "old": old_fp, "new": fp}));
+    audit::commit_critical(tx, &ev).await?;
+    Ok(repo::get(&state.pool, id).await?.unwrap_or(r))
+}
+
+/// Provenance and update badges for a page of the plugins list (C-600): the addon source's name
+/// at read time, and `update_available` — a manifest version of the package is newer than the row,
+/// and the row is the newest version the instance holds (or the active one).
+pub async fn decorate(state: &AppState, items: &mut [PluginPackage]) -> Result<(), ApiError> {
+    if !items.iter().any(|i| i.source_id.is_some()) {
+        return Ok(());
+    }
+    let sources = repo::list(&state.pool).await?;
+    let names: BTreeMap<Uuid, String> = sources.iter().map(|s| (s.id, s.name.clone())).collect();
+    // The newest version each source's manifest lists, per package id.
+    let mut listed: BTreeMap<String, Semver> = BTreeMap::new();
+    for s in &sources {
+        for a in stored_addons(s) {
+            for (v, ver) in &a.versions {
+                if core_supports(ver.min_core.as_deref()).is_err() {
+                    continue;
+                }
+                if let Some(sv) = semver_of(v) {
+                    let e = listed.entry(a.id.clone()).or_insert(sv);
+                    *e = (*e).max(sv);
+                }
+            }
+        }
+    }
+    let pids: Vec<String> = items
+        .iter()
+        .filter(|i| i.source_id.is_some())
+        .map(|i| i.package_id.clone())
+        .collect();
+    let installed = installed_state(state, &pids).await?;
+    for i in items.iter_mut() {
+        let Some(sid) = i.source_id else { continue };
+        i.source_name = names.get(&sid).cloned();
+        let here = semver_of(&i.version);
+        let newest_held = installed.get(&i.package_id).and_then(Installed::newest);
+        i.update_available = match (here, listed.get(&i.package_id), newest_held) {
+            // A newer version is listed, and this row is the one in use (active) or the newest
+            // the instance holds: the badge points at the version waiting for the admin.
+            (Some(h), Some(l), Some((_, n))) => {
+                *l > h && (i.status == "active" || (h >= n && i.status == "pending_approval"))
+            }
+            _ => false,
+        };
+    }
+    Ok(())
 }

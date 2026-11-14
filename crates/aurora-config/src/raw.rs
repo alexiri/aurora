@@ -829,7 +829,7 @@ pub struct PluginsSection {
     /// Built-in catalogue (09 §10): only archives signed by the project key are loaded from here.
     pub builtin_dir: String,
     pub allow_unsigned: bool,
-    /// (phase 5, P5-ASRC, D-164) addon sources: the poll interval for every source.
+    /// (phase 5, P5-ASRC, D-250) addon sources: the default poll interval of a new source.
     pub addon_sources: AddonSourcesSection,
 }
 impl Default for PluginsSection {
@@ -843,12 +843,13 @@ impl Default for PluginsSection {
     }
 }
 
-/// `[plugins.addon_sources]` (phase 5, P5-ASRC, D-164; docs/15).
+/// `[plugins.addon_sources]` (phase 5, P5-ASRC, D-250; docs/15).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AddonSourcesSection {
-    /// How often every addon source is re-checked: `6h|12h|1d|1w|2w|1mo|never`
-    /// (`never` = manual checks only). Validated in `validate_for`.
+    /// The schedule a newly registered addon source starts with (an admin can change it per
+    /// source): `6h|12h|1d|1w|2w|1mo|never` (`never` = manual checks only). Validated in
+    /// `validate_for`.
     pub update_interval: String,
 }
 impl Default for AddonSourcesSection {

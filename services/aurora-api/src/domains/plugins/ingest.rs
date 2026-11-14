@@ -17,7 +17,6 @@ use aurora_registry::{Limits, Manifest, Package, Violation};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
@@ -193,7 +192,7 @@ async fn decide(
     }
     let prev = plugins::previous_approved(&state.pool, &m.package.id).await?;
     let Some(prev) = prev else {
-        // (P5-ASRC, D-164(b)) addon packages are never auto-activated on first sight:
+        // (P5-ASRC, D-250(b)) addon packages are never auto-activated on first sight:
         // third-party permissions always need the ordinary instance-admin approval.
         return Ok(if source == Source::Builtin && *signer == Signer::Project {
             activate
@@ -247,15 +246,25 @@ pub async fn ingest(
     ingest_inner(state, bytes, source, None, actor).await
 }
 
-/// (P5-ASRC, C-607) Ingest an addon package for `source_row`: same pipeline, the row
-/// records `source = "addon"` and `source_id`; the audit action is `addon.ingest`.
+/// What an addon source expects of a package it lists (P5-ASRC, SEC-86): the package must be
+/// signed by **the source's own key**, carry the repo's publisher and the listed id and
+/// version, and use a package id nobody else owns.
+pub struct AddonExpect<'a> {
+    pub source: &'a aurora_db::repo::addon_sources::AddonSourceRow,
+    pub package_id: &'a str,
+    pub version: &'a str,
+}
+
+/// (P5-ASRC, C-607) Ingest an addon package: same pipeline, the row records `source = "addon"`
+/// and `source_id`; a first version is always `pending_approval`; the audit action is the
+/// security-critical `addon.ingest`, committed with the package row.
 pub async fn ingest_for_source(
     state: &AppState,
     bytes: &[u8],
-    source_row: &aurora_db::repo::addon_sources::AddonSourceRow,
+    expect: &AddonExpect<'_>,
     actor: &AuditActor,
 ) -> Result<PackageRow, ApiError> {
-    let out = ingest_inner(state, bytes, Source::Addon, Some(source_row.id), actor).await?;
+    let out = ingest_inner(state, bytes, Source::Addon, Some(expect), actor).await?;
     Ok(out.row)
 }
 
@@ -263,9 +272,10 @@ async fn ingest_inner(
     state: &AppState,
     bytes: &[u8],
     source: Source,
-    source_id: Option<Uuid>,
+    addon: Option<&AddonExpect<'_>>,
     actor: &AuditActor,
 ) -> Result<Ingested, ApiError> {
+    let source_id = addon.map(|a| a.source.id);
     let pkg = Package::read(bytes, &Limits::default()).map_err(|v| reject(&v))?;
     let trust = keys::trust_store(&state.pool).await?;
     // The builtin source is fail-closed (09 §10): never unsigned, and only the project key counts.
@@ -277,6 +287,19 @@ async fn ingest_inner(
             "SIGNATURE",
             "built-in packages must be signed by the project key",
         )]));
+    }
+    if let Some(a) = addon {
+        // The signature must verify against the key the source published (and the admin
+        // confirmed): not the project key, not another publisher's trusted key, not unsigned.
+        let ok =
+            matches!(&signer, Signer::Trusted { key_id, .. } if *key_id == a.source.signing_key);
+        if !ok {
+            return Err(reject(&[Violation::new(
+                "signer_not_source_key",
+                "SIGNATURE",
+                "the package is not signed by the addon source's key",
+            )]));
+        }
     }
     let signer_key_id = match &signer {
         Signer::Project => signature::BUILTIN.to_owned(),
@@ -302,6 +325,37 @@ async fn ingest_inner(
         }
     };
 
+    if let Some(a) = addon {
+        let bad = |code: &'static str, msg: &'static str| {
+            reject(&[Violation::new(code, "IDENTITY", msg)])
+        };
+        if publisher != a.source.publisher {
+            return Err(bad(
+                "publisher_mismatch",
+                "the package's publisher is not the addon source's publisher",
+            ));
+        }
+        if package_id != a.package_id || version != a.version {
+            return Err(bad(
+                "identity_mismatch",
+                "the package is not the id and version the manifest lists",
+            ));
+        }
+        if aurora_db::repo::addon_sources::package_id_owned_elsewhere(
+            &state.pool,
+            &package_id,
+            a.source.id,
+            &publisher,
+        )
+        .await?
+        {
+            return Err(bad(
+                "package_id_taken",
+                "the package id belongs to another source or publisher",
+            ));
+        }
+    }
+
     if let Some(row) = plugins::find_identity(&state.pool, &package_id, &version, &digest).await? {
         return Ok(Ingested {
             row,
@@ -315,13 +369,23 @@ async fn ingest_inner(
         Ok(_) => validate::package(&pkg, &ctx, &trust, allow_unsigned),
         Err(v) => v.clone(),
     };
-    let decision = match (&parsed, violations.is_empty()) {
+    let mut decision = match (&parsed, violations.is_empty()) {
         (Ok(m), true) => decide(state, m, &active, source, &signer).await?,
         _ => Decision {
             status: "invalid",
             reason: Some("validation_failed"),
         },
     };
+    // (P5-ASRC, D-250(b)) Third-party code never activates on its own: not on first sight and
+    // not as an update, whatever the permissions diff says. The admin approves the version (the
+    // click is the ordinary activation: connection impact, grant conversion and claim holds
+    // are computed then); the more specific holds above keep their reasons.
+    if source == Source::Addon && decision.status == "active" {
+        decision = Decision {
+            status: "pending_approval",
+            reason: Some("addon_update"),
+        };
+    }
     let violations_v = violations_json(&violations);
     let new_id = ids::new_id();
 
@@ -334,7 +398,6 @@ async fn ingest_inner(
     plugins::lock_compile(&mut tx).await?;
     // C-343 (RFE-022): a major upgrade that would flip a connection to `reauth_required` is
     // never activated automatically, widening or not; it waits for an instance admin.
-    let mut decision = decision;
     if let (Ok(m), true) = (&parsed, decision.status != "invalid") {
         let impact = upgrade::compute_for(&mut tx, None, &package_id, &version, m).await?;
         if !impact.flips.is_empty() && decision.reason != Some("claim_conflict") {
@@ -416,27 +479,28 @@ async fn ingest_inner(
             .await
             .map_err(registry::flatten)?;
     }
-    match &superseded {
-        Some(ev) => audit::commit_critical(tx, ev).await?,
-        None => tx.commit().await.map_err(DbError::from)?,
-    }
-
-    let audit_action = if source == Source::Addon {
-        "addon.ingest"
-    } else {
-        "plugin.ingest"
-    };
-    audit::record(
-        state,
-        AuditEvent::new(actor.clone(), audit_action, Outcome::Success)
+    let ingest_event = |action: &'static str| {
+        AuditEvent::new(actor.clone(), action, Outcome::Success)
             .target("plugin_package", new_id)
             .metadata(json!({
                 "package_id": package_id, "version": version, "digest": digest,
                 "source": source.as_str(), "source_id": source_id,
                 "status": decision.status,
                 "reason": decision.reason,
-            })),
-    );
+            }))
+    };
+    match &superseded {
+        Some(ev) => audit::commit_critical(tx, ev).await?,
+        // An addon package never activates on first sight, so there is no supersede row to
+        // share the transaction with: `addon.ingest` is security-critical and commits with it.
+        None if source == Source::Addon => {
+            audit::commit_critical(tx, &ingest_event("addon.ingest")).await?;
+        }
+        None => tx.commit().await.map_err(DbError::from)?,
+    }
+    if source != Source::Addon {
+        audit::record(state, ingest_event("plugin.ingest"));
+    }
     if auto {
         audit::record(
             state,

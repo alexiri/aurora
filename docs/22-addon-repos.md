@@ -1,4 +1,4 @@
-# 22. Addon repositories (P5-ASRC, D-164)
+# 22. Addon repositories (P5-ASRC, D-250)
 
 How to publish Aurora app packages as a third-party repository that an Aurora
 instance administrator can register as an **addon source**.
@@ -27,9 +27,12 @@ Security posture: `17` SEC-86, `06 §Destination guard`.
 
 ## The manifest: `aurora-addons.yaml`
 
-One YAML file per repository, ≤ 1 MiB, served over **https** (a raw file —
-put it in the repo root or a `docs/` folder and link the raw URL, e.g. the
-GitHub `raw.githubusercontent.com` URL of your default branch). Strict parse:
+One YAML file per repository, ≤ 1 MiB, served over **https** as a raw file at a
+stable URL (the repository root is the convention). An admin may paste the
+repository page — `https://github.com/<owner>/<repo>` (also `/tree/<ref>/<dir>`) or a
+GitLab project URL — or the direct link to `aurora-addons.yaml`; Aurora stores the raw
+manifest URL (`raw.githubusercontent.com/<owner>/<repo>/HEAD/aurora-addons.yaml`,
+`<gitlab>/<project>/-/raw/HEAD/aurora-addons.yaml`). Strict parse:
 unknown fields are refused, so always extend with a new `api` version, never
 silently.
 
@@ -78,56 +81,132 @@ characters; `size_bytes` ≤ `PACKAGE_MAX` (20 MiB).
 
 ## Building and signing a version
 
-A version is an ordinary signed package archive (`09 §2`):
+A version is an ordinary signed package archive (`09 §2`), built with the `aurora`
+CLI (`docs/operator/plugins-and-connectors.md` lists the commands):
 
 ```bash
-aurora-pkg build indigo_sso/plugin.yaml -o indigo_sso-1.0.0.aurora-plugin
-aurora-pkg sign indigo_sso-1.0.0.aurora-plugin --key cern-release.key
-sha256sum indigo_sso-1.0.0.aurora-plugin   # → the manifest's sha256
+aurora plugin keygen --out cern-release.key          # once; writes cern-release.key and cern-release.key.pub
+aurora plugin build indigo_sso --out indigo_sso-1.0.0.aurora-plugin
+aurora plugin validate indigo_sso-1.0.0.aurora-plugin --allow-unsigned   # the linter, before signing
+aurora plugin sign indigo_sso-1.0.0.aurora-plugin --key cern-release.key
+sha256sum indigo_sso-1.0.0.aurora-plugin             # → the manifest's sha256
 ```
 
-The signature must verify against the manifest's `signing_key`. A package
-signed by any other key — including the Aurora project key or a key another
-repo published — is refused.
+`cern-release.key.pub` is the manifest's `signing_key` (base64). What a package must
+satisfy to be ingested from a repository — beyond everything `09` already requires:
+
+| Rule | Refused with |
+|---|---|
+| The signature verifies against **the manifest's `signing_key`**. A package signed by any other key — the Aurora project key, another key the admin trusts for the same publisher, a key another repo published — is refused. | `signer_not_source_key` |
+| `plugin.yaml` `package.publisher` is the manifest's `publisher`, and `package.id` / `package.version` are the id and version the manifest lists. | `publisher_mismatch`, `identity_mismatch` |
+| The package id does not belong to another repository, another publisher or a package that was uploaded or ships with Aurora. | `package_id_taken` |
+| The archive's sha256 is the manifest's `sha256` (checked before anything is parsed). | `digest_mismatch` |
+
+A refused version is stored as an `invalid` package with its reason (the admin sees it
+on the source and in the plugins list) and is **not retried** by later checks: publish a
+new version to fix it. The other versions of the check go on. The publisher `aurora` is
+reserved for the project.
 
 ## Publishing a release
 
-Recommended shape (GitHub Actions):
+The recommended shape is **the addon repository's own GitHub releases**: the manifest
+lives in the repository root, every version is a release asset. A workflow sketch
+(`.github/workflows/release.yml`) with the three jobs that matter:
 
 ```yaml
-# .github/workflows/release.yml (sketch)
 name: release
 on:
   push:
-    tags: ["v*"]
+    branches: [main]          # build + verify on every push, publish nothing
+    tags: ["v*"]              # sign + publish on a version tag
+permissions:
+  contents: read
 jobs:
-  build:
+  build:                      # no secret in this job
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: aurora-pkg build indigo_sso/plugin.yaml -o indigo_sso-${GITHUB_REF_NAME#v}.aurora-plugin
-      - run: aurora-pkg sign indigo_sso-*.aurora-plugin --key <($CERN_RELEASE_KEY)
+      - run: cargo install --locked aurora-cli     # or download the release binary of the Aurora you target
+      - run: |
+          mkdir dist
+          for d in */plugin.yaml; do
+            aurora plugin build "$(dirname "$d")" --out "dist/$(dirname "$d").aurora-plugin"
+          done
+      - run: for p in dist/*.aurora-plugin; do aurora plugin validate "$p" --allow-unsigned; done
+      - run: |
+          # the manifest must list exactly what was built: same ids, versions and sha256
+          ./scripts/check-manifest.sh dist aurora-addons.yaml
+      - uses: actions/upload-artifact@v4          # hand-over to the next job only
+        with: { name: dist, path: dist }
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release                           # the signing key is a secret of this environment only
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - run: |
+          key="$(mktemp)"; trap 'rm -f "$key"' EXIT; chmod 600 "$key"
+          printf '%s' "$RELEASE_SIGNING_KEY" > "$key"
+          for p in dist/*.aurora-plugin; do aurora plugin sign "$p" --key "$key"; done
         env:
-          CERN_RELEASE_KEY: ${{ secrets.CERN_RELEASE_KEY }}
-      - run: sha256sum indigo_sso-*.aurora-plugin
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: indigo_sso-*.aurora-plugin
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+      - run: |
+          # no-overwrite rule: a published version is never replaced
+          for p in dist/*.aurora-plugin; do
+            gh release view "${GITHUB_REF_NAME}" --json assets -q '.assets[].name' | grep -qx "$(basename "$p")" \
+              && { echo "$(basename "$p") is already published"; exit 1; }
+          done
+          gh release create "${GITHUB_REF_NAME}" dist/*.aurora-plugin --title "${GITHUB_REF_NAME}" --notes "" \
+            || gh release upload "${GITHUB_REF_NAME}" dist/*.aurora-plugin   # never --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: sha256sum dist/*.aurora-plugin        # the values for aurora-addons.yaml
 ```
 
-Then add the version to `aurora-addons.yaml` on your default branch (the
-`package` URL points at the release asset) and commit. **Why the manifest
-points at release URLs instead of Actions artifacts**: workflow artifacts need
-an authenticated token to download and their URLs are not stable — an Aurora
-instance must be able to fetch every package with no credentials at all
-(the whole point of the TOFU model is that the *only* secret in the chain is
-the publisher's signing key). Release assets (or any static file server,
-object storage, your own CDN) are public, permanent and cacheable.
+Then add the version to `aurora-addons.yaml` on your default branch (the `package` URL points
+at the release asset, `https://github.com/<owner>/<repo>/releases/download/<tag>/<file>`; GitHub
+redirects it once to its CDN, which Aurora follows) and commit. Points that matter:
 
-A poll (or the admin's "Check now") then ingests the new version: digest
-checked first, signature against your published key, ordinary approval flow
-afterwards. Nothing is overwritten: an existing `(package, version)` row wins,
-and versions you delete from the manifest stay installed everywhere.
+- **Secrets**: only the `release` job, only for a tag, sees the signing key
+  (`environment: release` with required reviewers, if you want a human gate); the build job
+  and every pull request never do, so code under review cannot read it. The key is written to
+  a `0600` temp file and removed. Keep an offline copy; a lost key means a key rotation (below).
+- **The no-overwrite rule**: a version, once published, is immutable — Aurora keys a package by
+  `(id, version, digest)` and installed copies would diverge from a replaced asset. Fix a
+  mistake with a new version number; never `--clobber`, never move a tag.
+- **Why the manifest points at release URLs instead of Actions run artifacts**: a workflow
+  run's artifact needs an authenticated token to download, its URL is not stable, it is a
+  zip of files rather than the archive, and it expires (90 days by default) — while an Aurora
+  instance must be able to fetch every package with no credentials at all (the TOFU model's
+  only secret is the publisher's signing key). Release assets (or any static file server,
+  object storage, your own CDN) are public, permanent and cacheable.
+
+## What a check does (the publisher's view)
+
+A poll (on the admin's schedule: `6h`, `12h`, `1d`, `1w`, `2w`, `1mo`, `never`) or the
+admin's "Check now" re-reads `aurora-addons.yaml` — fetched **without redirects**, ≤ 1 MiB —
+and compares it with what the instance holds:
+
+- **First registration** ingests the **newest** version of each addon that this Aurora can run
+  (`min_core`), not the whole history. **Later checks** ingest every version newer than the
+  newest one the instance holds, oldest first.
+- Each version is downloaded (https, a public host, at most **one** redirect — the GitHub
+  release-asset pattern — and ≤ 20 MiB), its **sha256 is checked against the manifest before
+  anything is parsed**, then it goes through the ordinary ingest (signature, linter, approval).
+- **Nothing activates by itself.** A new addon's first version, and every update, waits as
+  `pending_approval`: the admin sees "Update available" on the plugins list and the source,
+  and approving the new version runs the ordinary activation rules (identical or narrower
+  permissions activate on click; widened permissions or a major version go through the review).
+- A version you **delete from the manifest** stays installed everywhere (the admin sees it as
+  "removed upstream"); an existing `(package, version, digest)` is never replaced.
+- A repository that is unreachable, or whose manifest is invalid, changes nothing: the check
+  records the (sanitized) reason and the last known state keeps serving.
+- A manifest whose `signing_key` or `publisher` differs from the registered one is never
+  trusted automatically (see "Rotating the signing key").
 
 ## What an admin sees
 

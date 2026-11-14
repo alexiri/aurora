@@ -1,4 +1,4 @@
-//! Guarded outbound fetches for addon sources (SEC-86, D-164(d)): https only, public
+//! Guarded outbound fetches for addon sources (SEC-86, D-250(d)): https only, public
 //! addresses only (`06 §Destination guard` via the connect `Env`), the manifest fetched
 //! **without** redirects, package URLs following **at most one** redirect (the GitHub
 //! release-asset CDN pattern). Digest checks happen before anything is parsed.

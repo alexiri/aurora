@@ -21,6 +21,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/addon-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List addon sources (instance administrators). */
+        get: operations["adminListAddonSources"];
+        put?: never;
+        /**
+         * Register a source (TOFU: the manifest's signing key becomes a trusted key, C-593) and ingest
+         *     what it lists; every package waits for the ordinary approval.
+         */
+        post: operations["adminCreateAddonSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/check-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check every source (C-596: per-source outcomes, a failure never blocks the others). */
+        post: operations["adminCheckAllAddonSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview a manifest before registering (C-592): fetch and parse only, nothing is stored. */
+        post: operations["adminPreviewAddonSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One addon source (from its last accepted manifest, not a live fetch). */
+        get: operations["adminGetAddonSource"];
+        put?: never;
+        post?: never;
+        /** Remove a source (refused while its packages are active; packages stay, C-597). */
+        delete: operations["adminDeleteAddonSource"];
+        options?: never;
+        head?: never;
+        /** Edit the check schedule (C-594). */
+        patch: operations["adminUpdateAddonSource"];
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check one source now (the shared poll path with `trigger = manual`, C-596). */
+        post: operations["adminCheckAddonSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/{id}/confirm-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-confirm a changed signing key (C-595): updates the source and its trusted key. */
+        post: operations["adminConfirmAddonSourceKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/agents/{agent}/start-failures": {
         parameters: {
             query?: never;
@@ -4678,6 +4786,94 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
+        AddonEntry: {
+            description: string;
+            id: string;
+            name: string;
+            /** @description Newest first. */
+            versions: components["schemas"]["AddonVersion"][];
+        };
+        AddonRepoInfo: {
+            contact?: string | null;
+            description: string;
+            homepage?: string | null;
+            name: string;
+        };
+        /** @description `GET /v1/admin/addon-sources[/{id}]`, C-590. */
+        AddonSource: {
+            addon_count: number;
+            addons: components["schemas"]["AddonEntry"][];
+            /** Format: date-time */
+            check_failed_at?: string | null;
+            /** @description Sanitized, at most 200 characters. */
+            check_failed_reason?: string | null;
+            contact?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            homepage?: string | null;
+            /** Format: uuid */
+            id: string;
+            key_description?: string | null;
+            /** @description `sha256:<12 hex>` of the manifest-published signing key. */
+            key_fingerprint: string;
+            /** Format: date-time */
+            last_checked_at?: string | null;
+            manifest_digest: string;
+            name: string;
+            /** @description Only while `status = signing_key_changed`. */
+            new_key_fingerprint?: string | null;
+            publisher: string;
+            removed_upstream: components["schemas"]["RemovedUpstream"][];
+            /** @description `ok` | `check_failed` | `signing_key_changed`. */
+            status: string;
+            /** @description `6h` | `12h` | `1d` | `1w` | `2w` | `1mo` | `never`. */
+            update_interval: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The resolved manifest URL. */
+            url: string;
+        };
+        AddonSourceCheckAll: {
+            items: components["schemas"]["AddonSourceCheckResult"][];
+        };
+        /** @description One source's check, C-596. */
+        AddonSourceCheckResult: {
+            check_failed_reason?: string | null;
+            failed_versions: components["schemas"]["FailedVersion"][];
+            ingested: components["schemas"]["PluginPackage"][];
+            /** Format: uuid */
+            source_id: string;
+            /** @description `updated` | `up_to_date` | `failed`. */
+            status: string;
+        };
+        AddonSourceList: {
+            items: components["schemas"]["AddonSource"][];
+        };
+        /** @description `POST /v1/admin/addon-sources/preview`, C-592: what registering would trust and ingest. */
+        AddonSourcePreview: {
+            addons: components["schemas"]["AddonEntry"][];
+            key_description?: string | null;
+            key_fingerprint: string;
+            /** @description Packages registering would ingest now (not yet on this instance). */
+            packages_new: number;
+            publisher: string;
+            repo: components["schemas"]["AddonRepoInfo"];
+            /** @description The normalized manifest URL that would be stored. */
+            url: string;
+        };
+        /** @description One version of one addon as the manifest lists it, with this instance's install state. */
+        AddonVersion: {
+            /** @description False while `min_core` is above the running core (listed, not ingestable). */
+            ingestable: boolean;
+            /** @description The active version of this package on the instance, else the newest ingested one. */
+            installed_version?: string | null;
+            min_core?: string | null;
+            /** @description `core_too_new` when not ingestable. */
+            not_ingestable_reason?: string | null;
+            /** @description This version is semver-newer than the newest ingested one. */
+            update_available: boolean;
+            version: string;
+        };
         /** @description `GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets. */
         AdminIdentity: {
             providers: components["schemas"]["IdentityProvider"][];
@@ -5377,6 +5573,10 @@ export interface components {
         ConditionOn: "body";
         /** @enum {string} */
         ConditionOp: "contains" | "not_contains" | "equals";
+        ConfirmKeyRequest: {
+            /** @description The new fingerprint the admin saw (echoed back). */
+            new_key_fingerprint: string;
+        };
         ConfirmLinkRequest: {
             /**
              * @description The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is
@@ -5765,6 +5965,12 @@ export interface components {
              *     `fallback` (a class is counting per replica because the backend is unreachable).
              */
             state: string;
+        };
+        CreateAddonSourceRequest: {
+            /** @description `6h|12h|1d|1w|2w|1mo|never`; default: `plugins.addon_sources.update_interval`. */
+            update_interval?: string | null;
+            /** @description The repo URL or the direct manifest URL (https); the normalized manifest URL is stored. */
+            url: string;
         };
         CreateAgentRequest: {
             brief?: string | null;
@@ -6212,6 +6418,11 @@ export interface components {
              *     instead of a download link. Empty when none.
              */
             purged_attachments: components["schemas"]["PurgedAttachment"][];
+        };
+        FailedVersion: {
+            package_id: string;
+            reason: string;
+            version: string;
         };
         Features: {
             channels: boolean;
@@ -8034,11 +8245,20 @@ export interface components {
                 permissions: components["schemas"]["PluginPermissions"];
                 publisher: string;
                 signer: components["schemas"]["PluginSigner"];
-                /** @description `builtin` | `directory` | `upload`. */
+                /** @description `builtin` | `directory` | `upload` | `addon` (P5-ASRC). */
                 source: string;
+                /**
+                 * Format: uuid
+                 * @description (P5-ASRC, C-600) the addon source row for `source = "addon"`.
+                 */
+                source_id?: string | null;
+                /** @description (P5-ASRC, C-600) the addon source's name at read time (never stored). */
+                source_name?: string | null;
                 /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
                 status: string;
                 status_reason?: string | null;
+                /** @description (P5-ASRC, C-600) a manifest version of the same package is newer than this row. */
+                update_available?: boolean;
                 version: string;
                 violations: components["schemas"]["PluginViolation"][];
                 widenings: components["schemas"]["PluginWidening"][];
@@ -8791,11 +9011,20 @@ export interface components {
             permissions: components["schemas"]["PluginPermissions"];
             publisher: string;
             signer: components["schemas"]["PluginSigner"];
-            /** @description `builtin` | `directory` | `upload`. */
+            /** @description `builtin` | `directory` | `upload` | `addon` (P5-ASRC). */
             source: string;
+            /**
+             * Format: uuid
+             * @description (P5-ASRC, C-600) the addon source row for `source = "addon"`.
+             */
+            source_id?: string | null;
+            /** @description (P5-ASRC, C-600) the addon source's name at read time (never stored). */
+            source_name?: string | null;
             /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
             status: string;
             status_reason?: string | null;
+            /** @description (P5-ASRC, C-600) a manifest version of the same package is newer than this row. */
+            update_available?: boolean;
             version: string;
             violations: components["schemas"]["PluginViolation"][];
             widenings: components["schemas"]["PluginWidening"][];
@@ -8950,6 +9179,9 @@ export interface components {
         };
         /** @enum {string} */
         PresenceStatus: "pending_setup" | "active" | "disabled" | "needs_attention";
+        PreviewAddonSourceRequest: {
+            url: string;
+        };
         PreviewCreatedBy: {
             /** Format: uuid */
             id?: string | null;
@@ -9198,6 +9430,11 @@ export interface components {
             last_seen_at: string;
             /** Format: int32 */
             streams_open: number;
+            version: string;
+        };
+        /** @description A version this instance ingested from the source that the manifest no longer lists. */
+        RemovedUpstream: {
+            package_id: string;
             version: string;
         };
         Replica: {
@@ -10230,6 +10467,10 @@ export interface components {
         };
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
+        UpdateAddonSourceRequest: {
+            /** @description `6h|12h|1d|1w|2w|1mo|never`. */
+            update_interval: string;
+        };
         UpdateScheduleRequest: {
             /** @description `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021). */
             anchor?: string | null;
@@ -10510,6 +10751,568 @@ export interface operations {
                 };
             };
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListAddonSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourceList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCreateAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAddonSourceRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCheckAllAddonSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourceCheckAll"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPreviewAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewAddonSourceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourcePreview"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminUpdateAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAddonSourceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCheckAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourceCheckResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminConfirmAddonSourceKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmKeyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

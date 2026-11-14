@@ -1,4 +1,4 @@
-//! The addon source poll job (C-598, D-164): claims due sources under their lease and
+//! The addon source poll job (C-598, D-250): claims due sources under their lease and
 //! runs the shared check path with `trigger = "scheduled"`. Like the library refresh, it
 //! is safe on every replica at once.
 
