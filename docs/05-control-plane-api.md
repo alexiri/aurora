@@ -471,7 +471,8 @@ OpenAPI document and the phase tags (FIX-119).
 
 | Route | Why it is outside |
 |---|---|
-| GET `/v1/agents/{agent}/terminal` | WebSocket upgrade (C-616): not describable as an OpenAPI operation |
+| GET `/v1/agents/{agent}/terminal` | WebSocket upgrade (C-616): not describable as an OpenAPI operation. Its auth, close codes and refusals are specified only in `API_CONTRACTS` C-616..C-625 and `16 §W19`; the OpenAPI drift test (`openapi_matches_checked_in`) cannot see a change here, so the terminal integration tests (`api it/terminal.rs`) are the only guard |
+| `/scim/v2/**` (Users, Groups, ServiceProviderConfig, ResourceTypes, Schemas) | SCIM 2.0 plane (per-org `aud_` bearer token, SCIM error bodies, `16 §W15`, C-470..C-479): a protocol of its own, not the dashboard API. A change to it is not caught by the OpenAPI drift test; the `scim_*` integration tests and the IdP fixtures (`tests/fixtures/scim/`) are the guard. The token and settings *management* routes under `/v1/orgs/{org}/scim…` are ordinary dashboard routes and are in the document |
 | GET `/v1/previews/authorize` | browser navigation redirect of the preview origin flow (C-540..C-549) |
 | POST `/v1/relay/register` | relay plane (`aul_` token, C-550..C-559) |
 | POST `/v1/runner/preview-streams/open` | runner plane (`aur_` token) |
