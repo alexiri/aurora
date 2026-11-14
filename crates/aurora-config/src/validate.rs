@@ -700,7 +700,10 @@ impl RawConfig {
             g.internal_bind.as_deref(),
             &self.server.bind,
         );
-        if !(4096..=8 * 1024 * 1024).contains(&g.condition_body_bytes) {
+        if !(aurora_core::limits::CONDITION_BODY_BUFFER_MIN as u64
+            ..=aurora_core::limits::CONDITION_BODY_BUFFER_MAX as u64)
+            .contains(&g.condition_body_bytes)
+        {
             c.err(
                 "gateway.condition_body_bytes",
                 "must be between 4096 (4 KiB) and 8388608 (8 MiB)",

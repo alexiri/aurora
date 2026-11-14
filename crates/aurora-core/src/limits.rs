@@ -86,7 +86,6 @@ pub const BACKGROUND_CAP: Duration = Duration::from_secs(43200);
 pub const TURN_CEILING: Duration = Duration::from_secs(21600);
 pub const TURN_CEILING_WARNING: Duration = Duration::from_secs(900);
 pub const TURN_STALL: Duration = Duration::from_secs(600);
-pub const TURN_PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
 pub const STALE_DISPATCH: Duration = Duration::from_secs(90);
 pub const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(25);
 pub const TOOL_CONSECUTIVE_FAILURES: u32 = 2;
@@ -373,8 +372,6 @@ pub const TERMINAL_WAKE_WINDOW: Duration = Duration::from_secs(60);
 pub const TERMINAL_WAKE_WAIT: Duration = Duration::from_secs(45);
 /// wakes per agent per hour; beyond it 429.
 pub const TERMINAL_WAKES_PER_AGENT_HOUR: u32 = 12;
-/// revocation cache: freeze/disable closes sessions within this (mirroring previews).
-pub const TERMINAL_AUTH_CACHE: Duration = Duration::from_secs(15);
 /// the `pty.open` round trip to the supervisor (an older supervisor answers nothing → 4502).
 pub const TERMINAL_PTY_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -427,7 +424,6 @@ mod tests {
         assert_eq!(TERMINAL_WAKE_WINDOW, Duration::from_secs(60));
         assert_eq!(TERMINAL_WAKE_WAIT, Duration::from_secs(45));
         assert_eq!(TERMINAL_WAKES_PER_AGENT_HOUR, 12);
-        assert_eq!(TERMINAL_AUTH_CACHE, Duration::from_secs(15));
         assert_eq!(TERMINAL_PTY_OPEN_TIMEOUT, Duration::from_secs(5));
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
         const { assert!(CONDITION_BODY_BUFFER <= CONDITION_BODY_BUFFER_MAX) };

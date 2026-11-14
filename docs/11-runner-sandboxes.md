@@ -552,7 +552,7 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   user, cwd `/workspace`, container environment minus every `AURORA_*` variable and the boot
   document — the shell has exactly the privilege a `process_start` command already has, in a
   terminal. `pty.resize` applies `TIOCSWINSZ`; a W6 reconnect or a stop closes every PTY.
-- **Lifecycle**: frozen agent → sessions closed within `TERMINAL_AUTH_CACHE` 15 s (the API re-checks every 10 s) and no new
+- **Lifecycle**: frozen agent → sessions closed within 10 s (the API re-checks access every `ACCESS_RECHECK`; a 15 s draft constant was never read and was removed, FIX-119) and no new
   open (423); restart/park → sessions closed (4503/`channel_lost`), the tab shows "Waking…"
   and reopens on ready; harness change or runner move → sessions closed; agent deleted →
   destroyed with the sandbox. Bytes are never logged, stored or request-log-rowed (byte

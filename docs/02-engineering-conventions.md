@@ -223,7 +223,7 @@ overridden by the named configuration key (`15`).
 | `TURN_CEILING` | 6 h | `hosted.turn_ceiling_secs` | 10 |
 | `TURN_CEILING_WARNING` | 15 min | — | 10 |
 | `TURN_STALL` | 10 min | `hosted.turn_stall_secs` | 10 |
-| `TURN_PROGRESS_INTERVAL` | 60 s | — | 12 |
+| turn progress interval | **not implemented as a limit** (FIX-119): the supervisor emits progress every 10 s (`SupervisorConfig.progress_interval`, `services/aurora-supervisor/src/supervisor.rs`); the 60 s draft constant (`turn progress interval`) was never read and was removed. A configurable interval, if wanted, is a new task | — | 12 |
 | `STALE_DISPATCH` | 90 s | — | 10 |
 | `TOOL_CALL_TIMEOUT` | 25 s | — | 12 |
 | `TOOL_CONSECUTIVE_FAILURES` | 2 | — | 12 |
@@ -330,7 +330,7 @@ overridden by the named configuration key (`15`).
 | `TERMINAL_IDLE_TIMEOUT` / `TERMINAL_MAX_LIFETIME` | (phase 4, P4-TERM) 600 s idle (WebSocket pings count) / 4 h per session | — | 16 |
 | Stream-listener bounds | (FIX-092) request head within 10 s in total; 256 unauthenticated connections per runner replica; live legs per sandbox 64 streams + 2 PTYs; browser text frame ≤ 256 bytes; stalled write 30 s; runner outbound queue 512 frames per supervisor connection; `pty.resize` coalesced to the latest size | — | 16 |
 | `TERMINAL_AWAKE_GRACE` / `TERMINAL_AWAKE_CAP` | (phase 4, P4-TERM) 120 s after the last session byte / 4 h per boot of terminal-held wakefulness | `terminal.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
-| `TERMINAL_AUTH_CACHE` / `TERMINAL_WAKE_WINDOW` / `TERMINAL_WAKES_PER_AGENT_HOUR` | (phase 4, P4-TERM) 15 s revocation bound (freeze/disable closes sessions; implemented as the API's 10 s access re-check `ACCESS_RECHECK` in `terminal/service.rs`, so sessions close within 10 s and the 15 s constant is never reached, FIX-074) / 60 s wake demand window / 12 wakes per agent per hour | — | 11 |
+| `TERMINAL_WAKE_WINDOW` / `TERMINAL_WAKES_PER_AGENT_HOUR` | (phase 4, P4-TERM) the revocation bound (freeze/disable closes sessions) is the API's 10 s access re-check `ACCESS_RECHECK` in `terminal/service.rs`: sessions close within 10 s; there is no separate auth-cache constant (a 15 s draft value was never read and was removed, FIX-119) / 60 s wake demand window / 12 wakes per agent per hour | — | 11 |
 | `PREVIEW_CONNECT_TIMEOUT` / `PREVIEW_HEADER_TIMEOUT` | (phase 4, P4-PRV-2) 10 s to open a stream (supervisor connect 5 s) / 60 s for upstream response headers | — | 16 |
 | `PREVIEW_REQUEST_BODY_MAX` | (phase 4, P4-PRV-2) 100 MiB (the ceiling and the binary's default; the Helm chart ships 32 MiB, FIX-074) | `relay.request_body_max_bytes` (lower only) | 15, 16 |
 | `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day, one shared counter across relay replicas (429 `preview_quota` with `Retry-After` to the next UTC midnight; FIX-072, C-637, `16 §W18`) | `previews.bytes_per_share_day` | 16 |

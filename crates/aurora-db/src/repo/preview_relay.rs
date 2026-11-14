@@ -352,7 +352,7 @@ pub async fn keep_preview_awake<'e, E: PgExecutor<'e>>(
           WHERE agent_id = $1 AND state IS NOT NULL",
     )
     .bind(agent)
-    .bind(120i64)
+    .bind(aurora_core::limits::PREVIEW_AWAKE_GRACE.as_secs() as i64)
     .execute(exec)
     .await?;
     Ok(())
