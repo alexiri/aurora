@@ -2963,6 +2963,60 @@ async fn connector_availability_states_and_instance_admin_names_only() {
             .await;
         assert_eq!(state(&v, "fake").as_deref(), Some(want), "{v}");
     }
+    // A type announced by a live host with no connector row: `not_added`.
+    let m = manifest("newtype", json!({"fields": []}));
+    aurora_db::repo::connector_hosts::upsert_host(
+        w.h.pool(),
+        Uuid::now_v7(),
+        "1.0.0",
+        &json!([{"type_id": "newtype", "manifest": m, "manifest_digest": "d".repeat(64)}]),
+    )
+    .await
+    .unwrap();
+    let (s, v) = w
+        .call(&w.plain, Method::GET, "/v1/connector-availability", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(state(&v, "newtype").as_deref(), Some("not_added"), "{v}");
+    let item = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type_id"] == "newtype")
+        .unwrap();
+    assert!(item["connector_id"].is_null(), "{v}");
+}
+
+/// C-714: a caller without a linked chat account gets `link_required`; the probe never echoes a
+/// credential, not even in its refusals.
+#[tokio::test]
+async fn my_spaces_need_a_link_and_probe_errors_do_not_echo_credentials() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let mine = format!("/v1/integrations/{integ}/spaces?mine=true");
+    let (s, v) = w.call(&w.wsowner, Method::GET, &mine, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("link_required")),
+        "{v}"
+    );
+    let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
+    let body = w.create_body(&w.fake);
+    for (code, want) in [
+        ("invalid", "credentials_invalid"),
+        ("credential_dead", "credentials_invalid"),
+    ] {
+        let ((s, v), _) = tokio::join!(
+            w.call(&w.admin, Method::POST, &path, Some(body.clone())),
+            w.serve(&w.fake, 1, |_| op_err(code, "rejected"))
+        );
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some(want)),
+            "{code}: {v}"
+        );
+        assert!(!v.to_string().contains(SECRET), "{v}");
+    }
 }
 
 fn user_json(r: &str, bot: bool) -> Value {

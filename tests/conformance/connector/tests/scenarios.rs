@@ -1,4 +1,4 @@
-//! The thirteen connector conformance scenarios (docs/13 §7, TEST-015).
+//! The connector conformance scenarios (docs/13 §7, TEST-015).
 //!
 //! Each test starts its own fake core + connector under test (the in-process
 //! fake connector, or the binary in `CONFORMANCE_CONNECTOR_BIN`), plays the
@@ -1249,6 +1249,54 @@ async fn s14_deprovision_error_codes_and_missing_credentials() -> R {
     if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
         assert!(!p.active, "bot still active after deprovision");
     }
+    c.0.finish().await?;
+    Ok(())
+}
+
+// ------------------------------- 15. validate probe mode (FIX-127, C-710)
+
+#[tokio::test]
+async fn s15_validate_probe_returns_choices_and_changes_nothing() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let before = c.0.driver.posts(None).await?.len();
+    // The team is the field whose choices come from the probe: probe without it set.
+    let mut payload =
+        c.0.core
+            .validate_payload(c.0.integration, true)
+            .expect("the integration is served");
+    let secrets: Vec<String> = payload["credentials"]
+        .as_object()
+        .map(|o| {
+            o.values()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(cfg) = payload["config"].as_object_mut() {
+        cfg.remove("team");
+    }
+    let r = c.op("credentials.validate", payload).await?;
+    let data = ok_data(&r);
+    let res: CredentialsValidateResult = serde_json::from_value(data.clone())?;
+    let teams = res.choices.get("team").expect("probe returns team choices");
+    assert!(!teams.is_empty(), "no choices: {data}");
+    assert!(
+        teams
+            .iter()
+            .all(|t| !t.value.is_empty() && !t.label.is_empty())
+    );
+    assert!(teams.len() <= 100 && res.warnings.len() <= 5);
+    // Nothing of the credentials comes back.
+    let text = data.to_string();
+    for s in secrets.iter().filter(|s| !s.is_empty()) {
+        assert!(
+            !text.contains(s.as_str()),
+            "the probe result echoes a credential"
+        );
+    }
+    // A probe has no effect on the platform.
+    assert_eq!(c.0.driver.posts(None).await?.len(), before);
     c.0.finish().await?;
     Ok(())
 }

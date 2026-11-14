@@ -286,6 +286,7 @@ pub struct MySpace {
     pub label: String,
     /// `channel` or `private`.
     pub kind: String,
+    /// Always true: `spaces.list` is the bot's own view (C-714).
     pub bot_present: bool,
 }
 

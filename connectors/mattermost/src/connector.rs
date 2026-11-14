@@ -779,4 +779,175 @@ mod tests {
         assert_eq!(bot_display_name(Some(&json!({})), "daneel"), "daneel");
         assert_eq!(bot_display_name(None, "daneel"), "daneel");
     }
+
+    use crate::api::NetPolicy;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn connector(net: NetPolicy) -> MattermostConnector {
+        MattermostConnector::new(Settings {
+            public_url: None,
+            hmac_key: Vec::new(),
+            catchup_window: std::time::Duration::from_secs(60),
+            api_url: None,
+            token_check: std::time::Duration::from_secs(3600),
+            capabilities: None,
+            test_control: false,
+            net,
+        })
+    }
+
+    fn probe_op(server: &str, config_extra: Value, credentials: Value) -> CredentialsValidateOp {
+        let mut config = json!({"server_url": server});
+        if let (Some(c), Some(x)) = (config.as_object_mut(), config_extra.as_object()) {
+            c.extend(x.clone());
+        }
+        CredentialsValidateOp {
+            config,
+            credentials,
+            mode: Some(CredentialsValidateOp::PROBE.to_owned()),
+        }
+    }
+
+    /// C-710/C-711: a probe lists the bot's teams (sorted by label, id as the value) and only
+    /// ever reads: no PUT/POST/PATCH/DELETE reaches Mattermost (no slash command, no profile edit,
+    /// no webhook), and the only paths are the two identity reads.
+    #[tokio::test]
+    async fn probe_lists_the_bots_teams_and_never_writes() {
+        let mm = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/users/me"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"id": "u1", "username": "daneel"})),
+            )
+            .mount(&mm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/users/me/teams"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"id": "t2", "name": "zeta", "display_name": "Zeta"},
+                {"id": "t1", "name": "alpha", "display_name": ""},
+            ])))
+            .mount(&mm)
+            .await;
+        let c = connector(NetPolicy::allow_all());
+        let v = c
+            .validate(probe_op(&mm.uri(), json!({}), json!({"bot_token": "tok"})))
+            .await
+            .unwrap();
+        assert_eq!(
+            v["choices"]["team"],
+            json!([
+                {"value": "t1", "label": "alpha"},
+                {"value": "t2", "label": "Zeta"}
+            ])
+        );
+        assert_eq!(v["tenant_ref"], "");
+        assert!(
+            v["tenant_label"]
+                .as_str()
+                .unwrap()
+                .starts_with("@daneel on "),
+            "{v}"
+        );
+        assert!(
+            v["warnings"][0]
+                .as_str()
+                .unwrap()
+                .contains("No admin token"),
+            "{v}"
+        );
+        assert!(!v.to_string().contains("tok\""), "{v}");
+        let reqs = mm.received_requests().await.unwrap();
+        assert!(!reqs.is_empty());
+        for r in &reqs {
+            assert_eq!(r.method.as_str(), "GET", "{} {}", r.method, r.url);
+            assert!(
+                matches!(r.url.path(), "/api/v4/users/me" | "/api/v4/users/me/teams"),
+                "unexpected read {}",
+                r.url
+            );
+        }
+    }
+
+    /// A team typed in probe mode must still resolve; an unset one is not an error.
+    #[tokio::test]
+    async fn probe_checks_a_typed_team_and_reports_an_unknown_one() {
+        let mm = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/users/me"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"username": "daneel"})))
+            .mount(&mm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/users/me/teams"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&mm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/teams/name/nope"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"message": "x"})))
+            .mount(&mm)
+            .await;
+        let c = connector(NetPolicy::allow_all());
+        let e = c
+            .validate(probe_op(
+                &mm.uri(),
+                json!({"team": "nope"}),
+                json!({"bot_token": "tok"}),
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::Invalid);
+        assert!(!e.message.contains("tok"), "{}", e.message);
+    }
+
+    /// The URL guard (C-711 amendment, docs/20 §Transport): a loopback server URL is refused as
+    /// `invalid` before **any** request leaves the connector, probe mode included.
+    #[tokio::test]
+    async fn probe_with_a_guarded_server_url_makes_zero_requests() {
+        let mm = MockServer::start().await; // listens on 127.0.0.1
+        let c = connector(NetPolicy::default());
+        for mode in [Some(CredentialsValidateOp::PROBE.to_owned()), None] {
+            let mut op = probe_op(&mm.uri(), json!({"team": "t"}), json!({"bot_token": "tok"}));
+            op.mode = mode;
+            let e = c.validate(op).await.unwrap_err();
+            assert_eq!(e.code, ErrorCode::Invalid);
+            assert!(
+                !e.message.contains(&mm.uri()),
+                "no target text: {}",
+                e.message
+            );
+        }
+        assert!(
+            mm.received_requests().await.unwrap().is_empty(),
+            "the guard must refuse before dialling"
+        );
+    }
+
+    /// A manifest copy change must keep the digest pins in step: the managed manifest's setup
+    /// fields carry the new labels and the `advanced` / `choices` flags.
+    #[test]
+    fn manifest_copy_and_flags() {
+        let c = connector(NetPolicy::allow_all()).managed();
+        let m = serde_json::to_value(c.manifest()).unwrap();
+        let fields = |k: &str| m[k]["fields"].as_array().unwrap().clone();
+        let find = |fs: &[Value], n: &str| fs.iter().find(|f| f["name"] == n).unwrap().clone();
+        let inst = fields("instance_setup");
+        assert_eq!(
+            find(&inst, "public_url")["label"],
+            "Address Mattermost uses to reach Aurora"
+        );
+        for n in ["public_url", "catchup_window_secs", "token_check_secs"] {
+            assert_eq!(find(&inst, n)["advanced"], true, "{n}");
+        }
+        assert!(find(&inst, "callback_hmac_key").get("advanced").is_none());
+        let integ = fields("integration_setup");
+        assert_eq!(
+            find(&integ, "server_url")["label"],
+            "Your Mattermost server"
+        );
+        assert_eq!(find(&integ, "team")["label"], "Team");
+        assert_eq!(find(&integ, "team")["choices"], "from_validate");
+    }
 }

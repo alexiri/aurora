@@ -624,7 +624,11 @@ impl Connector for FakeConnector {
                 setup_guide_md: Some("Test-only simulated platform.".into()),
             },
             capabilities,
-            integration_setup: json!({"fields": []}),
+            // `team` demonstrates `choices: "from_validate"` (C-710); optional so existing
+            // integrations of the fake stay valid.
+            integration_setup: json!({"fields": [
+                {"name": "team", "label": "Team", "type": "text", "required": false,
+                 "store": "config", "choices": "from_validate"}]}),
             presence_setup: json!({"dedicated": {"fields": []}}),
             limits: ManifestLimits {
                 message_max_chars: Some(MESSAGE_MAX_CHARS),
