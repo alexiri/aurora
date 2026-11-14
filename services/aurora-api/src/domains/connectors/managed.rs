@@ -175,7 +175,18 @@ pub async fn overview(s: &AppState) -> Result<AdminOverview, ApiError> {
     let hosts =
         connector_hosts::list_seen(&s.pool, limits::CONNECTOR_HOST_RETAIN.as_secs_f64()).await?;
     let (backend, state) = s.counters.overview();
+    // (FIX-148, C-841) The Previews line, only while previews are on.
+    let previews = if s.config.previews.enabled {
+        let replicas = crate::domains::relay::service::list_replicas(s).await?;
+        Some(OverviewPreviews {
+            relay_replicas: i64::try_from(replicas.len()).unwrap_or(i64::MAX),
+            last_seen_at: replicas.iter().map(|r| r.last_seen_at).max(),
+        })
+    } else {
+        None
+    };
     Ok(AdminOverview {
+        previews,
         counters: CountersInfo {
             backend: backend.to_owned(),
             state: state.to_owned(),

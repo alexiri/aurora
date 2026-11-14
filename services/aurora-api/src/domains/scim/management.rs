@@ -241,8 +241,8 @@ pub async fn put_settings(
             "exclusive": p.exclusive,
         }));
     crate::audit::commit_critical(tx, &ev).await?;
-    let scim_value = next.get("scim").unwrap_or(&serde_json::Value::Null);
-    let scim = OrgScim::from_settings(org, scim_value);
+    // `update_scim_settings` returns the stored `settings.scim` object itself.
+    let scim = OrgScim::from_settings(org, &next);
     Ok(Json(settings_payload(&state, &scim)))
 }
 
@@ -526,7 +526,7 @@ pub async fn status(
     let errors: Vec<ErrorRow> = sqlx::query_as(
         "SELECT created_at, COALESCE(metadata ->> 'method', ''), \
                     COALESCE(metadata ->> 'resource', ''), \
-                    COALESCE((metadata ->> 'status')::int, 0), \
+                    COALESCE((metadata ->> 'status')::bigint, 0), \
                     metadata ->> 'scim_type' \
              FROM audit_log WHERE org_id = $1 AND action = 'scim.error' \
              ORDER BY created_at DESC LIMIT $2",

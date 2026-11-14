@@ -303,6 +303,26 @@ describe("instance setup wizard (D-141)", () => {
     await waitFor(() => expect(screen.getByRole("link", { name: "Open your workspace" })).toHaveAttribute("href", "/o/users/w/default"));
   });
 
+  it("FIX-148 shows the Previews line with the relay replicas seen when previews are on, and nothing when off", async () => {
+    setupWorld();
+    routes["GET /v1/admin/overview"] = () =>
+      json(200, { connector_hosts: [], counters: { backend: "memory", state: "local" }, previews: { relay_replicas: 2, last_seen_at: "2026-11-14T10:00:00Z" } });
+    wrap(<SetupView />);
+    const line = await screen.findByTestId("previews-line");
+    expect(within(line).getByText("Previews")).toBeInTheDocument();
+    expect(within(line).getByText(/2 relay replicas seen/)).toBeInTheDocument();
+    cleanup();
+    routes["GET /v1/admin/overview"] = () =>
+      json(200, { connector_hosts: [], counters: { backend: "memory", state: "local" }, previews: { relay_replicas: 0 } });
+    wrap(<SetupView />);
+    expect(await within(await screen.findByTestId("previews-line")).findByText(/No relay replica has reported/)).toBeInTheDocument();
+    cleanup();
+    routes["GET /v1/admin/overview"] = () => json(200, { connector_hosts: [], counters: { backend: "memory", state: "local" } });
+    wrap(<SetupView />);
+    await screen.findByRole("list", { name: "Setup steps" });
+    expect(screen.queryByTestId("previews-line")).toBeNull();
+  });
+
   it("an instance without role mappings says only the e-mail list makes admins, and without a sign-in claim says so", async () => {
     setupWorld(
       setupStatus({

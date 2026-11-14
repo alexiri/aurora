@@ -1091,8 +1091,8 @@ until an org owner or admin switches **Port previews** on.
 
 **Turn it on** (one switch): set `relay.enabled: true` and `relay.domain` (the chart value
 mirrors `config.previews.enabled`, FIX-056 — set the config key only to agree explicitly,
-never alone), wait for `up{job="aurora-relay"}` and the Admin → Overview "Previews" line (relay
-replicas seen by the API), then an org owner or admin enables **Port previews** in the org
+never alone), wait for `up{job="aurora-relay"}` and the "Previews" line of the admin overview (top of Admin → Setup; relay
+replicas seen by the API, C-841), then an org owner or admin enables **Port previews** in the org
 settings. **Turn it off**: set `relay.enabled: false` (or unset it; shares are kept but
 inert; the supervisor allow-list is emptied at the next sync) or switch the org setting
 off.

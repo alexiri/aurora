@@ -241,6 +241,26 @@ kubectl -n aurora delete statefulset,service aurora-postgres
 kubectl -n aurora delete pvc data-aurora-postgres-0
 ```
 
+The namespace also keeps three more objects, because the chart creates them in hooks (or, for the
+CA, once and never overwrites it) and Helm does not delete hook resources
+(FIX-148, AUDIT-004 F-5). With `postgres.enabled` the first two include the evaluation database's
+login, so they matter as much as the PVC:
+
+| Object | What it holds | Keep for a reinstall in the same namespace | Delete for a clean removal |
+| --- | --- | --- | --- |
+| Secret `<fullname>-secrets` | The generated database passwords (`AURORA_DATABASE_URL`, the gateway's least-privilege URL), the relay token and the other generated secrets | **Keep it with the old PVC**: the database still has those passwords, so a fresh set would not match the data | Delete it together with the PVC |
+| Secret `<fullname>-gateway-ca` | The gateway CA certificate **and its private key** (the key signs the certificates the sandboxes trust) | Keep it so existing sandboxes keep trusting the gateway | **Delete it** when you are done: whoever reads it can impersonate the gateway to a sandbox |
+| ConfigMap `<fullname>-config` | The configuration rendered for the hooks (hook resources; it holds no secret) | Not needed, a reinstall recreates it | Delete it |
+
+```bash
+# Clean removal (this is irreversible: the database passwords and the CA key are gone)
+kubectl -n aurora delete secret aurora-secrets aurora-gateway-ca
+kubectl -n aurora delete configmap aurora-config
+```
+
+A Secret you supplied (`secrets.existingSecret`, `gateway.ca.existingSecret`) is yours and is
+never touched by the chart.
+
 Use an external PostgreSQL for anything that keeps its data.
 
 ## Gateway CA
@@ -714,6 +734,9 @@ external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the
    (see [Known limits](#known-limits-in-the-chart)). Verify the pods roll and the chat from step 6 still works.
 9. **Uninstall.** `helm uninstall aurora -n aurora`; check what remains (the namespaces, the Secrets you
    created, the PVCs, and with `postgres.enabled` the evaluation database, see [Database](#database)).
+   The chart's own Secrets `aurora-secrets` (generated passwords) and `aurora-gateway-ca` (the gateway CA
+   **private key**) and the ConfigMap `aurora-config` also stay: keep them to reinstall into the same
+   namespace with the old PVC, delete them for a clean removal (commands in [Database](#database)).
 10. **Backup and restore.** One restore drill from [backups.md](backups.md).
 
 Open limitation (P2-OPS-1): none of the lines above has been run on a real cluster yet.
@@ -745,7 +768,8 @@ Then register a runner ([runners.md](runners.md#add-a-runner)).
 - Changing a `plugins.configMapName` ConfigMap does not restart the API. Run
   `kubectl -n aurora rollout restart deploy/aurora-api`.
 - The bundled `postgres.enabled` database is evaluation-only and leaves its resources behind
-  on uninstall (see [Database](#database)).
+  on uninstall (see [Database](#database)), as do the generated Secret, the gateway CA Secret
+  (with its private key) and the hook ConfigMap.
 - `helm upgrade` from the previous chart to this one was run on a kind cluster (P2-OPS-1): it completes,
   the pods and the evaluation database stay up. The first upgrade from a release that predates the
   `-migrate` NetworkPolicy runs its migrate hook before that policy exists, so it can hang

@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 
 import { OwnerlessBanner } from "./ownerless-banner";
 import { PlacementView } from "./placement-view";
+import { PreviewsLine } from "./previews-line";
 
 type Tone = "accent" | "pending" | "neutral";
 
@@ -279,6 +280,7 @@ export function SetupView() {
       {setup.isError ? <ErrorState error={setup.error} onRetry={() => setup.refetch()} /> : null}
       <OwnerlessBanner />
       <ConnectorAvailableCallout />
+      <PreviewsLine />
       {setup.data ? (
         <>
           {!setup.data.placement_saved ? (
