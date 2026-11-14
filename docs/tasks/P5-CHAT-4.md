@@ -3,7 +3,8 @@
 ## Goal
 The owner (2026-11-14): "we're probably going to need that search API too, right? add it as another phase 5
 task." Today the conversation list filters loaded titles on the client and nothing searches message text
-(`14` "Agent chat": "there is no search API"). Decision D-229; contract C-727.
+(`14` "Agent chat": "there is no search API"). Decisions D-229, D-230; contracts C-727 (route), C-728 (agent
+tools).
 
 People search what was said in the conversations they can see: words, phrases, files, narrowed by agent,
 conversation, author and date, with results that open the message in place (P5-CHAT-2 permalinks).
@@ -49,6 +50,31 @@ predicate inside the query, never as a post-filter").
    `14` line "there is no search API" removed, `17`/security coverage (visibility inside the query, redacted
    text never returned), OpenAPI + `schema.d.ts`.
 
+## Part C — Agent tools (Rust, `rust-developer`, after Part A; may share Part A's lane)
+The owner: "shouldn't the agent be able to search its own conversations? that would improve memory"
+(D-230; contract C-728 — read it whole).
+1. Two `PlatformTool` registry entries, family "Conversations": `conversation_search` and
+   `conversation_read`, on Part A's index and query builder (one query module, two callers: the route and
+   the tools).
+2. **Scope predicate** (C-728): current conversation; the speaker's own direct conversation with this agent;
+   the agent's non-direct conversations the speaker can see; never another person's direct conversation,
+   even for an owner speaker; speakerless turns get the current conversation and non-direct ones. Built
+   from the call's stamped agent and turn (`12 §Platform tools`: identity is attached downstream, never from
+   arguments).
+3. Results wrapped as untrusted quoted data (C-728 wording); descriptions repeat the `10` preamble rule;
+   bounds as C-728.
+4. Spec: `12 §Phase 0 catalogue` gets the "Conversations" family; `10` (§Search: the agent's scope, why
+   owners' wider dashboard view does not extend to the agent); `17` row (agent search cannot cross direct
+   conversations).
+Acceptance (in addition to the list below):
+- [ ] IT scope matrix: speaker A (member) finds A's direct + non-direct, not B's direct; speaker O (owner)
+      also does **not** find B's direct; schedule turn finds non-direct only (+ current); another agent's
+      conversations never; a redacted message never; `conversation_read` on an out-of-scope id → `not_found`
+      identical to an unknown id.
+- [ ] IT: tool result carries the untrusted wrapper; ≤ 64 KiB; `index_complete` passes through.
+- [ ] Access change: speaker loses `can_use` → the next call no longer returns that workspace's non-direct
+      conversations.
+
 ## Part B — Web (Next.js, `nextjs-developer`, after Part A and P5-AGENT-2, P5-CHAT-2)
 Designed on the P5-CHAT-0 canvas as a **Search** board (added to P5-CHAT-0's list).
 1. The conversation-list filter becomes a search box: typing filters titles as today; **Enter** (or "Search
@@ -68,7 +94,8 @@ Part A: new migration, `crates/aurora-db/src/repo/{transcript,search}.rs`, the t
 redaction/retention/delete paths, new `services/aurora-api/src/domains/conversations/search.rs` (+ route
 wiring), the backfill job, `web/openapi.json`, `schema.d.ts`, docs `03`/`05`/`10`/`17`. Part B:
 `components/chat/conversation-list.tsx` (after P5-AGENT-2 releases it), new `components/chat/search/**`,
-`lib/api/search.ts`, tests. Part A not parallel with P5-CHAT-1 (same domain and migration range; run after
+`lib/api/search.ts`, tests. Part C: new tool registry entries under the API's tool registry
+(`domains/tools/**` or wherever `memory_search` lives), docs `12`/`10`/`17`. Part A not parallel with P5-CHAT-1 (same domain and migration range; run after
 it); Part B not parallel with P5-CHAT-2/3 (same panel).
 
 ## Acceptance criteria
