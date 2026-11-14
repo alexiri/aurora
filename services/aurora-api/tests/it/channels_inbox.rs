@@ -1105,7 +1105,10 @@ async fn mirror_posts_a_formatted_answer_unchanged() {
     assert_eq!(posts.len(), 1, "{posts:?}");
     // Everything arrives as written except D-270's fifth exception: an autolink is a labelled link
     // (a platform's preview fetches a bare URL unprompted).
-    let want = answer.replace("<https://x.example>", "[https://x.example](https://x.example)");
+    let want = answer.replace(
+        "<https://x.example>",
+        "[https://x.example](https://x.example)",
+    );
     assert_eq!(posts[0]["content"]["text"].as_str().unwrap(), want);
 }
 
