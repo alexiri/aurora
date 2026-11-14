@@ -206,6 +206,15 @@ cmd_up() {
       || k -n aurora-dev-mock rollout status deploy/litellm --timeout=300s >/dev/null || die "llm-mock not ready"
   fi
   k -n "$NS" get pods >&2
+  # Ready pods are not yet a serving ingress: the controller picks up new endpoints a few seconds
+  # later and answers 503 meanwhile (the nightly first-run journey hit that on 2026-11-14). "Up"
+  # means the public URL serves both the dashboard and the API.
+  local deadline=$((SECONDS + 120))
+  until curl -fsS -o /dev/null "http://localhost:$PORT/auth/login" \
+    && curl -fsS -o /dev/null "http://localhost:$PORT/v1/instance"; do
+    [ "$SECONDS" -lt "$deadline" ] || die "pods are ready but http://localhost:$PORT does not serve /auth/login and /v1/instance after 120 s"
+    sleep 2
+  done
   log "Aurora is up: http://localhost:$PORT  (sign in with 'Development sign-in' and pick a user; kubectl --context $CTX -n $NS ...)"
   log "first instance admin: deploy/dev/kind-dev.sh bootstrap-admin you@example.com  (then sign in with that e-mail)"
   [ "$mock" = 1 ] && log "LLM endpoint litellm-mock, key sk-aurora-mock-dev; hosted agents run the real claude-code harness (runner.image $SANDBOX_LLM_IMAGE)"
