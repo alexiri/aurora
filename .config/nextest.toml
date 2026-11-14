@@ -18,9 +18,9 @@ archive.include = [
 
 [profile.ci]
 # (FIX-101, FIX-140) The env-gated suites run in their own CI jobs (`gated-suites`: a pinned Redis service and the
-# runner's podman tests; `vault`: the Vault dev-server suites of aurora-secrets and `secrets_migrate`; gates set). The shards have neither service, and under CI=true the skip policy
+# runner's podman tests; `vault`: the Vault dev-server suites of aurora-secrets, `secrets_migrate` and the gateway's `refused_vault_reference_injects_nothing`; gates set). The shards have neither service, and under CI=true the skip policy
 # (`aurora_testkit::require_or_skip`) fails a gated test whose gate is unset: keep them out of the shards.
-default-filter = "not (package(aurora-runner) & test(/^podman::/)) & not (package(aurora-counters) & test(/redis/)) & not (package(aurora-secrets) & test(/^vault_(cas|managed|reference)::/)) & not (package(aurora-api) & test(/^secrets_migrate::(round_trip_through_vault|racing_migrators_leave_one_valid_ref_per_row_vault)$/))"
+default-filter = "not (package(aurora-runner) & test(/^podman::/)) & not (package(aurora-counters) & test(/redis/)) & not (package(aurora-secrets) & test(/^vault_(cas|managed|reference)::/)) & not (package(aurora-api) & test(/^secrets_migrate::(round_trip_through_vault|racing_migrators_leave_one_valid_ref_per_row_vault)$/)) & not (package(aurora-gateway) & test(/refused_vault_reference_injects_nothing$/))"
 test-threads = 8
 fail-fast = false
 retries = 0

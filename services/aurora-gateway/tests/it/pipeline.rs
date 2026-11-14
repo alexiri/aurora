@@ -487,8 +487,9 @@ fn vault_backing(
 /// the org. Runs against a Vault dev server when `AURORA_TEST_VAULT=1`.
 #[tokio::test]
 async fn refused_vault_reference_injects_nothing() {
-    if std::env::var("AURORA_TEST_VAULT").as_deref() != Ok("1") {
-        eprintln!("skipped: set AURORA_TEST_VAULT=1 (and the Vault dev server variables)");
+    // (FIX-101/FIX-140, D-198) A skip is visible, and fails under CI=true: the CI `vault` job
+    // sets the gate; the nextest `ci` profile keeps this test out of the shards.
+    if !aurora_testkit::require_or_skip("AURORA_TEST_VAULT") {
         return;
     }
     let addr =
