@@ -1,3 +1,6 @@
 # Aurora sandbox image (FIX-138): the one PATH for every zsh (login or not, interactive or not).
 # Keep identical to the image's ENV PATH, /etc/profile.d/aurora.sh and the supervisor's spawn::IMAGE_PATH.
+# No first-run wizard: the agent's home has no startup files by design, and an interactive zsh would otherwise
+# open zsh-newuser-install and wait for a keypress. A function of that name defined here replaces it.
+zsh-newuser-install() { :; }
 export PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin

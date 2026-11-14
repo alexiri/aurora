@@ -45,7 +45,7 @@ FROM ${SANDBOX_BASE_IMAGE} AS os
 # (FIX-138) The web terminal's shells: bash (default, with bash-completion) and zsh, both in the
 # OS layer so every target has them; `which` for the shells' `type`/completion helpers.
 RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common postgresql rpm \
-         bash bash-completion zsh which \
+         bash bash-completion zsh which ncurses \
     && useradd --uid 1000 --user-group --home-dir /workspace --no-create-home --shell /bin/bash agent \
     && mkdir -p /workspace /run/aurora /opt/aurora /opt/aurora/bin \
     && chown 1000:1000 /workspace \
