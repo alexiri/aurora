@@ -1091,6 +1091,8 @@ async fn open_supervisor_pty(
         window: TERMINAL_STREAM_WINDOW as u32,
         cols: 80,
         rows: 24,
+        // (FIX-138) The grant's choice (the API's redemption answer), never the browser's.
+        shell: binding.shell.unwrap_or_default(),
     };
     if state
         .send_to_supervisor(r, RunnerToSupervisor::PtyOpen(open))

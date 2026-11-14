@@ -199,12 +199,14 @@ pub async fn list_workspace(
     viewer: Uuid,
     ws: Uuid,
     status: Option<&str>,
+    agent_id: Option<Uuid>,
     after: After,
     fetch: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
     let (t, id) = split(after);
     Ok(sqlx::query_as(&format!(
         "{SELECT} WHERE a.workspace_id = $6 AND ($2::text IS NULL OR a.status = $2) \
+         AND ($7::uuid IS NULL OR a.agent_id = $7) \
          AND ($3::timestamptz IS NULL OR (a.created_at, a.id) < ($3, $4)) \
          AND NOT {} \
          ORDER BY a.created_at DESC, a.id DESC LIMIT $5",
@@ -216,6 +218,7 @@ pub async fn list_workspace(
     .bind(id)
     .bind(fetch)
     .bind(ws)
+    .bind(agent_id)
     .fetch_all(pool)
     .await?)
 }

@@ -218,6 +218,12 @@ carve-out is deliberate and was undocumented until phase 3:
   governs requests to an LLM host on which Aurora injects nothing (the agent
   brought its own key): they are blocked unless allow-listed. (3) The `allow`
   Default Rule is unaffected (it allows anyway). (4) Everything in `08 §11`.
+- (phase 5, FIX-138 item 1b, D-247) **The web terminal's `claude`/`codex` are the agent's traffic.**
+  They reach the LLM through the same machine proxy and boot-token credential as a turn's model
+  calls, so governance and this carve-out apply unchanged, the calls count against the agent's
+  budgets and rate limits, and the request log shows them as the agent's `mitm` requests with the
+  agent's injected key and **no turn or conversation** (the person at the terminal is not
+  recorded as a speaker). The terminal holds only the placeholder credential (SEC-01/SEC-34).
 - (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
   providers of `08 §Phase 4 providers` (OpenAI, Azure OpenAI, Bedrock, Vertex, generic
   OpenAI-compatible) add the **exact hosts** of their configured endpoints to the

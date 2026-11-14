@@ -159,6 +159,7 @@ pub async fn upgrade(
     agent: Uuid,
     ws: WebSocketUpgrade,
     wait: bool,
+    shell: aurora_protocol::runner::PtyShell,
 ) -> Result<axum::response::Response, ApiError> {
     let a = admit(&s, &c, agent).await?;
     let Some((sandbox_id, state, boot_id)) = load_sandbox(&s, a.id).await? else {
@@ -224,6 +225,7 @@ pub async fn upgrade(
         c.user_id,
         &grant_hash,
         expires_at,
+        shell.as_str(),
     )
     .await?;
     drop(conn);
@@ -363,6 +365,7 @@ pub(crate) async fn open(
         window: TERMINAL_STREAM_WINDOW as u32,
         idle_secs: TERMINAL_IDLE_TIMEOUT.as_secs() as u32,
         max_lifetime_secs: TERMINAL_MAX_LIFETIME.as_secs() as u32,
+        shell: Some(aurora_protocol::runner::PtyShell::parse(&row.shell).unwrap_or_default()),
     })
 }
 

@@ -20,7 +20,7 @@ import {
   type AppSummary,
 } from "@/lib/api/apps";
 
-import { Markdown } from "./markdown";
+import { Markdown } from "@/components/ui/markdown";
 
 export function AppDetailBody({ app, workspaceId }: { app: string; workspaceId: string }) {
   const detail = useApp(app, workspaceId);

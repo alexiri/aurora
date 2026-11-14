@@ -23,6 +23,7 @@ let paneProps: TerminalProps | null = null;
 // would re-run the effect — and re-open the socket — on every render, forever.
 const { write } = vi.hoisted(() => ({ write: vi.fn() }));
 
+vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme", ws: "main", handle: "daneel" }) }));
 vi.mock("@wterm/ghostty", () => ({
   GhosttyCore: {
     load: vi.fn(() =>

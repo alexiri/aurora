@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ConversationActions } from "@/components/agents/conversation-actions";
 import { Avatar } from "@/components/agent-avatar";
@@ -34,6 +34,7 @@ export function ChatThread({
   retentionDays = null,
   onGone,
   onBack,
+  onTurn,
   agent,
 }: {
   agentId: string;
@@ -55,11 +56,19 @@ export function ChatThread({
   onGone?: () => void;
   /** Phones: back to the list. */
   onBack?: () => void;
+  /** (P5-AGENT-2) Reports whether a turn runs and its latest activity line, for the status rail ("Doing now"). */
+  onTurn?: (turn: { active: boolean; line: string | null }) => void;
 }) {
   const { state, loading, error, live } = useTranscript(convId);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [stopErr, setStopErr] = useState<string | null>(null);
   const active = activeTurnId(state, conversation ?? direct);
+  const line = active ? (state.activity[active] ?? null) : null;
+  useEffect(() => {
+    onTurn?.({ active: !!active, line });
+  }, [active, line, onTurn]);
+  // A conversation switch unmounts this thread: the rail must not keep its last turn.
+  useEffect(() => () => onTurn?.({ active: false, line: null }), [onTurn]);
   const agentName = agent?.name ?? "the agent";
   const readOnly = ownerView !== null;
   const isDirect = ownDirect || !!direct || readOnly || conversation?.kind === "direct";

@@ -12,7 +12,11 @@
 
 use std::ffi::{OsStr, OsString};
 
-const DEFAULT_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+/// (FIX-138) The one `PATH` of the image: the agent's own tools (`npm -g`, `/workspace/.local`),
+/// the harness wrappers (`/opt/aurora/bin`), then the system. Same in the image's `ENV PATH`,
+/// `/etc/profile.d/aurora.sh` (bash), `/etc/zsh/zshenv` (zsh), a turn and the terminal.
+pub const IMAGE_PATH: &str = "/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin";
+const DEFAULT_PATH: &str = IMAGE_PATH;
 /// Credential stand-in that is safe to pass (`adapters::claude_code::config::PLACEHOLDER`).
 const PLACEHOLDER: &str = "aurora-placeholder";
 
@@ -123,9 +127,10 @@ where
 /// returned (and the bootstrap reports a dead shell). Note `CommandExt::exec` returns the
 /// error itself, not a `Result`, and never returns on success.
 #[allow(clippy::disallowed_methods)]
-pub fn exec(shell: &str, env: Vec<(OsString, OsString)>) -> std::io::Error {
+pub fn exec(shell: &str, args: &[String], env: Vec<(OsString, OsString)>) -> std::io::Error {
     use std::os::unix::process::CommandExt as _;
     std::process::Command::new(shell)
+        .args(args)
         .env_clear()
         .envs(env)
         .exec()

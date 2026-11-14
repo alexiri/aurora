@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +23,11 @@ vi.mock("@/components/agents/terminal-tab", () => ({
   ),
 }));
 vi.mock("@/components/agents/instructions-tab", () => ({ InstructionsTab: () => <div data-testid="instructions-tab" /> }));
+// The Computer pages have their own tests; here the Computer section only has to offer the Terminal page.
+vi.mock("@/components/agents/computer-tab", () => ({ ComputerTab: () => <div data-testid="computer-tab" /> }));
+vi.mock("@/components/agents/previews-tab", () => ({ PreviewsTab: () => <div data-testid="previews-tab" /> }));
+// A hosted agent opens on Chat (D-200); the chat has its own tests.
+vi.mock("@/components/agents/chat-tab", () => ({ ChatTab: () => <div data-testid="chat-tab" /> }));
 
 const agent = {
   id: "00000000-0000-4000-8000-000000000002",
@@ -116,6 +121,8 @@ function wrap(ui: ReactNode) {
 
 afterEach(() => {
   cleanup();
+  // Switching sections writes `?tab=` to the URL; the next test starts on the default page.
+  window.history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
 });
 
@@ -123,13 +130,16 @@ describe("Terminal tab gating (C-622)", () => {
   it("offers the tab when the instance enabled the terminal", async () => {
     mockFetch({ terminal: true });
     wrap(<AgentPage />);
+    // Terminal is a page of the Computer section (D-200).
+    fireEvent.click(await screen.findByRole("tab", { name: "Computer" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Terminal" })).toBeInTheDocument());
   });
 
   it("offers no tab when the terminal is off (default)", async () => {
     mockFetch({ terminal: false });
     wrap(<AgentPage />);
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Computer" })).toBeInTheDocument());
+    fireEvent.click(await screen.findByRole("tab", { name: "Computer" }));
+    await screen.findByTestId("computer-tab");
     expect(screen.queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
   });
 
@@ -164,6 +174,7 @@ describe("Terminal tab gating (C-622)", () => {
     });
     vi.stubGlobal("fetch", fn);
     wrap(<AgentPage />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Computer" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Terminal" })).toBeInTheDocument());
     screen.getByRole("tab", { name: "Terminal" }).click();
     await waitFor(() => expect(screen.getByText(/paused/i)).toBeInTheDocument());

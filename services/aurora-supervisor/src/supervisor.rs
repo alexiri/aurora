@@ -52,6 +52,9 @@ pub struct SupervisorConfig {
     /// file points at it. `None`: no service file, no relay, no `PGSERVICEFILE`. Port 0 binds any
     /// free port (tests that exercise the relay directly).
     pub pg: Option<u16>,
+    /// (FIX-138 item 1b) `/run/aurora/harness.env` for the terminal's harness wrappers: rewritten
+    /// with the agent's model at each session start. `None` (tests): no file.
+    pub harness_env: Option<crate::harness_env::HarnessEnvConfig>,
 }
 
 impl SupervisorConfig {
@@ -69,6 +72,7 @@ impl SupervisorConfig {
             tools: ToolsConfig::default(),
             process: ProcessConfig::new(PathBuf::from("/workspace")),
             pg: None,
+            harness_env: None,
         }
     }
 }
@@ -837,6 +841,14 @@ impl Supervisor {
             env.extend(crate::pg::env(&self.cfg.working_dir));
         }
         env.extend(d.model.client_env.iter().cloned());
+        // The terminal's `claude`/`codex` wrappers reach the LLM with the same model the agent
+        // uses (placeholders only, no secret; `crate::harness_env`).
+        if let Some(h) = &self.cfg.harness_env
+            && let Err(e) =
+                crate::harness_env::write(&h.path, &crate::harness_env::render(h, Some(&d.model)))
+        {
+            tracing::warn!(error = %e, "could not update harness.env for the terminal wrappers");
+        }
         let session = self
             .adapter
             .start_session(SessionOptions {

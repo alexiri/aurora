@@ -358,6 +358,11 @@
           "minimum": 0,
           "type": "integer"
         },
+        "shell": {
+          "$ref": "#/$defs/PtyShell",
+          "default": "bash",
+          "description": "(FIX-138) The shell the person chose; absent (an older runner) = bash. An enumerated\nvalue, never a path: the supervisor maps it to a fixed binary."
+        },
         "window": {
           "format": "uint32",
           "minimum": 0,
@@ -399,6 +404,14 @@
         "rows"
       ],
       "type": "object"
+    },
+    "PtyShell": {
+      "description": "(FIX-138) The terminal's shell choice (`12 §Terminal`, `16 §W19`, `05` `?shell=`).",
+      "enum": [
+        "bash",
+        "zsh"
+      ],
+      "type": "string"
     },
     "Recall": {
       "properties": {

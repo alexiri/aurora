@@ -37,8 +37,20 @@ export function decisionTone(d: string): "accent" | "pending" | "danger" {
   return "pending";
 }
 
+/** (P5-AGENT-2) The agent filter is in the URL (`?agent=<id>`), so the agent page's "All activity" lands filtered. */
+function agentFromUrl(): string {
+  return typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("agent") ?? "");
+}
+
 export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
-  const [agent, setAgent] = useState("");
+  const [agent, setAgentState] = useState(agentFromUrl);
+  const setAgent = (id: string) => {
+    setAgentState(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("agent", id);
+    else url.searchParams.delete("agent");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  };
   const [decision, setDecision] = useState("");
   const [hostInput, setHostInput] = useState("");
   const [host, setHost] = useState("");

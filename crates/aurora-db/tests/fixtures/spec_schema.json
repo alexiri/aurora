@@ -1020,7 +1020,8 @@
       "grant_hash",
       "granted_by",
       "id",
-      "sandbox_id"
+      "sandbox_id",
+      "shell"
     ],
     "thread_links": [
       "agent_id",
@@ -2205,7 +2206,8 @@
       "grant_hash": "text not null",
       "granted_by": "uuid not null",
       "id": "uuid not null",
-      "sandbox_id": "uuid not null"
+      "sandbox_id": "uuid not null",
+      "shell": "text not null"
     },
     "thread_links": {
       "agent_id": "uuid",

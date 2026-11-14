@@ -31,9 +31,26 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   a style attribute cannot run script, and `img-src`/`connect-src` keep it
   from loading anything from another origin).
 - Untrusted text (model output, plugin text, platform names, labels) is
-  rendered with the markdown renderer in safe mode (no raw HTML, links show
-  their target, `rel="noopener noreferrer nofollow"`); never
-  `dangerouslySetInnerHTML`.
+  rendered with the one Markdown renderer (`components/ui/markdown.tsx`, FIX-137,
+  D-227): **it renders like github.com** — CommonMark 0.31, GFM (tables, task
+  lists, strikethrough, extended autolinks), footnotes, alerts, emoji
+  shortcodes, highlighted code with a language label and Copy, math, heading
+  anchors and GitHub's raw-HTML allowlist — **except**: an image from another
+  origin is a link ("🖼 alt"), never loaded (same-origin attachments are
+  inline); only `http`, `https`, `mailto` and same-origin relative links are
+  links (any other scheme is its label as text); a link whose label looks like
+  a URL or domain of another host gets "→ host"; raw HTML outside the
+  allowlist is dropped (its text kept; a `<script>`'s content goes with it);
+  KaTeX runs with `trust: false`; a ```` ```mermaid ```` block is shown as a
+  code block (D-245: Mermaid's SVG carries an inline `<style>` that the CSP
+  forbids, and loosening `style-src` is out). External links carry
+  `rel="noopener noreferrer nofollow"` and the full URL as their tooltip. Tables
+  and code blocks scroll inside themselves (never the page). Math, the
+  highlighter and emoji are lazy chunks loaded only for messages that use them.
+  Output is React elements (parse → hast → sanitize → React); never
+  `dangerouslySetInnerHTML` (the theme script of I-41 is the sole exception). A
+  streaming reply holds back an unfinished table row; an unclosed fence is a
+  code block until it closes.
 - (phase 2, RFE-017) The generated client treats 429 as retryable: it waits for
   `retry-after` (cap 30 s, jittered) for idempotent reads and shows a non-blocking
   "You're going fast — retrying in Ns" toast; non-idempotent writes are **not**
@@ -364,7 +381,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).
-  - **Header**, one line that wraps: 40 px avatar; "Agents /" breadcrumb above
+  - **Header**, one row of about 56 px from 768 px up (it does not wrap; the
+    chat card below fills the rest of the window height); on a phone one
+    compact row (back arrow, 32 px avatar, name with the state under it, the
+    44 px Status and Agent actions buttons) with the section switcher as a
+    44 px-tall strip under it, like the board "A · Phone": 40 px avatar; "Agents /" breadcrumb above
     the name (20 px Space Grotesk 600) and `@handle` (mono, `muted`); for a hosted
     agent the sandbox state as a `StatusDot` (labels and failure tooltip as in
     the FIX-025 rule above); on the right the **section switcher** (segmented
@@ -425,9 +446,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     primitive) with the same items and "Open the status panel"; the other icons
     expand the rail at their part. The choice is stored per browser (as the
     theme, never sent to the API); unset, the rail starts expanded at a viewport
-    of 1440 px or more and collapsed below. While the chat panel is narrower than
-    1024 px the expanded rail overlays the thread (focus-trapped, Esc closes)
-    instead of pushing it.
+    of 1440 px or more and collapsed below. The expanded rail **pushes** the
+    thread aside, as on the board, at a window width of 1100 px or more (so at
+    1280 px the thread narrows to about 440 px); **below a 1100 px window
+    width** it overlays the thread instead (focus-trapped, Esc closes). Owner,
+    2026-11-14 (it was: below a 1024 px chat-panel width, which made the rail
+    overlay at 1280 px).
   - **Below 768 px**: no rail. Under the header, approvers with pending items see
     a full-width `pending` banner "N approvals waiting" (44 px), and the header
     has a "Status" button; both open the five parts in a sheet (`Dialog`). The
@@ -509,10 +533,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - Agent turns are left-aligned, with a 32 px avatar aligned to the top of
       the meta line. The bubble is `subtle`, with a 14 px radius, a 4 px
       top-left corner and a maximum width of 80 % (as person bubbles).
-    - Bubbles render markdown in safe mode. In a person's message a single
+    - Bubbles render Markdown like github.com with D-227's exceptions (see
+      the safety rules above). In a person's message a single
       typed newline stays a line break. Inline code and code blocks sit on
-      `surface` (dark: `canvas`) with a `line` border, and code blocks scroll
-      horizontally inside themselves.
+      `surface` (dark: `canvas`) with a `line` border, and code blocks and
+      tables scroll horizontally inside themselves (keyboard-focusable
+      regions); alerts use the note/tip/important/warning/caution tokens.
     - (Phase 5, P5-CHAT-2, D-228, C-725; board "P5-CHAT · Reply".) **Quote
       strip.** A message whose `turn.queued` payload has `reply_to` shows a strip
       directly above its bubble, on the bubble's side, at most as wide as a
@@ -863,6 +889,7 @@ here, add it here and document it.
 | Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
+| Popover | `Popover`, `PopoverTrigger`, `PopoverContent` (`ui/popover.tsx`, Radix) | (phase 5, P5-AGENT-2) A small non-modal panel anchored to a control (the status rail's Needs-you items). Esc closes it and returns focus to the trigger; use `Menu` for a list of commands and `Dialog` when the content needs the whole screen. |
 | Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
 | Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
@@ -1178,6 +1205,29 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
     chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.
+    (Phase 5, FIX-138, web half) **Pane size and scrolling:** the pane has a bounded height (at
+    least 18 rem, otherwise the viewport minus the page chrome; 60 % of the viewport below
+    768 px), so `autoResize` derives a fixed grid and output scrolls inside the pane's
+    scrollback (5,000 lines), never by growing the page. The view follows the cursor; once the
+    person has scrolled up it stays put and a **Jump to latest** button appears. **Keyboard:** Tab
+    belongs to the shell (completion); Esc, then Tab (within 1.5 s) leaves the terminal for the
+    next control and says "Left the terminal." (WCAG 2.1.2); the page says so beside the pane.
+    **Open in new window** (`window.open`, `noopener,noreferrer`) opens
+    `/o/<org>/w/<ws>/agents/<agent>/terminal`: no app chrome, a title bar ("<agent> — Terminal",
+    also the document title) and a pane that fills the window. It is a second, independent shell
+    over the same cookie, route and single-use grant as the tab; it counts against the sandbox's
+    leg cap (4409 reads "The sandbox's terminal session limit was reached.").
+    (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) above the pane,
+    remembered per browser and agent (`localStorage` key `aurora.terminal.shell.<agent id>`; a
+    server-side preference would need a table for one enum). It applies to the next session — the
+    open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the
+    default and sends no query). If the image lacks the chosen shell the pane prints the
+    supervisor's one-line fallback notice (`12 §Terminal`).
+    (FIX-138 item 1b, D-247) `claude` and `codex` typed in the pane run the image's wrappers
+    (`12 §Terminal`): they reach the LLM through the gateway with the placeholder credential and
+    their own state under `/workspace/.aurora/terminal`; a harness the instance does not enable
+    prints "not enabled on this instance". The pane carries no hint line for them (the web does
+    not know which harnesses an image holds; the wrapper's message is the answer).
   - **SSH** (phase 5, P4-SSH-1/2, D-239, C-795) — a page of the **Computer** section beside Terminal
     and Previews (`?tab=ssh`), with the same availability rule as Terminal but on `features.ssh`:
     hosted agents only, `can_use`, hidden for BYO agents and non-`can_use` callers; a frozen agent shows

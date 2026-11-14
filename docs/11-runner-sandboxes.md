@@ -176,9 +176,12 @@ environment or memory), removes it from its environment and never passes it on.
   "capabilities": [ "browser" ],
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "files": [ { "path": "/workspace/.config/…", "mode": "0600", "content_b64": "…", "only_if_absent_or_sentinel": true } ],
-  "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },  "timezone": "Europe/Zurich"
+  "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },
+  "enabled_harnesses": [ "claude-code", "codex" ],  "timezone": "Europe/Zurich"
 }
 ```
+
+(FIX-138 item 1b, C-750) `enabled_harnesses` is `hosted.enabled_harnesses`; the terminal's `claude` and `codex` wrappers refuse a harness not listed (absent: only `harness.id`).
 
 (phase 4, P4-HAR, D-122) `harness.id` is the agent's `agents.harness` (`claude-code`, `codex`, `fake`), chosen by the API only; an unknown id or a runtime missing from the image fails the boot with `reason_code = harness_unsupported` (`12 §Harness selection and adapter contract`). The runner registers `harnesses` from the image label `org.aurora.harnesses` (`16 §W5`); an image without the label is treated as `claude-code,fake`, so images built before phase 4 keep working.
 
@@ -674,6 +677,17 @@ checksum-verified release artifact, and the image label `org.aurora.harnesses` l
 runtimes present, e.g. `claude-code,codex,fake`),
 entrypoint `/usr/local/bin/aurora-supervisor run`, user `agent` (uid 1000),
 `WORKDIR /workspace`.
+- (FIX-138, D-246) **Terminal shells and defaults**: `bash` + `bash-completion` and `zsh` are in
+  the OS layer (so every target, `sandbox-min` included, has both); `ripgrep`, `less`, `jq`,
+  `fd-find` are in the base layer. `/etc/profile.d/aurora.sh` (bash login shells) and
+  `/etc/zsh/zshenv` set the one `PATH` — `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin`,
+  also the image's `ENV PATH`; `/etc/bashrc` and `/etc/zshrc` carry the interactive defaults
+  (aliases, `LS_COLORS`, prompt, history, zsh `compinit`) — system files, never the agent's home
+  (`12 §Terminal`). `/opt/aurora/bin` holds the `claude` and `codex` wrappers (FIX-138 item 1b,
+  D-247; `images/sandbox/bin`, in the OS layer so every image has them): they refuse when the
+  pinned binary is missing or the harness is not in the boot document's `enabled_harnesses`, source
+  `/run/aurora/harness.env` (written by the supervisor, no secret) and keep their own state under
+  `/workspace/.aurora/terminal/` (`12 §Terminal`, C-750).
 - Durable user-space installs live in the home: `npm config prefix ~/.local`, `pip --user`, `uv tool`; `~/.local/bin` is on `PATH`.
 - No root, no sudo, no package manager usable by the agent.
 

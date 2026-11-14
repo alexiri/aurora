@@ -29,11 +29,14 @@ export function ConversationRow({
   selected,
   now,
   onSelect,
+  waiting = false,
 }: {
   conversation: Conversation;
   selected: boolean;
   now: Date;
   onSelect: () => void;
+  /** (P5-AGENT-2) For approvers: the conversation has a pending approval ("Waiting on you" replaces the kind line). */
+  waiting?: boolean;
 }) {
   const memberDirect = c.kind === "direct" && !!c.direct_user;
   const kind = KIND[c.kind] ?? KIND.api;
@@ -57,7 +60,11 @@ export function ConversationRow({
       )}
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{conversationTitle(c)}</span>
-        {isWorking(c) ? (
+        {waiting ? (
+          <StatusDot tone="pending" className="whitespace-nowrap text-pending-ink">
+            Waiting on you
+          </StatusDot>
+        ) : isWorking(c) ? (
           <StatusDot tone="accent" className="text-accent-ink">
             Working
           </StatusDot>
@@ -87,7 +94,10 @@ export function ConversationList({
   now,
   status,
   className,
+  waitingIds,
 }: {
+  /** (P5-AGENT-2) Ids of conversations with a pending approval, for approvers only (omit for everyone else). */
+  waitingIds?: ReadonlySet<string>;
   groups: ListGroups;
   /** The selected conversation id, or `null` when none is picked. */
   selectedId: string | null;
@@ -103,7 +113,9 @@ export function ConversationList({
 }) {
   const { mine, others, memberDirects } = groups;
   const rows = (items: Conversation[]) =>
-    items.map((c) => <ConversationRow key={c.id} conversation={c} selected={selectedId === c.id} now={now} onSelect={() => onSelect(c.id)} />);
+    items.map((c) => (
+      <ConversationRow key={c.id} conversation={c} selected={selectedId === c.id} now={now} onSelect={() => onSelect(c.id)} waiting={waitingIds?.has(c.id) ?? false} />
+    ));
   const empty = !mine && others.length === 0 && memberDirects.length === 0;
   return (
     <nav aria-label="Conversations" className={cn("flex min-h-0 flex-col gap-3 p-3", className)}>

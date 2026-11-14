@@ -1,0 +1,45 @@
+#!/bin/sh
+# `codex` in the web terminal (FIX-138 item 1b, docs/12 §Terminal); see `claude` beside it. Codex
+# takes its model provider from its config, so the wrapper gives it the gateway endpoint as `-c`
+# overrides (the same values `codex::config::render_config` writes for a turn) and keeps its state
+# in /workspace/.aurora/terminal/codex (never the agent harness's CODEX_HOME).
+bin=/opt/aurora/harness/codex/codex
+envfile=/run/aurora/harness.env
+refuse() {
+    echo "codex: not enabled on this instance" >&2
+    exit 127
+}
+[ -x "$bin" ] || refuse
+if [ ! -r "$envfile" ]; then
+    echo "codex: the sandbox's gateway settings ($envfile) are missing" >&2
+    exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+. "$envfile"
+set +a
+case " ${HARNESSES_ENABLED:-} " in
+*" codex "*) ;;
+*) refuse ;;
+esac
+CODEX_HOME=/workspace/.aurora/terminal/codex
+export CODEX_HOME
+mkdir -p "$CODEX_HOME" 2>/dev/null
+model="${AURORA_CODEX_MODEL:-}"
+base="${AURORA_CODEX_BASE_URL:-}"
+unset HARNESSES_ENABLED AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL
+if [ -n "$base" ]; then
+    # TOML basic strings: the values come from the supervisor (an endpoint URL, a model id).
+    exec "$bin" \
+        -c "model_provider=\"aurora\"" \
+        -c "model=\"$model\"" \
+        -c "model_providers.aurora.name=\"Aurora gateway\"" \
+        -c "model_providers.aurora.base_url=\"$base\"" \
+        -c "model_providers.aurora.wire_api=\"responses\"" \
+        -c "model_providers.aurora.env_key=\"OPENAI_API_KEY\"" \
+        -c "model_providers.aurora.requires_openai_auth=false" \
+        -c "check_for_update_on_startup=false" \
+        -c "forced_login_method=\"api\"" \
+        "$@"
+fi
+exec "$bin" -c "check_for_update_on_startup=false" "$@"

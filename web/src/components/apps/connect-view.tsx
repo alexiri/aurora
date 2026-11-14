@@ -35,7 +35,7 @@ import { ScopeGroups } from "@/components/grants/scope-groups";
 import { Segmented } from "@/components/ui/segmented";
 
 import { DynamicForm } from "./dynamic-form";
-import { Markdown, safeHref } from "./markdown";
+import { Markdown, safeHref } from "@/components/ui/markdown";
 
 /** The method the chooser preselects: the one a reconnect keeps, else the recommended one, else the first. */
 function initialMethod(app: AppDetail, keep?: string | null): ConnectMethod | undefined {

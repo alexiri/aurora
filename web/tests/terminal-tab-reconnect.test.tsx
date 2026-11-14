@@ -7,6 +7,7 @@ import { TerminalTab } from "@/components/agents/terminal-tab";
 // documented backoff, a few times, visibly; the terminal close codes (4403/4404/4409) end the pane.
 
 const { write } = vi.hoisted(() => ({ write: vi.fn() }));
+vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme", ws: "main", handle: "daneel" }) }));
 vi.mock("@wterm/ghostty", () => ({ GhosttyCore: { load: vi.fn(() => Promise.resolve({ dispose: vi.fn() })) } }));
 vi.mock("@wterm/react", () => ({
   useTerminal: () => ({ ref: { current: null }, write }),

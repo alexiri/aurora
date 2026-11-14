@@ -12,14 +12,28 @@
 // as notices, never a silent close. wterm never touches the clipboard itself: an application's
 // OSC 52 write surfaces a "Copy to clipboard" confirmation (C-622); selection copy is the
 // browser's own.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { GhosttyCore } from "@wterm/ghostty";
 import { Terminal, useTerminal } from "@wterm/react";
 import "@wterm/react/css";
 
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
+import { Segmented } from "@/components/ui/segmented";
 import { useSandbox } from "@/lib/api/conversations";
+
+/** (FIX-138, D-246) The shell the next session starts: bash (default) or zsh, remembered per browser and agent. */
+type Shell = "bash" | "zsh";
+const shellKey = (agentId: string) => `aurora.terminal.shell.${agentId}`;
+function readShell(agentId: string): Shell {
+  try {
+    return window.localStorage.getItem(shellKey(agentId)) === "zsh" ? "zsh" : "bash";
+  } catch {
+    return "bash";
+  }
+}
 
 // The vendored, version-named Ghostty WASM (sha256 recorded in scripts/guards/ghostty-wasm.sha256) (`web/public`, served same-origin as
 // `application/wasm`; the CSP's `'wasm-unsafe-eval'` in script-src is what lets it compile —
@@ -112,9 +126,71 @@ function useGhosttyCore(disabled: boolean) {
   return core;
 }
 
+/** (FIX-138) The grid keeps this much history; older lines scroll away (the pane's own scrollback, never the page). */
+const SCROLLBACK_LINES = 5000;
+/** (FIX-138) A person who pressed Esc and then Tab within this window leaves the terminal (WCAG 2.1.2: no keyboard trap). */
+const ESCAPE_CHORD_MS = 1500;
+
+/**
+ * The agent's Terminal page (docs/14 §Terminal tab): the pane plus an **Open in new window** button. The pop-out is a
+ * second, independent shell on the same route and grant as the tab (FIX-138; it counts against the sandbox's leg cap
+ * and the pane says so when the cap refuses it).
+ */
 export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: boolean }) {
+  const { org, ws, handle } = useParams<{ org: string; ws: string; handle: string }>();
+  const popOutRef = useRef<HTMLButtonElement>(null);
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-ink-2">
+          A shell inside the agent&apos;s sandbox. Tab completes in the shell; to leave the terminal with the keyboard, press Esc, then Tab.
+        </p>
+        <button
+          ref={popOutRef}
+          type="button"
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+          disabled={frozen}
+          onClick={() => window.open(`/o/${org}/w/${ws}/agents/${handle}/terminal`, "_blank", "noopener,noreferrer")}
+        >
+          Open in new window
+        </button>
+      </div>
+      <TerminalPane agentId={agentId} frozen={frozen} exitFocusRef={popOutRef} />
+    </div>
+  );
+}
+
+/**
+ * The terminal itself (used by the tab and by the standalone window route). The pane has a bounded height (CSS,
+ * `.term-pane`), so `autoResize` derives a fixed grid from it and output scrolls inside the pane's scrollback instead
+ * of growing the page. `variant="window"` fills the viewport.
+ */
+export function TerminalPane({
+  agentId,
+  frozen,
+  variant = "tab",
+  exitFocusRef,
+}: {
+  agentId: string;
+  frozen: boolean;
+  variant?: "tab" | "window";
+  /** Where Esc, Tab leaves to (the control after the pane). */
+  exitFocusRef?: RefObject<HTMLElement | null>;
+}) {
   const sandbox = useSandbox(agentId);
   const { ref, write } = useTerminal();
+  // The pane element, for "Jump to latest": set when wterm is ready.
+  const paneEl = useRef<HTMLElement | null>(null);
+  const [scrolledUp, setScrolledUp] = useState(false);
+  // True while the view follows the cursor (the person has not scrolled up): new output and resizes re-pin the pane to
+  // its bottom. wterm renders the scrollback into the pane but does not keep it pinned, so the pane does (FIX-138).
+  const followRef = useRef(true);
+  const follow = useCallback(() => {
+    const el = paneEl.current;
+    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+  }, []);
+  const lastEscape = useRef(0);
+  const [left, setLeft] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "connecting" });
   // Bumped by the pane's Reconnect button: a final close ended the socket effect, so a fresh
   // run of it (not a fresh core) is what re-opens the session.
@@ -139,6 +215,11 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
   // The latest measured grid: a reconnect re-opens at the current size, and the first
   // `pty.resize` rides the freshly opened socket.
   const sizeRef = useRef({ cols: 80, rows: 24 });
+  // The shell choice (bash when localStorage is unavailable, e.g. during SSR; the pane renders only after the client-side
+  // core load, so nothing of it is hydrated). Applied to the next session only — the open one keeps running, so changing
+  // it never re-runs the socket effect (a ref feeds the next connect).
+  const [shell, setShell] = useState<Shell>(() => readShell(agentId));
+  const shellRef = useRef<Shell>(shell);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const paused = frozen;
@@ -162,7 +243,8 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
           ? { kind: "connecting" }
           : { kind: "reconnecting", attempt: attemptRef.current, max: wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS },
       );
-      ws = new WebSocket(`/v1/agents/${agentId}/terminal`);
+      // bash is the server's default, so only zsh names itself (`?shell=` is an enumeration, 422 otherwise).
+      ws = new WebSocket(`/v1/agents/${agentId}/terminal${shellRef.current === "zsh" ? "?shell=zsh" : ""}`);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
@@ -182,6 +264,8 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
         // text control, `pty.resize`, is browser → runner) — ignore, never parse as text.
         if (typeof ev.data === "string") return;
         write(new Uint8Array(ev.data as ArrayBuffer));
+        // After wterm has laid the new output out (it renders on the next frame), keep the bottom in view.
+        requestAnimationFrame(() => requestAnimationFrame(follow));
       };
       ws.onclose = (ev) => {
         if (disposed || wsRef.current !== ws) return;
@@ -226,10 +310,11 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
     };
     // `write` is stable (`useTerminal`'s callback is `useCallback(..., [])`); `retryNonce`
     // re-runs the effect after the pane's explicit Reconnect.
-  }, [agentId, core, paused, write, retryNonce]);
+  }, [agentId, core, paused, write, follow, retryNonce]);
 
   const onResize = (cols: number, rows: number) => {
     sizeRef.current = { cols, rows };
+    requestAnimationFrame(follow);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ kind: "pty.resize", pty_id: 0, cols, rows }));
     }
@@ -271,6 +356,26 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
 
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Segmented<Shell>
+          label="Shell"
+          value={shell}
+          options={[
+            { value: "bash", label: "bash" },
+            { value: "zsh", label: "zsh" },
+          ]}
+          onChange={(s) => {
+            shellRef.current = s;
+            setShell(s);
+            try {
+              window.localStorage.setItem(shellKey(agentId), s);
+            } catch {
+              // Not remembered; the choice still applies to the next session in this tab.
+            }
+          }}
+        />
+        <span className="text-xs text-muted">Applies to the next session (Reconnect or open a new terminal).</span>
+      </div>
       {status ? (
         <Notice tone="pending" role="status" aria-live="polite">
           {status}
@@ -320,25 +425,78 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
           </span>
         </Notice>
       ) : null}
-      <Terminal
-        ref={ref}
-        className="term-pane border-line"
-        core={core}
-        autoResize
-        announceOutput
-        aria-label="Agent terminal"
-        onData={(data) => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            sendInput(wsRef.current, data);
-          } else {
-            // Not connected: the keystroke is not sent and not queued (it could replay into a
-            // different session); say so instead of dropping it silently.
-            setDroppedInput(true);
+      <div
+        className="relative"
+        // Esc, then Tab leaves the terminal (the shell still gets Esc; Tab on its own is the shell's completion key).
+        onKeyDownCapture={(e) => {
+          if (e.key === "Escape") {
+            lastEscape.current = Date.now();
+            setLeft(false);
+          } else if (e.key === "Tab" && Date.now() - lastEscape.current < ESCAPE_CHORD_MS) {
+            lastEscape.current = 0;
+            e.preventDefault();
+            e.stopPropagation();
+            exitFocusRef?.current?.focus();
+            setLeft(true);
           }
         }}
-        onResize={onResize}
-        onClipboardWrite={setCopied}
-      />
+      >
+        <Terminal
+          ref={ref}
+          className={variant === "window" ? "term-pane term-pane-window border-line" : "term-pane border-line"}
+          core={core}
+          autoResize
+          announceOutput
+          scrollbackLines={SCROLLBACK_LINES}
+          aria-label="Agent terminal"
+          onReady={(wt) => {
+            paneEl.current = wt.element;
+            const el = wt.element;
+            el.addEventListener(
+              "scroll",
+              () => {
+                const up = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
+                followRef.current = !up;
+                setScrolledUp(up);
+              },
+              { passive: true },
+            );
+          }}
+          onData={(data) => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              sendInput(wsRef.current, data);
+            } else {
+              // Not connected: the keystroke is not sent and not queued (it could replay into a
+              // different session); say so instead of dropping it silently.
+              setDroppedInput(true);
+            }
+          }}
+          onResize={onResize}
+          onClipboardWrite={setCopied}
+        />
+        {scrolledUp ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="absolute bottom-3 right-4 shadow-pop"
+            onClick={() => {
+              const el = paneEl.current;
+              followRef.current = true;
+              if (el) el.scrollTop = el.scrollHeight;
+              setScrolledUp(false);
+              ref.current?.focus();
+            }}
+          >
+            Jump to latest
+          </Button>
+        ) : null}
+      </div>
+      {left ? (
+        <p role="status" className="text-xs text-muted">
+          Left the terminal.
+        </p>
+      ) : null}
       <p className="text-xs text-muted">The shell runs inside the agent&apos;s sandbox as its own user. Terminal output is never logged.</p>
     </div>
   );

@@ -4900,7 +4900,7 @@ export interface components {
         /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
         AppInstance: {
             app_id: string;
-            /** @description (C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root. */
+            /** @description (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root. */
             base_path?: string | null;
             /** @description `https://<host><base_path>`: how the registration is named everywhere. */
             base_url: string;
@@ -5730,8 +5730,8 @@ export interface components {
         CreateAppInstanceRequest: {
             app_id: string;
             /**
-             * @description (C-731, D-231) Only if the app is served under a path: `/jira` for
-             *     `https://its.cern.ch/jira`. Normalized (`/jira/` = `/jira`, `""` and `/` = none); cannot be
+             * @description (C-731, D-231) Only if the app is served under a path: `/wiki` for
+             *     `https://its.cern.ch/wiki`. Normalized (`/wiki/` = `/wiki`, `""` and `/` = none); cannot be
              *     changed later.
              */
             base_path?: string | null;
@@ -7514,7 +7514,7 @@ export interface components {
         Page_AppInstance: {
             items: {
                 app_id: string;
-                /** @description (C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root. */
+                /** @description (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root. */
                 base_path?: string | null;
                 /** @description `https://<host><base_path>`: how the registration is named everywhere. */
                 base_url: string;
@@ -29359,6 +29359,8 @@ export interface operations {
             query?: {
                 /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
                 status?: string;
+                /** @description (C-700) Only this agent's approvals; an unknown or foreign agent yields an empty page. */
+                agent_id?: string;
                 limit?: number;
                 cursor?: string;
             };
