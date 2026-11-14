@@ -19,6 +19,25 @@ export function initialValues(fields: SetupField[], settings: Record<string, unk
   return out;
 }
 
+/**
+ * Settings and secrets of an add-connector request from the typed values (empty strings and
+ * generated secrets are left out: the API fills defaults and generates the key).
+ */
+export function splitSettings(
+  fields: SetupField[],
+  values: Record<string, string>,
+): { settings: Record<string, unknown>; secrets: Record<string, string> } {
+  const settings: Record<string, unknown> = {};
+  const secrets: Record<string, string> = {};
+  for (const f of fields) {
+    const v = values[f.name] ?? "";
+    if (v === "" || f.type === "generated_secret") continue;
+    if (f.type === "secret") secrets[f.name] = v;
+    else settings[f.name] = typedValue(f, v);
+  }
+  return { settings, secrets };
+}
+
 const hasDefault = (f: SetupField) => f.default !== undefined && f.default !== null;
 
 /**

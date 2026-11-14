@@ -189,6 +189,19 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 /// Routes that are not checked against the principal matrix, with reasons.
 const EXEMPT: &[(&str, &str, &str)] = &[
     (
+        "POST",
+        "/v1/agents/{agent}/space-bindings",
+        "FIX-127 (C-713): can_own of the agent's workspace, but the body names an integration and \
+         an unseeded one is the specified 404 `integration_not_found`, which this matrix reads as \
+         a denial; the denial side (member 403, outsider 404) is in channels_mgmt.rs",
+    ),
+    (
+        "GET",
+        "/v1/integrations/{id}/spaces",
+        "FIX-127 (C-714): authorization resolves through the integration's org and the caller's \
+         linked chat account (can_own in the org, 403 otherwise); covered by channels_mgmt.rs",
+    ),
+    (
         "DELETE",
         "/v1/scim/tokens/{id}",
         "authorization resolves through the token's org (owner only); an unknown id is an \
@@ -875,6 +888,14 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("DELETE", "/v1/user-links/{id}", G::Admin, false),
+    // FIX-127 (C-711..C-713).
+    r(
+        "POST",
+        "/v1/orgs/{org}/channel-integrations:probe",
+        G::Admin,
+        false,
+    ),
+    r("GET", "/v1/connector-availability", G::Auth, false),
     r("GET", "/v1/agents/{agent}/presences", G::WsUse, false),
     r(
         "GET",
@@ -1318,6 +1339,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"agent_id": fx.agent, "method": "GET", "url": "https://example.com/"})
         }
         ("POST", "/v1/orgs/{org}/channel-integrations") => {
+            json!({"connector_id": "matrix-none", "config": {}, "credentials": {"token": "x"}})
+        }
+        ("POST", "/v1/orgs/{org}/channel-integrations:probe") => {
             json!({"connector_id": "matrix-none", "config": {}, "credentials": {"token": "x"}})
         }
         ("PATCH", "/v1/channel-integrations/{id}") => json!({"status": "disabled"}),

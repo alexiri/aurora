@@ -17,9 +17,19 @@ import {
   usePatchIntegration,
   type ChannelIntegration,
 } from "@/lib/api/channels";
-import { hasCapability, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
+import {
+  formFields,
+  hasCapability,
+  needsProbe,
+  useConnectorAvailability,
+  useConnectors,
+  type ConnectorInfo,
+} from "@/lib/api/connectors";
+import { useSession } from "@/lib/api/queries";
 
+import { ConnectorBlocked, NoConnectorsYet } from "./connector-blocked";
 import { IntegrationDialog } from "./integration-dialog";
+import { IntegrationStepper } from "./integration-stepper";
 import { MutationError, StatusChip } from "./shared";
 
 function UserLinks({ integration }: { integration: ChannelIntegration }) {
@@ -192,6 +202,8 @@ function IntegrationRow({
 export function ChannelsView({ orgId }: { orgId: string }) {
   const integrations = useIntegrations(orgId);
   const connectors = useConnectors();
+  const availability = useConnectorAvailability();
+  const session = useSession();
   const [adding, setAdding] = useState<ConnectorInfo | null>(null);
   const [updating, setUpdating] = useState<ChannelIntegration | null>(null);
 
@@ -200,6 +212,11 @@ export function ChannelsView({ orgId }: { orgId: string }) {
   if (connectors.isError) return <ErrorState error={connectors.error} onRetry={() => connectors.refetch()} />;
 
   const byId = new Map(connectors.data.items.map((c) => [c.id, c]));
+  // Types that exist but are not usable yet, each with who acts next (C-712). A failed
+  // availability read only loses these notes; the usable connectors above still work.
+  const blocked = (availability.data?.items ?? []).filter((a) => a.setup_state !== "active");
+  const admins = availability.data?.instance_admins ?? [];
+  const isInstanceAdmin = session.data?.user.is_instance_admin === true;
   const updatingConnector = updating ? (byId.get(updating.connector_id) ?? null) : null;
 
   return (
@@ -211,9 +228,7 @@ export function ChannelsView({ orgId }: { orgId: string }) {
       />
 
       <Section id="connectors" title="Add an integration">
-        {connectors.data.items.length === 0 ? (
-          <p className="text-sm text-muted">No connectors are available. Ask an instance administrator.</p>
-        ) : (
+        {connectors.data.items.length > 0 ? (
           <ul className="flex flex-wrap gap-2">
             {connectors.data.items.map((c) => (
               <li key={c.id}>
@@ -225,7 +240,17 @@ export function ChannelsView({ orgId }: { orgId: string }) {
               </li>
             ))}
           </ul>
-        )}
+        ) : null}
+        {blocked.length > 0 ? (
+          <ul className="space-y-2" aria-label="Connectors that are not ready">
+            {blocked.map((b) => (
+              <ConnectorBlocked key={b.type_id} item={b} admins={admins} isInstanceAdmin={isInstanceAdmin} />
+            ))}
+          </ul>
+        ) : null}
+        {connectors.data.items.length === 0 && blocked.length === 0 ? (
+          <NoConnectorsYet admins={admins} isInstanceAdmin={isInstanceAdmin} />
+        ) : null}
       </Section>
 
       <Section id="integrations" title="Integrations">
@@ -246,7 +271,13 @@ export function ChannelsView({ orgId }: { orgId: string }) {
         )}
       </Section>
 
-      {adding ? <IntegrationDialog key={adding.id} orgId={orgId} connector={adding} onClose={() => setAdding(null)} /> : null}
+      {adding ? (
+        needsProbe(formFields(adding.integration_setup)) ? (
+          <IntegrationStepper key={adding.id} orgId={orgId} connector={adding} onClose={() => setAdding(null)} />
+        ) : (
+          <IntegrationDialog key={adding.id} orgId={orgId} connector={adding} onClose={() => setAdding(null)} />
+        )
+      ) : null}
       {updating ? (
         <IntegrationDialog
           key={updating.id}

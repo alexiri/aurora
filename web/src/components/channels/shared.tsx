@@ -21,6 +21,13 @@ const CHANNEL_MESSAGES: Record<string, string> = {
   stale_revision: "This request changed in the meantime. The latest version has been loaded.",
   stale_manifest: "The connector announced a different manifest. The latest version has been loaded; review it again.",
   connector_in_use: "Integrations still use this connector. Remove them first.",
+  link_required: "Link your chat account first, so Aurora knows which spaces you are in.",
+  bot_not_in_space: "The bot is not in that channel yet. Invite it to the channel, then try again.",
+  not_a_member: "You are not a member of that channel, so you cannot bind an agent to it.",
+  space_not_bindable: "Direct conversations cannot be bound. Pick a channel.",
+  no_shared_presence: "This agent has no shared bot on that integration. Attach it first.",
+  already_bound: "This agent is already bound to that channel.",
+  space_already_bound: "Another agent already listens in that channel.",
   conflict: "That conflicts with the current state. Reload and try again.",
 };
 
@@ -31,6 +38,8 @@ export function channelError(err: unknown): string {
       return `The platform rejected the credentials${err.message ? `: ${err.message}` : "."}`;
     }
     if (err.code === "connector_error" && err.message) return `${CHANNEL_MESSAGES.connector_error} ${err.message}`;
+    // The API words the invite hint with the bot's own handle ("Invite @bot to the channel…").
+    if (err.code === "bot_not_in_space" && err.message) return err.message;
     const m = CHANNEL_MESSAGES[err.code];
     if (m) return m;
   }

@@ -42,6 +42,21 @@ is not a target (MM-001 findings were identical on 12.0.2).
 field: it is a core-owned integration setting stored in
 `channel_integrations.config` and edited by org admins (`13 §5.9`).
 
+(FIX-127, C-715) Labels and flags in the manifest: `server_url` is "Your Mattermost server";
+`team` is "Team" and declares `choices: "from_validate"`; `public_url` (instance setup) is "Address
+Mattermost uses to reach Aurora" with the help "Leave empty unless Mattermost reaches Aurora under
+another name", and it, `catchup_window_secs` and `token_check_secs` are `advanced: true`.
+
+`credentials.validate` with `mode: "probe"` (C-710): `GET /api/v4/users/me` (bot token) then
+`GET /api/v4/users/me/teams` → `choices.team = [{ value: <team URL name>, label: <display name> }]` (create resolves a name or an
+id; the dashboard builds the "Open a DM with @bot" link `https://<server>/<name>/messages/@<bot>`
+from the value),
+`tenant_label` "@<bot> on <host>"; `warnings` carries "no admin token: replies to individuals
+arrive as DMs, and `/aurora` is not registered" when no `admin_token` is given, and the check of
+the admin token when one is. Probe never registers the slash command, edits the bot profile or
+reads `config/client`. A `team` that is set (name or id) is still resolved as below and its
+failure is a probe error; an unset `team` is not.
+
 `credentials.validate`: `GET /api/v4/users/me` (bot) → bot identity;
 `GET /api/v4/teams/name/{team}` (or by id) → `tenant_ref =
 "<server host>/<team_id>"`, label "<Team> on <host>"; bot must be a team member

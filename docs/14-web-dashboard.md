@@ -629,6 +629,21 @@ again" and "Show the getting-started guide again".
   automatically by verified email"** (default off; shown only when the
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
+  (FIX-127, D-195(g), C-711..C-714) **Mattermost as one guided path.** *Empty and blocked
+  states* come from `GET /v1/connector-availability`: `not_added` → "An instance administrator
+  needs to add Mattermost first" with their names (and, for a viewer who is also an instance
+  admin, an inline **Add Mattermost** in a dialog — the Admin one-click flow); `waiting_for_host`
+  → "Waiting for the connector host — the operator must start it"; `disabled` → "Mattermost is
+  disabled — an instance administrator can enable it"; `needs_approval` → "…needs an instance
+  administrator's approval". No state is a dead end: each names who acts next. *Connecting* is a
+  three-step stepper replacing the single dialog (same form-field components): (1) server URL
+  and bot token, setup guide collapsible → **Check** runs the probe; (2) **Team** is a select
+  filled from the probe (one team: preselected), the optional admin token with its explanation
+  (private replies and `/aurora`), the probe `warnings` as notices; (3) **Connect** (the
+  existing synchronous create). The **done screen** says "Mattermost is connected as @bot in
+  <team>" and offers three buttons: **Attach an agent** (workspaces the viewer can own or use,
+  shared presence by default, the existing attach route), **Link your Mattermost account**
+  (`/account/channels`), **Open a DM with @bot** (`https://<server>/<team>/messages/@<bot>`).
 - **Skill libraries** (`/o/<org>/skills/libraries`, phase 4, P4-GSL, D-148; org owners/admins; a tab of
   the org Skills page): a table (label, repository `owner/name`, ref, path, status chip with the sanitized
   last error and "Reconnect" link when the connection needs it, last checked, skills in use by tier,
@@ -699,6 +714,14 @@ again" and "Show the getting-started guide again".
     editor above is FIX-022: specified since phase 0, not yet built.)
   - **Channels** — presences (attach dedicated/shared per integration
     capabilities; status; re-attach/detach), space bindings, reach requests.
+    (FIX-127, D-195(g), C-713/C-714) One integration is preselected. After attaching, a **Next steps**
+    panel offers "Talk to it: DM @bot" (link) and "Add it to a channel: invite @bot, then bind
+    here" with an **Add to a channel** picker (`GET /v1/integrations/{id}/spaces?mine=true`: spaces
+    you are in; each shows whether the bot is present; the picker says "Invite @bot to a private channel to see it here"; listen mode `mentions` by default →
+    `POST /v1/agents/{agent}/space-bindings`) — or, as the alternative, `@bot bind <handle>` in the
+    channel. A `409 bot_not_in_space` shows its hint; `link_required` links to `/account/channels`.
+    The empty state is "Attach this agent to Mattermost" with the integration picker, or, when the
+    org has none, who can create one (a link for org admins).
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
   - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
@@ -925,6 +948,16 @@ and for managed ones the hosts reporting it. The primary action is **Add connect
    placeholders, `secret` as password inputs, `generated_secret` as a read-only "Generated
    automatically" line. Validation errors from the API map to their fields.
 4. **Add**: one request (C-451). A 409 `stale_manifest` reloads the type and returns to step 2.
+
+(FIX-127, D-195(g), D-219) **One-click add.** A type whose `instance_setup` fields are all
+optional or generated (Mattermost) is added from the choose step with a single **Add** button: the
+review summary (capabilities, public callbacks, publisher, signature) sits inline above it, and the
+settings form is collapsed under **Advanced** (fields flagged `advanced: true`, C-715, always
+there; with no required field nothing else is shown). A type with a required field keeps the
+three steps. There is **no auto-add**: adding exposes public callback endpoints and approves a
+manifest, so it stays an explicit instance-admin act (built-in *app packages* auto-activate;
+connectors do not). To make that findable, Admin › Setup and Overview show a **"Mattermost is
+available — add it"** callout when a built-in type is announced and not added (`added: false`).
 
 A managed connector's detail view has **Settings** (same form; a set secret shows "Set ·
 updated <date>" with **Replace** and, if optional, **Clear**; generated secrets have

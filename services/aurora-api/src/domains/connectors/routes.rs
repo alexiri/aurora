@@ -18,6 +18,7 @@ use uuid::Uuid;
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_connectors))
+        .routes(routes!(connector_availability))
         .routes(routes!(connector_icon))
         .routes(routes!(admin_list, admin_create))
         .routes(routes!(admin_delete, admin_patch))
@@ -80,6 +81,19 @@ async fn list_connectors(
     State(s): State<AppState>,
 ) -> Result<Json<ConnectorInfoList>, ApiError> {
     Ok(Json(admin::catalogue(&s).await?))
+}
+
+/// Per connector type: is it usable, and if not, what is missing and which instance admins to
+/// ask (C-712). No secrets or settings.
+#[utoipa::path(get, path = "/connector-availability", operation_id = "getConnectorAvailability",
+    tag = "channels",
+    responses((status = 200, body = ConnectorAvailabilityList), (status = 401, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn connector_availability(
+    _c: Caller,
+    State(s): State<AppState>,
+) -> Result<Json<ConnectorAvailabilityList>, ApiError> {
+    Ok(Json(admin::availability(&s).await?))
 }
 
 /// Connector icon (`image/png`).

@@ -8558,6 +8558,125 @@
             "api_key": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Bind an agent to a space from the dashboard (C-713, `can_own`): only a space the caller's\nlinked chat account is a member of and the shared bot is already in.",
+        "operationId": "createAgentSpaceBinding",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBindingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceBinding"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
       }
     },
     "/v1/agents/{agent}/start-failures": {
@@ -11709,6 +11828,55 @@
         ]
       }
     },
+    "/v1/connector-availability": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Per connector type: is it usable, and if not, what is missing and which instance admins to\nask (C-712). No secrets or settings.",
+        "operationId": "getConnectorAvailability",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorAvailabilityList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/connectors": {
       "get": {
         "tags": [
@@ -14053,6 +14221,154 @@
             }
           }
         }
+      }
+    },
+    "/v1/integrations/{id}/spaces": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Spaces the caller is in and the bot is in (C-714).",
+        "operationId": "listMyIntegrationSpaces",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "mine",
+            "in": "query",
+            "description": "Must be `true`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1..=50, default 25.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MySpacesList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
       }
     },
     "/v1/invitations/accept": {
@@ -16595,6 +16911,127 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/channel-integrations:probe": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Probe credentials before creating an integration (C-711): returns the choices a connector\noffers for fields such as a team. Nothing is stored. 422 `credentials_invalid`,\n`probe_unsupported`, 503 `connector_unavailable`.",
+        "operationId": "probeChannelIntegration",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeIntegrationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -32233,6 +32670,60 @@
           }
         }
       },
+      "ConnectorAvailability": {
+        "type": "object",
+        "required": [
+          "type_id",
+          "name",
+          "setup_state"
+        ],
+        "properties": {
+          "connector_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The connector's id when one exists."
+          },
+          "icon_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "setup_state": {
+            "$ref": "#/components/schemas/ConnectorSetupState"
+          },
+          "type_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ConnectorAvailabilityList": {
+        "type": "object",
+        "required": [
+          "items",
+          "instance_admins"
+        ],
+        "properties": {
+          "instance_admins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstanceAdminName"
+            },
+            "description": "Display names only, at most 10."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectorAvailability"
+            }
+          }
+        }
+      },
       "ConnectorHostInfo": {
         "type": "object",
         "required": [
@@ -32337,6 +32828,17 @@
             "format": "date-time"
           }
         }
+      },
+      "ConnectorSetupState": {
+        "type": "string",
+        "description": "Where a connector type stands for an org admin who wants to use it (C-712).",
+        "enum": [
+          "active",
+          "not_added",
+          "waiting_for_host",
+          "disabled",
+          "needs_approval"
+        ]
       },
       "ConnectorStatus": {
         "type": "string",
@@ -32833,6 +33335,34 @@
           }
         },
         "additionalProperties": false
+      },
+      "CreateBindingRequest": {
+        "type": "object",
+        "description": "`POST /agents/{agent}/space-bindings` (C-713).",
+        "required": [
+          "integration_id",
+          "space_ref"
+        ],
+        "properties": {
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "listen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Listen",
+                "description": "Default `mentions`."
+              }
+            ]
+          },
+          "space_ref": {
+            "type": "string"
+          }
+        }
       },
       "CreateConnectorRequest": {
         "type": "object",
@@ -35449,6 +35979,17 @@
         ],
         "description": "Injection recipe (`08 §5`)."
       },
+      "InstanceAdminName": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "InstanceAgentTokens": {
         "type": "object",
         "description": "(phase 3, RFE-013) The instance level of the agent-token maximum age.",
@@ -37143,6 +37684,45 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ModelItem"
+            }
+          }
+        }
+      },
+      "MySpace": {
+        "type": "object",
+        "required": [
+          "space_ref",
+          "label",
+          "kind",
+          "bot_present"
+        ],
+        "properties": {
+          "bot_present": {
+            "type": "boolean",
+            "description": "Always true: `spaces.list` is the bot's own view (C-714)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`channel` or `private`."
+          },
+          "label": {
+            "type": "string"
+          },
+          "space_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "MySpacesList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MySpace"
             }
           }
         }
@@ -43485,6 +44065,75 @@
           },
           "enabled": {
             "type": "boolean"
+          }
+        }
+      },
+      "ProbeChoice": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "ProbeIntegrationRequest": {
+        "type": "object",
+        "description": "`POST /orgs/{org}/channel-integrations:probe` body (C-711): the create shapes.",
+        "required": [
+          "connector_id",
+          "credentials"
+        ],
+        "properties": {
+          "config": {
+            "type": "object"
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "credentials": {
+            "type": "object",
+            "description": "Write-only: used once, never stored or logged."
+          }
+        }
+      },
+      "ProbeIntegrationResponse": {
+        "type": "object",
+        "required": [
+          "choices",
+          "warnings"
+        ],
+        "properties": {
+          "choices": {
+            "type": "object",
+            "description": "Per setup field that declares `choices: \"from_validate\"`.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ProbeChoice"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "tenant_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

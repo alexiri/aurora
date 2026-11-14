@@ -251,6 +251,39 @@ pub struct ConnectorInfo {
     pub presence_setup: serde_json::Value,
 }
 
+/// Where a connector type stands for an org admin who wants to use it (C-712).
+#[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorSetupState {
+    Active,
+    NotAdded,
+    WaitingForHost,
+    Disabled,
+    NeedsApproval,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ConnectorAvailability {
+    pub type_id: String,
+    pub name: String,
+    pub icon_url: Option<String>,
+    pub setup_state: ConnectorSetupState,
+    /// The connector's id when one exists.
+    pub connector_id: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct InstanceAdminName {
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ConnectorAvailabilityList {
+    pub items: Vec<ConnectorAvailability>,
+    /// Display names only, at most 10.
+    pub instance_admins: Vec<InstanceAdminName>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct ConnectorInfoList {
     pub items: Vec<ConnectorInfo>,

@@ -110,6 +110,21 @@ pub async fn record_login<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Us
     .await?)
 }
 
+/// Display names of enabled instance admins, by name, at most `limit` (the "who to ask" list
+/// of `GET /v1/connector-availability`, C-712: names only).
+pub async fn instance_admin_names<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT display_name FROM users WHERE is_instance_admin AND disabled_at IS NULL
+         ORDER BY display_name, id LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Grant (never revoke) the instance-admin flag; returns the fresh row.
 pub async fn grant_instance_admin<'e, E: PgExecutor<'e>>(
     exec: E,

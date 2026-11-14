@@ -7,7 +7,7 @@ use super::{capability_enabled, map_correlated, object_field};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::connectors::integration_seal_ctx;
-use crate::domains::connectors::ops::{self, CORRELATED_WAIT, NewOp};
+use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::http::auth::Caller;
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::{ApiError, FieldError, Secret};
@@ -173,6 +173,20 @@ async fn validate(
     config: &Value,
     credentials: &Value,
 ) -> Result<CredentialsValidateResult, ApiError> {
+    run_validate(s, connector_id, config, credentials, false).await
+}
+
+async fn run_validate(
+    s: &AppState,
+    connector_id: &str,
+    config: &Value,
+    credentials: &Value,
+    probe: bool,
+) -> Result<CredentialsValidateResult, ApiError> {
+    let mut payload = json!({"config": config, "credentials": credentials});
+    if probe {
+        payload["mode"] = json!("probe");
+    }
     let out = ops::call_correlated(
         s,
         NewOp {
@@ -180,7 +194,7 @@ async fn validate(
             connector_id: Some(connector_id.to_owned()),
             integration_id: None,
             presence_id: None,
-            payload: json!({"config": config, "credentials": credentials}),
+            payload,
             dedupe_key: None,
         },
         CORRELATED_WAIT,
@@ -190,12 +204,61 @@ async fn validate(
     if let Err(e) = channel_ops::scrub_validate_payloads(&s.pool, connector_id).await {
         tracing::warn!(error = %e, "validate payload not scrubbed");
     }
+    if probe
+        && let Err(CorrelatedError::Failed { code, .. }) = &out
+        && code == "unsupported"
+    {
+        return Err(ApiError::unprocessable(
+            "probe_unsupported",
+            "This connector cannot list choices before the integration is created.",
+        ));
+    }
     let value = out.map_err(map_correlated)?;
     serde_json::from_value::<CredentialsValidateResult>(value).map_err(|_| {
         ApiError::bad_gateway(
             "connector_error",
             "The connector returned an invalid validation result.",
         )
+    })
+}
+
+/// `POST /v1/orgs/{org}/channel-integrations:probe` (C-711): one probe-mode validate. Nothing is
+/// stored, audited or logged beyond the request log.
+pub async fn probe(
+    s: &AppState,
+    c: &Caller,
+    org: Uuid,
+    req: ProbeIntegrationRequest,
+) -> Result<ProbeIntegrationResponse, ApiError> {
+    c.org(s, org).await?.require_admin()?;
+    let config = check_config(&req.config)?;
+    let credentials = object_field(&req.credentials, "/credentials", CREDENTIALS_MAX, false)?;
+    let connector = connectors::get(&s.pool, &req.connector_id)
+        .await?
+        .filter(|r| r.status == "active")
+        .ok_or_else(|| invalid_field("/connector_id", "unknown or inactive connector"))?;
+    let res = run_validate(s, &connector.id, &config, &credentials, true).await?;
+    let clip = |t: &str, n: usize| t.chars().take(n).collect::<String>();
+    Ok(ProbeIntegrationResponse {
+        choices: res
+            .choices
+            .into_iter()
+            .take(8)
+            .map(|(k, v)| {
+                (
+                    k,
+                    v.into_iter()
+                        .take(100)
+                        .map(|c| ProbeChoice {
+                            value: clip(&c.value, 256),
+                            label: clip(&c.label, 200),
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+        tenant_label: Some(clip(&res.tenant_label, 200)).filter(|l| !l.is_empty()),
+        warnings: res.warnings.iter().take(5).map(|w| clip(w, 300)).collect(),
     })
 }
 

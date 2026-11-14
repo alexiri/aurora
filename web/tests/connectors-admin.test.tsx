@@ -9,6 +9,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
 }));
 
+import { AddConnectorFlow } from "@/components/connectors/add-connector";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
 
 const json = (status: number, body: unknown) =>
@@ -183,8 +184,8 @@ describe("Add connector flow", () => {
       "POST /v1/admin/connectors": () => json(201, { connector: mmConnector }),
       "GET /v1/admin/connectors": () => json(200, { items: [] }),
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Add Mattermost" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    // (FIX-127, D-219) Nothing is required: the settings sit collapsed under "Advanced".
+    expect(await screen.findByText("Advanced")).toBeInTheDocument();
     const url = await screen.findByLabelText("Callback URL (optional)");
     expect(url).toHaveAttribute("placeholder", "https://aurora.example.org/connectors/mattermost");
     // The placeholder is not repeated as help text; the help is its own sentence.
@@ -197,10 +198,27 @@ describe("Add connector flow", () => {
     // No server URL or admin token at instance level.
     expect(screen.queryByLabelText(/Server URL/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Catch-up window (seconds) (optional)"), { target: { value: "900" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Mattermost" }));
     await waitFor(() => expect(add(calls)).toHaveLength(1));
     expect(add(calls)[0].body).toEqual({
       id: "mattermost", managed: true, approve_manifest_digest: "sha256:mm", settings: { catchup_window_secs: 900 }, secrets: {},
+    });
+  });
+
+  it("adds an all-optional type with one click and zero typed fields, approving the digest shown", async () => {
+    const onAdded = vi.fn();
+    const calls = mockFetch({
+      "GET /v1/admin/connector-types": () => json(200, types([mattermost])),
+      "POST /v1/admin/connectors": () => json(201, { connector: mmConnector }),
+    });
+    wrap(<AddConnectorFlow onAdded={onAdded} />);
+    // The manifest summary is inline (collapsed), no Continue step exists.
+    expect(await screen.findByText("What Mattermost can do")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add Mattermost" }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalledWith("mattermost"));
+    expect(calls.find((c) => c.key === "POST /v1/admin/connectors")?.body).toEqual({
+      id: "mattermost", managed: true, approve_manifest_digest: "sha256:mm", settings: {}, secrets: {},
     });
   });
 
