@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.1.1
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -26,7 +26,7 @@ apps:
       category: productivity
       api_docs: https://docs.getindico.io/en/stable/http-api/
       connect_note:
-        text: "An administrator registers your Indico server first (Instances). Bookings, favorites and room search by free time use Indico's internal endpoints and the broad 'Everything' scopes, which Indico does not keep compatible between versions; read the setup guide before choosing them."
+        text: "An administrator registers your Indico server first (Instances). Bookings, favorites and room search by free time use Indico's internal endpoints and the broad 'Everything' scopes, which Indico does not keep compatible between versions; read the setup guide before choosing them. To find free rooms and book them, also tick 'Extended: read everything' and 'Book rooms through the documented HTTP API'; 'Everything' write access is only needed for recurring bookings, cancellations and favorites."
         url: https://docs.getindico.io/en/stable/http-api/access/
       label_hint: Indico account email
     instances:
@@ -248,18 +248,23 @@ apps:
         Indico is connected. Send requests to https://<host> of the Indico server this connection is
         registered for; Aurora adds the token. Never ask for one, never add ak, apikey, signature,
         timestamp or cookieauth, and never send this connection's requests to another host.
-        Prefer the HTTP API: /export/categ/<ids>.json (filters from, to, type, location, room,
-        detail), /export/categ/favorites.json, /export/event/<id>.json (detail=contributions,
-        sessions), /export/event/search/<term>.json, /export/timetable/<id>.json,
-        /export/room/<location>/<id>.json, /export/roomName/<location>/<name>.json,
-        /export/reservation/<location>.json; files: /export/event/<event>/material/<folder id>/<attachment id>.bin;
-        current user: /api/user/.
-        Book with POST /api/roomBooking/bookRoom.json, form-encoded: roomid, location, from, to
-        (YYYY-MM-DDTHH:MM, same day), tz, reason, username (login of the person booked for). Use the
-        long parameter names only.
-        If granted, /rooms/api/..., /user/api/favorites/..., /user/search/..., /search/api/search and
-        /event/create/prepare are internal to Indico and may change: on a 404 or an unexpected
-        shape, say so instead of guessing. Send JSON bodies to them.
-        Confirm room, time and person before booking, and never retry a booking automatically. To
-        create an event, prepare it and give the user the returned link: Indico has no API that
-        creates events.
+        Official API: /export/categ/<ids>.json (from, to, type, location, room, detail),
+        /export/categ/favorites.json, /export/event/<id>.json (detail=contributions|sessions),
+        /export/event/search/<term>.json, /export/timetable/<id>.json, /export/room/<loc>/<id>.json,
+        /export/roomName/<loc>/<name>.json, /export/reservation/<loc>.json,
+        /export/event/<id>/material/<folder>/<file>.bin, /api/user/ (id, email, names; no login).
+        Free rooms (read:everything): GET /rooms/api/rooms/search?building=<b>&capacity=<n>
+        &start_dt=<YYYY-MM-DDTHH:MM:SS>&end_dt=<...>&repeat_frequency=NEVER, one call per building.
+        Always send repeat_frequency, or busy rooms come back too. It returns ids only: name them
+        with GET /rooms/api/rooms/<id>. Times are the server's local time; with no end time assume
+        one hour and say so.
+        Book (write:legacy_api): POST /api/roomBooking/bookRoom.json, form: roomid, from, to (same
+        day, YYYY-MM-DDTHH:MM), tz, reason, username = the person's Indico login, not the email
+        (ask if unknown). Long names only. It cannot book rooms that need confirmation. With
+        full:everything: POST /rooms/api/booking/create, JSON {room_id, start_dt, end_dt,
+        repeat_frequency:"NEVER", reason, is_prebooking}; leave user out (it books for you).
+        Never guess availability: if a scope is missing, say which one.
+        /rooms/api/, /user/api/favorites/, /user/search/, /search/api/search and /event/create/prepare
+        are internal to Indico: on a 404 or an unexpected shape, say so. Confirm room, time and
+        person before booking; never retry a booking. Indico cannot create events by API: prepare
+        one and give the user the link.
