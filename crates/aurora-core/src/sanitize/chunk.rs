@@ -20,74 +20,89 @@ fn count(s: &str) -> usize {
     s.chars().count()
 }
 
-/// A fenced code block open at a cut: its opening line (reopened in the next piece, prefix and
-/// info string intact) and the line that closes it (the fence marker, with the same `>` quote
-/// prefix and list indentation).
-struct OpenFence {
-    opener: String,
-    close: String,
-    ch: char,
-    len: usize,
+/// A stretch of the text whose lines must stay what they are across a cut — a fenced code block
+/// or an HTML block, found by the parser (never by scanning lines: a `>\t` prefix, a nested
+/// `> > ```` line inside a fence and a `<pre>` all defeat a scan). A cut inside it closes it
+/// (`close`, if the construct needs one) and starts the next piece with `reopen`.
+struct Region {
+    /// Start of the line that opens the construct; lines after it, up to `end`, are inside.
+    opener_ls: usize,
+    end: usize,
+    reopen: String,
+    close: Option<String>,
 }
 
-/// Width of a list marker (`- `, `12. `) at the start of `t`.
-fn list_marker_len(t: &str) -> Option<usize> {
-    let b = t.as_bytes();
-    if matches!(b.first(), Some(b'-' | b'*' | b'+')) && b.get(1) == Some(&b' ') {
-        return Some(2);
-    }
-    let d = t.chars().take_while(char::is_ascii_digit).count();
-    (1..=9)
-        .contains(&d)
-        .then(|| {
-            (matches!(b.get(d), Some(b'.' | b')')) && b.get(d + 1) == Some(&b' ')).then_some(d + 2)
-        })
-        .flatten()
+fn line_start(s: &str, i: usize) -> usize {
+    s[..i].rfind('\n').map_or(0, |p| p + 1)
 }
 
-/// The fence a line opens, whatever quote or list-item prefix it sits in.
-fn fence_opener(line: &str) -> Option<OpenFence> {
-    let mut i = 0;
-    loop {
-        let rest = &line[i..];
-        let t = rest.trim_start_matches(' ');
-        let skipped = rest.len() - t.len();
-        if t.starts_with('>') {
-            i += skipped + 1;
-        } else if let Some(m) = list_marker_len(t) {
-            i += skipped + m;
-        } else {
-            i += skipped;
-            break;
-        }
-    }
-    let rest = &line[i..];
-    let ch = rest.chars().next().filter(|c| matches!(c, '`' | '~'))?;
-    let len = rest.chars().take_while(|c| *c == ch).count();
-    if len < 3 || (ch == '`' && rest[len..].contains('`')) {
-        return None;
-    }
-    let prefix: String = line[..i]
+/// The container prefix of a line (`> `, list indentation) as it must precede a closing line.
+fn closing_prefix(prefix: &str) -> String {
+    prefix
         .chars()
         .map(|c| if c == '>' { '>' } else { ' ' })
-        .collect();
-    Some(OpenFence {
-        opener: line.to_owned(),
-        close: format!("{prefix}{}", ch.to_string().repeat(len)),
-        ch,
-        len,
-    })
+        .collect()
 }
 
-fn closes_fence(line: &str, f: &OpenFence) -> bool {
-    let t = line.trim_start_matches([' ', '>']).trim_end();
-    t.chars().count() >= f.len && t.chars().all(|c| c == f.ch)
+fn regions(s: &str) -> Vec<Region> {
+    let mut out = Vec::new();
+    for (e, r) in Parser::new_ext(s, options()).into_offset_iter() {
+        match e {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) => {
+                let ls = line_start(s, r.start);
+                let le = s[ls..].find('\n').map_or(s.len(), |p| ls + p);
+                let Some(m) = s[r.start..le].find(['`', '~']) else {
+                    continue;
+                };
+                let at = r.start + m;
+                let ch = s[at..].chars().next().unwrap_or('`');
+                let len = s[at..].chars().take_while(|c| *c == ch).count();
+                out.push(Region {
+                    opener_ls: ls,
+                    end: r.end,
+                    reopen: s[ls..le].to_owned(),
+                    close: Some(format!(
+                        "{}{}",
+                        closing_prefix(&s[ls..at]),
+                        ch.to_string().repeat(len)
+                    )),
+                });
+            }
+            Event::Start(Tag::HtmlBlock) => {
+                let ls = line_start(s, r.start);
+                let first = s[r.start..].lines().next().unwrap_or("");
+                let name: String = first
+                    .trim_start_matches('<')
+                    .chars()
+                    .take_while(char::is_ascii_alphanumeric)
+                    .collect::<String>()
+                    .to_ascii_lowercase();
+                let prefix = closing_prefix(&s[ls..r.start]);
+                // Blocks that run on across blank lines (`<pre>`) are closed and reopened with their
+                // own tag; the others (`<div>`, `<table>`, …) are reopened with a `<div>` line, which
+                // starts an HTML block again.
+                let raw = matches!(name.as_str(), "pre" | "script" | "style" | "textarea");
+                out.push(Region {
+                    opener_ls: ls,
+                    end: r.end,
+                    reopen: if raw {
+                        format!("{prefix}<{name}>")
+                    } else {
+                        format!("{prefix}<div>")
+                    },
+                    close: raw.then(|| format!("{prefix}</{name}>")),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Leading quote marks and indentation of a line: what a continuation of it must repeat to stay
 /// the same kind of block (indented code, a quote).
 fn line_prefix(line: &str) -> &str {
-    let t = line.trim_start_matches([' ', '>']);
+    let t = line.trim_start_matches([' ', '\t', '>']);
     &line[..line.len() - t.len()]
 }
 
@@ -123,29 +138,31 @@ fn split_line(line: &str, lim: usize) -> Vec<String> {
 
 /// Cut `s` line by line into pieces of at most `max` chars: at a blank line when the piece has
 /// one past its middle, else between lines; one line longer than a piece is cut inside (see
-/// [`split_line`]). A fenced block open at a cut is closed there and reopened in the next piece
-/// with the same opening line, so code never turns into prose; indentation and quote prefixes
-/// are never trimmed.
+/// [`split_line`]). A fenced block or HTML block (a [`Region`], from the parser) open at a cut
+/// is closed there and reopened in the next piece, so code never turns into prose; indentation
+/// and quote prefixes are never trimmed.
 fn cut_text(s: &str, max: usize) -> Vec<String> {
-    let limit = |f: &Option<OpenFence>| {
-        max.saturating_sub(
-            f.as_ref()
-                .map_or(0, |f| count(&f.opener) + count(&f.close) + 2),
-        )
+    let regs = regions(s);
+    let limit = |g: Option<&Region>| {
+        max.saturating_sub(g.map_or(0, |g| {
+            count(&g.reopen) + g.close.as_ref().map_or(0, |c| count(c)) + 2
+        }))
         .max(20)
     };
     let mut out: Vec<String> = Vec::new();
     let mut cur: Vec<String> = Vec::new();
     let mut used = 0usize;
-    let mut fence: Option<OpenFence> = None;
+    let mut ls = 0usize;
     for line in s.split('\n') {
-        for seg in split_line(line, limit(&fence)) {
-            let lim = limit(&fence);
+        let here = regs.iter().find(|g| g.opener_ls < ls && ls < g.end);
+        ls += line.len() + 1;
+        for seg in split_line(line, limit(here)) {
+            let lim = limit(here);
             if !cur.is_empty() && used + count(&seg) + 1 > lim {
                 let mut next: Vec<String> = Vec::new();
-                if let Some(f) = &fence {
-                    cur.push(f.close.clone());
-                    next.push(f.opener.clone());
+                if let Some(g) = here {
+                    cur.extend(g.close.clone());
+                    next.push(g.reopen.clone());
                 } else if let Some(j) = cur
                     .iter()
                     .rposition(|l| l.trim().is_empty())
@@ -159,11 +176,6 @@ fn cut_text(s: &str, max: usize) -> Vec<String> {
             }
             used += count(&seg) + 1;
             cur.push(seg);
-        }
-        match &fence {
-            Some(f) if closes_fence(line, f) => fence = None,
-            Some(_) => {}
-            None => fence = fence_opener(line),
         }
     }
     if !cur.is_empty() {
@@ -525,6 +537,36 @@ mod tests {
         assert!(fenced >= 4 && fenced.is_multiple_of(2), "{v:?}");
     }
 
+    /// Re-review of F3: each of these is cut at 200 characters after twelve padding lines, and
+    /// the `@here` after it is code (or HTML text) in the source.
+    #[test]
+    fn code_found_by_the_parser_not_by_line_scanning_stays_code_at_a_cut() {
+        let pad =
+            |p: &str| -> String { (0..24).map(|i| format!("{p}padding line {i}\n")).collect() };
+        for (name, src) in [
+            // a) a quote with a TAB after `>`.
+            ("tab", format!(">\t```\n{}>\t@here\n>\t```", pad(">\t"))),
+            // b) a content line `> > ```` inside a `> ```` fence is not its closer.
+            (
+                "nested marker",
+                format!("> ```\n{}> > ```\n> @here\n> ```", pad("> ")),
+            ),
+            // c) a long <pre> block.
+            ("pre", format!("<pre>\n{}@here\n</pre>", pad(""))),
+            (
+                "pre in a quote",
+                format!("> <pre>\n{}> @here\n> </pre>", pad("> ")),
+            ),
+            // A long HTML block of another kind: its text is not prose after the cut either.
+            ("div", format!("<div>\n{}@here\n</div>", pad(""))),
+        ] {
+            let v = markdown_chunks(&src, 200);
+            fits(&v, 200);
+            assert!(v.len() > 1, "{name}: not cut: {v:?}");
+            assert!(!broadcasts(&v), "{name}: {v:?}");
+        }
+    }
+
     #[test]
     fn a_cut_never_falls_mid_word_because_of_an_early_blank_line() {
         // One list item (so one block) with an early blank line, then a long paragraph.
@@ -548,7 +590,7 @@ mod tests {
         /// A block whose every `@here` is inside code, in a random container.
         fn block() -> impl Strategy<Value = String> {
             let words = "[a-z]{1,12}";
-            (0u8..6, 1usize..40, words).prop_map(|(kind, n, w)| {
+            (0u8..9, 1usize..40, words).prop_map(|(kind, n, w)| {
                 let body = |p: &str| -> String {
                     (0..n)
                         .map(|i| format!("{p}{w}{i} @here ![x](https://e.example/?d=S)\n"))
@@ -562,6 +604,9 @@ mod tests {
                     2 => format!("- item\n- ```sh\n{}  ```\n\nsep\n\n", body("  ")),
                     3 => format!("{}\nsep\n\n", body("    ")),
                     4 => format!("1. one\n\n       {w} @here\n\nsep\n\n"),
+                    5 => format!("<pre>\n{}</pre>\n\nsep\n\n", body("")),
+                    6 => format!(">\t```\n{}>\t```\n\nsep\n\n", body(">\t")),
+                    7 => format!("> ```\n{}> > ```\n> @here\n> ```\n\nsep\n\n", body("> ")),
                     _ => format!("{} plain words here\n\nsep\n\n", w.repeat(n)),
                 }
             })
