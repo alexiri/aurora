@@ -136,6 +136,11 @@ async fn install(h: &Harness, who: &str, yaml: &str, key: &SigningKey) {
 }
 
 async fn world_with(probe_override: bool) -> W {
+    world_cfg(probe_override, None).await
+}
+
+/// `extra_ca`: the path of the PEM bundle configured as `tls.extra_ca_bundle`.
+async fn world_cfg(probe_override: bool, extra_ca: Option<String>) -> W {
     let up = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/health"))
@@ -157,6 +162,7 @@ async fn world_with(probe_override: bool) -> W {
     // The hook host's host is a reserved name (09 §6): a registered instance may not equal it.
     let mut h = Harness::with_config(|c| {
         c.hookhost_url = "http://hooks.aurora.example.org:4104".into();
+        c.tls.extra_ca_bundle = extra_ca;
     })
     .await;
     if probe_override {
@@ -883,6 +889,73 @@ async fn a_slow_upstream_is_a_timeout() {
     reroute(&mut w, &origin, Some(std::time::Duration::from_millis(200)));
     let d = probe_details(&w, "its.cern.ch").await;
     assert_eq!(d["reason"], "timeout", "{d}");
+}
+
+/// (FIX-144 follow-up) An instance served under a private CA (CERN's) passes the registration
+/// check once the CA is in `tls.extra_ca_bundle`, and fails with `tls` while it is not.
+#[tokio::test]
+async fn a_private_ca_in_the_extra_bundle_is_trusted_by_the_probe() {
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
+    let ca_key = KeyPair::generate().unwrap();
+    let mut ca_params = CertificateParams::new(vec![]).unwrap();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca = ca_params.self_signed(&ca_key).unwrap();
+    let leaf_key = KeyPair::generate().unwrap();
+    let leaf = CertificateParams::new(vec!["127.0.0.1".to_owned()])
+        .unwrap()
+        .signed_by(&leaf_key, &ca, &ca_key)
+        .unwrap();
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        leaf_key.serialize_der(),
+    ));
+    let cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(vec![leaf.der().clone()], key)
+    .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let a = acceptor.clone();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let Ok(mut tls) = a.accept(tcp).await else {
+                    return;
+                };
+                let mut buf = [0u8; 1024];
+                let _ = tls.read(&mut buf).await;
+                let _ = tls
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .await;
+                let _ = tls.shutdown().await;
+            });
+        }
+    });
+    let bundle = std::env::temp_dir().join(format!("aurora-test-ca-{}.pem", Uuid::now_v7()));
+    std::fs::write(&bundle, ca.pem()).unwrap();
+    let origin = format!("https://127.0.0.1:{port}");
+
+    // The CA is not trusted: the platform's roots do not know it.
+    let mut w = world_cfg(false, None).await;
+    reroute(&mut w, &origin, None);
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "tls", "{d}");
+
+    // The CA is in `tls.extra_ca_bundle`: the same server passes the check.
+    let mut w = world_cfg(false, Some(bundle.to_string_lossy().into_owned())).await;
+    reroute(&mut w, &origin, None);
+    let (s, v) = w.register(&w.owner, w.org, "desk", "its.cern.ch").await;
+    server.abort();
+    let _ = std::fs::remove_file(&bundle);
+    assert_eq!(s, 201, "{v}");
 }
 
 /// An untrusted certificate is a `tls` failure (a real handshake against a self-signed server).

@@ -69,16 +69,23 @@ pub struct Call<'a> {
 }
 
 impl HookClient {
-    pub fn new(base: &str, ring: &aurora_crypto::SecretRing) -> Result<Self, String> {
+    pub fn new(
+        base: &str,
+        ring: &aurora_crypto::SecretRing,
+        extra_ca_bundle: Option<&str>,
+    ) -> Result<Self, String> {
         Ok(Self {
             base: base.trim_end_matches('/').to_owned(),
             bearer: ring.active_bearer(),
             key_id: ring.active_id().to_owned(),
-            http: reqwest::Client::builder()
-                .timeout(HOOK_WALL)
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|e| format!("hook client: {e}"))?,
+            http: aurora_secrets::tls::with_extra_roots(
+                reqwest::Client::builder()
+                    .timeout(HOOK_WALL)
+                    .redirect(reqwest::redirect::Policy::none()),
+                extra_ca_bundle,
+            )?
+            .build()
+            .map_err(|e| format!("hook client: {e}"))?,
         })
     }
 

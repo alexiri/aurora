@@ -2,6 +2,7 @@
 //! and the hook-host client. `override_origin` redirects all guarded requests to a test
 //! server (tests only).
 use super::hooks::HookClient;
+use aurora_secrets::tls::with_extra_roots;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
@@ -229,25 +230,33 @@ impl Env {
         hookhost_url: &str,
         internal_ring: &aurora_crypto::SecretRing,
         allowed_private: &[String],
+        extra_ca_bundle: Option<&str>,
     ) -> Result<Self, String> {
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(10))
-            .dns_resolver(std::sync::Arc::new(Guarded))
-            .build()
-            .map_err(|e| format!("connect http client: {e}"))?;
+        // `tls.extra_ca_bundle` (docs/15): a registered instance may be served under a private CA.
+        let http = with_extra_roots(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(10))
+                .dns_resolver(std::sync::Arc::new(Guarded)),
+            extra_ca_bundle,
+        )?
+        .build()
+        .map_err(|e| format!("connect http client: {e}"))?;
         let allow = PrivateAllow::new(allowed_private);
-        let http_instance = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(10))
-            .dns_resolver(std::sync::Arc::new(GuardedAllow(allow.clone())))
-            .build()
-            .map_err(|e| format!("connect instance http client: {e}"))?;
+        let http_instance = with_extra_roots(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(10))
+                .dns_resolver(std::sync::Arc::new(GuardedAllow(allow.clone()))),
+            extra_ca_bundle,
+        )?
+        .build()
+        .map_err(|e| format!("connect instance http client: {e}"))?;
         Ok(Self {
             http,
             http_instance,
             allow,
-            hooks: HookClient::new(hookhost_url, internal_ring)?,
+            hooks: HookClient::new(hookhost_url, internal_ring, extra_ca_bundle)?,
             override_origin: None,
             probe_timeout_ms: std::sync::atomic::AtomicU64::new(10_000),
         })
@@ -310,7 +319,7 @@ mod tests {
             }
         };
         let ring = aurora_crypto::SecretRing::default();
-        let strict = Env::new("http://hooks.example:4104", &ring, &[]).unwrap();
+        let strict = Env::new("http://hooks.example:4104", &ring, &[], None).unwrap();
         assert_eq!(
             reason(&strict, "https://localhost:1/").await,
             "destination_refused"
@@ -320,6 +329,7 @@ mod tests {
             "http://hooks.example:4104",
             &ring,
             &["localhost".to_owned()],
+            None,
         )
         .unwrap();
         assert_eq!(reason(&open, "https://localhost:1/").await, "connect");
