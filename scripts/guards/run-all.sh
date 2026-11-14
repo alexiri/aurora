@@ -24,6 +24,9 @@ echo "== helm-gateway-role (FIX-106: the gateway's least-privilege role is autom
 source scripts/guards/lib.sh
 if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; fi
 
+echo "== limits-readers (FIX-116: every limits.rs constant has a reader and a docs/02 row)"
+bash scripts/guards/limits-readers.sh
+
 echo "== no-dev-idp-in-release (SEC-42)"
 bash scripts/guards/no-dev-idp-in-release.sh
 

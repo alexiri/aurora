@@ -730,13 +730,24 @@ async fn fresh_open_instance_admits_a_listed_admin() {
     e.sign_in().await.unwrap();
     // Unsaved: today's behaviour (own org) for the admin.
     assert_eq!(e.n("SELECT count(*) FROM organizations").await, 1);
+    // FIX-116: the administrator's own sign-in created an organization, yet the gate stays
+    // closed for everyone else until a placement is saved.
+    e.who("s2", "bob@example.com", Some("bobj"));
+    assert_eq!(e.sign_in().await.unwrap_err(), "instance_setup_pending");
+    assert_eq!(
+        e.n("SELECT count(*) FROM users WHERE email = 'bob@example.com'")
+            .await,
+        0
+    );
 }
 
 #[tokio::test]
 async fn unsaved_and_personal_org_modes_keep_todays_behaviour() {
     let e = env(SignupMode::Open).await;
-    // An organization exists, so the instance is no longer fresh.
+    // An organization exists and the instance predates the setup gate (FIX-116), so it is not
+    // fresh.
     e.h.org().await;
+    e.h.mark_upgraded_instance().await;
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     assert_eq!(e.n("SELECT count(*) FROM organizations").await, 2);

@@ -163,6 +163,13 @@ owner cannot be demoted or removed).
 | starter_grants | jsonb not null default `[]` | `[{ kind: secret|connection, id }]`, org-scope credentials of the default org |
 | updated_by | uuid null FK→users (set null) | `updated_at` is implicit (`§Conventions`) |
 
+### `instance_setup`
+(FIX-116, REVIEW-5 PLAT-4) The persisted fresh-instance gate of `04 §New-user placement`. One row, written by the migration.
+| Column | Type | Notes |
+|---|---|---|
+| singleton | boolean pk default true CHECK (singleton) | one row |
+| placement_pending | boolean not null | `true` when the migration found no organization and no saved placement (an instance installed with this release); cleared by the first saved placement (same statement as the `instance_placement` upsert) and never set again. Existing instances start `false` |
+
 ### `user_onboarding`
 (phase 4, P4-ONB-2, D-141) Per-user onboarding progress: Welcome seen, dismissed guides, tour. Only what cannot be computed is stored; guide step completion is derived from real state (model readiness, grants, conversations) and never stored.
 | Column | Type | Notes |

@@ -129,8 +129,12 @@ interface"); stored in the database, audited):
   (`personal_org` under `open`, so nothing changes on upgrade), and the admin page
   shows a warning while that holds. The **instance setup wizard** (`14 §Onboarding`)
   asks for the placement before anything else and proposes `shared_org` with a personal
-  workspace. While it is unsaved on a fresh instance (no organization exists yet), users
-  who are not instance admins signing in under `open` see "This instance is being set up — try again shortly" (no user row is created).
+  workspace. Until a placement is first saved on an instance installed with this release or later, users
+  who are not instance admins signing in under `open` are refused with `instance_setup_pending`
+  ("This instance is being set up — try again shortly"; no user row is created); an administrator's own
+  sign-in does not end that state (a persisted marker, `03 §instance_setup`, not "no organization exists").
+  An instance that already had organizations or a placement when this release was installed is not
+  pending.
 
 ## Instance admins
 

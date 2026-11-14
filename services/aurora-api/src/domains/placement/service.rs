@@ -56,7 +56,8 @@ pub enum OpenPlan {
     Placed,
     /// `none`, or `shared_org` whose default org is gone: only invitation, role claim or JIT admit.
     Closed,
-    /// Nothing saved and no organization exists: only instance admins may sign in yet.
+    /// Nothing saved on a fresh instance (FIX-116: even after an administrator's own sign-in
+    /// created an organization): only instance admins may sign in until a placement is saved.
     SetupPending,
 }
 
@@ -66,7 +67,7 @@ pub async fn open_plan(
 ) -> Result<OpenPlan, aurora_db::DbError> {
     Ok(match repo::get(&mut *conn).await? {
         None => {
-            if !privileged && repo::org_count(&mut *conn).await? == 0 {
+            if !privileged && repo::setup_pending(&mut *conn).await? {
                 OpenPlan::SetupPending
             } else {
                 OpenPlan::OwnOrg

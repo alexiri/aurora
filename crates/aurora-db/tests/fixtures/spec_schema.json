@@ -437,6 +437,10 @@
       "starter_grants",
       "updated_by"
     ],
+    "instance_setup": [
+      "placement_pending",
+      "singleton"
+    ],
     "invitations": [
       "accepted_by",
       "approver_workspace_ids",

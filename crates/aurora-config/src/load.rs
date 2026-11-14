@@ -243,6 +243,7 @@ fn read_env_secrets(
         oidc_client_secrets: BTreeMap::new(),
         redis_username: None,
         redis_password: None,
+        smtp_password: read_secret(env, "AURORA_SMTP_PASSWORD", errors),
     };
     // (P4-CNT, 08 §4) Redis credentials come from the variables the configuration names; a named
     // variable that is unset refuses startup.

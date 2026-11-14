@@ -2125,3 +2125,50 @@ async fn late_runner_failed_report_after_give_up_counts_once() {
         ("failed", Some("sandbox_start_failed"), 1)
     );
 }
+
+/// FIX-116: `terminal.awake_cap_secs` bounds a terminal-only keep-awake on its own clock: with
+/// the terminal cap at 600 s and the preview cap at 4 h, a boot whose terminal stamp is 700 s
+/// old is stopped by the arm-2 sweep (the preview cap used to decide, so it stayed awake).
+#[tokio::test]
+async fn terminal_awake_cap_is_its_own_clock() {
+    let r = rig_cfg(|c| {
+        c.terminal.enabled = true;
+        c.terminal.awake_cap_secs = 600;
+        c.previews.awake_cap_secs = 4 * 3600;
+    })
+    .await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent_with_turn("term").await;
+    let (sb, boot) = r.boot_running(rep).await;
+    r.finish_turns(agent).await;
+    // Idle past IDLE_STOP, with a live terminal stamp.
+    r.age(&sb, 3).await;
+    let stamp = |secs: i32| {
+        let sb = sb.clone();
+        let pool = r.h.pool().clone();
+        async move {
+            sqlx::query(
+                "UPDATE sandboxes SET terminal_active_until = now() + interval '2 minutes',
+                     terminal_awake_since = now() - make_interval(secs => $2) WHERE id = $1::uuid",
+            )
+            .bind(&sb)
+            .bind(secs)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    // Within the terminal cap the stamp keeps the box awake.
+    stamp(300).await;
+    assert!(r.work(rep, 0).await["items"].as_array().unwrap().is_empty());
+    assert_eq!(r.sandbox_state(&sb).await, "running");
+    // Past the terminal cap (but far inside the preview cap) it is stopped.
+    stamp(700).await;
+    let w = r.work(rep, 0).await;
+    let stop = first(&w, "sandbox.stop");
+    assert_eq!(
+        (stop["reason"].as_str(), stop["boot_id"].as_str()),
+        (Some("idle"), Some(boot.as_str())),
+        "{w}"
+    );
+}

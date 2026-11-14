@@ -40,13 +40,20 @@ pub trait Mailer: Send + Sync {
     async fn send(&self, mail: Mail) -> Result<(), MailError>;
 }
 
-/// Dev mode: write the link to the API log at INFO.
-pub struct LogMailer;
+/// Log-only mode (SMTP not configured). The recipient and subject are logged; the action link
+/// (a sign-in or invitation token, SEC-10) only when `email.log_links` is set (development).
+pub struct LogMailer {
+    pub log_links: bool,
+}
 
 #[async_trait::async_trait]
 impl Mailer for LogMailer {
     async fn send(&self, mail: Mail) -> Result<(), MailError> {
-        tracing::info!(to = %mail.to, subject = %mail.subject, link = %mail.link, "email (log-only mode, SMTP not configured)");
+        if self.log_links {
+            tracing::info!(to = %mail.to, subject = %mail.subject, link = %mail.link, "email (log-only mode, SMTP not configured)");
+        } else {
+            tracing::info!(to = %mail.to, subject = %mail.subject, "email (log-only mode, SMTP not configured; set email.log_links to log the link in development)");
+        }
         Ok(())
     }
 }
@@ -85,10 +92,21 @@ pub struct SmtpMailer {
 }
 
 impl SmtpMailer {
-    pub fn new(url: &str, from: &str) -> Result<Self, MailError> {
-        let transport = AsyncSmtpTransport::<Tokio1Executor>::from_url(url)
-            .map_err(|e| MailError(e.to_string()))?
-            .build();
+    /// `credentials` is `(username, password)` from `email.smtp_username` and
+    /// `AURORA_SMTP_PASSWORD`; the URL never carries them.
+    pub fn new(
+        url: &str,
+        from: &str,
+        credentials: Option<(String, String)>,
+    ) -> Result<Self, MailError> {
+        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::from_url(url)
+            .map_err(|e| MailError(e.to_string()))?;
+        if let Some((user, pass)) = credentials {
+            builder = builder.credentials(
+                lettre::transport::smtp::authentication::Credentials::new(user, pass),
+            );
+        }
+        let transport = builder.build();
         let from = from.parse().map_err(|e| MailError(format!("{e}")))?;
         Ok(Self { transport, from })
     }
@@ -116,14 +134,21 @@ impl Mailer for SmtpMailer {
 pub fn from_config(cfg: &ApiConfig) -> Arc<dyn Mailer> {
     if let Some(url) = &cfg.email.smtp_url {
         let from = cfg.email.from.as_deref().unwrap_or_default();
-        match SmtpMailer::new(url.expose(), from) {
+        let credentials = cfg
+            .email
+            .smtp_username
+            .clone()
+            .zip(cfg.email.smtp_password.as_ref().map(|p| p.expose().clone()));
+        match SmtpMailer::new(url.expose(), from, credentials) {
             Ok(m) => return Arc::new(m),
             Err(e) => {
                 tracing::error!(error = %e, "invalid SMTP configuration; using log-only mailer")
             }
         }
     }
-    Arc::new(LogMailer)
+    Arc::new(LogMailer {
+        log_links: cfg.email.log_links,
+    })
 }
 
 /// Send in the background; failures are logged (never exposing existence of accounts).
@@ -134,4 +159,60 @@ pub fn send_detached(mailer: &Arc<dyn Mailer>, mail: Mail) {
             tracing::error!(error = %e, "email send failed");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[derive(Clone, Default)]
+    struct Buf(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Buf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+        type Writer = Buf;
+        fn make_writer(&'a self) -> Buf {
+            self.clone()
+        }
+    }
+
+    async fn logged(log_links: bool) -> String {
+        let buf = Buf::default();
+        let sub = tracing_subscriber::fmt()
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(sub);
+        let mail = Mail::new(
+            "invitee@example.org",
+            "You are invited",
+            "Join:",
+            "https://aurora.example.org/join?token=SECRET-TOKEN-123",
+        );
+        LogMailer { log_links }.send(mail).await.unwrap();
+        drop(guard);
+        let out = buf.0.lock().unwrap().clone();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// FIX-116: with SMTP unset the log carries recipient and subject, never the token link
+    /// (SEC-10) — unless development sets `email.log_links`.
+    #[tokio::test]
+    async fn log_mailer_hides_the_link_unless_asked() {
+        let quiet = logged(false).await;
+        assert!(quiet.contains("invitee@example.org"), "{quiet}");
+        assert!(!quiet.contains("SECRET-TOKEN-123"), "{quiet}");
+        let dev = logged(true).await;
+        assert!(dev.contains("SECRET-TOKEN-123"), "{dev}");
+    }
 }
