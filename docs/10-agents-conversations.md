@@ -508,6 +508,15 @@ sync. Order:
  "Notes from the <app> plugin (third-party)"), where you talk (channels),
  peer agents, memory (including the **memory language** rule), skills,
  schedules, background processes, machine facts (timezone, home, tools).
+ (Phase 5, FIX-144/FIX-145, C-730/C-731) Each account of the connected-apps
+ render inputs is `{ id, label, service?, address? }`. `address` is where a
+ self-hosted account lives: `https://<instance host><base_path>` for a
+ connection bound to a registered instance (the base path only when the
+ registration has one, D-231: `https://its.cern.ch/jira`),
+ `https://<default_host>` for an instance-bound app's default-host connection,
+ absent for every other app. It is sanitized like the label and rendered after
+ it: ``- `<id>`: <label> — at https://its.cern.ch/jira``. Plugin snippets refer
+ to it as `<address>`.
 
 Render inputs are delivered in the start payload and refreshed by home sync
 (`12 §Home projection`).

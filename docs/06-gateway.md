@@ -427,6 +427,29 @@ prefixed by org and workspace (so invalidation can drop whole scopes):
    connections whose `instance_id` is that instance are candidates. The
    instance list is cached per org and dropped by the `org` invalidation scope
    (instance-wide changes invalidate every org).
+   (Phase 5, D-231, FIX-145) A host may carry several registrations with
+   disjoint **base paths** (`its.cern.ch` + `/jira` for jira-dc, + `/confluence`
+   for confluence-dc), so at connect time the host lookup yields every
+   registration on the host with its `base_path`; the choice among them is made
+   per request (the path is not known at `CONNECT`), in step 5 of the pipeline:
+   - the request belongs to a registration when the path normalized by step 3
+     (the same path tool matching uses) is the base path itself or starts with
+     base path + `/` (segment boundary: `/jira` does not cover `/jira2` or
+     `/JIRA`); a registration without a base path covers every path; among
+     several matches the longest base path wins;
+   - that registration's app, host entries and connections are the only
+     instance candidates for the request; a request on the host outside every
+     registered base path matches no instance, so no instance connection is a
+     candidate and nothing is injected (fail closed, as for an unknown host);
+   - app and tool identification (step 5: host-entry `path_prefix`, tool
+     `path`, `params`), `{path.N}` in approval summaries and every other manifest
+     decision use the **app path**, the normalized path with the base path
+     removed (`/jira/rest/api/2/myself` → `/rest/api/2/myself`; the base path
+     itself → `/`);
+   - the upstream request, the audit `path` and the approval display keep the
+     **full** path.
+   Static claims, LLM hosts and secrets stay host-level and are unaffected.
+   `default_host` connections have no base path.
 3. **Secret candidates**: workspace and org secrets whose `host_pattern`
    matches (path patterns are evaluated per request).
 4. **LLM candidates**: if the host is an LLM provider host (`08 §LLM
@@ -494,7 +517,10 @@ minted.
    body conditions, a GraphQL- or git-tagged tool may match, a hold could
    occur, or a model allow-list applies to the host (`08 §11.5`); the rest
    stays in the pipe. Record `truncated`.
-5. **App and tool identification.** Look up the app serving (host, path) in the
+5. **App and tool identification.** (Phase 5, D-231) On a registered instance
+   host, first select the registration whose base path covers the path (longest
+   wins; none → no instance candidate) and use the app path from here on
+   (`§MITM lane: connect-time resolution`). Look up the app serving (host, path) in the
    snapshot host index (longest path prefix wins among non-lost claims); find
    the matching tool in that app's catalogue (host, path, methods, GraphQL kind
    via the fail-closed classifier, git operation; (phase 4, P4-GRANTS, Q8) a tool's
