@@ -14,7 +14,7 @@
 | **Connector** (per platform) | `aurora-connector-<id>` | Chat platform transport, translation, provisioning | platform callbacks only (e.g. 4110) | none | its chat platform only |
 | **Connector host** (phase 4, P4-MCON) | `aurora-connector-host` | Runs the built-in connector types as **managed connectors** added from the dashboard (`13 §3.1`); speaks the connector contract on their behalf | 4110 platform callbacks (`/connectors/<id>/…` via the edge); 4192 health/metrics | none | edge (platform callbacks) |
 | **Preview relay** (phase 4, P4-PRV-2; **only when `previews.enabled`**) | `aurora-relay` | Browser-facing HTTP/WebSocket reverse proxy for preview hostnames: authenticates the browser (`04 §Preview access`), resolves hostnames through the API, opens byte streams to a sandbox port through the runner (`16 §W17`, `§W18`) | 4112 (edge-routed wildcard host); 4193 health/metrics | none (in-memory caches only) | edge (wildcard preview host) |
-| **SSH terminator** (phase 5, D-138) | `aurora-terminator` | Certificate-authenticated SSH into sandboxes | 2222 | none | users |
+| **SSH terminator** (phase 5, D-138; P4-SSH-2, D-239; **only when `ssh.enabled`**) | `aurora-terminator` | Public SSH server (Rust, `russh`): certificate-only authentication of people, then a session opened with the API and one byte stream per SSH channel to the sandbox through the runner's stream listener (`16 §W20`, the web terminal's path); holds no signing key, no database and no cluster credential (`11 §SSH access`) | 2222 (published by a LoadBalancer Service, port 22 by default); 4194 health/metrics | none (in-memory session table only) | SSH clients (LoadBalancer) |
 | **PostgreSQL** | — | System of record, queue, event bus | 5432 | yes | API, gateway |
 | **Migrations job** | `aurora-api migrate` | Forward-only schema migrations before API starts | — | — | — |
 | **CLI** | `aurora` | Login, BYO `run`, management, plugin tooling | — | `~/.config/aurora` | — |
@@ -158,6 +158,22 @@ database, no keys, no ambient network. It is called only on slow paths.
     is the only inbound path into a sandbox; there is no listening socket in the sandbox other than
     the app's own, and the sandbox network policy is unchanged (it still reaches only the gateway
     and runner channel ports, SEC-02).
+14. **SSH terminator** (phase 5, P4-SSH-1/2, D-239, SEC-92..SEC-96). When `ssh.enabled`, the
+    terminator is the only component that faces SSH clients, on its own LoadBalancer port. It is
+    **untrusted with respect to authorization**, like the relay (boundary 13): it holds the SSH
+    host key and its `aut_` anchor, but **no CA signing key**, no database access and no
+    Kubernetes or podman credential. The user-certificate CA key lives in the API only (a signer
+    seam: local key now, KMS later). Every decision — which person, which agent, whether the
+    access law still holds — is made by the API at session open, at every channel open and at
+    every 30 s heartbeat, and re-enforced by the runner (an `auz_` grant names the sandbox and
+    boot, never the terminator) and the supervisor (session channels only, no forwarding). A
+    compromised terminator can deny service, read the bytes of sessions it carries, and open
+    sessions only for certificates it has seen while they are valid (`ssh.cert_ttl_secs`) and
+    only within those people's access (17 residual risk *A compromised terminator*); it cannot
+    mint a certificate, name a sandbox, reach a sandbox network or skip the API's audit and caps.
+    The path *SSH client → terminator → runner :4108 → supervisor → PTY or process* is the web
+    terminal's path (boundary 13's runner and supervisor hops); the sandbox gains no listening
+    socket and its network policy is unchanged (SEC-02).
 
 ## End-to-end flows
 

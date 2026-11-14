@@ -1621,6 +1621,102 @@ rows carry the before/after diff, `04 §Audit`); no history table. Migration
 `20261201000190_instance_settings.sql` (block `000190..199`, SET-1..SET-5) creates the table and the
 grant; no data is written by the migration (the first API start mirrors the configuration's locked
 keys, D-238(a)).
+#### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+Five new tables and three `sandboxes` columns. P4-SSH-1 lands `ssh_keys` and `ssh_mint_counters`
+(migrations `20261201000200_ssh_keys.sql`, `…000201_ssh_mint_counters.sql`); P4-SSH-2 lands
+`ssh_sessions`, `ssh_stream_grants`, `ssh_terminator_replicas` and the `sandboxes` columns
+(`…000202` … `…000205`; block `000200..209`). Each moves into the tables above, as a real
+`### \`table\`` section, in the change that adds its migration. The gateway database role gets
+nothing on any of them.
+
+#### `ssh_keys` (new table; a person's registered SSH public keys)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 5 (P4-SSH-1) |
+| user_id | uuid not null FK→users (cascade) | owned by the person, not by an org or workspace; at most `SSH_KEYS_PER_USER` (10) | 5 (P4-SSH-1) |
+| name | text not null CHECK (char_length(name) BETWEEN 1 AND 80) | sanitized (`02 §Untrusted text`); defaults to the key's comment, else "SSH key" | 5 (P4-SSH-1) |
+| algorithm | text not null CHECK in (`ssh-ed25519`) | the only accepted type (D-239(b)) | 5 (P4-SSH-1) |
+| public_key | text not null | **canonical** OpenSSH form `ssh-ed25519 <base64>`, rebuilt from the parsed key (never the raw paste; the comment and any options are dropped) | 5 (P4-SSH-1) |
+| fingerprint | text not null | `SHA256:<unpadded base64>` of the key blob, computed by the server (OpenSSH format) | 5 (P4-SSH-1) |
+| last_used_at | timestamptz null | stamped at a certificate mint and at a session open with this key, at most once a minute (churn column) | 5 (P4-SSH-1) |
+| unique | `(user_id, fingerprint)` | the same key twice for one person is 409 `ssh_key_exists`; two people may register the same public key (a row grants nothing by itself: a certificate also needs the private key) | 5 (P4-SSH-1) |
+
+#### `ssh_mint_counters` (new table; certificate-mint rate limit, a ledger)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| user_id | uuid not null | pk part; no FK (a ledger, like `preview_grant_uses`) | 5 (P4-SSH-1) |
+| agent_id | uuid not null | pk part; no FK | 5 (P4-SSH-1) |
+| window_start | timestamptz not null | pk part; `date_trunc('hour', now())` | 5 (P4-SSH-1) |
+| count | int not null default 0 | incremented by one `INSERT … ON CONFLICT DO UPDATE SET count = count + 1 WHERE count < SSH_MINTS_PER_USER_AGENT_HOUR RETURNING count` in the mint transaction: no row returned → 429 `ssh_mint_rate_limited`. Rows older than 24 h are pruned by the retention sweep | 5 (P4-SSH-1) |
+
+Its own table rather than `rate_limit_windows`/`aurora-counters` (D-239(c)): the mint limit must be exact
+across API replicas whatever `ratelimit.counters.backend` says (the default `local` counts per
+replica) and must never fail open; the audit row is best-effort and cannot be the counter.
+
+#### `ssh_sessions` (new table; one row per authenticated SSH connection)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the session id the terminator carries | 5 (P4-SSH-2) |
+| user_id | uuid not null FK→users (cascade) | the certificate's person | 5 (P4-SSH-2) |
+| ssh_key_id | uuid null FK→ssh_keys (set null) | the key the certificate certified; deleting the key nulls it and the next heartbeat revokes the session (`key_deleted`) | 5 (P4-SSH-2) |
+| key_fingerprint | text not null | kept for audit after the key row is gone | 5 (P4-SSH-2) |
+| cert_serial | bigint not null | the certificate's serial (`agent.ssh_certificate.mint` audit row names it too) | 5 (P4-SSH-2) |
+| org_id | uuid not null FK→organizations (cascade) | denormalized for the org audit and the org delete order | 5 (P4-SSH-2) |
+| workspace_id | uuid not null FK→workspaces (cascade) | | 5 (P4-SSH-2) |
+| agent_id | uuid not null FK→agents (cascade) | the certificate's principal; hosted agents only (service-enforced) | 5 (P4-SSH-2) |
+| terminator_replica_id | uuid not null | the replica that holds the connection (no FK: replica rows are pruned) | 5 (P4-SSH-2) |
+| client_address | text null | the SSH client's address as the terminator saw it, **coarsened** at insert (IPv4 /24, IPv6 /48, like `04 §CLI login`); terminator-reported, audit metadata only | 5 (P4-SSH-2) |
+| state | text not null default `open` CHECK in (`open`,`closed`) | the guarded transition `open → closed` (`UPDATE … WHERE state = 'open' RETURNING`) is the **close-exactly-once** gate; the one `agent.ssh.close` audit row is written by whichever path wins it | 5 (P4-SSH-2) |
+| lease_until | timestamptz not null | `now() + SSH_SESSION_LEASE` (90 s) at open and at every heartbeat that keeps it; a session whose lease passed is dead whatever `state` says (liveness = lease) | 5 (P4-SSH-2) |
+| last_activity_at | timestamptz null | the last channel byte the terminator reported (heartbeat); never keystroke content | 5 (P4-SSH-2) |
+| revoke_requested_at | timestamptz null; revoke_reason text null | set by `DELETE /v1/ssh-sessions/{id}` (`user_disconnect` / `owner_disconnect`); the next heartbeat answers it revoked | 5 (P4-SSH-2) |
+| closed_at | timestamptz null | | 5 (P4-SSH-2) |
+| close_reason | text null | open vocabulary: `client_disconnect`, `idle_timeout`, `max_duration`, `access_revoked`, `key_deleted`, `frozen`, `ssh_disabled`, `user_disconnect`, `owner_disconnect`, `agent_deleted`, `lease_expired`, `wake_timeout`, `terminator_shutdown`, `relay_error` | 5 (P4-SSH-2) |
+| channels_total | int not null default 0; bytes_in bigint not null default 0; bytes_out bigint not null default 0 | heartbeat and close accounting (byte totals only; never content, never commands) | 5 (P4-SSH-2) |
+| index | `(user_id) WHERE state = 'open'`; `(agent_id) WHERE state = 'open'`; `(lease_until) WHERE state = 'open'`; `(created_at)` | caps (`SSH_SESSIONS_PER_USER`, `_PER_AGENT`, counted over open, lease-current rows: global, not per replica), the stale-session sweep, retention | 5 (P4-SSH-2) |
+
+Closed rows are kept for `SSH_SESSION_RETENTION` (30 days) and then deleted by the retention sweep
+(the audit rows outlive them).
+
+#### `ssh_stream_grants` (new table; single-use SSH channel grants)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 5 (P4-SSH-2) |
+| session_id | uuid not null FK→ssh_sessions (cascade) | the session the channel belongs to; redemption is refused unless it is still `open` and lease-current | 5 (P4-SSH-2) |
+| agent_id, sandbox_id, boot_id | uuid not null | the binding the runner receives (stale boot → redemption refused); no FK | 5 (P4-SSH-2) |
+| grant_hash | text not null unique | SHA-256 of the `auz_` grant; the value is returned once to the terminator and never stored | 5 (P4-SSH-2) |
+| expires_at | timestamptz not null | `now() + SSH_GRANT_TTL` (30 s) | 5 (P4-SSH-2) |
+| consumed_at | timestamptz null | set by the single-use compare-and-set at redemption | 5 (P4-SSH-2) |
+| index | unique `(grant_hash)`; `(expires_at)` | redemption, pruning after 24 h | 5 (P4-SSH-2) |
+
+A table of its own, not rows in `terminal_stream_grants` (D-239(f)): the `auz_` prefix routes redemption
+to this table alone, so a terminal grant can never open an SSH channel or the reverse, and the
+binding includes the session whose liveness redemption re-checks.
+
+#### `ssh_terminator_replicas` (new table; registered terminator replicas)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the replica id returned by `POST /v1/terminator/register` | 5 (P4-SSH-2) |
+| version | text not null | (churn) | 5 (P4-SSH-2) |
+| host_public_key | text not null | the replica's SSH host public key, canonical `ssh-ed25519 <base64>`; the API serves the distinct keys of live replicas as the known-hosts entries (`05 §SSH access`) | 5 (P4-SSH-2) |
+| host_key_fingerprint | text not null | `SHA256:…` | 5 (P4-SSH-2) |
+| sessions_open | int not null default 0 | heartbeat churn | 5 (P4-SSH-2) |
+| last_seen_at | timestamptz not null | refreshed by each heartbeat; a replica is live while `last_seen_at > now() − SSH_SESSION_LEASE`; rows older than 24 h pruned | 5 (P4-SSH-2) |
+
+There is no `terminator_tokens` table: the single anchor token's SHA-256 is computed by the API from
+`AURORA_BOOTSTRAP_TERMINATOR_TOKEN` at startup and held in memory (rotation = a new Secret value and a
+rollout of the API and the terminator; `15 §SSH access`).
+
+#### `sandboxes` (SSH keep-awake; phase 5, P4-SSH-2)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| ssh_active_until | timestamptz null | `now() + SSH_AWAKE_GRACE` at each runner keep-awake stamp while an SSH channel carries bytes; keep-awake reason `ssh` (churn column) | 5 (P4-SSH-2) |
+| ssh_awake_since | timestamptz null | first SSH channel byte of the current boot; the `SSH_AWAKE_CAP` clock; reset at every start claim (churn column) | 5 (P4-SSH-2) |
+
+The SSH **wake demand** reuses `terminal_wake_at` and the terminal's wake budget
+(`TERMINAL_WAKES_PER_AGENT_HOUR`, shared): both are a person asking for an interactive shell on a
+parked sandbox, and one budget keeps two front doors from doubling the wake rate (D-239(h)).
 
 ### `preview_shares` (port previews, phase 4, P4-PRV-1, D-144, D-145)
 | Column | Type | Notes |

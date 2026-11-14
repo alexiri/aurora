@@ -113,6 +113,22 @@ SSH arm hook. Design follows OneCLI `docs/11`:
   (podman exec / Kubernetes exec); heartbeat every 30 s re-runs the access law;
   lease 90 s; close exactly once with a reason; audit.
 - Tables: `ssh_keys`, `ssh_sessions`, `ssh_mint_counters`.
+- **Specified (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96, C-790..C-799).** Off unless the
+  operator sets `ssh.enabled`; who may connect is the web terminal's rule (`can_use`, hosted, not
+  frozen). Two departures from the sketch above: the terminator reaches the sandbox through the
+  **runner's stream listener :4108** (one `auz_` grant per SSH channel, `exec.*` frames to the
+  supervisor) instead of podman/Kubernetes exec — exec would bypass the supervisor's environment scrub
+  and give an internet-facing daemon cluster-wide exec rights (D-239(e)); and the "CA-signed session
+  grant" is an API-side `ssh_sessions` row plus single-use per-channel grants the runner redeems at the
+  API, which closes the same compromised-terminator hole without a second signed token (D-239(f)).
+  Session channels only (shell, exec, `sftp`/`scp`); no port, agent or X11 forwarding. Tables
+  `ssh_keys`, `ssh_mint_counters`, `ssh_sessions`, `ssh_stream_grants`, `ssh_terminator_replicas`
+  and `sandboxes.ssh_active_until`/`ssh_awake_since`. Owning sections: `04 §SSH access`,
+  `11 §SSH access`, `12 §SSH channels`, `16 §W20`, `05 §SSH access` and `§Terminator plane`,
+  `03 §Planned changes`, `14` (Account › SSH keys, agent SSH page), `15 §SSH access`, `23`, `02 §Limits`,
+  `17` SEC-92..SEC-96, `18 §SSH access`, `00` (`aut_`, `auz_`), `01` (trust boundary 14). Not in this
+  batch: port forwarding of any kind, FIDO (`sk-ssh-ed25519`) keys, a KMS signer, an org-level switch,
+  PROXY-protocol client addresses.
 
 ## Phase 4 — Port previews
 

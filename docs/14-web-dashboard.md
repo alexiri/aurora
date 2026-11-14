@@ -319,7 +319,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     agent's banner stays full width under the header.
   - **Sections**, in this order: **Chat** (hosted only) · **Behaviour**
     (Instructions, Memory, Skills) · **Triggers** (Schedules, Webhooks, Channels,
-    Peers) · **Computer** (Computer, Terminal, Previews; BYO: Computer: Connect) ·
+    Peers) · **Computer** (Computer, Terminal, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
     **Access**. Pages keep today's availability rules (Terminal and Previews only
     where enabled; BYO has only Instructions, Computer: Connect and Access); a
     section with no available page is hidden; a section with several pages shows
@@ -576,13 +576,28 @@ connects), `/setup-error` (missing required configuration reported by
 
 ### Account (`/account/*`)
 Profile, password *(phase 0 only)*, sessions (sign out others), API keys
-(personal workspace keys), chat platform links, DM defaults, delete account
+(personal workspace keys), (phase 5) SSH keys, chat platform links, DM defaults, delete account
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
 lists the person's groups per organization (read-only) and the effective role with its
 source. (phase 5 (D-138, moved from phase 4), RFE-011b) **Notifications**: the in-tab notification and e-mail switches
 and the Web Push device list (*Key flows*). (phase 4, P4-IDP-1) **Roles from your
 sign-in**: each IdP role value and what it granted. (phase 4, P4-ONB-2) "Show the tour
 again" and "Show the getting-started guide again".
+
+(phase 5, P4-SSH-1/2, D-239, C-795) **SSH keys** (`/account/ssh`), shown only when `/v1/instance`
+reports `features.ssh`. A `ResourceTable` of the person's keys — name, `SHA256:` fingerprint (mono,
+truncated in the middle with the full value in a tooltip and a copy button), added, last used —
+with Rename and Delete (a `ConfirmDialog` that says open sessions using the key end within 30 s).
+**Add key**: a `Dialog` with a name field and a monospace textarea for one `ssh-ed25519 AAAA…` line,
+the help text "Paste the contents of `~/.ssh/id_ed25519.pub`. Only ed25519 keys are accepted; the
+private key never leaves your computer." and the command to create one (`ssh-keygen -t ed25519`);
+422/409 errors render inline under the field in plain language ("This is not an ed25519 public key",
+"You already added this key", "You can add at most 10 keys"). Adding and deleting need the dashboard
+session (an API key cannot). Under the table, **Active SSH sessions** (P4-SSH-2): agent, key, coarse
+address, opened, last activity, with **Disconnect** (`DELETE /v1/ssh-sessions/{id}`; the row shows
+"Disconnecting…" until it disappears). Empty states: "No SSH keys yet" with the Add key action; no
+sessions → the section is hidden. Mobile (390 px): the tables collapse to stacked rows (the shared
+`ResourceTable` pattern), the fingerprint wraps.
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).
@@ -849,6 +864,35 @@ again" and "Show the getting-started guide again".
     UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
     chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.
+  - **SSH** (phase 5, P4-SSH-1/2, D-239, C-795) — a page of the **Computer** section beside Terminal
+    and Previews (`?tab=ssh`), with the same availability rule as Terminal but on `features.ssh`:
+    hosted agents only, `can_use`, hidden for BYO agents and non-`can_use` callers; a frozen agent shows
+    the freeze banner and no instructions. Content, top to bottom, all from `GET /v1/ssh` and the
+    agent:
+    1. **Connect with SSH** (`Card`): "Use the Aurora CLI" — `aurora ssh <agent id>` in a `CodeBlock`
+       with a copy button, and one line on installing the CLI and signing in (`aurora login`). Below it
+       "Or use plain ssh": the steps (1) add your key on **Account › SSH keys** (a link; when the person
+       has no key, this step is a `Notice` with the link and the rest is disabled), (2) **Get a
+       certificate** — a button that picks the key (a `Select` of the person's keys when there are
+       several) and calls `POST /v1/agents/{agent}/ssh-certificate`, then offers the certificate as a
+       download named `id_ed25519-cert.pub` and states "valid for 15 minutes; get a new one to
+       reconnect later" (the TTL from `cert_ttl_secs`), (3) the command
+       `ssh -o CertificateFile=~/Downloads/id_ed25519-cert.pub -i ~/.ssh/id_ed25519 -p <port> <agent id>@<host>`
+       in a `CodeBlock`. A 429 reads "Too many certificates for this agent in the last hour; try again
+       at HH:MM".
+    2. **Host key** (`Card`): the `known_hosts` lines in a `CodeBlock` with copy, the fingerprints
+       (`SHA256:…`) and one sentence: "Check that ssh shows this fingerprint the first time you
+       connect, or add the line above to `~/.ssh/known_hosts`." No live terminator → a `Notice`
+       "SSH is enabled but no SSH server is running; ask your administrator."
+    3. **What works**: interactive shell, remote commands, `sftp` and `scp`; port forwarding, agent
+       forwarding and X11 are not available (use **Previews** for web apps). Sessions end after 10
+       minutes without activity or after 4 hours, and when you lose access to the agent.
+    4. **Open sessions on this agent** (P4-SSH-2): the caller's own, or everyone's for `can_own`
+       (person, key, coarse address, opened, last activity, **Disconnect**). An open session keeps the
+       sandbox awake while it carries bytes ("awake because…" says "SSH session in use") up to the 4 h
+       cap.
+    The status rail's Computer part adds "SSH" beside "Terminal" where the page is available. Every
+    `CodeBlock` wraps at 390 px instead of scrolling the page (it scrolls inside itself).
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
   history; batch actions. (phase 2, RFE-012) The page, the sidebar counter and the
@@ -992,6 +1036,10 @@ with that agent's failure history (the C-614 route), so an admin can tell
 "this agent keeps failing" from "the runner is failing everyone"), **Self-hosted apps** (`/admin/instances`, D-74, FIX-132: every registration, instance-wide and per-organization, with an Organization column and filter; **Make instance-wide** on an organization's registration, with a confirmation, audited `app_instance.promote`; the registration error offers the same action when an organization already registered the host, and links an instance admin to Host claims for a static claim; phase 5, FIX-145: the same Path field and `base_url` display as the org page), **OAuth clients** (instance-level).
 (phase 4, P4-PRV-2) a **Previews** line when `previews.enabled`: relay replicas
 (`GET /v1/admin/relays`), the domain, share count and a "no relay seen" warning.
+(phase 5, P4-SSH-2) an **SSH** line when `features.ssh`: terminator replicas (`GET
+/v1/admin/terminators`: version, host-key fingerprint, open sessions, last seen), a "no SSH server
+seen" warning, and a warning when live replicas present **different** host keys (a half-finished
+host-key rotation: clients will see a host-key mismatch).
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up
 mode shown read-only (config); placement mode; default org (pick or create); shared
 workspaces with roles; personal workspace on/off, role, name template with a live

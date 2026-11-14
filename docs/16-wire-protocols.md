@@ -27,6 +27,7 @@ implementation repo and checked in (CI fails on drift).
 | W17 | Relay plane (phase 4, P4-PRV-2) | relay → API `/v1/relay`; runner → API `/v1/runner/preview-streams/*` | `aul_` + replica; `aur_` + replica | this doc, `04 §Preview access` |
 | W18 | Preview byte streams (phase 4, P4-PRV-2) | relay → runner :4108 (WebSocket per stream); runner ↔ supervisor (stream frames on W6) | stream grant `aux_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
 | W19 | Terminal streams (phase 4, P4-TERM) | browser → API `/v1/agents/{agent}/terminal` (WebSocket); API → runner :4108 (grant redemption); runner ↔ supervisor (`pty.*` frames on W6) | terminal grant `auy_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
+| W20 | SSH access (phase 5, P4-SSH-2, D-239) | SSH client → terminator (SSH, certificate-only); terminator → API `/v1/terminator`; terminator → runner :4108 (one WebSocket per SSH channel); runner ↔ supervisor (`exec.*` frames on W6) | OpenSSH user certificate; `aut_` + replica; channel grant `auz_` (single use); the authenticated W6 channel | this doc, `04 §SSH access`, `11 §SSH access`, `12 §SSH channels` |
 
 ## Cross-cutting conventions
 
@@ -581,3 +582,109 @@ browser → runner is the `pty.resize` control (`{"kind":"pty.resize",
 "pty_id":0,...}` — the runner stamps the leg's real id); any other Text is
 ignored, never parsed as bytes (C-619). In the other direction the PTY's
 output rides Binary frames end to end.
+
+## W20 — SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+Four hops: the SSH protocol between the client and `aurora-terminator`; the terminator plane
+(`05 §Terminator plane`, C-794); leg 1, terminator → runner :4108, one WebSocket per SSH channel;
+leg 2, `exec.*` frames on W6. Legs 1 and 2 are W18/W19's machinery (listener, grant pattern, credit
+windows, chunking, close codes, violation counting) with an **exec target**; this section owns only
+the differences. Off unless `ssh.enabled`.
+
+**SSH protocol (terminator, `russh`).**
+- *Transport*: SSH-2 only; host key `ssh-ed25519` (from `AURORA_SSH_HOST_KEY`, the same key on every
+  replica); key exchange `curve25519-sha256` (and `@libssh.org`), `sntrup761x25519-sha512@openssh.com`
+  where the library offers it; ciphers `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`,
+  `aes128-gcm@openssh.com`; MACs only for non-AEAD ciphers (none offered); no SHA-1, CBC, DSA or RSA.
+  Server keepalive every 30 s (keeps load-balancer idle timers from cutting a session); identification
+  string `SSH-2.0-aurora` without a version number.
+- *Authentication*: the only method advertised and accepted is `publickey` with an OpenSSH **user
+  certificate** of type `ssh-ed25519-cert-v01@openssh.com`. In the *query* phase (no signature) the
+  terminator answers OK only when the whole certificate law passes offline: CA signature by one of the
+  `ca_public_keys` of its registration, type `user`, inside the validity window (60 s skew),
+  principal list exactly `[<username>]` and the username a UUID, **no critical options**, the key id
+  in the `aurora:u=…:k=…:a=…:w=…` shape. In the *signature* phase the library verifies possession of
+  the certified key; only then does the terminator call `POST /v1/terminator/sessions`, and
+  authentication succeeds only if the API answers 201. Every other outcome — plain keys, `password`,
+  `keyboard-interactive`, `hostbased`, a failing certificate, an API refusal or error — is the same
+  `USERAUTH_FAILURE` listing `publickey` only, after the same 1 s delay, no banner (hint-free). The
+  `none` probe is answered without counting; `SSH_AUTH_ATTEMPTS` (6) other attempts end the connection.
+- *Pre-auth limits* (per replica): `SSH_PREAUTH_MAX` (256) unauthenticated connections in total and
+  `SSH_PREAUTH_PER_IP` (8) per client address, `SSH_CONNECT_RATE` (30/min, burst 10) per address,
+  `SSH_AUTH_TIMEOUT` (20 s) from accept to success; a refusal closes the socket without a message.
+  The client address is the socket peer (the chart's LoadBalancer keeps it with
+  `externalTrafficPolicy: Local`, `15 §SSH access`).
+- *Channels* (D-239(g)): only `session` channels, at most `SSH_CHANNELS_PER_SESSION` (4) at once. On a
+  session channel the terminator accepts `pty-req` (needs `permit-pty` in the certificate; `term` ≤ 64
+  printable ASCII, cols/rows 1…1000, terminal modes ignored), `env` (`LANG`, `LC_*` only, ≤ 16 of
+  ≤ 256 bytes; other names get a failure reply), `window-change`, and exactly one of `shell`, `exec`
+  (`SSH_EXEC_COMMAND_MAX`, no NUL), `subsystem sftp`. Refused with a failure reply: `x11-req`,
+  `auth-agent-req@openssh.com`, `signal`, `break`, any other subsystem or request. Refused channel opens
+  (`SSH_MSG_CHANNEL_OPEN_FAILURE`, `administratively prohibited`): `direct-tcpip` (`-L`, `-D`),
+  `direct-streamlocal@openssh.com`, `x11`, `auth-agent@openssh.com`, every unknown type. Refused global
+  requests: `tcpip-forward` and `cancel-tcpip-forward` (`-R`), `streamlocal-forward@openssh.com`;
+  `keepalive@openssh.com` gets the standard failure reply; `no-more-sessions@openssh.com` is honoured.
+- *Ending*: the child's exit status becomes `exit-status` (or `exit-signal` with the signal name),
+  then `EOF` and `CLOSE`; a leg that ends before an exit status is `relay_error` (`exit-status` 255 and
+  a one-line stderr notice). Notices are written to the channel's extended data (stderr) and the
+  terminator waits for the client's `CHANNEL_CLOSE` (or 2 s) before `DISCONNECT`, so OpenSSH prints
+  them (the banner/goodbye ordering of OneCLI `docs/11`).
+
+**Terminator plane** (routes in `05 §Terminator plane`). `register` is repeated after any 401 or restart;
+`config` in the register and heartbeat answers carries `ca_public_keys` (the active CA key and
+`ssh.ca.previous_public_keys`), so a CA rotation reaches the terminators within one heartbeat. The
+terminator sends the heartbeat every `SSH_HEARTBEAT` (30 s) with every session it holds (≤ 500 per call,
+batched); after `SSH_HEARTBEAT_FAILURES` (3) consecutive failures it closes every session
+(`lease_expired`, they have expired server-side anyway) and refuses new authentications until a
+heartbeat succeeds. The terminator reports `close` once per session with its reason; the API's
+guarded transition makes a second close, a sweep close or a heartbeat revocation a no-op.
+
+**Leg 1, terminator → runner.** `GET /v1/preview-stream` on the runner's stream listener, `Authorization:
+Bearer auz_…` — the prefix selects the kind, as `auy_` does. The runner redeems the grant (`POST
+/v1/runner/preview-streams/open { kind: "ssh", grant }` → `{ sandbox_id, boot_id, window, idle_secs,
+max_lifetime_secs }`; 403 `grant_invalid`; 409 `not_current` when the boot is stale, the agent frozen,
+`ssh.enabled` off or the grant's session no longer open and lease-current), checks it holds the
+sandbox's channel for that boot (404 `not_here`), and completes the handshake (101). The terminator's
+**first message** must then be one Text frame, within 5 s (else close 4504):
+`{"kind":"exec.open","mode":"shell"|"exec"|"sftp","command"?:string,"tty"?:{"term","cols","rows"},"env":{…}}`
+(≤ 12 KiB); the runner allocates the `pty_id`, sends leg 2's `exec.open`, and answers
+`{"kind":"exec.opened"}` or closes 4502 (refused, unsupported, timeout) / 4409 (limit). After that:
+
+| Frame on leg 1 | Direction | Meaning |
+|---|---|---|
+| Binary `[0x02][payload ≤ 16 KiB]` | both | stdin (terminator → runner); stdout or the PTY's output (runner → terminator) |
+| Binary `[0x03][payload ≤ 16 KiB]` | runner → terminator | stderr (only without `tty`) |
+| Text `{"kind":"pty.resize","cols","rows"}` | terminator → runner | `window-change` (coalesced to the latest size) |
+| Text `{"kind":"exec.eof"}` | terminator → runner | the client sent `EOF` on stdin |
+| Text `{"kind":"exec.exit","status"?:int,"signal"?:string}` | runner → terminator | the child ended; a `1000` close follows |
+
+Any other Text frame, a Text frame over 256 bytes after `exec.open`, or a Binary frame with another tag
+closes the leg 4502 without forwarding. Close codes, ping/pong, the 30 s stalled-write rule and
+backpressure are W18 leg 1's; the runner refreshes keep-awake on bytes only (`POST
+/v1/runner/terminal/keep-awake { sandbox_id, kind: "ssh" }` → `ssh_active_until`, at most one per
+`SSH_AWAKE_GRACE` per sandbox; an older API ignores `kind` and stamps the terminal column, harmless).
+
+**Leg 2, runner ↔ supervisor — `exec.*` frames on W6**, beside `pty.*` and `stream.*` (same conventions:
+outside seq/ack, control as JSON text `{ seq: 0, ack: 0 }`, one id space with `pty.*`, data as binary,
+interleaved round-robin, credit with `pty.credit` exactly as W19):
+
+| Direction | Frame | Body |
+|---|---|---|
+| runner → supervisor | `exec.open` | `{ pty_id: u32, window: bytes, mode: "shell"\|"exec"\|"sftp", command?: string, tty?: { term, cols: u16, rows: u16 }, env: { name: value } }` |
+| supervisor → runner | `exec.opened` / `exec.refused` | `{ pty_id, window }` / `{ pty_id, reason: "disabled"\|"limit"\|"unsupported"\|"error" }` |
+| runner → supervisor | `pty.resize` | as W19 (only for an exec with `tty`) |
+| runner → supervisor | `exec.eof` | `{ pty_id }` — close the child's stdin |
+| supervisor → runner | `exec.exit` | `{ pty_id, status?: i32, signal?: string }` — exactly one, before `pty.close { reason: "eof" }` |
+| both | `pty.credit`, `pty.close` | as W19 |
+| both | binary data | `[0x02][pty_id: u32 BE][payload ≤ 16 KiB]` stdin/stdout/PTY; `[0x03][pty_id: u32 BE][payload ≤ 16 KiB]` stderr (supervisor → runner only); both count against the one window of that `pty_id` |
+
+A W6 reconnect ends every exec (leg 1 closes 4503); a supervisor that does not know `exec.*` ignores it
+(the runner's `exec.open` times out 5 s → 4502). Supervisor semantics: `12 §SSH channels`. Channel bytes
+and commands are never logged or stored at any hop (byte totals only).
+
+**Allow-list at every hop (SEC-95).** The terminator accepts only the channel types and requests above;
+the API mints a grant only for a lease-current open session that passes `can_ssh`, bound to (session,
+agent, sandbox, boot); the runner takes sandbox and boot only from the API's answer and sends `exec.open`
+only on that boot's channel; the supervisor accepts only the three modes, its fixed `sftp-server` path
+and the `LANG`/`LC_*` environment. No hop dials a TCP port or a socket for SSH: forwarding does not exist
+below the terminator either.

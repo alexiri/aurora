@@ -617,6 +617,9 @@ the frozen payload.
 | Switch **Port previews** on or off for the org (`settings.previews_enabled`, default off) (phase 4, P4-PRV-1) | org `owner`/`admin` (`org.previews.update`, security-critical) |
 | Create, pause/resume, change the start command of, delete a preview share; list the agent's shares; start the app now (phase 4, P4-PRV-1) | `can_use` of the agent's workspace, session or API key; **never an agent tool**; BYO agents have none; frozen agent: 423 |
 | Open a preview in the browser (phase 4, P4-PRV-2) | a **live dashboard session** of a user for whom `can_use(workspace)` holds, re-checked at least every `PREVIEW_AUTH_CACHE` (15 s); never an API key, never an agent credential, no other visibility (`04 §Preview access`) |
+| Register, rename, delete one's own **SSH public keys** (phase 5, P4-SSH-1, D-239) | any signed-in user, own keys only; **session only** (403 `session_required` for API keys, like creating an API key); no re-authentication (the terminal needs none either) |
+| Mint an **SSH user certificate** for an agent; connect to its sandbox over SSH (phase 5, P4-SSH-1/2, D-239) | the web terminal's rule, unchanged: `can_use` of the agent's workspace, hosted agents only, agent not frozen, instance `ssh.enabled`; session or the user's own API key for the mint (never a service key or an agent credential), re-checked by the API at session open, channel open and every heartbeat (`§SSH access`); **never an agent tool** |
+| List and disconnect SSH sessions (phase 5, P4-SSH-2) | one's own: the session's person; all sessions of an agent: `can_own` of its workspace; terminator replicas: instance admin |
 | Create, edit, pause, delete a **skill library**; "Check now"; read library settings and status (phase 4, P4-GSL) | org `owner`/`admin`; the connection must be org-scoped |
 | Browse a skill library's catalogue and read one skill at a commit (phase 4, P4-GSL) | any user who `can_use` a workspace of the org (names, descriptions and content an agent could be told; nothing is stored) |
 | Add a library skill to an agent / a workspace / the org; approve, reject a proposed library update; detach; remove (phase 4, P4-GSL) | the **tier's write authority**, unchanged from manual skills (SEC-56): agent `can_use`, workspace `can_own`, org `owner`/`admin`; **never an agent tool**; session or API key for adds, **session only** for approve/reject/detach |
@@ -1090,6 +1093,58 @@ effort, not security-critical), `preview.session.revoked` is not written (it is 
 Denials are metrics only (`aurora_relay_requests_total{outcome}`), never audit rows (volume,
 unauthenticated sources).
 
+## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+Who may SSH into which sandbox is **the web terminal's rule** (`11 §Web terminal`, SEC-87), applied
+by the API at four points. No new role, no org toggle: the instance switch `ssh.enabled` (default
+off) is the deployment's choice, like `terminal.enabled`, and the two are independent.
+
+**The SSH access predicate** `can_ssh(user, agent)`: `ssh.enabled` **and** the user is not
+disabled **and** `can_use(user, agent.workspace)` (active membership, effective role, groups —
+*The access law*) **and** the agent is hosted (BYO: 422 `ssh_not_supported`) **and** no freeze
+applies to the agent, its workspace or its org (423 `frozen`). It is implemented once in
+`aurora-db::authz` beside `can_use` and evaluated:
+
+1. **at certificate mint** (`POST /v1/agents/{agent}/ssh-certificate`, session or the person's own
+   API key; an `auk_` key only for agents of its workspace): additionally the presented public key
+   must be one of the caller's registered `ssh_keys` (422 `ssh_key_not_registered`) and the mint
+   counter must allow it (429 `ssh_mint_rate_limited`);
+2. **at session open** (the terminator's `POST /v1/terminator/sessions`, after the client proved
+   possession of the certified key): the API re-verifies the certificate against its own CA keys
+   (signature, `user` type, validity window, principal = the SSH username = the agent id, no
+   critical options, key id naming this user, key and agent), requires the certified key to be
+   **still registered** to that user with the same fingerprint, re-runs `can_ssh` and the session
+   caps; any failure is a refusal the client sees as a plain authentication failure;
+3. **at every channel open** (grant mint, `POST /v1/terminator/sessions/{id}/channels`): the session is
+   open and lease-current and `can_ssh` still holds;
+4. **at every heartbeat** (30 s): for each open session `can_ssh` still holds, the key is still
+   registered, no disconnect was requested and the lifetime is not exceeded; a failure closes the
+   row server-side at detection (so keep-awake drops even if a hostile terminator keeps
+   heartbeating) and answers the session revoked; the terminator ends the connection.
+
+Revocation therefore takes effect within one heartbeat (≤ 30 s) plus the terminator's close —
+slower than the terminal's 10 s re-check, by design of the pull-shaped lease (the API cannot dial
+the terminator); a freeze, a removed membership, a deleted key, `ssh.enabled: false` and a
+disconnect all use it. Deleting the agent, its workspace or org closes its sessions (`agent_deleted`)
+and cascades the rows.
+
+**Certificates.** A user certificate is the proof that the access law passed recently for one
+person, one key and one agent, not a standing credential: type `user`, key
+`ssh-ed25519` (the registered key), CA `ssh-ed25519` (the API's signer), `valid_principals = [<agent id>]`,
+`key_id = "aurora:u=<user id>:k=<ssh key id>:a=<agent id>:w=<workspace id>"`, a random non-zero
+64-bit `serial`, `valid_after = now − 60 s`, `valid_before = now + ssh.cert_ttl_secs` (default 900 s),
+**no critical options**, and the single extension `permit-pty` (no `permit-port-forwarding`,
+`permit-agent-forwarding`, `permit-X11-forwarding` or `permit-user-rc`; the terminator refuses those
+whatever a certificate says, `12 §SSH channels`). The CA private key lives in the API only (a signer
+seam: `local` loads it from `AURORA_SSH_CA_KEY`; a KMS signer is a later registry entry); the
+terminator receives only the CA **public** keys (active and `ssh.ca.previous_public_keys`).
+
+**Hint-free refusal.** Unknown agent, wrong principal, expired or foreign certificate, a plain key,
+an unregistered or deleted key, no access, frozen, BYO, a session cap: the client sees the same
+`Permission denied (publickey)`, after the same delay, with no banner and no reason. The reason is
+recorded only in the terminator's metrics (no ids in labels) and, for refusals the API made, in the
+API's debug log (never the certificate itself).
+
 ## Freeze (phase 2, RFE-006, D-50)
 
 An emergency, **reversible** switch that stops an agent, every agent of a
@@ -1272,7 +1327,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 
 | Area | Actions |
 |------|---------|
-| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
+| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), (phase 5, P4-SSH-1) `ssh_key.create`, `ssh_key.delete`, `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
 | Grants | `grant.put`, `grant.delete` (connection and secret grants) |
 | Policy | `policy.publish`, `policy.rollback` (org and workspace) |
 | Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `plugin.supersede` (FIX-123: connections of a superseded app moved to its successor, counts only), `trusted_key.add\|remove`, `host_claim.decide` |
@@ -1301,5 +1356,11 @@ previous `failure_code`; the start failure itself is not an audited action, the
 opening a web-terminal session, metadata: agent and workspace) and
 `agent.terminal.close` (D-178: its end, metadata: agent, workspace, close code and duration in seconds); the terminal's
 bytes are never recorded anywhere, the `terminal_stream_grants` row is its
-record) — is
-best-effort.
+record), (phase 5, P4-SSH, D-239) `agent.ssh_certificate.mint` (metadata: agent, workspace, key
+fingerprint, serial, `valid_before`), `agent.ssh.open` (agent, workspace, key fingerprint, serial,
+coarse client address, terminator replica), `agent.ssh.close` (agent, workspace, close reason, duration,
+channel counts per mode, byte totals; written once by the close-exactly-once transition) and
+`ssh_session.disconnect` (a person or owner ended a session; metadata: session, agent, `by`) — is
+best-effort. SSH channel bytes and `exec` command lines are never recorded anywhere.
+(phase 5, P4-SSH-1) `ssh_key.create` and `ssh_key.delete` (metadata: name, fingerprint; never the key
+blob) are **security-critical** (Keys and credentials).

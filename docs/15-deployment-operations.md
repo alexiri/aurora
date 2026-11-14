@@ -16,6 +16,7 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-hookhost` | `aurora-hookhost` |
 | `aurora-runner` | `aurora-runner` |
 | `aurora-relay` | `aurora-relay` (phase 4, P4-PRV-2, deployed only when previews are enabled) |
+| `aurora-terminator` | `aurora-terminator` (phase 5, P4-SSH-2, deployed only when `ssh.enabled`; a copy of the single workspace compile like the other service images) |
 | `aurora-web` | Next.js standalone build |
 | `aurora-connector-fake` | test/dev only |
 | `aurora-connector-mattermost` | phase 1 |
@@ -78,6 +79,9 @@ section's list, not row by row.
 | `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (optional) | api | (phase 4, P4-MCON) on startup, upsert this `auh_…` token's hash into `connector_host_tokens` as the shared, unbound token (kept for the upgrade path, `§Upgrades`) |
 | `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` (optional) | api | (FIX-120, D-189) JSON `[{"name","token":"auh_…","types":["mattermost"]}]`: per-host tokens bound to connector types, upserted by name at start (hash only; a changed token under the same name revokes the old one). Strictly validated: names unique, `types` non-empty, `auh_` prefix. The chart writes it from `connectorHost.perHostToken` |
 | OIDC client secrets | api | referenced from config (`client_secret_env = "…"`) |
+| `AURORA_TERMINATOR_TOKEN` | terminator | (phase 5, P4-SSH-2) `aut_…`; the chart hands the same Secret key to the API as `AURORA_BOOTSTRAP_TERMINATOR_TOKEN` (hash kept in memory; no table) |
+| `AURORA_SSH_CA_KEY` | api only | (phase 5, P4-SSH-1, D-239(d)) the SSH **user-certificate CA** private key: `ed25519:<base64 of a 32-byte seed>` (what the `secrets` hook generates) or an unencrypted OpenSSH ed25519 private key; the `local` signer. Never given to the terminator (it receives the public key at registration). Required when `ssh.enabled` (startup refusal naming it) |
+| `AURORA_SSH_HOST_KEY` | terminator only | (phase 5, P4-SSH-2) the SSH **host** key, same two formats; the same key on every replica so clients can pin it. Required when `ssh.enabled` |
 | `AURORA_SMTP_PASSWORD` (or `AURORA_SMTP_PASSWORD_FILE`) | api | (FIX-116) the mailer's password, paired with `email.smtp_username`; `email.smtp_url` carries no credentials (the file is rendered into a ConfigMap), startup refuses userinfo there and in `gateway.egress_proxy`. In the chart: `api.extraEnv` with a `secretKeyRef` |
 
 Setup tooling generates every secret and **never overwrites** an existing one.
@@ -215,6 +219,15 @@ every development or test switch: `auth.dev_idp.*`, `hosted.allow_fake_harness`,
 | `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`). The runner registers the `stream_tls` capability; the API derives the endpoint scheme it hands the relay from it (`ws://` off, `wss://` on, `16 §W18`) — the relay verifies the presented certificate against its own trust configuration |
 | `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled. Helm: the chart value `terminal.enabled` is the single switch — it mirrors `config.terminal.enabled` (FIX-053), so `helm upgrade --set terminal.enabled=true` wires everything; set the config key only to agree explicitly, never alone. (phase 5, SET-5, D-237(d)) A movable setting (*Instance settings*): its default becomes the value of `terminal.available`, and the chart value renders `terminal.available` instead of this key |
 | `terminal.available` | `false` | api | (phase 5, SET-5, D-237(d); not built yet) the deployment provides the terminal's wiring (the runner's :4108 listener and, on Kubernetes, the NetworkPolicy flows). Rendered by the chart from its `terminal.enabled` value; set it to `true` by hand on other deployments that route :4108. Not a setting: `terminal.enabled` cannot be turned on while it is `false` (422 `setting_requires_deployment`) |
+| `ssh.enabled` | `false` | api, terminator, runner (via the API) | (phase 5, P4-SSH-1/2, D-239) SSH access to sandboxes: off means every SSH route answers 404 `ssh_disabled`, no key can be registered, the runner registers no `ssh` capability and the chart deploys no terminator. Helm: the chart value `ssh.enabled` is the single switch and mirrors `config.ssh.enabled` (the FIX-053/FIX-056 pattern: both set and unequal, or the config key alone, fails the render). Independent of `terminal.enabled` |
+| `ssh.public_host` / `ssh.public_port` | host of `server.external_url` / `22` | api | (phase 5, P4-SSH-1) the name and port people connect to (the terminator's LoadBalancer address or a DNS name for it); shown in the dashboard, returned by `GET /v1/ssh` and the mint, used in `known_hosts` lines (`[host]:port` when the port is not 22) |
+| `ssh.cert_ttl_secs` | 900 | api | (phase 5, P4-SSH-1) `SSH_CERT_TTL`, 60 … 86 400 |
+| `ssh.ca.previous_public_keys` | `[]` | api | (phase 5, P4-SSH-1) OpenSSH public-key lines of retired CA keys the terminators still accept (a rotation's overlap, at least `ssh.cert_ttl_secs`); the API never signs with them |
+| `ssh.sessions_per_user`, `ssh.sessions_per_agent`, `ssh.idle_timeout_secs` | 4, 8, 600 | api | (phase 5, P4-SSH-2) lower only (`02 §Limits`); the API hands the idle timeout to the terminators at registration |
+| `ssh.awake_cap_secs` / `ssh.wake_wait_secs` | 14400 / 90 | api | (phase 5, P4-SSH-2) `SSH_AWAKE_CAP` (≤ `hosted.background_cap_secs`) / `SSH_WAKE_WAIT` |
+| `terminator.api_url` | `http://127.0.0.1:4101` | terminator | (phase 5, P4-SSH-2) the API it registers with; the anchor token comes from `AURORA_TERMINATOR_TOKEN` (`aut_`) |
+| `terminator.listen` / `terminator.ops_port` | `0.0.0.0:2222` / `4194` | terminator | (phase 5, P4-SSH-2) the SSH listener / health and metrics |
+| `terminator.max_preauth`, `terminator.max_preauth_per_ip` | 256, 8 | terminator | (phase 5, P4-SSH-2) `SSH_PREAUTH_MAX`, `SSH_PREAUTH_PER_IP` per replica (lower only) |
 | `terminal.awake_cap_secs` | 14400 | api | (phase 4, P4-TERM) `TERMINAL_AWAKE_CAP`, at most `hosted.background_cap_secs`; since FIX-116 the terminal keep-awake is bounded by this key (not `previews.awake_cap_secs`), and `terminal.wake_window_secs` sets the wake-demand window |
 | `terminal.wake_window_secs` / `terminal.wake_wait_secs` | 60 / 45 | api | (phase 4, P4-TERM) the wake-demand window on open / how long the WebSocket upgrade may wait for a waking sandbox |
 | `previews.shares_per_agent`, `previews.shares_per_org` | 10, 200 | api | (phase 4, P4-PRV-1) lower only (`02 §Limits`) |
@@ -1170,6 +1183,82 @@ With N API replicas the effective ceilings are N× those numbers (a user can hol
 `TERMINALS_PER_SANDBOX` is still enforced at the runner across replicas. Over the cap the upgrade completes and
 the socket closes `4409`. An open terminal re-checks its holder every 10 s (dashboard session live, org
 membership, `can_use`, agent not frozen) and closes `4403` when access is lost.
+
+## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+**Optional and off by default.** SSH (`11 §SSH access`) adds an internet-facing TCP port, so a
+deployment that does not set `ssh.enabled` has no terminator, no LoadBalancer, no keys and no extra
+NetworkPolicy; nothing else changes.
+
+**Turn it on** (Helm, one switch plus one required list): `ssh.enabled: true` and
+`networkPolicy.sshFrom` (who may reach the SSH port; the render fails while it is empty — to admit
+everyone, say so: `[{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: ::/0}}]`). Then point a DNS name at
+the Service's external address and set `config.ssh.public_host` to it (and `public_port` if the
+Service port is not 22). Wait for Admin › Overview's **SSH** line to show a replica.
+
+**The terminator** (`aurora-terminator`, image `aurora-terminator`, P4-SSH-2). A Rust service
+(`russh`; no database, no Vault, no Kubernetes or podman credential; in-memory session table only).
+Helm (rendered **only** with `ssh.enabled`): Deployment `aurora-terminator` (`terminator.replicas`,
+default 2 so a node loss does not cut SSH; PodDisruptionBudget; read-only root filesystem, dropped
+capabilities, non-root, no service-account token), a **LoadBalancer** Service publishing
+`terminator.service.port` (default 22) → 2222 with `externalTrafficPolicy: Local` (the terminator's
+per-address limits need the client's address; with a load balancer that cannot keep it, every client
+shares the balancer's address in `SSH_PREAUTH_PER_IP` and `SSH_CONNECT_RATE` — raise
+`terminator.max_preauth_per_ip` accordingly), `loadBalancerSourceRanges` from
+`terminator.service.loadBalancerSourceRanges`, optional annotations, and a headless ops Service on
+4194. Several replicas are fine: each holds its own connections; sessions are rows in the API with a
+lease, so a replica that dies loses its connections only (the sweep closes their rows within 90 s).
+A rolling update ends the sessions of the replica being replaced (`terminator_shutdown`, with a
+notice to the client); clients reconnect.
+
+**Keys** (all in the instance Secret, generated by the `secrets` hook when `ssh.enabled` and absent,
+never overwritten; with `secrets.existingSecret` create them yourself):
+- `AURORA_TERMINATOR_TOKEN` — `aut_` + 48 hex characters; the terminator's anchor (the API reads the
+  same key as `AURORA_BOOTSTRAP_TERMINATOR_TOKEN`). Rotate by replacing the value and rolling both.
+- `AURORA_SSH_CA_KEY` — the user-certificate CA, mounted **into the API pods only**. Generated as
+  `ed25519:` + base64 of 32 random bytes (the hook has no `ssh-keygen`); an operator may supply an
+  OpenSSH key (`ssh-keygen -t ed25519 -N '' -f ca`). **Rotation**: put the old public key into
+  `config.ssh.ca.previous_public_keys`, replace the private key, roll the API; terminators learn both at
+  the next heartbeat; remove the old key after `ssh.cert_ttl_secs`. A leaked CA key lets its holder
+  mint certificates for any agent id — but the API still refuses a session whose key id does not
+  name a registered key of a person with access (`04 §SSH access` point 2), so rotation is urgent
+  hygiene, not an open door (17 residual risk).
+- `AURORA_SSH_HOST_KEY` — the host key, mounted **into the terminator pods only**, same formats.
+  Clients pin it (the dashboard and `aurora ssh` publish the `known_hosts` line). **Rotation** changes
+  what every client has pinned: announce it, roll the terminators, and clients see a host-key change
+  warning until they update `known_hosts` (`aurora ssh` updates its own file from `GET /v1/ssh`).
+
+**NetworkPolicy** (each rule rendered only with `ssh.enabled`): terminator ingress on 2222 from
+`networkPolicy.sshFrom` only; terminator egress to **api:4101**, **runner:4108** (runner pods of this
+release; a runner outside the cluster must be reachable on 4108 from the terminator, as from the relay)
+and DNS **only** — no Postgres, no gateway, no sandboxes, no Internet; api ingress from the terminator
+on 4101; runner ingress on 4108 from the terminator pods (beside the relay and api pods). The
+sandboxes namespace gets nothing new (the `sandbox-network` guard keeps it so). The ops port 4194 is
+opened only through `networkPolicy.monitoringFrom`. The runner opens :4108 when previews, the terminal
+or SSH is enabled.
+
+**Metrics** (4194 `/metrics`; no ids, addresses or usernames in labels):
+`aurora_terminator_connections_total{outcome}` (`authenticated`, `auth_failed`, `preauth_limited`,
+`rate_limited`, `auth_timeout`, `api_error`), `aurora_terminator_auth_failures_total{reason}`
+(`not_certificate`, `bad_signature`, `expired`, `principal`, `critical_options`, `key_id`, `denied`,
+`limit` — the reason the client is never told), `aurora_terminator_sessions_open` (gauge),
+`aurora_terminator_channels_total{mode}` (`shell`, `exec`, `sftp`) and
+`aurora_terminator_channel_refused_total{kind}` (`direct-tcpip`, `tcpip-forward`, `x11`,
+`auth-agent`, `streamlocal`, `subsystem`, `other`), `aurora_terminator_bytes_total{direction}`
+(`to_sandbox`, `from_sandbox`), `aurora_terminator_session_closed_total{reason}`,
+`aurora_terminator_heartbeat_failures_total`; API: `aurora_ssh_certificates_minted_total` and
+`aurora_ssh_sessions_open` (gauge). Alert on `up{job="aurora-terminator"} == 0`, on rising
+`heartbeat_failures_total`, and on a rising `auth_failures_total{reason="bad_signature"}` or
+`connections_total{outcome="rate_limited"}` (scanning or a forged-certificate attempt). Logs carry
+session ids, agent ids, coarse addresses and reasons; never certificates, commands or bytes.
+
+**kind dev**: `deploy/kind` maps the terminator Service as a NodePort on host port 2222
+(`ssh -p 2222 <agent id>@localhost`); `scripts/e2e/ssh.sh` is the end-to-end suite (`18 §SSH access`).
+
+**Upgrade and rollback.** All SSH state is additive (new tables and two `sandboxes` columns). An
+older runner reports no `ssh` capability (channels fail, nothing else); an older supervisor ignores
+`exec.*` (channels fail with 4502). Rolling back removes the terminator; keys and closed session rows
+stay in the database, inert.
 
 ## Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
 
