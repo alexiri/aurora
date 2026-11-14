@@ -62,7 +62,14 @@ Rules every store MUST follow:
    ref naming it. The **database row is the compare-and-set authority**: callers
    swap refs with `UPDATE … WHERE <ref/version column> = <old>`. Stores
    therefore need no CAS of their own, and a lost race leaves only an orphan
-   version (cleaned by `discard`).
+   version (cleaned by `discard`). **Deleting an owner discards its values** (FIX-122): an
+   agent delete discards the agent's webhook verification secrets and its dedicated
+   presences' credentials; a workspace delete those of its agents plus its managed
+   secrets, connections and OAuth client secrets; an org delete all of those plus the
+   org's channel-integration credentials. The refs are collected inside the deleting
+   transaction and discarded after the commit (the store call cannot join the
+   transaction); a failed discard is logged and leaves an unreferenced orphan in the
+   store, never a row that still resolves.
 2. **Purpose binding.** A ref resolved with a different purpose or owner than it
    was sealed with MUST fail (`SecretRefMismatch`). Inline achieves this with
    AEAD associated data; external stores by path layout and by storing the

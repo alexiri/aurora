@@ -484,10 +484,18 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
     // Self-contained deprovision ops (RFE-024): credential copies sealed first (a seal failure
     // refuses the delete with 503), the ops committed with the delete, before the cascade.
     let mut dep = deprovision::prepare(state, Scope::Agent(id)).await?;
+    let mut refs = Vec::new();
     let done = async {
         let mut tx = state.pool.begin().await.map_err(DbError::from)?;
         credentials::revoke_for_agent(&mut *tx, id, true).await?;
         dep.enqueue(&mut tx).await?;
+        // (FIX-122) The agent's webhook secrets and dedicated-presence credentials lose their
+        // rows with the cascade: collect the refs now, discard the stored values after the
+        // commit (a failed discard is logged; the row and every reference are already gone).
+        if let Some(row) = agents::get(&mut *tx, id).await? {
+            refs = aurora_db::repo::orgs::agent_owned_refs(&mut tx, row.org_id, None, Some(id))
+                .await?;
+        }
         // (FIX-097) The agent's grants cascade without touching their compiled rules: remove
         // those first, or they stay in the policy as rules of a source that no longer exists.
         aurora_db::repo::derived_rules::delete_for_agent_grants(&mut *tx, id).await?;
@@ -502,6 +510,7 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
         return Err(e);
     }
     dep.committed(state).await;
+    crate::domains::tenancy::service::discard_managed(state, refs).await;
     Ok(())
 }
 

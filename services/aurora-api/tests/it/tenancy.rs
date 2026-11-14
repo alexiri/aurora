@@ -911,3 +911,135 @@ async fn agent_delete_removes_its_grant_derived_rules() {
         1
     );
 }
+
+/// Inserts a webhook with a sealed verification secret on `agent`; returns the stored ref.
+async fn webhook_with_secret(h: &Harness, org: Uuid, ws: Uuid, agent: Uuid) -> (Uuid, String) {
+    let hook = Uuid::now_v7();
+    let r = seal(
+        h,
+        aurora_secrets::Purpose::WebhookVerification,
+        hook,
+        org,
+        Some(ws),
+    )
+    .await;
+    sqlx::query("INSERT INTO webhooks (id, agent_id, name, instructions, token_hash, display_prefix, verification) VALUES ($1,$2,'h','do it',$3,'aur_x',$4)")
+        .bind(hook)
+        .bind(agent)
+        .bind(Uuid::now_v7().as_bytes().repeat(2))
+        .bind(json!({"kind": "bearer", "header": "Authorization", "secret_ref": r}))
+        .execute(h.pool())
+        .await
+        .unwrap();
+    (hook, r)
+}
+
+async fn plain_agent(h: &Harness, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,'Bot','byo','medium','')")
+        .bind(agent).bind(org).bind(ws).bind(handle).execute(h.pool()).await.unwrap();
+    agent
+}
+
+async fn integration_with_credentials(h: &Harness, org: Uuid, tenant: &str) -> (Uuid, String) {
+    sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', '{}', 'active') ON CONFLICT DO NOTHING")
+        .bind(vec![0u8; 32]).execute(h.pool()).await.unwrap();
+    let integ = Uuid::now_v7();
+    let r = seal(
+        h,
+        aurora_secrets::Purpose::IntegrationCredentials,
+        integ,
+        org,
+        None,
+    )
+    .await;
+    sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'chat',$3,$3,'{}',$4,'active')")
+        .bind(integ).bind(org).bind(tenant).bind(&r).execute(h.pool()).await.unwrap();
+    (integ, r)
+}
+
+async fn presence_with_credentials(h: &Harness, org: Uuid, agent: Uuid, integ: Uuid) -> String {
+    let presence = Uuid::now_v7();
+    let r = seal(
+        h,
+        aurora_secrets::Purpose::PresenceCredentials,
+        presence,
+        org,
+        None,
+    )
+    .await;
+    sqlx::query("INSERT INTO channel_presences (id, agent_id, integration_id, mode, credentials_ref, status) VALUES ($1,$2,$3,'dedicated',$4,'active')")
+        .bind(presence).bind(agent).bind(integ).bind(&r).execute(h.pool()).await.unwrap();
+    r
+}
+
+/// (FIX-122) Deleting an agent discards its webhook signing secret and its dedicated
+/// presence's credentials from the secret store; another agent's values stay.
+#[tokio::test]
+async fn agent_delete_discards_its_webhook_and_presence_secrets() {
+    let (h, mem) = memory_harness().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let before = mem.managed_count();
+    let gone = plain_agent(&h, org, ws, "gone").await;
+    let kept = plain_agent(&h, org, ws, "kept").await;
+    let (integ, _) = integration_with_credentials(&h, org, "T1").await;
+    webhook_with_secret(&h, org, ws, gone).await;
+    webhook_with_secret(&h, org, ws, kept).await;
+    presence_with_credentials(&h, org, gone, integ).await;
+    // integration + 2 webhooks + 1 presence
+    assert_eq!(mem.managed_count(), before + 4);
+    let (s, e) = call(&h, &ot, Method::DELETE, &format!("/v1/agents/{gone}"), None).await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(
+        mem.managed_count(),
+        before + 2,
+        "the agent's webhook secret and presence credentials went; the others stayed"
+    );
+}
+
+/// (FIX-122) Deleting a workspace or an organization discards the same, plus the
+/// organization's integration credentials.
+#[tokio::test]
+async fn workspace_and_org_delete_discard_webhook_and_integration_secrets() {
+    let (h, mem) = memory_harness().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let before = mem.managed_count();
+    let agent = plain_agent(&h, org, ws, "bot").await;
+    let (integ, _) = integration_with_credentials(&h, org, "T2").await;
+    webhook_with_secret(&h, org, ws, agent).await;
+    presence_with_credentials(&h, org, agent, integ).await;
+    assert_eq!(mem.managed_count(), before + 3);
+    // The workspace delete takes the agent's webhook secret and presence credentials, not the
+    // org's integration credentials.
+    let (s, e) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/workspaces/{ws}"),
+        Some(json!({"confirm": "default"})),
+    )
+    .await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(mem.managed_count(), before + 1);
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
+        .bind(org)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let (s, e) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/orgs/{org}"),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(mem.managed_count(), before);
+}
