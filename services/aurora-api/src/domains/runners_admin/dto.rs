@@ -1,7 +1,16 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
+
+/// (FIX-121, C-695) Rotation options.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct RotateQuery {
+    /// Seconds the replaced token keeps working so the runner can be rolled (0 to 86400,
+    /// default 600; 0 refuses the old token at once).
+    pub grace_secs: Option<u32>,
+}
 
 #[derive(Deserialize, ToSchema)]
 pub struct CreateRunnerRequest {
@@ -36,7 +45,10 @@ pub struct RunnerSummary {
     pub live_replicas: i64,
     pub sandboxes: i64,
     pub running_sandboxes: i64,
+    /// The declared capacity limit (`capabilities.max_sandboxes`); `null` = none declared.
     pub max_sandboxes: Option<i64>,
+    /// (FIX-121, C-695) While a rotation's grace lasts: when the replaced token stops working.
+    pub previous_token_expires_at: Option<DateTime<Utc>>,
     pub replicas: Vec<Replica>,
 }
 

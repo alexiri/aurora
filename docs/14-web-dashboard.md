@@ -877,7 +877,7 @@ approved version; reject/disable/uninstall with orphan warnings), **Host
 claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
-(provision, token, replicas, capacity; FIX-025, D-158, C-586: each runner has a
+(capacity table per runner — backend, running sandboxes of the declared limit, live replicas, version, last seen — and a **Rotate token** action with a grace period for the old token and a one-time copy of the new one; FIX-121, D-211, C-694/C-695; **provisioning (adding and removing runners) is Helm/CLI, not the dashboard**; FIX-025, D-158, C-586: each runner has a
 **Start failures** section listing the recent failures (30 days) with the time,
 code (`10 §Failure semantics`), sanitised human reason, the start attempt's last
 phase, the elapsed seconds and the pod's Warning events — so a production

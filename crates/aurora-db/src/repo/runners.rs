@@ -14,10 +14,12 @@ pub struct RunnerRow {
     pub capabilities: Option<serde_json::Value>,
     pub last_registered_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// (FIX-121) End of the rotation grace while the previous token still works.
+    pub previous_token_expires_at: Option<DateTime<Utc>>,
 }
 
-const COLS: &str =
-    "id, name, installation_fingerprint, backend, capabilities, last_registered_at, created_at";
+const COLS: &str = "id, name, installation_fingerprint, backend, capabilities, last_registered_at, created_at, \
+     CASE WHEN previous_token_expires_at > now() THEN previous_token_expires_at END AS previous_token_expires_at";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ReplicaRow {
@@ -113,18 +115,26 @@ pub async fn upsert_named<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// Replaces the runner's token. The token it replaces keeps working for `grace_secs` (0 = it is
+/// refused at once); a second rotation inside the grace drops the first token (FIX-121).
 pub async fn set_token<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
     token_hash: &[u8],
     fingerprint: &str,
+    grace_secs: f64,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "UPDATE runners SET token_hash=$2, installation_fingerprint=$3, updated_at=now() WHERE id=$1",
+        "UPDATE runners SET
+             previous_token_hash = CASE WHEN $4 > 0 THEN token_hash END,
+             previous_token_expires_at = CASE WHEN $4 > 0 THEN now() + make_interval(secs => $4) END,
+             token_hash=$2, installation_fingerprint=$3, updated_at=now()
+         WHERE id=$1",
     )
     .bind(id)
     .bind(token_hash)
     .bind(fingerprint)
+    .bind(grace_secs)
     .execute(exec)
     .await?
     .rows_affected()
@@ -154,12 +164,14 @@ pub async fn find_by_token_hash<'e, E: PgExecutor<'e>>(
     exec: E,
     hash: &[u8],
 ) -> Result<Option<RunnerRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM runners WHERE token_hash=$1"))
-            .bind(hash)
-            .fetch_optional(exec)
-            .await?,
-    )
+    // The current token, or the one a rotation replaced while its grace lasts (FIX-121).
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM runners WHERE token_hash=$1
+            OR (previous_token_hash=$1 AND previous_token_expires_at > now())"
+    ))
+    .bind(hash)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<RunnerRow>, DbError> {

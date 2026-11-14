@@ -629,7 +629,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rotate the runner token; the new `aur_` token is returned once. */
+        /**
+         * Rotate the runner token; the new `aur_` token is returned once and the replaced token keeps
+         *     working for `grace_secs` (default 600) so the runner can be rolled (FIX-121, C-695).
+         */
         post: operations["adminRotateRunnerToken"];
         delete?: never;
         options?: never;
@@ -9114,9 +9117,17 @@ export interface components {
             last_registered_at?: string | null;
             /** Format: int64 */
             live_replicas: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The declared capacity limit (`capabilities.max_sandboxes`); `null` = none declared.
+             */
             max_sandboxes?: number | null;
             name: string;
+            /**
+             * Format: date-time
+             * @description (FIX-121, C-695) While a rotation's grace lasts: when the replaced token stops working.
+             */
+            previous_token_expires_at?: string | null;
             replicas: components["schemas"]["Replica"][];
             /** Format: int64 */
             running_sandboxes: number;
@@ -12708,7 +12719,13 @@ export interface operations {
     };
     adminRotateRunnerToken: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Seconds the replaced token keeps working so the runner can be rolled (0 to 86400,
+                 *     default 600; 0 refuses the old token at once).
+                 */
+                grace_secs?: number;
+            };
             header?: never;
             path: {
                 /** @description Runner id */
@@ -12724,6 +12741,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunnerWithToken"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */

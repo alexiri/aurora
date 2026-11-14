@@ -1102,6 +1102,8 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | name | text unique not null | |
 | token_hash | bytea unique | `aur_` |
 | installation_fingerprint | text not null | sha256(token) hex prefix; labels infra objects |
+| previous_token_hash | bytea null unique | (FIX-121, D-211) the token a rotation replaced, accepted until `previous_token_expires_at`; set together with it, one at most |
+| previous_token_expires_at | timestamptz null | end of the rotation grace; past it the previous token is refused (and the pair may be cleared) |
 | backend | text null | declared at registration |
 | capabilities | jsonb null | `RunnerCapabilities` (`16`) |
 | last_registered_at | timestamptz null | |

@@ -297,12 +297,12 @@ async fn admin_provision_register_and_list() {
     assert_eq!(v["items"][0]["live_replicas"], 1);
     assert_eq!(v["items"][0]["replicas"][0]["advertised_host"], "runner-a");
     assert!(v["items"][0].get("token").is_none());
-    // Rotate: old token dies, new works once.
+    // Rotate with no grace: the old token dies at once.
     let id = r.runner_id;
     let (s, _, v2) =
         r.h.send(
             Method::POST,
-            &format!("/v1/admin/runners/{id}/token"),
+            &format!("/v1/admin/runners/{id}/token?grace_secs=0"),
             &[("cookie", &c), ("origin", ORIGIN)],
             None,
         )
@@ -320,6 +320,108 @@ async fn admin_provision_register_and_list() {
         )
         .await;
     assert_eq!(s, 409);
+}
+
+/// (FIX-121, C-694) The admin list carries each runner's capacity and replicas; only an
+/// instance admin may read it.
+#[tokio::test]
+async fn admin_runner_list_shows_capacity_and_refuses_non_admins() {
+    let r = rig().await;
+    r.register("runner-cap", 7).await;
+    let admin = r.h.user("cap-admin@x.io", true).await;
+    let (_, sess) = r.h.good_session(admin).await;
+    let c = cookie(&sess);
+    let (s, _, v) =
+        r.h.send(Method::GET, "/v1/admin/runners", &[("cookie", &c)], None)
+            .await;
+    assert_eq!(s, 200, "{v}");
+    let item = &v["items"][0];
+    assert_eq!(item["max_sandboxes"], 7);
+    assert_eq!(item["backend"], "fake");
+    assert_eq!(item["live_replicas"], 1);
+    assert_eq!(item["running_sandboxes"], 0);
+    assert_eq!(item["replicas"][0]["version"], "0.1");
+    assert!(item["previous_token_expires_at"].is_null());
+    let plain = r.h.user("cap-plain@x.io", false).await;
+    let (_, sess) = r.h.good_session(plain).await;
+    let (s, _, _) =
+        r.h.send(
+            Method::GET,
+            "/v1/admin/runners",
+            &[("cookie", &cookie(&sess))],
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+}
+
+/// (FIX-121, C-695) A rotation keeps the replaced token working for the grace period, then
+/// refuses it; the new token works throughout and the rotation is audited with its grace.
+#[tokio::test]
+async fn rotated_runner_token_works_during_the_grace_and_is_refused_after() {
+    let r = rig().await;
+    let rep = r.register("runner-g", 4).await;
+    let admin = r.h.user("rot-admin@x.io", true).await;
+    let (_, sess) = r.h.good_session(admin).await;
+    let c = cookie(&sess);
+    let id = r.runner_id;
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/admin/runners/{id}/token?grace_secs=300"),
+            &[("cookie", &c), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let new_tok = v["token"].as_str().unwrap().to_owned();
+    assert!(v["runner"]["previous_token_expires_at"].is_string());
+    let poll = |tok: String| {
+        let h = &r.h;
+        let rep = rep.to_string();
+        async move {
+            let b = bearer(&tok);
+            h.send(
+                Method::POST,
+                "/v1/runner/work",
+                &[("authorization", b.as_str()), ("x-aurora-replica", &rep)],
+                Some(json!({"wait_secs":0,"capacity":{"running":0,"max":1}})),
+            )
+            .await
+            .0
+            .as_u16()
+        }
+    };
+    assert_eq!(poll(r.tok.clone()).await, 200, "old token within the grace");
+    assert_eq!(poll(new_tok.clone()).await, 200, "new token");
+    // The grace ends (the clock is the row: drive it deterministically).
+    sqlx::query(
+        "UPDATE runners SET previous_token_expires_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(poll(r.tok.clone()).await, 401, "old token after the grace");
+    assert_eq!(poll(new_tok).await, 200, "new token after the grace");
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'admin.runner_rotate' AND target_id = $1 AND metadata->>'grace_secs' = '300'",
+    )
+    .bind(id.to_string())
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+    // An out-of-range grace is refused.
+    let (s, _, _) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/admin/runners/{id}/token?grace_secs=86401"),
+            &[("cookie", &c), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 400);
 }
 
 #[tokio::test]

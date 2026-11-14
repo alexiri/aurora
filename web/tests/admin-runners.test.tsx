@@ -74,9 +74,10 @@ describe("admin runners view (FIX-025, C-586)", () => {
         }),
     });
     wrap(<AdminRunnersView />);
-    await within(document.body).findByText("runner-a");
-    expect(screen.getByText("kubernetes")).toBeTruthy();
-    expect(screen.getByText("1 live")).toBeTruthy();
+    // The runner is named in the capacity table and in its card.
+    expect((await within(document.body).findAllByText("runner-a")).length).toBe(2);
+    expect(screen.getAllByText("kubernetes").length).toBe(2);
+    expect(screen.getAllByText("1 live").length).toBe(2);
     fireEvent.click(screen.getByRole("button", { name: "Start failures" }));
     const code = await screen.findByText("supervisor_unreachable");
     expect(code).toBeTruthy();
@@ -144,6 +145,49 @@ describe("admin runners view (FIX-025, C-586)", () => {
     const urls = fetchMock.mock.calls.map((c) => new URL((c[0] as Request).url, "http://localhost").pathname);
     expect(urls.some((u) => u.includes("/agents//"))).toBe(false);
     expect(urls).toContain("/v1/admin/agents/ag1/start-failures");
+  });
+
+  // FIX-121 (C-694): the capacity table shows what each runner runs against its limit.
+  it("shows each runner's capacity, replicas, version and last seen", async () => {
+    mockFetch({
+      "GET /v1/admin/runners": () =>
+        json(200, {
+          items: [
+            { ...runner, replicas: [{ version: "0.9.1", live: true, last_seen_at: "2026-11-10T10:05:00Z" }] },
+            { ...runner, id: "r2", name: "runner-b", max_sandboxes: null, running_sandboxes: 3, live_replicas: 0, backend: null },
+          ],
+        }),
+    });
+    wrap(<AdminRunnersView />);
+    const table = await screen.findByRole("table", { name: "Runner capacity" });
+    expect(within(table).getByText("1 of 4 running")).toBeTruthy();
+    expect(within(table).getByText("0.9.1")).toBeTruthy();
+    expect(within(table).getByText("3 running (no limit declared)")).toBeTruthy();
+    expect(within(table).getByText("not registered")).toBeTruthy();
+    expect(within(table).getByText("never")).toBeTruthy();
+  });
+
+  // FIX-121 (C-695): confirm, choose the grace, the new token is shown once, the old one's end is told.
+  it("rotates a runner's token with a grace period and shows the new token once", async () => {
+    let called = "";
+    mockFetch({
+      "GET /v1/admin/runners": () => json(200, { items: [runner] }),
+      "POST /v1/admin/runners/r1/token": (req) => {
+        called = new URL(req.url, "http://localhost").search;
+        return json(200, {
+          token: "aur_NEWTOKEN",
+          runner: { ...runner, previous_token_expires_at: "2026-11-10T10:20:00Z" },
+        });
+      },
+    });
+    wrap(<AdminRunnersView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate token" }));
+    const dlg = await screen.findByRole("dialog");
+    fireEvent.change(within(dlg).getByLabelText("Grace period for the old token"), { target: { value: "3600" } });
+    fireEvent.click(within(dlg).getByRole("button", { name: "Rotate token" }));
+    await waitFor(() => expect(screen.getByTestId("secret-key").textContent).toBe("aur_NEWTOKEN"));
+    expect(called).toBe("?grace_secs=3600");
+    expect(screen.getByRole("dialog").textContent).toContain("The old token keeps working until");
   });
 
   it("marks an offline runner", async () => {

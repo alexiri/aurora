@@ -25,11 +25,31 @@ Other admin actions:
 
 | Action | Route | Result |
 |--------|-------|--------|
-| List | `GET /v1/admin/runners` | Runners, replicas, capacity |
-| Rotate token | `POST /v1/admin/runners/{id}/token` | `200` with a new `aur_` token, shown once |
+| List | `GET /v1/admin/runners` | Runners, replicas, capacity (`max_sandboxes`, `running_sandboxes`, live replicas, versions, last seen) |
+| Rotate token | `POST /v1/admin/runners/{id}/token?grace_secs=600` | `200` with a new `aur_` token, shown once; the replaced token keeps working for the grace (0 to 86400 s, default 600) |
 | Delete | `DELETE /v1/admin/runners/{id}` | `204`. `409` while sandboxes run on it. |
 
-Every change is audited (`admin.runner_create`, `admin.runner_delete`, `admin.runner_rotate`).
+Every change is audited (`admin.runner_create`, `admin.runner_delete`, `admin.runner_rotate`
+with the grace in its metadata).
+
+Adding and removing runners is Helm/CLI work, not a dashboard action (D-211). **Admin ›
+Runners** shows the capacity table and has a **Rotate token** action.
+
+### Rotate a runner's token (D-211)
+
+1. Rotate: Admin › Runners › **Rotate token** (choose the grace, default 10 minutes), or
+   `POST /v1/admin/runners/{id}/token?grace_secs=…`. Copy the new token; it is shown once.
+2. Put the new token where the runner reads `AURORA_RUNNER_TOKEN` (Helm: update the runner
+   token Secret, e.g. `kubectl -n aurora create secret generic … --dry-run=client -o yaml | kubectl apply -f -`,
+   or the value behind `api.bootstrap.runnerToken` for the `default` runner) and roll the
+   runner Deployment (`kubectl rollout restart`).
+3. The old token works until the grace ends (the runners list shows "old token valid until");
+   after that it gets `401`. A second rotation inside the grace replaces the first old token.
+   Roll within the grace: the sandboxes' `aurora.installation` label is the hash of the **new**
+   token, so a runner still on the old token no longer recognises sandboxes the API started
+   after the rotation as its own until it is rolled.
+4. With `AURORA_BOOTSTRAP_RUNNER_TOKEN` set, the API re-applies that value to the runner `default`
+   at every start, which undoes a rotation of `default`: change the configured value as well.
 
 ### Bootstrap alternative
 

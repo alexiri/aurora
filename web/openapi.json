@@ -3571,7 +3571,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Rotate the runner token; the new `aur_` token is returned once.",
+        "summary": "Rotate the runner token; the new `aur_` token is returned once and the replaced token keeps\nworking for `grace_secs` (default 600) so the runner can be rolled (FIX-121, C-695).",
         "operationId": "adminRotateRunnerToken",
         "parameters": [
           {
@@ -3583,6 +3583,17 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "grace_secs",
+            "in": "query",
+            "description": "Seconds the replaced token keeps working so the runner can be rolled (0 to 86400,\ndefault 600; 0 refuses the old token at once).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
           }
         ],
         "responses": {
@@ -3592,6 +3603,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RunnerWithToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -44536,10 +44557,19 @@
               "integer",
               "null"
             ],
-            "format": "int64"
+            "format": "int64",
+            "description": "The declared capacity limit (`capabilities.max_sandboxes`); `null` = none declared."
           },
           "name": {
             "type": "string"
+          },
+          "previous_token_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(FIX-121, C-695) While a rotation's grace lasts: when the replaced token stops working."
           },
           "replicas": {
             "type": "array",

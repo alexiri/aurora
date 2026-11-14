@@ -38,6 +38,7 @@ async fn summary(s: &AppState, r: RunnerRow) -> Result<RunnerSummary, ApiError> 
         sandboxes: stats.as_ref().map_or(0, |x| x.sandboxes),
         running_sandboxes: stats.as_ref().map_or(0, |x| x.running),
         max_sandboxes: max,
+        previous_token_expires_at: r.previous_token_expires_at,
         replicas: replicas
             .into_iter()
             .map(|p| Replica {
@@ -173,11 +174,26 @@ pub async fn create(
     })
 }
 
+/// (FIX-121, C-695) Default and maximum seconds the replaced runner token keeps working.
+pub const DEFAULT_TOKEN_GRACE_SECS: u32 = 600;
+pub const MAX_TOKEN_GRACE_SECS: u32 = 86_400;
+
 pub async fn rotate(
     s: &AppState,
     id: Uuid,
+    grace_secs: Option<u32>,
     actor: &crate::audit::AuditActor,
 ) -> Result<RunnerWithToken, ApiError> {
+    let grace = grace_secs.unwrap_or(DEFAULT_TOKEN_GRACE_SECS);
+    if grace > MAX_TOKEN_GRACE_SECS {
+        return Err(ApiError::invalid_request(
+            "Invalid grace period.",
+            vec![aurora_core::FieldError::new(
+                "/grace_secs",
+                "0 to 86400 seconds",
+            )],
+        ));
+    }
     let tok = token::generate(TokenPrefix::Runner);
     let mut tx = crate::audit::begin(s).await?;
     if !runners::set_token(
@@ -185,12 +201,17 @@ pub async fn rotate(
         id,
         &token::hash(tok.expose()),
         &fingerprint(tok.expose()),
+        f64::from(grace),
     )
     .await?
     {
         return Err(ApiError::not_found("Runner not found."));
     }
-    crate::audit::commit_critical(tx, &event(actor, "admin.runner_rotate", id)).await?;
+    crate::audit::commit_critical(
+        tx,
+        &event(actor, "admin.runner_rotate", id).metadata(serde_json::json!({"grace_secs": grace})),
+    )
+    .await?;
     let row = runners::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Runner not found."))?;
