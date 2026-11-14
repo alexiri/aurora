@@ -3,7 +3,7 @@
 //! Everything here is pure: callers resolve mention references first
 //! ([`mention_refs`]) and hand the answers in as [`Lookups`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use aurora_channels::{Block, ButtonStyle, Card};
 use base64::Engine;
@@ -21,6 +21,9 @@ const HERE: char = '\u{E000}';
 pub struct MentionRefs {
     pub users: Vec<String>,
     pub spaces: Vec<String>,
+    /// Lowercase `@names` typed in the text (not `channel`/`all`/`here`, which are always
+    /// defused): each is a user, a group or nothing — the connector asks the platform (D-271).
+    pub names: Vec<String>,
 }
 
 /// Pre-resolved platform names for mention tokens.
@@ -30,6 +33,54 @@ pub struct Lookups {
     pub users: HashMap<String, String>,
     /// channel id → channel name
     pub spaces: HashMap<String, String>,
+    /// Lowercase mention names of groups (custom and LDAP-synced): broadcasts, defused like
+    /// `@channel` (D-271(c)).
+    pub groups: HashSet<String>,
+    /// Lowercase usernames that were looked up and exist: a single user's mention passes.
+    pub known: HashSet<String>,
+    /// The name lookup was unavailable (or too long to run): every `@name` that is not a known
+    /// user is treated as a group — fail closed (D-271(c)).
+    pub closed: bool,
+}
+
+/// The mention name at the start of `rest` (which begins with `@`): username characters
+/// (`a-z0-9._-`, any case), trailing `.`, `_`, `-` left out — the server reads `@channel.foo` as the
+/// name `channel.foo` but `@channel.` as `channel` — as `(lowercase name, byte length with the @)`.
+fn name_at(rest: &str) -> Option<(String, usize)> {
+    let body = rest.strip_prefix('@')?;
+    let n = body
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+        .unwrap_or(body.len());
+    let name = body[..n].trim_end_matches(['.', '_', '-']);
+    (!name.is_empty()).then(|| (name.to_ascii_lowercase(), 1 + name.len()))
+}
+
+/// The server does not read `@` after an ASCII letter or digit, or after another `@`, as a mention.
+fn can_ping_after(text: &str, at: usize) -> bool {
+    !text[..at]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '@')
+}
+
+fn is_broadcast_word(name: &str) -> bool {
+    matches!(name, "channel" | "all" | "here")
+}
+
+fn mention_names(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (i, _) in text.match_indices('@') {
+        if !can_ping_after(text, i) || text[..i].ends_with('<') {
+            continue;
+        }
+        if let Some((name, _)) = name_at(&text[i..])
+            && !is_broadcast_word(&name)
+            && !out.contains(&name)
+        {
+            out.push(name);
+        }
+    }
+    out
 }
 
 /// Parsed `<@user:ID>`, `<@bot:ID>`, `<#space:ID>` token.
@@ -89,6 +140,7 @@ pub fn mention_refs(neutral: &str) -> MentionRefs {
         }
         true
     });
+    m.names = mention_names(neutral);
     m
 }
 
@@ -135,7 +187,7 @@ pub fn render_text(neutral: &str, lk: &Lookups) -> String {
     }
     out.push_str(rest);
     // `defuse` skips the private-use marker, so the core's `<@here>` survives.
-    let out = defuse(&out).replace(HERE, "@here");
+    let out = defuse(&out, lk).replace(HERE, "@here");
     // Last line of defence (FIX-142 review): nothing after the core's sanitizer may produce what
     // the sanitizer refuses. If the converted text holds an image, a link outside http/https/
     // mailto or an image opener, the whole text is posted as escaped plain text instead.
@@ -151,7 +203,7 @@ pub fn render_text(neutral: &str, lk: &Lookups) -> String {
         });
         let data =
             aurora_core::sanitize::markdown_as_data(&neutral_without_marker(neutral), usize::MAX);
-        defuse(&URL.replace_all(&data, "$1:\\/"))
+        defuse(&URL.replace_all(&data, "$1:\\/"), lk)
     }
 }
 
@@ -160,72 +212,66 @@ fn neutral_without_marker(neutral: &str) -> String {
     neutral.replace(HERE, "")
 }
 
-fn is_word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+/// Whether the mention `name` (lowercase) would notify more than one person: `channel`, `all`,
+/// `here`, a group, or — when the lookup was unavailable — any name that is not a known user.
+fn pings_many(name: &str, lk: &Lookups) -> bool {
+    is_broadcast_word(name)
+        || lk.groups.contains(name)
+        || (lk.closed
+            && !lk.known.contains(name)
+            && !lk.users.values().any(|u| u.eq_ignore_ascii_case(name)))
 }
 
-/// Broadcast word at the start of `s` (which begins with `@`), if any.
-fn broadcast_at(s: &str) -> Option<usize> {
-    let after = s.strip_prefix('@')?;
-    for w in ["channel", "all", "here"] {
-        if after.len() >= w.len()
-            && after.is_char_boundary(w.len())
-            && after[..w.len()].eq_ignore_ascii_case(w)
-            && !after[w.len()..].chars().next().is_some_and(is_word)
-        {
-            return Some(1 + w.len());
-        }
-    }
-    None
-}
-
-/// Wraps `@channel`, `@all` and `@here` in inline code so they notify nobody.
-/// Text already inside inline code or a fenced block is left alone.
-pub fn defuse(text: &str) -> String {
+/// Defuses every mention that would notify more than one person (D-271): `@channel`, `@all`,
+/// `@here` (the core's own `<@here>` is a private marker here, untouched), a group's name and,
+/// when `lk.closed`, any name that is not a known user — in any letter case, next to any
+/// punctuation, inside emphasis, headings, quotes, lists, table cells and link labels (the
+/// server reads the raw text, measured on 11.7.15 — `docs/20 §Rendering`). The word is wrapped
+/// in an inline code span (`` `@channel` ``); in a link destination the `@` is percent-encoded;
+/// after a backslash (which would escape the backtick) a zero-width space breaks it. Code is
+/// never touched, and nothing in code notifies. One user's `@name` passes.
+pub fn defuse(text: &str, lk: &Lookups) -> String {
+    let code = crate::convert::code_ranges(text);
+    let dests = crate::convert::link_dest_ranges(text);
+    let inside = |rs: &[std::ops::Range<usize>], i: usize| rs.iter().any(|r| r.contains(&i));
+    // A backtick that is not part of code is literal: one we add could pair with it.
+    let stray = text
+        .char_indices()
+        .any(|(i, c)| c == '`' && !inside(&code, i));
     let mut out = String::with_capacity(text.len() + 8);
-    let mut i = 0;
-    while i < text.len() {
-        let rest = &text[i..];
-        let at_line_start = i == 0 || text.as_bytes()[i - 1] == b'\n';
-        if at_line_start && rest.starts_with("```") {
-            // Fenced block: copy through the closing fence line (or to the end).
-            let end = rest[3..].find("\n```").map_or(rest.len(), |p| 3 + p + 4);
-            out.push_str(&rest[..end]);
-            i += end;
+    let mut at = 0;
+    for (i, _) in text.match_indices('@') {
+        if i < at || inside(&code, i) || !can_ping_after(text, i) {
             continue;
         }
-        let Some(c) = rest.chars().next() else { break };
-        if c == '`' {
-            let n = rest.bytes().take_while(|b| *b == b'`').count();
-            let fence = "`".repeat(n);
-            let mut end = n;
-            let mut found = None;
-            while let Some(p) = rest[end..].find(&fence) {
-                let at = end + p;
-                if rest.as_bytes().get(at + n) == Some(&b'`') {
-                    end = at + n + rest[at + n..].bytes().take_while(|b| *b == b'`').count();
-                    continue;
-                }
-                found = Some(at + n);
-                break;
-            }
-            let take = found.unwrap_or(n);
-            out.push_str(&rest[..take]);
-            i += take;
+        let Some((name, len)) = name_at(&text[i..]) else {
+            continue;
+        };
+        if !pings_many(&name, lk) {
             continue;
         }
-        if c == '@'
-            && let Some(len) = broadcast_at(rest)
+        out.push_str(&text[at..i]);
+        let word = &text[i..i + len];
+        let backslashes = text[..i].chars().rev().take_while(|c| *c == '\\').count();
+        if inside(&dests, i) {
+            out.push_str("%40");
+            out.push_str(&word[1..]);
+        } else if backslashes % 2 == 1
+            || stray
+            || text[..i].ends_with('`')
+            || text[i + len..].starts_with('`')
         {
+            out.push('@');
+            out.push('\u{200B}');
+            out.push_str(&word[1..]);
+        } else {
             out.push('`');
-            out.push_str(&rest[..len]);
+            out.push_str(word);
             out.push('`');
-            i += len;
-            continue;
         }
-        out.push(c);
-        i += c.len_utf8();
+        at = i + len;
     }
+    out.push_str(&text[at..]);
     out
 }
 
@@ -449,17 +495,187 @@ mod tests {
         );
     }
 
+    fn d(s: &str) -> String {
+        defuse(s, &Lookups::default())
+    }
+
     #[test]
     fn defuse_keeps_ordinary_mentions_and_code() {
         assert_eq!(
-            defuse("@allison @channels @here_x"),
+            d("@allison @channels @here_x"),
             "@allison @channels @here_x"
         );
-        assert_eq!(defuse("`@channel` already"), "`@channel` already");
-        assert_eq!(defuse("``a @all b`` @all"), "``a @all b`` `@all`");
-        assert_eq!(defuse("```\n@here\n```\n@here"), "```\n@here\n```\n`@here`");
-        assert_eq!(defuse("unclosed ` @all"), "unclosed ` `@all`");
-        assert_eq!(defuse("é@all"), "é`@all`");
+        assert_eq!(d("`@channel` already"), "`@channel` already");
+        assert_eq!(d("``a @all b`` @all"), "``a @all b`` `@all`");
+        assert_eq!(d("```\n@here\n```\n@here"), "```\n@here\n```\n`@here`");
+        // (a stray backtick: ours could pair with it, so a zero-width space breaks the word)
+        assert_eq!(d("unclosed ` @all"), "unclosed ` @\u{200B}all");
+        // (superset: only an ASCII letter or digit in front makes it no mention on the server)
+        assert_eq!(d("é@all"), "é`@all`");
+        // Names the server reads as a longer name are no mention of `channel`, `all`, `here`.
+        for same in [
+            "@channelx",
+            "@channel.foo",
+            "@channel-foo",
+            "@channel_foo",
+            "@here.foo",
+            "@all-foo",
+            "@all1",
+            "x@channel",
+            "1@here",
+            "foo@all.example.com",
+            "@@channel",
+            "~~~\n@all\n~~~",
+            "    @channel (indented code)",
+            "\n    @here\n",
+        ] {
+            assert_eq!(d(same), same, "{same:?}");
+        }
+    }
+
+    /// D-271 (a)(b): every spelling the pinned dev server (Mattermost 11.7.15) notifies on —
+    /// measured through the members' `mention_count` (`docs/20 §Rendering`, mentions table) —
+    /// is defused: any letter case, punctuation either side (including `_`, `-`, `.`, a
+    /// backslash), inside emphasis, headings, quotes, lists, table cells and link labels.
+    #[test]
+    fn every_spelling_mattermost_pings_on_is_defused() {
+        for (src, want) in [
+            ("@Channel", "`@Channel`"),
+            ("@CHANNEL", "`@CHANNEL`"),
+            ("@cHaNnEl", "`@cHaNnEl`"),
+            ("@All and @ALL", "`@All` and `@ALL`"),
+            ("@Here @HERE", "`@Here` `@HERE`"),
+            ("@channel.", "`@channel`."),
+            ("@channel,", "`@channel`,"),
+            ("@channel:", "`@channel`:"),
+            ("@channel!", "`@channel`!"),
+            ("@channel?", "`@channel`?"),
+            ("@channel;", "`@channel`;"),
+            ("@channel)", "`@channel`)"),
+            ("(@channel)", "(`@channel`)"),
+            ("[@channel]", "[`@channel`]"),
+            ("\"@channel\" '@all'", "\"`@channel`\" '`@all`'"),
+            (
+                "@channel- @channel_ @channel..",
+                "`@channel`- `@channel`_ `@channel`..",
+            ),
+            (
+                "@channel’s @channel… @channel— @channel(",
+                "`@channel`’s `@channel`… `@channel`— `@channel`(",
+            ),
+            ("_@channel", "_`@channel`"),
+            (
+                ".@here -@here /@here <@here\u{200B}>",
+                ".`@here` -`@here` /`@here` <`@here`\u{200B}>",
+            ),
+            ("#@all >@all &@all", "#`@all` >`@all` &`@all`"),
+            (":tada:@channel", ":tada:`@channel`"),
+            (
+                "**@channel** _@all_ ~~@here~~ *@channel*",
+                "**`@channel`** _`@all`_ ~~`@here`~~ *`@channel`*",
+            ),
+            ("# @channel", "# `@channel`"),
+            ("> @channel", "> `@channel`"),
+            ("- @all\n1. @here", "- `@all`\n1. `@here`"),
+            ("| a |\n|---|\n| @channel |", "| a |\n|---|\n| `@channel` |"),
+            (
+                "[@channel](https://x.example)",
+                "[`@channel`](https://x.example)",
+            ),
+            (
+                "[x @all y](https://x.example)",
+                "[x `@all` y](https://x.example)",
+            ),
+            ("@channel/@all", "`@channel`/`@all`"),
+            ("@channel\n@all", "`@channel`\n`@all`"),
+            // A backslash in front would escape the opening backtick: a zero-width space instead.
+            ("\\@channel", "\\@\u{200B}channel"),
+            ("\\\\@channel", "\\\\`@channel`"),
+        ] {
+            assert_eq!(d(src), want, "{src:?}");
+        }
+    }
+
+    /// Inserted backticks must not pair with the author's: a stray backtick anywhere, a backtick
+    /// right next to the word or a backslash in front means a zero-width space instead (found by
+    /// the pipeline property: `` ` @devs … <code>@here</code> `` re-paired and freed `@devs`).
+    #[test]
+    fn a_defused_word_never_changes_what_is_code_around_it() {
+        let mut lk = Lookups::default();
+        lk.groups.insert("devs".into());
+        for (src, want) in [
+            ("` @channel", "` @\u{200B}channel"),
+            ("a ` b @all c", "a ` b @\u{200B}all c"),
+            ("`x`@here", "`x`@\u{200B}here"),
+            ("@here`x`", "@\u{200B}here`x`"),
+            ("``a`` @all `b` @here", "``a`` `@all` `b` `@here`"),
+            // (the first pair of backticks is a code span around the names; the last one is stray)
+            ("` @devs @Devs ` @here `", "` @devs @Devs ` @\u{200B}here `"),
+        ] {
+            assert_eq!(defuse(src, &lk), want, "{src:?}");
+        }
+    }
+
+    /// A link destination is no place for a backtick: the `@` is percent-encoded there.
+    #[test]
+    fn a_ping_word_inside_a_link_destination_is_percent_encoded() {
+        assert_eq!(
+            d("[x](https://a.example/@channel) and [y](https://a.example/p?q=@all)"),
+            "[x](https://a.example/%40channel) and [y](https://a.example/p?q=%40all)"
+        );
+        assert_eq!(
+            d("[x][r]\n\n[r]: https://a.example/@here"),
+            "[x][r]\n\n[r]: https://a.example/%40here"
+        );
+    }
+
+    /// D-271 (c)(d): a group's mention name is a broadcast like `@channel`; one user's name passes;
+    /// when the lookup was unavailable every name that is not a known user is treated as a group.
+    #[test]
+    fn group_mentions_are_defused_and_unresolved_names_fail_closed() {
+        let mut lk = Lookups::default();
+        lk.groups.insert("devs".into());
+        lk.known.insert("alice".into());
+        for (src, want) in [
+            ("@devs", "`@devs`"),
+            ("@Devs.", "`@Devs`."),
+            ("**@DEVS**", "**`@DEVS`**"),
+            ("[@devs](https://x.example)", "[`@devs`](https://x.example)"),
+            ("@alice and @Alice.", "@alice and @Alice."),
+            ("@devs.sub", "@devs.sub"),
+            ("`@devs`", "`@devs`"),
+            ("@stranger", "@stranger"),
+        ] {
+            assert_eq!(defuse(src, &lk), want, "{src:?}");
+        }
+        lk.closed = true;
+        for (src, want) in [
+            ("@stranger and @alice", "`@stranger` and @alice"),
+            ("@stranger.name!", "`@stranger.name`!"),
+            ("mail me@example.com", "mail me@example.com"),
+            ("`@stranger`", "`@stranger`"),
+        ] {
+            assert_eq!(defuse(src, &lk), want, "{src:?}");
+        }
+        // A person the core mentions by token is a user, resolved and live even when closed.
+        let mut lk2 = lk_with_alice();
+        lk2.closed = true;
+        assert_eq!(
+            render_text("hi <@user:u1> and @bob", &lk2),
+            "hi @alice and `@bob`"
+        );
+    }
+
+    fn lk_with_alice() -> Lookups {
+        lk()
+    }
+
+    #[test]
+    fn mention_names_lists_the_names_to_resolve() {
+        let r = mention_refs(
+            "hi @Alice, @bob.smith and @channel @all @here, x@mail.example <@user:u1> `@code` @devs!",
+        );
+        assert_eq!(r.names, ["alice", "bob.smith", "code", "devs"]);
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod events;
 pub mod integ;
 pub mod lanes;
 pub mod managed;
+pub mod mentions;
 pub mod ops;
 pub mod presence;
 pub mod render;

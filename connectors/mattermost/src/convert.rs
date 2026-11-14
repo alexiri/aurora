@@ -382,6 +382,39 @@ static REF_USE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[([^\[\]\n]*)\](?:\[([^\[\]\n]*)\])?").unwrap_or_else(|_| unreachable!())
 });
 
+/// Byte ranges of the code (spans, fenced and indented blocks) in `text`.
+pub fn code_ranges(text: &str) -> Vec<Range<usize>> {
+    Parser::new_ext(text, options())
+        .into_offset_iter()
+        .filter(|(e, _)| matches!(e, Event::Code(_) | Event::Start(Tag::CodeBlock(_))))
+        .map(|(_, r)| r)
+        .collect()
+}
+
+/// Byte ranges of the link destinations in `text` — `](…)` of inline links and the destination
+/// of a reference definition — read the way [`is_safe`] reads them.
+pub fn link_dest_ranges(text: &str) -> Vec<Range<usize>> {
+    let m = masked(text);
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(p) = m[from..].find("](") {
+        let close = from + p;
+        from = close + 2;
+        if escaped(&m, close) {
+            continue;
+        }
+        if let Some((_, span)) = inline_dest(&m[close + 2..]) {
+            out.push(close + 2..close + 2 + span);
+        }
+    }
+    for c in REF_DEF.captures_iter(&m) {
+        if let Some(g) = c.get(2) {
+            out.push(g.range());
+        }
+    }
+    out
+}
+
 /// `text` with code spans and blocks blanked (same length): links in code are not links.
 fn masked(text: &str) -> String {
     let mut b = text.as_bytes().to_vec();

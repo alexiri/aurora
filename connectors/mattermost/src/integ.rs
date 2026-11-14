@@ -98,6 +98,8 @@ pub struct Integ {
     pub settings: Settings,
     users: Mutex<HashMap<String, (Instant, MmUser)>>,
     names: Mutex<HashMap<String, (Instant, Option<MmUser>)>>,
+    /// `@name` → user / group / neither (D-271(c)).
+    mention_names: crate::mentions::NameCache,
     channels: Mutex<HashMap<String, (Instant, MmChannel)>>,
     ready: AtomicBool,
     catching_up: AtomicBool,
@@ -203,6 +205,7 @@ impl Integ {
             settings,
             users: Mutex::new(HashMap::new()),
             names: Mutex::new(HashMap::new()),
+            mention_names: crate::mentions::NameCache::default(),
             channels: Mutex::new(HashMap::new()),
             ready: AtomicBool::new(false),
             catching_up: AtomicBool::new(false),
@@ -395,6 +398,20 @@ impl Integ {
             if let Ok(c) = self.channel(id).await {
                 lk.spaces.insert(id.clone(), c.name);
             }
+        }
+        // D-271(c): which typed `@name`s are a user and which a group; a lookup that fails
+        // leaves the rest to be treated as groups.
+        if !refs.names.is_empty() {
+            let d = self.snapshot();
+            crate::mentions::resolve(
+                &self.mm,
+                &d.bot_token,
+                d.admin_token.as_deref(),
+                &self.mention_names,
+                &refs.names,
+                &mut lk,
+            )
+            .await;
         }
         lk
     }

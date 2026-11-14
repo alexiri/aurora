@@ -30,6 +30,61 @@ fn posts(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// A model of the pinned server's mention reading (Mattermost 11.7.15, measured through members'
+/// `mention_count`, `docs/20 §Rendering`): outside code, `@name` where the name is `[A-Za-z0-9._-]`
+/// without trailing `._-`, not after an ASCII letter/digit or `@`. Returns the lowercase names
+/// that would notify more than one person: `channel`, `all`, `here` and `groups`.
+fn live_pings(post: &str, groups: &[&str]) -> Vec<String> {
+    let mut code: Vec<std::ops::Range<usize>> = Vec::new();
+    for (e, r) in Parser::new_ext(post, opts()).into_offset_iter() {
+        if matches!(e, Event::Code(_) | Event::Start(Tag::CodeBlock(_))) {
+            code.push(r);
+        }
+    }
+    let mut out = Vec::new();
+    for (i, _) in post.match_indices('@') {
+        if code.iter().any(|r| r.contains(&i)) {
+            continue;
+        }
+        if post[..i]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '@')
+        {
+            continue;
+        }
+        let body = &post[i + 1..];
+        let n = body
+            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+            .unwrap_or(body.len());
+        let name = body[..n]
+            .trim_end_matches(['.', '_', '-'])
+            .to_ascii_lowercase();
+        // A word wrapped in backticks is code to the server whatever the parser makes of the
+        // table cell around it (a row with more cells than its header loses the extras there).
+        if post[..i].ends_with('`') && body[name.len()..].starts_with('`') {
+            continue;
+        }
+        if matches!(name.as_str(), "channel" | "all" | "here") || groups.contains(&name.as_str()) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// The posts of `raw` with, for each, how many `<@here>` the core produced (the allowed
+/// broadcasts), under the given lookups.
+fn posts_with(raw: &str, lk: &Lookups) -> Vec<(String, usize)> {
+    markdown_chunks(raw, 400)
+        .into_iter()
+        .map(|c| {
+            let neutral = Content::agent_markdown(&c).text.unwrap_or_default();
+            let allowed = neutral.matches("<@here>").count();
+            (render_text(&neutral, lk), allowed)
+        })
+        .collect()
+}
+
 /// The first reason `post` is not safe, if any: an image (or an image opener) outside code, a
 /// link that is not http/https/mailto.
 fn violation(post: &str) -> Option<String> {
@@ -178,6 +233,14 @@ fn fragments() -> impl Strategy<Value = String> {
         "[^1]\n\n[^1]: n\n\n        ![x](https://e.example/?d=S)",
         "> [!NOTE]\n> n",
         "@here",
+        "@Channel. @ALL! (@all) _@channel_ **@here**",
+        "\\@channel \\\\@all _@here",
+        "[@channel](https://a.example) [x @all y][r]\n\n[r]: https://a.example/@here",
+        "# @channel\n> @all\n- @here\n| @channel |",
+        "@devs @Devs, **@DEVS** [@devs](https://a.example)",
+        "<code>@channel</code> <kbd>@all</kbd> <pre>@here</pre>",
+        "<div>@channel</div> <b>@all</b>",
+        "x@channel foo@all.example @channelx @channel.foo",
         "<code>@here</code>",
         "`@here`",
         "<@here>",
@@ -228,6 +291,33 @@ proptest! {
     ) {
         for p in posts(&s) {
             prop_assert!(violation(&p).is_none(), "{:?} -> {p:?}: {:?}", s, violation(&p));
+        }
+    }
+
+    /// D-271: no `@channel`/`@all`/group ping and no `@here` the core did not make, in any
+    /// spelling the server reads as one, however the agent wrote it — with the name lookup
+    /// answering (`devs` is a group) and with it failed (closed: no stranger's name passes).
+    #[test]
+    fn no_ping_reaches_mattermost_but_the_cores_here(
+        s in prop_oneof![fragments(), any::<String>()]
+    ) {
+        let mut lk = Lookups::default();
+        lk.groups.insert("devs".into());
+        lk.known.insert("alice".into());
+        for (p, allowed_here) in posts_with(&s, &lk) {
+            let pings = live_pings(&p, &["devs"]);
+            prop_assert!(
+                pings.iter().all(|n| n == "here") && pings.len() <= allowed_here,
+                "{s:?} -> {p:?}: {pings:?} (core made {allowed_here} <@here>)"
+            );
+        }
+        let closed = Lookups { closed: true, ..Lookups::default() };
+        for (p, allowed_here) in posts_with(&s, &closed) {
+            let pings = live_pings(&p, &["devs", "stranger", "bob"]);
+            prop_assert!(
+                pings.iter().all(|n| n == "here") && pings.len() <= allowed_here,
+                "closed: {s:?} -> {p:?}: {pings:?}"
+            );
         }
     }
 

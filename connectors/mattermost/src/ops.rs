@@ -106,6 +106,11 @@ async fn render_content(integ: &Integ, content: &Value) -> R<(String, Vec<Value>
         let more = crate::render::mention_refs(&s);
         refs.users.extend(more.users);
         refs.spaces.extend(more.spaces);
+        for n in more.names {
+            if !refs.names.contains(&n) {
+                refs.names.push(n);
+            }
+        }
     }
     let lk = integ.lookups(&refs).await;
     let message = render_text(&text, &lk);
