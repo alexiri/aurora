@@ -328,7 +328,11 @@ export async function mockApi(
       ];
       return json({ ...apps.find((x) => x.app_id === a.id), connect, credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [] });
     }
-    if (p.endsWith("/connections")) return json({ items: [connection(40, "github", "acme-bot"), connection(41, "linear", "Product team")] });
+    // The two lists are different scopes: these are workspace connections, the organization's list has none.
+    // (Serving them for both made the Access tab, which merges the lists, render ids 40/41 twice.)
+    if (p.endsWith("/connections")) {
+      return json({ items: p.startsWith("/v1/orgs/") ? [] : [connection(40, "github", "acme-bot"), connection(41, "linear", "Product team")] });
+    }
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
     if (p.endsWith("/agents")) return json({ items: [agent] });
