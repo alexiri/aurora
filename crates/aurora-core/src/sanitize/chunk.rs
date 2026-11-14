@@ -25,6 +25,8 @@ fn count(s: &str) -> usize {
 /// `> > ```` line inside a fence and a `<pre>` all defeat a scan). A cut inside it closes it
 /// (`close`, if the construct needs one) and starts the next piece with `reopen`.
 struct Region {
+    /// The construct cannot be reopened: when the text is cut, it is left out.
+    drop: bool,
     /// Start of the line that opens the construct; lines after it, up to `end`, are inside.
     opener_ls: usize,
     end: usize,
@@ -58,6 +60,7 @@ fn regions(s: &str) -> Vec<Region> {
                 let ch = s[at..].chars().next().unwrap_or('`');
                 let len = s[at..].chars().take_while(|c| *c == ch).count();
                 out.push(Region {
+                    drop: false,
                     opener_ls: ls,
                     end: r.end,
                     reopen: s[ls..le].to_owned(),
@@ -82,7 +85,18 @@ fn regions(s: &str) -> Vec<Region> {
                 // own tag; the others (`<div>`, `<table>`, …) are reopened with a `<div>` line, which
                 // starts an HTML block again.
                 let raw = matches!(name.as_str(), "pre" | "script" | "style" | "textarea");
+                // Types 2–5 (comment, processing instruction, declaration, CDATA) run across
+                // blank lines and the sanitizer removes them whole: nothing can reopen them, so
+                // a block that has to be cut is left out.
+                let first = first.trim_start();
+                let hidden = first.starts_with("<!--")
+                    || first.starts_with("<?")
+                    || first.starts_with("<![CDATA[")
+                    || first
+                        .strip_prefix("<!")
+                        .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_alphabetic()));
                 out.push(Region {
+                    drop: hidden,
                     opener_ls: ls,
                     end: r.end,
                     reopen: if raw {
@@ -155,10 +169,18 @@ fn cut_text(s: &str, max: usize) -> Vec<String> {
     let mut ls = 0usize;
     for line in s.split('\n') {
         let here = regs.iter().find(|g| g.opener_ls < ls && ls < g.end);
+        let hidden = regs
+            .iter()
+            .any(|g| g.drop && g.opener_ls <= ls && ls < g.end);
         ls += line.len() + 1;
+        if hidden {
+            continue;
+        }
         for seg in split_line(line, limit(here)) {
             let lim = limit(here);
-            if !cur.is_empty() && used + count(&seg) + 1 > lim {
+            // A piece that would hold only the construct's own opening line gets no cut yet.
+            let only_opener = here.is_some_and(|g| cur.len() == 1 && cur[0] == g.reopen);
+            if !cur.is_empty() && !only_opener && used + count(&seg) + 1 > lim {
                 let mut next: Vec<String> = Vec::new();
                 if let Some(g) = here {
                     cur.extend(g.close.clone());
@@ -564,6 +586,34 @@ mod tests {
             fits(&v, 200);
             assert!(v.len() > 1, "{name}: not cut: {v:?}");
             assert!(!broadcasts(&v), "{name}: {v:?}");
+        }
+    }
+
+    /// Review 3 (1): HTML blocks of types 2–5 (`<!--`, `<?`, `<!X`, `<![CDATA[`) run across blank
+    /// lines, so `<div>` cannot reopen them: the sanitizer removes such blocks, text and all, and
+    /// the chunker leaves them out of a block it has to cut. No piece is empty.
+    #[test]
+    fn hidden_html_blocks_do_not_surface_at_a_cut() {
+        let pad: String = (0..24).map(|i| format!("padding line {i}\n")).collect();
+        for (open, close) in [
+            ("<!--", "-->"),
+            ("<?php", "?>"),
+            ("<!DOCTYPE x", ">"),
+            ("<![CDATA[", "]]>"),
+        ] {
+            for wrap in [false, true] {
+                let body = format!("{open}\n{pad}\n@here hidden text\n{close}\n");
+                let src = if wrap {
+                    format!("- item\n\n  {}\n", body.replace('\n', "\n  "))
+                } else {
+                    body
+                };
+                let v = markdown_chunks(&format!("before\n\n{src}\nafter"), 200);
+                fits(&v, 200);
+                assert!(v.iter().all(|p| !p.trim().is_empty()), "{open}: {v:?}");
+                assert!(!broadcasts(&v), "{open}: {v:?}");
+                assert!(v.iter().all(|p| !p.contains("hidden")), "{open}: {v:?}");
+            }
         }
     }
 
