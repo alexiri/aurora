@@ -156,6 +156,32 @@ What a managed connector can and cannot do:
 The API routes behind the dashboard: `GET /v1/admin/connector-types`, `POST /v1/admin/connectors`
 with `"managed": true`, and `PATCH /v1/admin/connectors/{id}` (docs/05).
 
+### Connector-host tokens
+
+A connector host proves itself to the API with an `auh_…` token (`AURORA_CONNECTOR_HOST_TOKEN`).
+Since FIX-120 (D-189) a token can be **bound** to the connector types its host runs, so a leaked
+token can only act for those types. Instance administrators manage the tokens (the routes C-690..C-692 in
+[API_CONTRACTS](../API_CONTRACTS.md), `05 §Connectors`):
+
+- **Issue.** Give the token a name (unique among live tokens) and the connector type ids it may
+  serve (for example `mattermost`). The `auh_…` value is **shown once**; the list never shows it again
+  (only a prefix, the types, `last_used_at` and the state). Put it in that connector-host
+  Deployment's `AURORA_CONNECTOR_HOST_TOKEN` and roll the Deployment. Issuing is audited
+  (`admin.connector_host_token_issue`, security-critical).
+- **Rotate.** Issue a new token, roll the Deployment onto it, then revoke the old one. Running connectors
+  keep running while the host rolls, because a failed poll keeps the running set.
+- **Revoke.** The token is refused (401) on its next call. Audited (`admin.connector_host_token_revoke`).
+- **A token bound to type A cannot register type B** (403 `type_not_bound`, naming B).
+- **The shared bootstrap token** (`AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN`, unbound) keeps working until
+  the first bound token exists; **from then on it is refused (401)** and listed with the state `refused`. Revoking
+  every bound token makes it work again, which is the rollback. Upgrade steps: [upgrades.md](upgrades.md),
+  `15 §Upgrades`.
+- **The Helm chart** renders one bound token per connector-host Deployment by default
+  (`connectorHost.perHostToken: true`, [23-helm-values.md](../23-helm-values.md)): the hooks job
+  generates it for the types the Deployment runs (`mattermost`, plus `fake` with `connectorHost.testTypes`) and
+  hands it to the API as `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` (upserted by name; a changed token under the
+  same name revokes the old one). Set `perHostToken: false` only to keep the single shared token.
+
 ## Mattermost from zero
 
 The whole path, one actor per step. Each step names who does it and what the next step is;

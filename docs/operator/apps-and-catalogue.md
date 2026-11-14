@@ -40,6 +40,19 @@ Details and the first-run checks are in [docs/ops/builtin-plugin-signing.md](../
 
 Verify: `GET /v1/admin/plugins` (instance administrator) lists each package with `source: builtin`, `status: active` and `signer.kind: builtin`; the API log has no `plugin file refused` warnings.
 
+### Apps that allow only custom grants (`custom_only`)
+
+Some packages declare `grants.custom_only: true` (`docs/09 §Grants`, for apps whose token is far broader than their
+catalogue, such as Indico's `full:everything`). What it means for you as the instance admin:
+
+- It is part of the manifest you approve and appears in the permissions review; nobody can switch it off in a grant.
+- Users and agent owners cannot give such an app a `full` grant: the API refuses it (422 `full_grant_forbidden`) and the
+  dashboard does not offer it. They choose allow / ask / block **per tool**; tools a later version adds arrive blocked.
+- A request that matches none of the app's catalogue tools is blocked (403 `blocked_by_policy`, reason
+  `app_untooled_blocked`), and **no hand-written policy rule can allow it**, even a `network` allow for the app's host. If a
+  workflow needs something the catalogue does not name, the fix is a newer package, not a rule.
+- The only credentialed request outside the tools is the skill-library fetch (`skill-libraries.md`).
+
 ## Self-hosted apps (app instances: your own servers)
 
 SaaS apps live on fixed hosts. A company's own GitLab, Jira Data Center or Sentry (the examples in docs/09) lives on a domain nobody can declare in advance. An app whose manifest declares `instances` therefore does not send credentials anywhere until an administrator
