@@ -14,6 +14,8 @@ pub struct InstanceRow {
     pub package_id: String,
     pub app_id: String,
     pub host: String,
+    /// (FIX-145, D-231) The path the app is served under on `host`; null = the host root.
+    pub base_path: Option<String>,
     pub label: String,
     pub status: String,
     pub created_by: Option<Uuid>,
@@ -25,7 +27,7 @@ pub struct InstanceRow {
     pub org_slug: Option<String>,
 }
 
-const SELECT: &str = "SELECT i.id, i.org_id, i.package_id, i.app_id, i.host, i.label, i.status, \
+const SELECT: &str = "SELECT i.id, i.org_id, i.package_id, i.app_id, i.host, i.base_path, i.label, i.status, \
     i.created_by, u.display_name AS created_by_name, i.created_at, i.updated_at, \
     (SELECT count(*) FROM app_connections c WHERE c.instance_id = i.id) AS connections, \
     o.name AS org_name, o.slug AS org_slug \
@@ -37,6 +39,8 @@ const SELECT: &str = "SELECT i.id, i.org_id, i.package_id, i.app_id, i.host, i.l
 pub struct HostHolder {
     pub id: Uuid,
     pub app_id: String,
+    pub host: String,
+    pub base_path: Option<String>,
     pub org_id: Option<Uuid>,
     pub org_name: Option<String>,
     pub org_slug: Option<String>,
@@ -48,6 +52,7 @@ pub struct NewInstance<'a> {
     pub package_id: &'a str,
     pub app_id: &'a str,
     pub host: &'a str,
+    pub base_path: Option<&'a str>,
     pub label: &'a str,
     pub created_by: Option<Uuid>,
 }
@@ -62,35 +67,37 @@ pub async fn lock_host(conn: &mut PgConnection, host: &str) -> Result<(), DbErro
     Ok(())
 }
 
-/// The instance with this host in a scope that can see `org` (instance-wide rows, and the org's
-/// own); for an instance-wide registration (`org = None`) any scope. Instance-wide first.
-pub async fn visible_with_host<'e, E: PgExecutor<'e>>(
+/// The instances with this host in a scope that can see `org` (instance-wide rows, and the org's
+/// own); for an instance-wide registration (`org = None`) any scope. Instance-wide first. The
+/// caller decides which of them overlap the base path being registered (D-231).
+pub async fn visible_on_host<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Option<Uuid>,
     host: &str,
-) -> Result<Option<HostHolder>, DbError> {
+) -> Result<Vec<HostHolder>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT i.id, i.app_id, i.org_id, o.name AS org_name, o.slug AS org_slug \
+        "SELECT i.id, i.app_id, i.host, i.base_path, i.org_id, o.name AS org_name, o.slug AS org_slug \
          FROM app_instances i LEFT JOIN organizations o ON o.id = i.org_id \
          WHERE i.host = $2 AND ($1::uuid IS NULL OR i.org_id IS NULL OR i.org_id = $1) \
-         ORDER BY (i.org_id IS NOT NULL), i.created_at, i.id LIMIT 1",
+         ORDER BY (i.org_id IS NOT NULL), i.created_at, i.id",
     )
     .bind(org)
     .bind(host)
-    .fetch_optional(exec)
+    .fetch_all(exec)
     .await?)
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewInstance<'_>) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO app_instances (id, org_id, package_id, app_id, host, label, created_by) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        "INSERT INTO app_instances (id, org_id, package_id, app_id, host, base_path, label, created_by) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     )
     .bind(n.id)
     .bind(n.org_id)
     .bind(n.package_id)
     .bind(n.app_id)
     .bind(n.host)
+    .bind(n.base_path)
     .bind(n.label)
     .bind(n.created_by)
     .execute(exec)
@@ -172,17 +179,17 @@ pub async fn list_all<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// How many other registrations hold `host` (any scope), besides `except`.
-pub async fn other_holders(
+/// The base paths of the other registrations of `host` (any scope), besides `except`.
+pub async fn other_base_paths(
     conn: &mut PgConnection,
     host: &str,
     except: Uuid,
-) -> Result<i64, DbError> {
+) -> Result<Vec<Option<String>>, DbError> {
     Ok(
-        sqlx::query_scalar("SELECT count(*) FROM app_instances WHERE host = $1 AND id <> $2")
+        sqlx::query_scalar("SELECT base_path FROM app_instances WHERE host = $1 AND id <> $2")
             .bind(host)
             .bind(except)
-            .fetch_one(conn)
+            .fetch_all(conn)
             .await?,
     )
 }

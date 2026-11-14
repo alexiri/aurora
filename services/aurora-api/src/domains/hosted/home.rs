@@ -186,8 +186,16 @@ async fn render_inputs(
                             .and_then(|i| i.default_host.as_deref())
                     });
                     if let Some(h) = host {
-                        a["address"] =
-                            json!(format!("https://{}", aurora_core::sanitize::label(h)));
+                        // (D-231) `https://<host><base_path>`; a default-host connection has no path.
+                        let base = x
+                            .instance_host
+                            .as_ref()
+                            .and(x.instance_base_path.as_deref());
+                        a["address"] = json!(format!(
+                            "https://{}{}",
+                            aurora_core::sanitize::label(h),
+                            aurora_core::sanitize::label(base.unwrap_or(""))
+                        ));
                     }
                     // Only a database account carries its libpq service name (C-231).
                     if let Some(d) = databases

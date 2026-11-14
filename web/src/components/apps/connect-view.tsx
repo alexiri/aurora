@@ -232,7 +232,7 @@ function ConnectForm({
           >
             {defaultHost ? <option value="">{`${defaultHost} (default)`}</option> : <option value="">Select…</option>}
             {choices.map((i) => (
-              <option key={i.id} value={i.id}>{`${i.label} (${i.host})`}</option>
+              <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>
             ))}
           </select>
         </Field>

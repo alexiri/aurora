@@ -183,7 +183,7 @@ function CreateForm({
           <select id="oc-instance" className={inputClass} value={instanceId} onChange={(e) => setInstanceId(e.target.value)}>
             <option value="">{selected.default_host ? `${selected.default_host} (default host)` : "Select…"}</option>
             {choices.map((i) => (
-              <option key={i.id} value={i.id}>{`${i.label} (${i.host})`}</option>
+              <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>
             ))}
           </select>
         </Field>
@@ -304,7 +304,7 @@ export function OAuthClientsPanel({ scope, canOwn, orgId }: { scope: CredScope; 
           ? { kind: "organization", id: orgId }
           : undefined;
   const instances = useAppInstances(instScope).data?.items ?? [];
-  const hosts = new Map(instances.map((i) => [i.id, i.host]));
+  const hosts = new Map(instances.map((i) => [i.id, i.base_url]));
   const [adding, setAdding] = useState(false);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;

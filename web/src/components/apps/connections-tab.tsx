@@ -69,7 +69,7 @@ function ConnectionRow({
           {c.access === "read" ? <Badge tone="accent">Read-only</Badge> : null}
           {c.instance ? (
             <Badge className="font-mono normal-case tracking-normal" title={`Self-hosted instance: ${c.instance.label}`}>
-              {c.instance.host}
+              {c.instance.base_url}
             </Badge>
           ) : null}
         </div>

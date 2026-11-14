@@ -35,6 +35,7 @@ import {
 import { useAdminOrgs } from "@/lib/api/freeze";
 import { useMe } from "@/lib/api/queries";
 import { unwrap } from "@/lib/api/unwrap";
+import { splitInstanceUrl } from "@/lib/instance-url";
 
 /** Apps that declare `instances` (from the catalogue detail; no app knowledge lives in the bundle). */
 export function useInstanceBoundApps() {
@@ -137,17 +138,28 @@ function RegisterDialog({
   const create = useCreateAppInstance(scope);
   const [appId, setAppId] = useState("");
   const [host, setHost] = useState("");
+  const [basePath, setBasePath] = useState("");
   const [label, setLabel] = useState("");
   const app = bound.find((a) => a.app_id === appId);
   const errs = fieldErrors(create.error);
   const probe = probeFailure(create.error);
-  const hostError = probe ? probeFailedMessage(probe, app?.name ?? "", host.trim()) : errs.host;
+  const pathValue = basePath.trim();
+  const hostError = probe ? probeFailedMessage(probe, app?.name ?? "", host.trim(), pathValue || undefined) : errs.host;
 
   function reset() {
     setAppId("");
     setHost("");
+    setBasePath("");
     setLabel("");
     create.reset();
+  }
+
+  /** A full URL typed or pasted into Host fills Host and Path (D-231). */
+  function onHostChange(value: string) {
+    const s = splitInstanceUrl(value);
+    if (!s) return setHost(value);
+    setHost(s.host);
+    if (s.path) setBasePath(s.path);
   }
 
   async function submit(e: FormEvent) {
@@ -156,6 +168,7 @@ function RegisterDialog({
       await create.mutateAsync({
         app_id: appId,
         host: host.trim(),
+        ...(pathValue ? { base_path: pathValue } : {}),
         label: label.trim() || host.trim(),
       });
       reset();
@@ -198,7 +211,7 @@ function RegisterDialog({
       <Field
         id="ai-host"
         label="Host"
-        hint="The host name only, in lower case, for example gitlab.example.com. No https://, port, path or IP address."
+        hint="The host name, in lower case, for example gitlab.example.com. No port or IP address. Pasting a full URL fills Host and Path."
         error={hostError}
       >
         <input
@@ -208,8 +221,25 @@ function RegisterDialog({
           autoCapitalize="none"
           spellCheck={false}
           value={host}
-          onChange={(e) => setHost(e.target.value)}
+          onChange={(e) => onHostChange(e.target.value)}
           required
+        />
+      </Field>
+      <Field
+        id="ai-path"
+        label="Path"
+        hint="Only if the app is served under a path, for example /jira for https://its.cern.ch/jira"
+        error={errs.base_path}
+      >
+        <input
+          id="ai-path"
+          className={`${inputClass} font-mono`}
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder="/jira"
+          value={basePath}
+          onChange={(e) => setBasePath(e.target.value)}
         />
       </Field>
       <Field id="ai-label" label="Label" hint="Shown when people connect. Defaults to the host." error={errs.label}>
@@ -221,7 +251,7 @@ function RegisterDialog({
           onChange={(e) => setLabel(e.target.value)}
         />
       </Field>
-      {create.isError && !errs.app_id && !errs.label && !probe ? (
+      {create.isError && !errs.app_id && !errs.label && !errs.base_path && !probe ? (
         <HostConflictNotice
           error={create.error}
           scope={scope}
@@ -261,7 +291,7 @@ function InstanceRow({
     <tr>
       <Td>{appName}</Td>
       <Td>
-        <div className="font-mono text-sm">{inst.host}</div>
+        <div className="break-all font-mono text-sm">{inst.base_url}</div>
         <div className="text-xs text-muted">{inst.label}</div>
       </Td>
       {showOrg ? <Td className="text-ink-2">{inst.org_id ? (inst.org_name ?? inst.org_slug ?? inst.org_id) : "—"}</Td> : null}
@@ -278,7 +308,7 @@ function InstanceRow({
             <Button
               size="sm"
               variant="outline"
-              aria-label={`Make ${inst.host} instance-wide`}
+              aria-label={`Make ${inst.base_url} instance-wide`}
               onClick={() => setConfirmPromote(true)}
             >
               Make instance-wide
@@ -286,7 +316,7 @@ function InstanceRow({
             <ConfirmDialog
               open={confirmPromote}
               onOpenChange={setConfirmPromote}
-              title={`Make ${inst.host} instance-wide?`}
+              title={`Make ${inst.base_url} instance-wide?`}
               description={`Every organization will see this self-hosted app and can connect to it. Its ${inst.connections} existing connection${inst.connections === 1 ? "" : "s"} keep working. This is recorded in the audit log.`}
               confirmLabel="Make instance-wide"
               busy={promote.isPending}
@@ -306,12 +336,12 @@ function InstanceRow({
               size="sm"
               variant="outline"
               disabled={patch.isPending}
-              aria-label={`${active ? "Disable" : "Enable"} ${inst.host}`}
+              aria-label={`${active ? "Disable" : "Enable"} ${inst.base_url}`}
               onClick={() => patch.mutate({ id: inst.id, status: active ? "disabled" : "active" })}
             >
               {active ? "Disable" : "Enable"}
             </Button>
-            <Button size="sm" variant="danger" aria-label={`Delete ${inst.host}`} onClick={() => setConfirm(true)}>
+            <Button size="sm" variant="danger" aria-label={`Delete ${inst.base_url}`} onClick={() => setConfirm(true)}>
               Delete
             </Button>
           </div>
@@ -324,8 +354,8 @@ function InstanceRow({
         <ConfirmDialog
           open={confirm}
           onOpenChange={setConfirm}
-          title={`Delete ${inst.host}?`}
-          description={`Its ${inst.connections} connection${inst.connections === 1 ? "" : "s"} will be disabled and its OAuth clients removed. Nothing is injected on this host again.`}
+          title={`Delete ${inst.base_url}?`}
+          description={`Its ${inst.connections} connection${inst.connections === 1 ? "" : "s"} will be disabled and its OAuth clients removed. Nothing is injected on ${inst.base_path ? "this address" : "this host"} again.`}
           confirmLabel="Delete self-hosted app"
           danger
           busy={del.isPending}

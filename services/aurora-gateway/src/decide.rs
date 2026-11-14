@@ -675,12 +675,47 @@ impl PolicyHandler {
         let registry = rv.registry.clone();
         // (D-74) A host that is exactly a registered app instance serves that app's `{instance}`
         // host entries; otherwise the static host index decides.
+        // (D-231, SEC-59) Registrations may share the host under disjoint base paths: the one whose
+        // base path covers the (already normalized) path serves the request, and every manifest
+        // decision (host entry `path_prefix`, tool `path`/`params`, `{path.N}`) uses the **app
+        // path**, the path below the base path. A path outside every base path matches no
+        // instance: nothing is injected.
+        let inst =
+            aurora_registry::instance::select(&rv.instances, &path, |i| i.base_path.as_deref());
+        let inst_id = inst.map(|i| i.id);
+        let inst_app_path = inst
+            .map(|i| aurora_registry::instance::app_path(i.base_path.as_deref(), &path).to_owned());
         let app_match = registry.as_ref().and_then(|l| {
-            rv.instance
-                .as_ref()
-                .and_then(|i| apps::identify_instance_app(l, &i.app_id, &path))
+            inst.zip(inst_app_path.as_deref())
+                .and_then(|(i, ap)| apps::identify_instance_app(l, &i.app_id, ap))
                 .or_else(|| apps::identify_app(l, &host, port, &path))
         });
+        let app_path: String = match (&app_match, inst_app_path) {
+            (Some(m), Some(ap)) if m.instance => ap,
+            _ => path.clone(),
+        };
+        // A named connection of a registration on this host, used outside every registered base
+        // path: refused like a connection on the wrong host (421 with `expected_base_url`), when
+        // the agent may use it at all.
+        if inst.is_none()
+            && !rv.instances.is_empty()
+            && let Some(c) = aurora_headers
+                .connection_id
+                .as_deref()
+                .and_then(|n| Uuid::parse_str(n).ok())
+                .and_then(|n| rv.conns.iter().find(|c| c.id == n))
+                .filter(|c| {
+                    c.instance_id.is_some()
+                        && c.instance_host
+                            .as_deref()
+                            .is_some_and(|h| h.eq_ignore_ascii_case(&host))
+                })
+            && !selected_candidates(rv.all_rules(), &fi, &[Cand::App(c.clone()).credential()])
+                .is_empty()
+        {
+            let err = guidance::host_mismatch(&host, c.instance_base_path.as_deref());
+            return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
+        }
         // Candidates serving this path; selection by allow rules (07 §Injection selection).
         let mut cands: Vec<Cand> = rv
             .secrets
@@ -701,7 +736,7 @@ impl PolicyHandler {
                 .collect();
             // Tenant-bound entries only offer connections stored for this host; when none
             // does, the mismatching ones stay so that the guard answers 421.
-            let on_instance = rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id);
+            let on_instance = inst_id.filter(|_| m.instance);
             let bound: Vec<_> = if let Some(iid) = on_instance {
                 // Instance host: only connections bound to this very instance; connections of
                 // other instances stay so the guard answers 421, default-host ones never ride here.
@@ -830,7 +865,7 @@ impl PolicyHandler {
             .is_some_and(|g| Governance::needs_body(g, &host_port, wsec))
             || app_match
                 .as_ref()
-                .is_some_and(|m| apps::needs_body(m, &host, port, &path, method.as_str()));
+                .is_some_and(|m| apps::needs_body(m, &host, port, &app_path, method.as_str()));
         let (body_prefix, truncated, mut body) = if rv.needs_body() || may_hold || llm_body {
             let limit = if rv.needs_body() || llm_body {
                 self.condition_body_limit
@@ -857,7 +892,7 @@ impl PolicyHandler {
                 m,
                 &host,
                 port,
-                &path,
+                &app_path,
                 query.as_deref(),
                 method.as_str(),
                 &body_prefix,
@@ -951,6 +986,7 @@ impl PolicyHandler {
         {
             // 8. approval hold (nothing decrypted yet).
             let red_path = crate::reqlog::redact_path(&path);
+            let red_app_path = crate::reqlog::redact_path(&app_path);
             let hdr = |n: &str| {
                 headers
                     .get(n)
@@ -969,7 +1005,9 @@ impl PolicyHandler {
                 &crate::hold::SummaryRequest {
                     method: &ctx.method,
                     host: &host,
-                    path: &red_path,
+                    // `{path.N}` in the summary counts from the app path (D-231); the approval
+                    // display below keeps the full path.
+                    path: &red_app_path,
                     query: query.as_deref(),
                     content_type: content_type.as_deref(),
                     header: &hdr,
@@ -1086,19 +1124,15 @@ impl PolicyHandler {
             match mechanisms::route::instance_guard(
                 conn.instance_id,
                 conn.instance_host.as_deref(),
-                rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id),
+                conn.instance_base_path.as_deref(),
+                inst_id.filter(|_| m.instance),
                 &host,
+                &path,
             ) {
                 Ok(()) => {}
                 Err(mechanisms::route::GuardError::Mismatch { expected }) => {
-                    let err = ApiError::new(
-                        StatusCode::MISDIRECTED_REQUEST,
-                        "host_mismatch",
-                        format!(
-                            "This connection is bound to {expected}; send the request to that host."
-                        ),
-                    )
-                    .with_details(json!({ "expected_host": expected }));
+                    let err =
+                        guidance::host_mismatch(&expected, conn.instance_base_path.as_deref());
                     return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
                 }
                 Err(mechanisms::route::GuardError::Unavailable) => {
@@ -1187,7 +1221,7 @@ impl PolicyHandler {
             };
             // 9. token interception: answered locally, never forwarded.
             if let Some(i) = &m.entry.intercept
-                && mechanisms::intercept::matches(i, &method, &path)
+                && mechanisms::intercept::matches(i, &method, &app_path)
             {
                 let Some(tok) = exec.credential("access_token") else {
                     return unavailable(self, ctx);

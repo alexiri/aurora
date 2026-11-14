@@ -30765,6 +30765,7 @@
           "package_id",
           "app_id",
           "host",
+          "base_url",
           "label",
           "status",
           "created_at",
@@ -30774,6 +30775,17 @@
         "properties": {
           "app_id": {
             "type": "string"
+          },
+          "base_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root."
+          },
+          "base_url": {
+            "type": "string",
+            "description": "`https://<host><base_path>`: how the registration is named everywhere."
           },
           "connections": {
             "type": "integer",
@@ -33416,6 +33428,13 @@
         "properties": {
           "app_id": {
             "type": "string"
+          },
+          "base_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-731, D-231) Only if the app is served under a path: `/jira` for\n`https://its.cern.ch/jira`. Normalized (`/jira/` = `/jira`, `\"\"` and `/` = none); cannot be\nchanged later."
           },
           "host": {
             "type": "string",
@@ -36329,9 +36348,21 @@
         "required": [
           "id",
           "host",
+          "base_url",
           "label"
         ],
         "properties": {
+          "base_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-731, D-231) The path the app is served under on `host`; `null` = the host root."
+          },
+          "base_url": {
+            "type": "string",
+            "description": "`https://<host><base_path>`."
+          },
           "host": {
             "type": "string"
           },
@@ -39170,6 +39201,7 @@
                 "package_id",
                 "app_id",
                 "host",
+                "base_url",
                 "label",
                 "status",
                 "created_at",
@@ -39179,6 +39211,17 @@
               "properties": {
                 "app_id": {
                   "type": "string"
+                },
+                "base_path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root."
+                },
+                "base_url": {
+                  "type": "string",
+                  "description": "`https://<host><base_path>`: how the registration is named everywhere."
                 },
                 "connections": {
                   "type": "integer",

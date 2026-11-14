@@ -259,7 +259,8 @@ async fn render_inputs_carry_apps_channels_peers_and_schedules() {
 async fn render_inputs_tell_the_agent_where_a_self_hosted_account_lives() {
     let w = world().await;
     let inst = Uuid::now_v7();
-    w.sql("INSERT INTO app_instances (id, org_id, package_id, app_id, host, label) VALUES ($1,$2,'acme','desk','its.cern.ch','CERN')", &[inst, w.org]).await;
+    // (FIX-145, D-231) The registration is served under `/jira`: the address carries it.
+    w.sql("INSERT INTO app_instances (id, org_id, package_id, app_id, host, base_path, label) VALUES ($1,$2,'acme','desk','its.cern.ch','/jira','CERN')", &[inst, w.org]).await;
     let on_instance = Uuid::now_v7();
     let on_default = Uuid::now_v7();
     let plain = Uuid::now_v7();
@@ -290,14 +291,14 @@ async fn render_inputs_tell_the_agent_where_a_self_hosted_account_lives() {
             .find(|a| a["id"] == json!(id))
             .unwrap()
     };
-    assert_eq!(account(on_instance)["address"], "https://its.cern.ch");
+    assert_eq!(account(on_instance)["address"], "https://its.cern.ch/jira");
     assert_eq!(account(on_default)["address"], "https://saas.desk.example");
     assert!(account(plain).get("address").is_none(), "{ri}");
     let inputs: aurora_supervisor::instructions::RenderInputs = serde_json::from_value(ri).unwrap();
     let text = aurora_supervisor::instructions::render(&inputs);
     assert!(
         text.contains(&format!(
-            "`{on_instance}`: alice — at https://its.cern.ch\n"
+            "`{on_instance}`: alice — at https://its.cern.ch/jira\n"
         )),
         "{text}"
     );

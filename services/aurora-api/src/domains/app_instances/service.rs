@@ -10,6 +10,7 @@ use aurora_db::repo::credentials;
 use aurora_db::{DbError, conflict_code};
 use aurora_policy::HostPattern;
 use aurora_registry::claims::hosts_overlap;
+use aurora_registry::instance::{InstanceBase, normalize_base_path, overlaps};
 use aurora_registry::manifest::{InstanceProbe, ProbeMethod};
 use aurora_registry::snapshot::Snapshot;
 use aurora_registry::validate::plain_dns_name;
@@ -147,11 +148,18 @@ fn own_address_setting(state: &AppState, host: &str) -> Option<&'static str> {
 async fn run_probe(
     state: &AppState,
     host: &str,
+    base_path: Option<&str>,
     app_name: &str,
     probe: &InstanceProbe,
 ) -> Result<(), ApiError> {
     let env = &state.connect;
-    let raw = format!("https://{host}{}", probe.path);
+    // (D-231) The probe path is relative to the registration: `https://<host><base_path><path>`.
+    let raw = format!(
+        "{}{}",
+        InstanceBase::new(host, base_path).base_url(),
+        probe.path
+    );
+    let probed_path = format!("{}{}", base_path.unwrap_or(""), probe.path);
     // The URL shown to the person: what was probed, without a query (C-730).
     let shown = reqwest::Url::parse(&raw).ok().map(|mut u| {
         u.set_query(None);
@@ -162,10 +170,13 @@ async fn run_probe(
         let message = probe_message(
             reason,
             status,
-            host,
-            &probe.path,
-            app_name,
-            &probe.expect_status,
+            &MessageCtx {
+                host,
+                path: &probed_path,
+                base_path,
+                app: app_name,
+                expected: &probe.expect_status,
+            },
             location.as_deref(),
         );
         let mut d = json!({
@@ -214,19 +225,39 @@ async fn run_probe(
 
 /// The person-readable sentence for a failed registration check (the dashboard words it the same
 /// way, `probeFailedMessage`).
+struct MessageCtx<'a> {
+    host: &'a str,
+    /// The probed path, base path included.
+    path: &'a str,
+    base_path: Option<&'a str>,
+    app: &'a str,
+    expected: &'a [u16],
+}
+
 fn probe_message(
     reason: &str,
     status: Option<u16>,
-    host: &str,
-    path: &str,
-    app: &str,
-    expected: &[u16],
+    ctx: &MessageCtx<'_>,
     location: Option<&str>,
 ) -> String {
+    let MessageCtx {
+        host,
+        path,
+        base_path,
+        app,
+        expected,
+    } = *ctx;
+    let hint =
+        format!("If {app} is served under a path, such as https://{host}/jira, enter it in Path.");
     match (reason, status) {
-        ("unexpected_status", Some(404)) => format!(
-            "{host} answered 404 Not Found at {path}. {app} answers there when it is served at the root of the host. Servers under a path, such as https://{host}/jira, are not supported yet."
-        ),
+        ("unexpected_status", Some(404)) => match base_path {
+            Some(b) => format!(
+                "{host} answered 404 Not Found at {path}. {app} answers there when it is served under {b} on {host}. Check the Path."
+            ),
+            None => format!(
+                "{host} answered 404 Not Found at {path}. {app} answers there when it is served at the root of the host. {hint}"
+            ),
+        },
         ("unexpected_status", Some(s)) if (300..400).contains(&s) => {
             let mut m = format!("{host} redirected {path}");
             match location {
@@ -237,9 +268,8 @@ fn probe_message(
                         .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case(host)))
                         .unwrap_or(true);
                     if same {
-                        m.push_str(&format!(
-                            " {app} may be served under a path, which is not supported yet."
-                        ));
+                        m.push(' ');
+                        m.push_str(&hint);
                     } else {
                         m.push_str(" Register that host instead.");
                     }
@@ -399,7 +429,12 @@ pub async fn promote(
             "This registration is already instance-wide.",
         ));
     };
-    let others = repo::other_holders(&mut tx, &row.host, id).await?;
+    // (D-231) Only a registration whose base path overlaps this one is in the way.
+    let others = repo::other_base_paths(&mut tx, &row.host, id)
+        .await?
+        .iter()
+        .filter(|b| overlaps(b.as_deref(), row.base_path.as_deref()))
+        .count();
     if others > 0 {
         return Err(ApiError::conflict(
             "instance_host_shared",
@@ -452,6 +487,16 @@ pub async fn create(
             )
         })?;
     check_host_shape(&req.host)?;
+    let base_path = normalize_base_path(req.base_path.as_deref().unwrap_or("")).map_err(|e| {
+        field_error(
+            "instance_base_path_invalid",
+            "/base_path",
+            &e.to_string(),
+            None,
+        )
+    })?;
+    // Static claims, LLM hosts and Aurora's own addresses stay host-level: a path never gets
+    // around them.
     if let Some(e) = static_conflict(state, &snap, &req.host, reveal) {
         return Err(e);
     }
@@ -470,6 +515,8 @@ pub async fn create(
             "kind": "instance", "scope": scope, "app_id": h.app_id,
             "app_name": name_of(&h.app_id), "instance_id": h.id,
             "promotable": reveal && org.is_none() && h.org_id.is_some(),
+            "base_path": h.base_path,
+            "base_url": InstanceBase::new(&h.host, h.base_path.as_deref()).base_url(),
         });
         if let (true, Some(o)) = (reveal && org.is_none(), h.org_id) {
             c["org"] = json!({ "id": o, "name": h.org_name, "slug": h.org_slug });
@@ -481,16 +528,22 @@ pub async fn create(
             Some(json!({ "conflict": c })),
         )
     };
-    if let Some(h) = repo::visible_with_host(&state.pool, org, &req.host).await? {
+    // (D-231) Registrations with disjoint base paths share a host; only an overlapping one
+    // (either has none, equal, or a segment prefix) holds it.
+    let overlapping = |hs: Vec<repo::HostHolder>| {
+        hs.into_iter()
+            .find(|h| overlaps(h.base_path.as_deref(), base_path.as_deref()))
+    };
+    if let Some(h) = overlapping(repo::visible_on_host(&state.pool, org, &req.host).await?) {
         return Err(instance_conflict(h));
     }
     if let Some(p) = app.instances.as_ref().and_then(|i| i.probe.as_ref()) {
-        run_probe(state, &req.host, &app.about.name, p).await?;
+        run_probe(state, &req.host, base_path.as_deref(), &app.about.name, p).await?;
     }
     let id = ids::new_id();
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     repo::lock_host(&mut tx, &req.host).await?;
-    if let Some(h) = repo::visible_with_host(&mut *tx, org, &req.host).await? {
+    if let Some(h) = overlapping(repo::visible_on_host(&mut *tx, org, &req.host).await?) {
         return Err(instance_conflict(h));
     }
     let res = repo::insert(
@@ -501,6 +554,7 @@ pub async fn create(
             package_id: &app.package_id,
             app_id: &app.app_id,
             host: &req.host,
+            base_path: base_path.as_deref(),
             label: &label,
             created_by: actor.id,
         },
@@ -518,7 +572,8 @@ pub async fn create(
             actor,
             "app_instance.create",
             &row,
-            json!({"app_id": row.app_id, "package_id": row.package_id, "host": row.host, "label": row.label}),
+            json!({"app_id": row.app_id, "package_id": row.package_id, "host": row.host,
+                   "base_path": row.base_path, "label": row.label}),
         ),
     )
     .await?;

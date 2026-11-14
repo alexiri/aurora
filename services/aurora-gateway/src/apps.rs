@@ -44,6 +44,9 @@ pub struct ConnCand {
     /// active instances), or, for a default-host connection of an instance-bound app, the app's
     /// `default_host` (D-86).
     pub instance_host: Option<String>,
+    /// (D-231) The base path of the registration `instance_id` names; `{instance}` in a URL is
+    /// `<instance_host><instance_base_path>`. `None` for a default-host connection.
+    pub instance_base_path: Option<String>,
     /// `status = reauth_required`: refused with reconnect guidance after the decision.
     pub reauth_required: bool,
     /// (P4-GRANTS, D-123) The app's `grants` flags from the active snapshot (set by the resolver;
@@ -58,6 +61,14 @@ pub struct ConnCand {
 }
 
 impl ConnCand {
+    /// (D-231) Where `{instance}` points for this connection: the registration's host and base
+    /// path, or the app's `default_host` (no base path). The one resolver input for token URLs.
+    pub fn instance_base(&self) -> Option<aurora_registry::instance::InstanceBase<'_>> {
+        self.instance_host.as_deref().map(|h| {
+            aurora_registry::instance::InstanceBase::new(h, self.instance_base_path.as_deref())
+        })
+    }
+
     /// (FIX-136, D-241) The tool needs scopes (any of) and the connection's known scopes hold
     /// none of them. Unknown scopes (empty) never refuse: they are trusted only to refuse, never to
     /// widen, and an undeclared token may well have them.
@@ -90,6 +101,7 @@ impl ConnCand {
             instance_id: r.instance_id,
             connect_method: r.connect_method,
             instance_host: None,
+            instance_base_path: None,
             reauth_required: r.status == "reauth_required",
             custom_only: false,
             block_untooled: false,

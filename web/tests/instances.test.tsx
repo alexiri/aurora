@@ -52,20 +52,25 @@ const APP = {
 };
 const PLAIN = { ...APP, app_id: "plain", name: "Plain", instances: null, oauth_clients: [], package_id: "plainpkg" };
 
-const inst = (over: Record<string, unknown>) => ({
-  id: "i1",
-  org_id: "o1",
-  package_id: "selfhost",
-  app_id: "desk",
-  host: "desk.acme.example",
-  label: "Acme desk",
-  status: "active",
-  created_by: null,
-  created_at: "",
-  updated_at: "",
-  connections: 2,
-  ...over,
-});
+const inst = (over: Record<string, unknown>) => {
+  const r = {
+    id: "i1",
+    org_id: "o1",
+    package_id: "selfhost",
+    app_id: "desk",
+    host: "desk.acme.example",
+    base_path: null as string | null,
+    label: "Acme desk",
+    status: "active",
+    created_by: null,
+    created_at: "",
+    updated_at: "",
+    connections: 2,
+    ...over,
+  };
+  // (C-731) Registrations are named by `https://<host><base_path>`.
+  return { base_url: `https://${r.host}${r.base_path ?? ""}`, ...r };
+};
 
 interface Call {
   method: string;
@@ -108,12 +113,12 @@ describe("instances admin section", () => {
     });
     wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
     const table = await screen.findByRole("table", { name: "Registered self-hosted apps" });
-    expect(within(table).getByText("desk.acme.example")).toBeInTheDocument();
+    expect(within(table).getByText("https://desk.acme.example")).toBeInTheDocument();
     expect(within(table).getByText("Organization")).toBeInTheDocument();
     expect(within(table).getByText("Instance-wide")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete desk.acme.example" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete desk.wide.example" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Disable desk.wide.example" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Delete https://desk.acme.example" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete https://desk.wide.example" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Disable https://desk.wide.example" })).toBeNull();
   });
 
   it("registers an instance (label defaults to the host) and shows the server's refusal", async () => {
@@ -167,6 +172,54 @@ describe("instances admin section", () => {
     expect(screen.queryByText(/could not be reached from the gateway/)).toBeNull();
   });
 
+  it("a pasted URL fills Host and Path, and the path is sent as base_path (FIX-145)", async () => {
+    const calls = stub({
+      ...catalogue,
+      "GET /v1/orgs/o1/app-instances": () => json(200, { items: [], next_cursor: null }),
+      "POST /v1/orgs/o1/app-instances": () => json(201, inst({ host: "its.cern.ch", base_path: "/jira" })),
+    });
+    wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Register a self-hosted app" }));
+    fireEvent.change(await screen.findByLabelText("App"), { target: { value: "desk" } });
+    expect(screen.getByText(/Only if the app is served under a path, for example \/jira for https:\/\/its\.cern\.ch\/jira/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "https://its.cern.ch/jira/?x=1" } });
+    expect((screen.getByLabelText("Host") as HTMLInputElement).value).toBe("its.cern.ch");
+    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("/jira");
+    fireEvent.click(screen.getByRole("button", { name: "Register" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    expect(calls.filter((c) => c.method === "POST")[0].body).toEqual({ app_id: "desk", host: "its.cern.ch", base_path: "/jira", label: "its.cern.ch" });
+  });
+
+  it("a URL with a port stays as typed so the server explains, and a bad path shows on the Path field", async () => {
+    stub({
+      ...catalogue,
+      "GET /v1/orgs/o1/app-instances": () => json(200, { items: [], next_cursor: null }),
+      "POST /v1/orgs/o1/app-instances": () =>
+        json(422, { error: { code: "instance_base_path_invalid", message: "x", details: { fields: [{ path: "/base_path", message: "A path segment may not be . or .." }] } } }),
+    });
+    wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Register a self-hosted app" }));
+    fireEvent.change(await screen.findByLabelText("App"), { target: { value: "desk" } });
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "https://its.cern.ch:8443/jira" } });
+    expect((screen.getByLabelText("Host") as HTMLInputElement).value).toBe("https://its.cern.ch:8443/jira");
+    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("");
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "its.cern.ch" } });
+    fireEvent.change(screen.getByLabelText("Path"), { target: { value: "/a/.." } });
+    fireEvent.click(screen.getByRole("button", { name: "Register" }));
+    expect(await screen.findByText("A path segment may not be . or ..")).toBeInTheDocument();
+  });
+
+  it("a registration under a path is named by its base URL in the list and the confirmations (FIX-145)", async () => {
+    stub({
+      ...catalogue,
+      "GET /v1/orgs/o1/app-instances": () => json(200, { items: [inst({ host: "its.cern.ch", base_path: "/jira" })], next_cursor: null }),
+    });
+    wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
+    expect(await screen.findByText("https://its.cern.ch/jira")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete https://its.cern.ch/jira" }));
+    expect(await screen.findByText("Delete https://its.cern.ch/jira?")).toBeInTheDocument();
+  });
+
   it("deleting asks for confirmation and says what happens", async () => {
     const calls = stub({
       ...catalogue,
@@ -174,7 +227,7 @@ describe("instances admin section", () => {
       "DELETE /v1/app-instances/i1": () => json(204, null),
     });
     wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Delete desk.acme.example" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete https://desk.acme.example" }));
     const dlg = await screen.findByRole("dialog");
     expect(dlg.textContent).toMatch(/2 connections will be disabled/);
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
@@ -219,10 +272,10 @@ describe("connect dialog instance picker", () => {
     );
     wrap(<ConnectView />);
     const picker = await screen.findByLabelText("Desk instance");
-    await within(picker).findByRole("option", { name: "Acme desk (desk.acme.example)" });
+    await within(picker).findByRole("option", { name: "Acme desk (https://desk.acme.example)" });
     const options = within(picker).getAllByRole("option").map((o) => o.textContent);
     // the default host first; the disabled instance is not offered
-    expect(options).toEqual(["saas.desk.example (default)", "Acme desk (desk.acme.example)"]);
+    expect(options).toEqual(["saas.desk.example (default)", "Acme desk (https://desk.acme.example)"]);
     fireEvent.change(picker, { target: { value: "i1" } });
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: "t" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -266,14 +319,15 @@ describe("instance on connections and OAuth clients", () => {
       "GET /v1/workspaces/w1/connections": () =>
         json(200, {
           items: [
-            { ...base, id: "k1", label: "Acme GitLab", status: "active", status_reason: null, instance: { id: "i1", host: "desk.acme.example", label: "Acme desk" } },
+            { ...base, id: "k1", label: "Acme GitLab", status: "active", status_reason: null, instance: { id: "i1", host: "desk.acme.example", base_path: "/jira", base_url: "https://desk.acme.example/jira", label: "Acme desk" } },
             { ...base, id: "k2", label: "Gone", status: "disabled", status_reason: "instance_deleted", instance: null },
           ],
           next_cursor: null,
         }),
     });
     wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    expect(await screen.findByText("desk.acme.example")).toBeInTheDocument();
+    // the connection's instance line names the registration by its base URL (D-231)
+    expect(await screen.findByText("https://desk.acme.example/jira")).toBeInTheDocument();
     expect(screen.getByText(/self-hosted app of this connection was deleted/)).toBeInTheDocument();
     // k1 can be disabled, k2 (instance deleted) cannot be re-enabled
     expect(screen.getAllByRole("button", { name: /^(Disable|Enable)$/ })).toHaveLength(1);
@@ -288,13 +342,13 @@ describe("instance on connections and OAuth clients", () => {
       "POST /v1/orgs/o1/oauth-clients": () => json(201, { id: "c2" }),
     });
     wrap(<OAuthClientsPanel scope={{ kind: "organization", id: "o1" }} canOwn />);
-    expect(await screen.findByText("desk.acme.example")).toBeInTheDocument();
+    expect(await screen.findByText("https://desk.acme.example")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Add an OAuth client"));
     const app = await screen.findByLabelText("App");
     await within(app).findByRole("option", { name: "Desk (oa)" });
     fireEvent.change(app, { target: { value: "selfhost|oa" } });
     const picker = await screen.findByLabelText("Self-hosted app");
-    await within(picker).findByRole("option", { name: "Acme desk (desk.acme.example)" });
+    await within(picker).findByRole("option", { name: "Acme desk (https://desk.acme.example)" });
     fireEvent.change(picker, { target: { value: "i1" } });
     fireEvent.change(screen.getByLabelText("Application ID"), { target: { value: "cid" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));

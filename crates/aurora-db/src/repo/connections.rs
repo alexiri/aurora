@@ -29,6 +29,8 @@ pub struct ConnectionRow {
     /// The registered self-hosted instance (D-74); null for `default_host` and other apps.
     pub instance_id: Option<Uuid>,
     pub instance_host: Option<String>,
+    /// (FIX-145, D-231) The registration's base path (`/jira`); null = served at the host root.
+    pub instance_base_path: Option<String>,
     pub instance_label: Option<String>,
     pub credentials_expires_at: Option<DateTime<Utc>>,
     pub connected_by: Option<Uuid>,
@@ -40,7 +42,7 @@ pub struct ConnectionRow {
 
 const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.app_id, c.package_id, c.app_version, \
     c.label, c.status, c.status_reason, c.scopes, c.requested_scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
-    c.connect_method, c.access, c.instance_id, ai.host AS instance_host, ai.label AS instance_label, \
+    c.connect_method, c.access, c.instance_id, ai.host AS instance_host, ai.base_path AS instance_base_path, ai.label AS instance_label, \
     c.credentials_expires_at, c.connected_by, u.display_name AS connected_by_name, c.last_used_at, \
     c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
     LEFT JOIN app_instances ai ON ai.id = c.instance_id";

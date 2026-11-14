@@ -68,6 +68,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "Another registration of this host exists. Delete it first, then make this one available to every organization.",
   // Fallback; the specific text is `probeFailedMessage` (FIX-144, `details.reason`).
   instance_probe_failed: "That host could not be reached from the Aurora server.",
+  instance_base_path_invalid:
+    "The path must start with / and have at most 8 segments of letters, digits and . _ ~ - (for example /jira), 128 characters in all.",
   instance_required: "Choose which instance to connect to.",
   instance_oauth_client_required:
     "Ask an administrator to register an OAuth application for this instance first (Credentials, OAuth clients).",
@@ -108,6 +110,9 @@ export interface HostConflict {
   setting?: string | null;
   scope?: "instance" | "org";
   instance_id?: string;
+  /** (FIX-145, C-731) The holder's address: `https://<host><base_path>`. */
+  base_path?: string | null;
+  base_url?: string;
   promotable?: boolean;
   org?: { id: string; name?: string | null; slug?: string | null };
 }
@@ -138,12 +143,18 @@ export function hostConflictMessage(c: HostConflict, ownOrg = false): string {
       return c.setting
         ? `That host is Aurora's own address (setting ${c.setting}).`
         : "That host is one of Aurora's own addresses.";
-    case "instance":
-      if (c.scope !== "org") return `That host is already registered as a self-hosted ${app} and is available to every organization.`;
-      if (c.org?.name) return `That host is already registered as a self-hosted ${app} by the organization ${c.org.name}.`;
+    case "instance": {
+      // (D-231) The holder is named by its address when the server says it: another path on the
+      // host may be free.
+      const holder = c.base_url ? ` (${c.base_url})` : "";
+      const what = c.base_url ? "That address overlaps" : "That host is already";
+      const reg = c.base_url ? "one already registered as" : "registered as";
+      if (c.scope !== "org") return `${what} ${reg} a self-hosted ${app}${holder} and is available to every organization.`;
+      if (c.org?.name) return `${what} ${reg} a self-hosted ${app}${holder} by the organization ${c.org.name}.`;
       return ownOrg
-        ? `That host is already registered as a self-hosted ${app} in this organization.`
-        : `That host is already registered as a self-hosted ${app} by another organization — ask an instance administrator.`;
+        ? `${what} ${reg} a self-hosted ${app}${holder} in this organization.`
+        : `${what} ${reg} a self-hosted ${app}${holder} by another organization — ask an instance administrator.`;
+    }
   }
 }
 
@@ -185,20 +196,23 @@ function urlParts(u: string | undefined): { host: string; path: string } | null 
 }
 
 /** The sentence for a failed registration check: what the host actually answered (FIX-144). */
-export function probeFailedMessage(d: ProbeFailure, appName: string, host: string): string {
+export function probeFailedMessage(d: ProbeFailure, appName: string, host: string, basePath?: string): string {
   const path = urlParts(d.url)?.path ?? "the check path";
   const app = appName || "The app";
   const status = d.status ?? undefined;
+  const pathHint = `If ${app} is served under a path, such as https://${host}/jira, enter it in Path.`;
   switch (d.reason) {
     case "unexpected_status": {
       if (status === 404) {
-        return `${host} answered 404 Not Found at ${path}. ${app} answers there when it is served at the root of the host. Servers under a path, such as https://${host}/jira, are not supported yet.`;
+        return basePath
+          ? `${host} answered 404 Not Found at ${path}. ${app} answers there when it is served under ${basePath} on ${host}. Check the Path.`
+          : `${host} answered 404 Not Found at ${path}. ${app} answers there when it is served at the root of the host. ${pathHint}`;
       }
       if (status !== undefined && status >= 300 && status < 400) {
         const loc = d.location ? urlParts(d.location) : null;
         const head = `${host} redirected ${path}${d.location ? ` to ${d.location}` : ""}.`;
         if (loc && loc.host.toLowerCase() !== host.toLowerCase()) return `${head} Register that host instead.`;
-        return `${head} ${app} may be served under a path, which is not supported yet.`;
+        return `${head} ${pathHint}`;
       }
       if (status !== undefined) {
         const phrase = REASON_PHRASES[status];

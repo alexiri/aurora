@@ -11,7 +11,15 @@ describe("probeFailedMessage (FIX-144)", () => {
     const m = probeFailedMessage({ ...base, reason: "unexpected_status", status: 404 }, "Jira Data Center", H);
     expect(m).toContain("its.cern.ch answered 404 Not Found at /rest/api/2/serverInfo.");
     expect(m).toContain("Jira Data Center answers there when it is served at the root of the host.");
-    expect(m).toContain("https://its.cern.ch/jira");
+    // FIX-145: the way out is the Path field
+    expect(m).toContain("If Jira Data Center is served under a path, such as https://its.cern.ch/jira, enter it in Path.");
+  });
+
+  it("a 404 with a path entered says to check the path", () => {
+    const m = probeFailedMessage({ ...base, url: "https://its.cern.ch/jira/rest/api/2/serverInfo", reason: "unexpected_status", status: 404 }, "Jira", H, "/jira");
+    expect(m).toContain("answered 404 Not Found at /jira/rest/api/2/serverInfo.");
+    expect(m).toContain("served under /jira on its.cern.ch. Check the Path.");
+    expect(m).not.toContain("enter it in Path");
   });
 
   it("a redirect names the location; another host says to register that host", () => {
@@ -28,7 +36,7 @@ describe("probeFailedMessage (FIX-144)", () => {
       H,
     );
     expect(same).toContain("to https://its.cern.ch/jira/rest/api/2/serverInfo.");
-    expect(same).toContain("may be served under a path");
+    expect(same).toContain("enter it in Path.");
   });
 
   it("another status says what the app answers", () => {

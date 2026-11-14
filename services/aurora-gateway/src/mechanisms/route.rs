@@ -63,11 +63,17 @@ pub fn tenant_guard(t: &Tenant, stored: Option<&str>, host: &str) -> Result<(), 
 /// request host equals its instance's host, exactly. `on_instance` is the registered instance
 /// the request host resolved to, if any: a connection without an instance never rides on an
 /// instance host, and one bound to another instance answers 421 `host_mismatch`.
+///
+/// (D-231) A bound connection is also confined to its registration's base path: on its host but
+/// outside `conn_base_path` (request `path`, normalized) is the same 421. The caller adds
+/// `expected_base_url` to the refusal.
 pub fn instance_guard(
     conn_instance: Option<uuid::Uuid>,
     conn_instance_host: Option<&str>,
+    conn_base_path: Option<&str>,
     on_instance: Option<uuid::Uuid>,
     host: &str,
+    path: &str,
 ) -> Result<(), GuardError> {
     let Some(id) = conn_instance else {
         if on_instance.is_some() {
@@ -83,7 +89,11 @@ pub fn instance_guard(
         };
     };
     let stored = conn_instance_host.ok_or(GuardError::Unavailable)?;
-    if stored.eq_ignore_ascii_case(host) && on_instance.is_none_or(|o| o == id) {
+    let inside = match on_instance {
+        Some(o) => o == id,
+        None => aurora_registry::instance::covers(conn_base_path, path),
+    };
+    if stored.eq_ignore_ascii_case(host) && inside {
         Ok(())
     } else {
         Err(GuardError::Mismatch {
@@ -151,51 +161,85 @@ mod tests {
         use uuid::Uuid;
         let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
         // Bound connection on its own instance host, with or without the request resolving to it.
-        assert!(instance_guard(Some(a), Some("Desk.Acme.test"), Some(a), "desk.acme.test").is_ok());
-        assert!(instance_guard(Some(a), Some("desk.acme.test"), None, "desk.acme.test").is_ok());
+        let h = "desk.acme.test";
+        assert!(instance_guard(Some(a), Some("Desk.Acme.test"), None, Some(a), h, "/x").is_ok());
+        assert!(instance_guard(Some(a), Some(h), None, None, h, "/x").is_ok());
         // Any other host, including a lookalike or the instance's parent: 421 naming the host.
-        for h in [
+        for other in [
             "desk.acme.test.evil.test",
             "acme.test",
             "evil.test",
             "xdesk.acme.test",
         ] {
             assert_eq!(
-                instance_guard(Some(a), Some("desk.acme.test"), None, h),
+                instance_guard(Some(a), Some(h), None, None, other, "/x"),
                 Err(GuardError::Mismatch {
                     expected: "desk.acme.test".into()
                 }),
-                "{h}"
+                "{other}"
             );
         }
         // On another instance's host the connection of instance `a` is refused.
         assert!(matches!(
-            instance_guard(Some(a), Some("desk.acme.test"), Some(b), "desk.acme.test"),
+            instance_guard(Some(a), Some(h), None, Some(b), h, "/x"),
             Err(GuardError::Mismatch { .. })
         ));
         // A connection without an instance never rides on an instance host.
         assert_eq!(
-            instance_guard(None, None, Some(b), "desk.acme.test"),
+            instance_guard(None, None, None, Some(b), h, "/x"),
             Err(GuardError::Unavailable)
         );
-        assert!(instance_guard(None, None, None, "saas.test").is_ok());
+        assert!(instance_guard(None, None, None, None, "saas.test", "/x").is_ok());
         // A default-host connection (host = the app's default_host): that host only.
-        assert!(instance_guard(None, Some("saas.test"), None, "SaaS.test").is_ok());
+        assert!(instance_guard(None, Some("saas.test"), None, None, "SaaS.test", "/x").is_ok());
         assert_eq!(
-            instance_guard(None, Some("saas.test"), None, "saas.test.evil.test"),
+            instance_guard(
+                None,
+                Some("saas.test"),
+                None,
+                None,
+                "saas.test.evil.test",
+                "/x"
+            ),
             Err(GuardError::Mismatch {
                 expected: "saas.test".into()
             })
         );
         assert_eq!(
-            instance_guard(None, Some("saas.test"), Some(b), "desk.acme.test"),
+            instance_guard(None, Some("saas.test"), None, Some(b), h, "/x"),
             Err(GuardError::Unavailable)
         );
         // A bound connection whose instance host is unknown fails closed.
         assert_eq!(
-            instance_guard(Some(a), None, Some(a), "desk.acme.test"),
+            instance_guard(Some(a), None, None, Some(a), h, "/x"),
             Err(GuardError::Unavailable)
         );
+    }
+
+    /// (D-231) A bound connection is confined to its base path: on its host but outside it is the
+    /// same 421, whatever the request resolved to.
+    #[test]
+    fn instance_guard_confines_a_connection_to_its_base_path() {
+        use uuid::Uuid;
+        let a = Uuid::now_v7();
+        let h = "its.cern.ch";
+        let g = |on, path| instance_guard(Some(a), Some(h), Some("/jira"), on, h, path);
+        assert!(g(None, "/jira/rest/api/2/myself").is_ok());
+        assert!(g(Some(a), "/jira/rest/api/2/myself").is_ok());
+        assert!(g(None, "/jira").is_ok());
+        for p in [
+            "/rest/api/2/myself",
+            "/jira2/rest",
+            "/JIRA/rest",
+            "/",
+            "/confluence/x",
+        ] {
+            assert_eq!(
+                g(None, p),
+                Err(GuardError::Mismatch { expected: h.into() }),
+                "{p}"
+            );
+        }
     }
 
     #[test]

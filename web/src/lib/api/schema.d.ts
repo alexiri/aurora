@@ -4900,6 +4900,10 @@ export interface components {
         /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
         AppInstance: {
             app_id: string;
+            /** @description (C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root. */
+            base_path?: string | null;
+            /** @description `https://<host><base_path>`: how the registration is named everywhere. */
+            base_url: string;
             /**
              * Format: int64
              * @description Connections bound to this instance.
@@ -5725,6 +5729,12 @@ export interface components {
         };
         CreateAppInstanceRequest: {
             app_id: string;
+            /**
+             * @description (C-731, D-231) Only if the app is served under a path: `/jira` for
+             *     `https://its.cern.ch/jira`. Normalized (`/jira/` = `/jira`, `""` and `/` = none); cannot be
+             *     changed later.
+             */
+            base_path?: string | null;
             /** @description A lower-case DNS name: no port, path, userinfo or IP literal. */
             host: string;
             label: string;
@@ -6604,6 +6614,10 @@ export interface components {
         };
         /** @description The registered self-hosted instance a connection is bound to (C-243). */
         InstanceRef: {
+            /** @description (C-731, D-231) The path the app is served under on `host`; `null` = the host root. */
+            base_path?: string | null;
+            /** @description `https://<host><base_path>`. */
+            base_url: string;
             host: string;
             /** Format: uuid */
             id: string;
@@ -7500,6 +7514,10 @@ export interface components {
         Page_AppInstance: {
             items: {
                 app_id: string;
+                /** @description (C-731, D-231) The path the app is served under on `host` (`/jira`); `null` = the host root. */
+                base_path?: string | null;
+                /** @description `https://<host><base_path>`: how the registration is named everywhere. */
+                base_url: string;
                 /**
                  * Format: int64
                  * @description Connections bound to this instance.

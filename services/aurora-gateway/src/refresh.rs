@@ -12,6 +12,7 @@ use aurora_core::Secret;
 use aurora_core::limits::{REFRESH_LOCK_WAIT, REFRESH_MARGIN};
 use aurora_db::PgPool;
 use aurora_db::repo::gateway as repo;
+use aurora_registry::instance::InstanceBase;
 use aurora_registry::manifest::{BodyFormat, ClientAuth, Token, TokenKind, UrlOrTemplate};
 use aurora_registry::snapshot::OauthClientEntry;
 use aurora_secrets::{Purpose, SealContext, SecretRef, SecretVault, ValueSource};
@@ -387,6 +388,7 @@ impl TokenManager {
                 metadata,
                 tenant_host: job.conn.tenant_host.clone(),
                 instance_host: job.conn.instance_host.clone(),
+                instance_base_path: job.conn.instance_base_path.clone(),
                 client,
                 client_secret,
                 context: job.context.clone(),
@@ -421,7 +423,7 @@ impl TokenManager {
             &public,
             &secret,
             job.conn.tenant_host.as_deref(),
-            job.conn.instance_host.as_deref(),
+            job.conn.instance_base(),
         )?;
         let mut req = self
             .http
@@ -465,7 +467,7 @@ pub fn build_exchange(
     public: &Map<String, Value>,
     secret: &Map<String, Value>,
     tenant_host: Option<&str>,
-    instance_host: Option<&str>,
+    instance: Option<InstanceBase<'_>>,
 ) -> Result<ExchangeRequest, RefreshError> {
     let field = token.refresh_field.as_deref().unwrap_or("refresh_token");
     let refresh = current
@@ -473,7 +475,7 @@ pub fn build_exchange(
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .ok_or(RefreshError::Unavailable)?;
-    let url = token_url(client, tenant_host, instance_host)?;
+    let url = token_url(client, tenant_host, instance)?;
     let mut params: Vec<(String, String)> = vec![
         ("grant_type".into(), "refresh_token".into()),
         ("refresh_token".into(), refresh.to_owned()),
@@ -571,13 +573,13 @@ pub fn interpret_exchange(
 fn token_url(
     c: &OauthClientEntry,
     tenant_host: Option<&str>,
-    instance_host: Option<&str>,
+    instance: Option<InstanceBase<'_>>,
 ) -> Result<String, RefreshError> {
     match &c.token_url {
-        // (D-74, SEC-04) `https://{instance}/...`: the connection's own instance host, https, no
-        // port or userinfo; a refresh token never leaves its instance.
+        // (D-74, SEC-04) `https://{instance}/...`: the connection's own instance address (host and
+        // base path, D-231), https, no port or userinfo; a refresh token never leaves its instance.
         UrlOrTemplate::Url(u) if u.contains(aurora_registry::manifest::INSTANCE_HOST) => {
-            instance_token_url(u, instance_host)
+            instance_token_url(u, instance)
         }
         UrlOrTemplate::Url(u) => Ok(u.clone()),
         UrlOrTemplate::Templated(z) => {
@@ -603,17 +605,14 @@ fn token_url(
 }
 
 /// Substitute `{instance}` in a fixed token URL; fail closed unless the result is plain https on
-/// exactly `instance_host`.
-fn instance_token_url(raw: &str, instance_host: Option<&str>) -> Result<String, RefreshError> {
-    let host = instance_host
-        .filter(|h| {
-            !h.is_empty()
-                && h.parse::<std::net::IpAddr>().is_err()
-                && h.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
-        })
-        .ok_or(RefreshError::Unavailable)?;
-    let url = raw.replacen(aurora_registry::manifest::INSTANCE_HOST, host, 1);
+/// exactly the instance's host (through the one shared resolver, D-231).
+fn instance_token_url(
+    raw: &str,
+    instance: Option<InstanceBase<'_>>,
+) -> Result<String, RefreshError> {
+    let instance = instance.ok_or(RefreshError::Unavailable)?;
+    let host = instance.host;
+    let url = instance.resolve(raw).ok_or(RefreshError::Unavailable)?;
     let uri: http::Uri = url.parse().map_err(|_| RefreshError::Unavailable)?;
     let ok = uri.scheme_str() == Some("https")
         && uri.port_u16().is_none()
@@ -664,12 +663,14 @@ fn store_err(e: aurora_secrets::SecretError) -> RefreshError {
 #[cfg(test)]
 mod token_url_tests {
     use super::{check_templated_token_url, instance_token_url};
+    use aurora_registry::instance::InstanceBase;
 
     /// SEC-04/SEC-59: a refresh token is only ever sent to the connection's own instance host.
     #[test]
     fn instance_token_url_is_the_instance_host_or_nothing() {
+        let at = |h| Some(InstanceBase::new(h, None));
         assert_eq!(
-            instance_token_url("https://{instance}/oauth/token", Some("desk.acme.test")).ok(),
+            instance_token_url("https://{instance}/oauth/token", at("desk.acme.test")).ok(),
             Some("https://desk.acme.test/oauth/token".to_owned())
         );
         // No instance host (a connection without an instance, a deleted instance): fail closed.
@@ -683,12 +684,29 @@ mod token_url_tests {
             "[::1]",
         ] {
             assert!(
-                instance_token_url("https://{instance}/oauth/token", Some(bad)).is_err(),
+                instance_token_url("https://{instance}/oauth/token", at(bad)).is_err(),
                 "{bad}"
             );
         }
         // A non-https template never resolves.
-        assert!(instance_token_url("http://{instance}/oauth/token", Some("a.acme.test")).is_err());
+        assert!(instance_token_url("http://{instance}/oauth/token", at("a.acme.test")).is_err());
+    }
+
+    /// (D-231) A refresh token goes to the registration's own address, base path included.
+    #[test]
+    fn instance_token_url_carries_the_base_path() {
+        let b = Some(InstanceBase::new("its.cern.ch", Some("/jira")));
+        assert_eq!(
+            instance_token_url("https://{instance}/rest/oauth2/latest/token", b).ok(),
+            Some("https://its.cern.ch/jira/rest/oauth2/latest/token".to_owned())
+        );
+        assert!(
+            instance_token_url(
+                "https://{instance}/x",
+                Some(InstanceBase::new("its.cern.ch", Some("/a/../b")))
+            )
+            .is_err()
+        );
     }
 
     #[test]

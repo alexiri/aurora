@@ -488,7 +488,8 @@ async fn http_minter_follows_w9() {
             credentials: serde_json::Map::new(),
             metadata: json!({"a": "b"}),
             tenant_host: None,
-            instance_host: None,
+            instance_host: Some("its.cern.ch".into()),
+            instance_base_path: Some("/jira".into()),
             client: serde_json::Map::new(),
             client_secret: serde_json::Map::new(),
             context: Default::default(),
@@ -499,6 +500,9 @@ async fn http_minter_follows_w9() {
     let b = seen.lock().unwrap().clone();
     assert_eq!(b["package_digest"], "dg");
     assert_eq!(b["input"]["metadata"][0]["key"], "a");
+    // (C-249, D-231) The hook host request names the registration's host and its base path.
+    assert_eq!(b["instance_host"], "its.cern.ch");
+    assert_eq!(b["instance_base_path"], "/jira");
 }
 
 // ---- RFE-007: internal-secret ring on the gateway ----
@@ -540,6 +544,7 @@ async fn minter_presents_active_key_id_and_status_checks_the_ring() {
         metadata: json!({}),
         tenant_host: None,
         instance_host: None,
+        instance_base_path: None,
         client: serde_json::Map::new(),
         client_secret: serde_json::Map::new(),
         context: Default::default(),

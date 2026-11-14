@@ -746,6 +746,340 @@ async fn the_admin_list_shows_every_registration_and_promote_makes_one_instance_
     assert_eq!((org_id, critical), (Some(w.org), true));
 }
 
+// ---- D-231 / C-731: a base path ------------------------------------------------------------
+
+impl W {
+    async fn register_at(
+        &self,
+        who: &str,
+        org: Uuid,
+        app: &str,
+        host: &str,
+        base: Value,
+    ) -> (u16, Value) {
+        self.call(
+            who,
+            Method::POST,
+            &format!("/v1/orgs/{org}/app-instances"),
+            Some(json!({"app_id": app, "host": host, "base_path": base, "label": "l"})),
+        )
+        .await
+    }
+
+    /// The upstream answers the probe under these paths only (`/<p>/api/health`).
+    async fn serve_health_under(&self, paths: &[&str]) {
+        self.up.reset().await;
+        for p in paths {
+            Mock::given(method("GET"))
+                .and(path(format!("{p}/api/health")))
+                .respond_with(ResponseTemplate::new(200))
+                .mount(&self.up)
+                .await;
+        }
+    }
+}
+
+/// An instance served under a path registers once the base path is given: the probe runs against
+/// `https://<host><base_path><probe path>`; without it the failed check says to enter the Path.
+#[tokio::test]
+async fn a_server_under_a_path_registers_with_its_base_path() {
+    let w = world().await;
+    w.serve_health_under(&["/jira"]).await;
+    // Without the base path the probe gets a 404 (FIX-144's message, now pointing at the field).
+    let (s, v) = w.register(&w.owner, w.org, "desk", "its.cern.ch").await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["details"]["status"], 404, "{v}");
+    assert_eq!(
+        v["error"]["details"]["url"],
+        "https://its.cern.ch/api/health"
+    );
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("enter it in Path."),
+        "{v}"
+    );
+    // With it: registered; the stored path is normalized.
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", "its.cern.ch", json!("/jira/"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["base_path"], "/jira");
+    assert_eq!(v["base_url"], "https://its.cern.ch/jira");
+    assert_eq!(v["host"], "its.cern.ch");
+    let id = v["id"].as_str().unwrap().to_owned();
+    // The list carries it, and the registration probe ran under it.
+    let (_, v) = w
+        .call(
+            &w.owner,
+            Method::GET,
+            &format!("/v1/orgs/{}/app-instances", w.org),
+            None,
+        )
+        .await;
+    assert_eq!(v["items"][0]["base_url"], "https://its.cern.ch/jira");
+    let reqs = w.up.received_requests().await.unwrap();
+    assert!(reqs.iter().any(|r| r.url.path() == "/jira/api/health"));
+    // The base path cannot be changed (like the host).
+    let (s, _) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &format!("/v1/app-instances/{id}"),
+            Some(json!({"base_path": "/x"})),
+        )
+        .await;
+    assert_eq!(s, 400);
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT base_path FROM app_instances WHERE id = $1")
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(stored.as_deref(), Some("/jira"));
+}
+
+#[tokio::test]
+async fn every_base_path_rule_has_a_refusal_and_normalization_is_stored() {
+    let w = world().await;
+    w.serve_health_under(&["", "/a", "/x.y_z~w-1"]).await;
+    let long = format!("/{}", "a".repeat(65));
+    let many = "/1/2/3/4/5/6/7/8/9";
+    let toolong = format!("/{}/{}/{}", "a".repeat(60), "b".repeat(60), "c".repeat(10));
+    for bad in [
+        "jira",
+        "//jira",
+        "/a//b",
+        "/a/./b",
+        "/a/..",
+        "/a b",
+        "/a?x=1",
+        "/a#f",
+        "/a%2Fb",
+        "/a:8080",
+        "/a\\b",
+        long.as_str(),
+        many,
+        toolong.as_str(),
+    ] {
+        let (s, v) = w
+            .register_at(&w.owner, w.org, "nodefault", "nd.acme.example", json!(bad))
+            .await;
+        assert_eq!(s, 422, "{bad}: {v}");
+        assert_eq!(
+            v["error"]["code"], "instance_base_path_invalid",
+            "{bad}: {v}"
+        );
+        assert_eq!(field_path(&v), "/base_path", "{bad}");
+    }
+    // `/` and `""` mean no base path; a trailing slash is dropped; case and unreserved characters
+    // are kept.
+    for (i, (given, stored)) in [
+        (json!("/"), Value::Null),
+        (json!(""), Value::Null),
+        (json!(null), Value::Null),
+        (json!("/Kept/Case/"), json!("/Kept/Case")),
+        (json!("/x.y_z~w-1"), json!("/x.y_z~w-1")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // distinct hosts, so nothing conflicts
+        let host = format!("h{i}.acme.example");
+        let (s, v) = w
+            .register_at(&w.owner, w.org, "nodefault", &host, given.clone())
+            .await;
+        assert_eq!(s, 201, "{given}: {v}");
+        assert_eq!(v["base_path"], stored, "{given}");
+    }
+    // the database CHECK refuses what the API would never send
+    let bad = sqlx::query("UPDATE app_instances SET base_path = '/a/../b'")
+        .execute(w.h.pool())
+        .await;
+    assert!(bad.is_err());
+    let none: i64 = sqlx::query_scalar("SELECT count(*) FROM app_instances WHERE base_path = '/'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(none, 0);
+}
+
+/// Registrations on one host conflict only when their base paths overlap.
+#[tokio::test]
+async fn registrations_on_one_host_conflict_only_when_their_paths_overlap() {
+    let w = world().await;
+    w.serve_health_under(&["", "/jira", "/jira2", "/jira/x", "/confluence"])
+        .await;
+    let host = "its.cern.ch";
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", host, json!("/jira"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    // overlapping: no base path, equal, a segment prefix of it, or it a prefix
+    for (given, app) in [
+        (json!(null), "nodefault"),
+        (json!("/jira"), "nodefault"),
+        (json!("/jira/x"), "nodefault"),
+        (json!("/jira"), "desk"),
+    ] {
+        let (s, v) = w
+            .register_at(&w.owner, w.org, app, host, given.clone())
+            .await;
+        assert_eq!(s, 422, "{given}: {v}");
+        assert_eq!(v["error"]["code"], "instance_host_conflict", "{given}: {v}");
+        let c = &v["error"]["details"]["conflict"];
+        assert_eq!(c["kind"], "instance");
+        assert_eq!(c["base_path"], "/jira", "{given}: {v}");
+        assert_eq!(c["base_url"], "https://its.cern.ch/jira", "{given}: {v}");
+    }
+    // disjoint: accepted, for the same app and for another one
+    for (given, app) in [
+        (json!("/jira2"), "desk"),
+        (json!("/confluence"), "nodefault"),
+        (json!("/JIRA"), "nodefault"),
+    ] {
+        let (s, v) = w
+            .register_at(&w.owner, w.org, app, host, given.clone())
+            .await;
+        assert_eq!(s, 201, "{given}: {v}");
+    }
+    // a registration without a base path blocks every other one on the host
+    let (s, v) = w
+        .register_at(
+            &w.owner,
+            w.org,
+            "nodefault",
+            "root.acme.example",
+            json!(null),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w
+        .register_at(
+            &w.owner,
+            w.org,
+            "nodefault",
+            "root.acme.example",
+            json!("/x"),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("instance_host_conflict")),
+        "{v}"
+    );
+    // a static claim refuses the host whatever the path
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", "plain.example.test", json!("/a"))
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(
+        v["error"]["details"]["conflict"]["kind"], "static_claim",
+        "{v}"
+    );
+}
+
+/// The connect probe and the OAuth authorize URL resolve `{instance}` to `<host><base_path>`.
+#[tokio::test]
+async fn connect_probe_and_oauth_urls_carry_the_base_path() {
+    let w = world().await;
+    w.serve_health_under(&["/jira"]).await;
+    Mock::given(method("GET"))
+        .and(path("/jira/api/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name": "alice"})))
+        .mount(&w.up)
+        .await;
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", "its.cern.ch", json!("/jira"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // pasted-token connect: the probe `https://{instance}/api/me` ran under the base path
+    let (s, _, v) = w
+        .connect(&w.owner, "desk", w.body("api_key", Some(id)))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["label"], "alice");
+    assert_eq!(
+        v["connection"]["instance"]["base_url"],
+        "https://its.cern.ch/jira"
+    );
+    assert_eq!(v["connection"]["instance"]["base_path"], "/jira");
+    let reqs = w.up.received_requests().await.unwrap();
+    assert!(
+        reqs.iter().any(|r| r.url.path() == "/jira/api/me"),
+        "{:?}",
+        reqs.iter()
+            .map(|r| r.url.path().to_owned())
+            .collect::<Vec<_>>()
+    );
+    // OAuth: the authorize URL (and the token URL, checked on the way) are under it too
+    let oauth_uri = format!("/v1/orgs/{}/oauth-clients", w.org);
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            &oauth_uri,
+            Some(
+                json!({"package_id": "selfhost", "client_key": "oa", "instance_id": id,
+                        "fields": {"client_id": "cid", "client_secret": "sec"}}),
+            ),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, _, v) = w.connect(&w.owner, "desk", w.body("oauth", Some(id))).await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap();
+    assert!(
+        url.starts_with("https://its.cern.ch/jira/oauth/authorize?"),
+        "{url}"
+    );
+}
+
+/// Promote follows the same overlap rule: another organization's disjoint registration on the
+/// host does not stand in the way, an overlapping one does.
+#[tokio::test]
+async fn promote_is_refused_only_by_an_overlapping_registration() {
+    let w = world().await;
+    w.serve_health_under(&["/jira", "/other", "/jira/x"]).await;
+    let host = "its.cern.ch";
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", host, json!("/jira"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let uri = format!("/v1/admin/app-instances/{id}/promote");
+    // org B: disjoint path -> promote is fine; overlapping -> refused
+    let (s, v) = w
+        .register_at(&w.owner_b, w.org_b, "desk", host, json!("/jira/x"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let b_id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("instance_host_shared")),
+        "{v}"
+    );
+    let (s, _) = w
+        .call(
+            &w.owner_b,
+            Method::DELETE,
+            &format!("/v1/app-instances/{b_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+    let (s, v) = w
+        .register_at(&w.owner_b, w.org_b, "desk", host, json!("/other"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["base_path"], "/jira");
+}
+
 #[tokio::test]
 async fn the_probe_runs_and_a_failure_registers_nothing() {
     let w = world().await;
@@ -1180,7 +1514,8 @@ async fn connect_binds_the_connection_to_the_instance_or_the_default_host() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["connection"]["instance"],
-        json!({"id": id, "host": "desk.acme.example", "label": "desk.acme.example label"})
+        json!({"id": id, "host": "desk.acme.example", "base_path": null,
+               "base_url": "https://desk.acme.example", "label": "desk.acme.example label"})
     );
     assert_eq!(v["connection"]["label"], "alice");
     let injecting: Vec<&str> = v["connection"]["injecting"]

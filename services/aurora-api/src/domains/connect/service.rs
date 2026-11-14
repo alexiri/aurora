@@ -15,6 +15,7 @@ use aurora_db::DbError;
 use aurora_db::repo::app_instances::{self, InstanceRow};
 use aurora_db::repo::connections::{self as repo, ConnectionRow, NewConnection};
 use aurora_db::repo::{credentials, derived_rules, gateway};
+use aurora_registry::instance::InstanceBase;
 use aurora_registry::manifest::{
     BodyFormat, ClientAuth, Connect, FieldsConnect, Oauth2Connect, UrlOrTemplate,
 };
@@ -239,7 +240,7 @@ fn redirect_allowed(
     app: &AppEntry,
     pkg: &PackageEntry,
     url: &str,
-    instance: Option<&str>,
+    instance: Option<InstanceBase<'_>>,
 ) -> bool {
     if probe::declared_host(snap, app, url, instance) {
         return true;
@@ -316,6 +317,7 @@ impl Ctx<'_> {
                     tenant_host: g.tenant_host.as_deref(),
                     fields: &g.fields,
                     instance_host: self.instance_host(),
+                    instance_base_path: self.instance_base_path(),
                     instance_registered: self.instance.is_some(),
                 },
             )
@@ -348,9 +350,22 @@ impl Ctx<'_> {
         }
     }
 
-    /// The registered instance's host (the host the `{instance}` host entries apply to).
-    fn registered_host(&self) -> Option<&str> {
-        self.instance.as_ref().map(|i| i.host.as_str())
+    /// The registered instance's base path (D-231); a default-host connection has none.
+    fn instance_base_path(&self) -> Option<&str> {
+        self.instance.as_ref().and_then(|i| i.base_path.as_deref())
+    }
+
+    /// Where `{instance}` points: the registered instance's address, else the app's `default_host`.
+    fn instance_base(&self) -> Option<InstanceBase<'_>> {
+        self.instance_host()
+            .map(|h| InstanceBase::new(h, self.instance_base_path()))
+    }
+
+    /// The registered instance's address (the host and path the `{instance}` host entries apply to).
+    fn registered_base(&self) -> Option<InstanceBase<'_>> {
+        self.instance
+            .as_ref()
+            .map(|i| InstanceBase::new(&i.host, i.base_path.as_deref()))
     }
 
     fn bad(&self, k: Kind) -> ConnectErr {
@@ -367,6 +382,7 @@ impl Ctx<'_> {
             package_digest: &self.pkg.digest,
             app_id: &self.app.app_id,
             instance_host: self.instance_host(),
+            instance_base_path: self.instance_base_path(),
         }
     }
 
@@ -443,6 +459,7 @@ impl Ctx<'_> {
                     tenant_host: g.tenant_host.as_deref(),
                     fields: &g.fields,
                     instance_host: self.instance_host(),
+                    instance_base_path: self.instance_base_path(),
                     instance_registered: self.instance.is_some(),
                 },
             )
@@ -819,7 +836,7 @@ pub async fn start(
                     .authorize(&ctx.call(), input)
                     .await
                     .map_err(|e| ConnectErr::Hook(e.0))?;
-                if !redirect_allowed(&snap, app, pkg, &out.url, ctx.registered_host()) {
+                if !redirect_allowed(&snap, app, pkg, &out.url, ctx.registered_base()) {
                     return Err(ConnectErr::Hook("hook returned a disallowed URL".into()));
                 }
                 flow.continuation = out.continuation;
@@ -918,7 +935,7 @@ fn continue_to(
     url: String,
     continuation: String,
 ) -> Result<(String, String), ConnectErr> {
-    if !redirect_allowed(ctx.snap, ctx.app, ctx.pkg, &url, ctx.registered_host()) {
+    if !redirect_allowed(ctx.snap, ctx.app, ctx.pkg, &url, ctx.registered_base()) {
         return Err(ConnectErr::Hook("hook returned a disallowed URL".into()));
     }
     flow.continuation = Some(continuation);
@@ -985,14 +1002,14 @@ async fn start_oauth(
             "tenant host is not allowed for this app",
         ));
     }
-    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref(), ctx.instance_host())
+    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref(), ctx.instance_base())
         .ok_or_else(|| {
             invalid(
                 "/fields",
                 "a tenant host is required for this connect method",
             )
         })?;
-    if oauth_url(&ce.token_url, tenant.as_deref(), ctx.instance_host()).is_none() {
+    if oauth_url(&ce.token_url, tenant.as_deref(), ctx.instance_base()).is_none() {
         return Err(invalid(
             "/fields",
             "a tenant host is required for this connect method",
@@ -1183,11 +1200,11 @@ async fn run_callback(
 fn oauth_url(
     u: &UrlOrTemplate,
     tenant: Option<&str>,
-    instance_host: Option<&str>,
+    instance: Option<InstanceBase<'_>>,
 ) -> Option<String> {
     match u {
         UrlOrTemplate::Url(u) if u.contains(aurora_registry::manifest::INSTANCE_HOST) => {
-            probe::instance_url(u, instance_host?)
+            probe::instance_url(u, instance?)
         }
         UrlOrTemplate::Url(u) => Some(u.clone()),
         UrlOrTemplate::Templated(z) => {
@@ -1216,7 +1233,7 @@ async fn token_exchange(
     {
         return Err(ConnectErr::Exchange);
     }
-    let url = oauth_url(&ce.token_url, tenant, ctx.instance_host()).ok_or(ConnectErr::Exchange)?;
+    let url = oauth_url(&ce.token_url, tenant, ctx.instance_base()).ok_or(ConnectErr::Exchange)?;
     let url = env.prepare(&url).map_err(|_| ConnectErr::Exchange)?;
     // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
     let http = if ctx.instance.is_some() {
