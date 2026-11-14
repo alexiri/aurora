@@ -38,7 +38,64 @@ pub fn base() -> utoipa::openapi::OpenApi {
 /// The complete generated document. The SCIM plane is not part of the document and the
 /// router build with `None` simply skips wiring it, so no `AppState` is needed here.
 pub fn document() -> utoipa::openapi::OpenApi {
-    crate::app::api_router(None).1
+    let mut doc = crate::app::api_router(None).1;
+    add_common_errors(&mut doc);
+    doc
+}
+
+/// (FIX-119, `API_CONTRACTS` §conventions) Every authenticated route can answer **401** (no or an invalid
+/// credential) and **429** (the per-principal limiter), whatever its handler's own annotations say: the
+/// document used to list 401 on a handful of operations. Added at assembly, per operation that declares a
+/// security requirement, never overriding a response the handler already documents. The body is the common
+/// error envelope.
+fn add_common_errors(doc: &mut utoipa::openapi::OpenApi) {
+    use utoipa::openapi::path::Operation;
+    use utoipa::openapi::response::ResponseBuilder;
+    use utoipa::openapi::{Content, Ref};
+
+    fn add(op: &mut Operation) {
+        if op.security.as_ref().is_none_or(Vec::is_empty) {
+            return;
+        }
+        for (code, description) in [
+            (
+                "401",
+                "Unauthenticated: no credential, or an invalid or expired one",
+            ),
+            ("429", "Too many requests: the per-principal rate limit"),
+        ] {
+            if !op.responses.responses.contains_key(code) {
+                let response = ResponseBuilder::new()
+                    .description(description)
+                    .content(
+                        "application/json",
+                        Content::new(Some(Ref::from_schema_name("ErrorEnvelope"))),
+                    )
+                    .build();
+                op.responses
+                    .responses
+                    .insert(code.to_owned(), response.into());
+            }
+        }
+    }
+
+    for item in doc.paths.paths.values_mut() {
+        for op in [
+            item.get.as_mut(),
+            item.put.as_mut(),
+            item.post.as_mut(),
+            item.delete.as_mut(),
+            item.patch.as_mut(),
+            item.options.as_mut(),
+            item.head.as_mut(),
+            item.trace.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            add(op);
+        }
+    }
 }
 
 /// Pretty JSON with a trailing newline, as checked in at `web/openapi.json`.
