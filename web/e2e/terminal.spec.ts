@@ -75,6 +75,97 @@ test.describe("agent Terminal tab", () => {
     await expect(page.getByRole("group", { name: "Agent terminal" })).toHaveCount(0);
   });
 
+  // FIX-138: a bounded pane that scrolls inside itself.
+  for (const width of [1280, 390]) {
+    test.describe(`scrolling pane, ${width} px`, () => {
+      test.use({ viewport: { width, height: 800 } });
+      test("200 lines of output keep the pane height and the page still; the last line is visible; scrolling up offers Jump to latest", async ({ page }) => {
+        const lines = Array.from({ length: 200 }, (_, i) => `line ${i + 1}\r\n`).join("");
+        const pty: MockPty = { output: enc(lines), resizes: [] };
+        await mockWithTerminal(page, pty);
+        await openTab(page);
+        const pane = page.getByRole("group", { name: "Agent terminal" });
+        await expect(pane).toContainText("line 200", { timeout: 20_000 });
+        const box = await pane.boundingBox();
+        // The pane keeps a bounded height (a fixed number of rows), and so does the page.
+        expect(box!.height).toBeLessThan(800);
+        expect(box!.height).toBeGreaterThan(200);
+        // Desktop: the page itself does not scroll vertically; on a phone the pane is a fixed share of the viewport
+        // and the page may scroll to reach it. Never sideways.
+        if (width >= 768) {
+          expect(await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight), "the page scrolls").toBeLessThanOrEqual(0);
+        }
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        // The last line is in view (the pane follows the cursor).
+        const last = await pane.getByText("line 200", { exact: true }).boundingBox();
+        expect(last!.y + last!.height).toBeLessThanOrEqual(box!.y + box!.height + 1);
+        await expect(page.getByRole("button", { name: "Jump to latest" })).toHaveCount(0);
+        // Scrolled up: it stays put and the control appears; the control brings the pane back.
+        await pane.evaluate((el) => {
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event("scroll"));
+        });
+        const jump = page.getByRole("button", { name: "Jump to latest" });
+        await expect(jump).toBeVisible();
+        await jump.click();
+        await expect(jump).toHaveCount(0);
+        expect((await pane.boundingBox())!.height).toBe(box!.height);
+      });
+    });
+  }
+
+  test("Tab reaches the shell; Esc then Tab leaves the terminal (no keyboard trap)", async ({ page }) => {
+    const pty: MockPty = { output: enc("$ "), resizes: [], inputs: [] };
+    await mockWithTerminal(page, pty);
+    await openTab(page);
+    const pane = page.getByRole("group", { name: "Agent terminal" });
+    await expect(pane).toContainText("$", { timeout: 20_000 });
+    await pane.click();
+    await page.keyboard.type("ec");
+    await page.keyboard.press("Tab");
+    await expect.poll(() => pty.inputs!.join("")).toContain("ec\t");
+    // The page did not take Tab: the terminal still has focus.
+    await expect(pane).toHaveClass(/focused/);
+    const before = pty.inputs!.join("");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Open in new window" })).toBeFocused();
+    expect(pty.inputs!.join("").replace(before, "")).not.toContain("\t");
+    await expect(page.getByText("Left the terminal.")).toBeVisible();
+  });
+
+  test("Open in new window opens the standalone route without an opener", async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as unknown as { __opened: unknown[] }).__opened = [];
+      window.open = ((...args: unknown[]) => {
+        (window as unknown as { __opened: unknown[] }).__opened.push(args);
+        return null;
+      }) as typeof window.open;
+    });
+    await mockWithTerminal(page, { output: new Uint8Array(), resizes: [] });
+    await openTab(page);
+    await page.getByRole("button", { name: "Open in new window" }).click();
+    const opened = await page.evaluate(() => (window as unknown as { __opened: unknown[][] }).__opened);
+    expect(opened).toEqual([["/o/acme/w/main/agents/daneel/terminal", "_blank", "noopener,noreferrer"]]);
+  });
+
+  test("the standalone window route: no app chrome, a titled window, a pane that fills and resizes to the window", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const pty: MockPty = { output: enc("daneel:/workspace$ "), resizes: [] };
+    await mockWithTerminal(page, pty);
+    await page.goto("/o/acme/w/main/agents/daneel/terminal");
+    await expect(page.getByRole("heading", { name: "Daneel — Terminal" })).toBeVisible();
+    await expect(page.getByRole("complementary", { name: "Sidebar" })).toHaveCount(0);
+    await expect(page).toHaveTitle("Daneel — Terminal");
+    const pane = page.getByRole("group", { name: "Agent terminal" });
+    await expect(pane).toContainText("daneel:/workspace$", { timeout: 20_000 });
+    const box = await pane.boundingBox();
+    expect(box!.width).toBeGreaterThan(1500);
+    expect(box!.height).toBeGreaterThan(700);
+    expect(await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight), "the window scrolls").toBeLessThanOrEqual(0);
+    await expect.poll(() => pty.resizes.some((r) => r.cols > 150 && r.rows > 30), { timeout: 20_000 }).toBe(true);
+  });
+
   for (const scheme of ["light", "dark"] as const) {
     for (const width of [1280, 390]) {
       test.describe(`themed ${width} px (${scheme})`, () => {

@@ -1197,6 +1197,18 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
     chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.
+    (Phase 5, FIX-138, web half) **Pane size and scrolling:** the pane has a bounded height (at
+    least 18 rem, otherwise the viewport minus the page chrome; 60 % of the viewport below
+    768 px), so `autoResize` derives a fixed grid and output scrolls inside the pane's
+    scrollback (5,000 lines), never by growing the page. The view follows the cursor; once the
+    person has scrolled up it stays put and a **Jump to latest** button appears. **Keyboard:** Tab
+    belongs to the shell (completion); Esc, then Tab (within 1.5 s) leaves the terminal for the
+    next control and says "Left the terminal." (WCAG 2.1.2); the page says so beside the pane.
+    **Open in new window** (`window.open`, `noopener,noreferrer`) opens
+    `/o/<org>/w/<ws>/agents/<agent>/terminal`: no app chrome, a title bar ("<agent> — Terminal",
+    also the document title) and a pane that fills the window. It is a second, independent shell
+    over the same cookie, route and single-use grant as the tab; it counts against the sandbox's
+    leg cap (4409 reads "The sandbox's terminal session limit was reached.").
   - **SSH** (phase 5, P4-SSH-1/2, D-239, C-795) — a page of the **Computer** section beside Terminal
     and Previews (`?tab=ssh`), with the same availability rule as Terminal but on `features.ssh`:
     hosted agents only, `can_use`, hidden for BYO agents and non-`can_use` callers; a frozen agent shows
