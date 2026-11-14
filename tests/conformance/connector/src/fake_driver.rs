@@ -66,6 +66,14 @@ fn ack(v: &Value) -> Result<Ack> {
 
 #[async_trait]
 impl PlatformDriver for FakeDriver {
+    fn quirks(&self) -> PlatformQuirks {
+        PlatformQuirks {
+            // The fake connector has no public callbacks: platform events arrive over `/fake/*`.
+            public_callbacks: false,
+            ..PlatformQuirks::default()
+        }
+    }
+
     async fn wait_ready(&self, timeout: Duration) -> Result<()> {
         let end = tokio::time::Instant::now() + timeout;
         loop {

@@ -111,8 +111,14 @@ jobs:
           sudo systemctl stop postgresql 2>/dev/null || true
           podman --version
           ss -ltn | grep -E ':5432\b' && exit 1 || true
+      # The run includes s17 (a non-admin member's fetch of an approval post carries no action
+      # context, docs/20 §Public callbacks, FIX-113/FIX-139): it must have run and passed on this
+      # server version, not been skipped by a rename or a filter.
       - name: Mattermost conformance (scripts/conformance.sh --mattermost)
-        run: bash scripts/conformance.sh --mattermost
+        run: |
+          set -o pipefail
+          bash scripts/conformance.sh --mattermost 2>&1 | tee target/mattermost-conformance.log
+          grep -Eq '^test s17_members_never_see_the_action_context \.\.\. ok$' target/mattermost-conformance.log
       - name: Mattermost container logs of a failed run
         if: failure()
         run: podman logs --tail=300 aurora-mm2-server >target/mattermost-failure.log 2>&1 || true
