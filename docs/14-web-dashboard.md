@@ -240,7 +240,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   right-aligned (wrapping on narrow screens). **Page widths are theme tokens**,
   never arbitrary values: `max-w-page` (1160 px) for list and detail pages,
   `max-w-page-narrow` (880 px) for single-column pages such as Approvals; the
-  agent page uses neither (FIX-129: the full content width). Other one-off sizes
+  agent page uses neither (FIX-129: the full content width). The shell's
+  `<main>` has no max width of its own (owner 2026-11-14): each page sets its
+  width, so a page without one spans the whole content area. Other one-off sizes
   that recur are tokens too: `tracking-label`/`text-label` (caps labels),
   `max-w-bubble`/`max-w-chat-card`/`max-w-chat-notice` and `rounded-*-tail`
   (chat), `layout-aside-sm|md|lg` (a fixed aside next to a fluid column from

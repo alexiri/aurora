@@ -528,7 +528,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DialogPrimitive.Portal>
           </DialogPrimitive.Root>
         </div>
-        <main className="mx-auto w-full max-w-page space-y-4 px-4 py-6 md:px-8 md:py-8">
+        {/* No max width here: each page sets its own (docs/14 page widths), so the agent page gets the full content width. */}
+        <main className="w-full min-w-0 space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
           {children}
