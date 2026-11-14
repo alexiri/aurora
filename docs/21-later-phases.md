@@ -250,6 +250,13 @@ tokens), group → workspace access bindings, group identities in policy
   hosts`, `09` (reserved hosts), `12` (claude-code dialects), `15`, `16`, `18 §Additional
   LLM providers`. Not in phase 4: Entra ID for Azure, assume-role or gateway-identity
   AWS auth for Bedrock, Converse and Gemini-native dialects, gateway token counting.
+  (phase 5, P4-LLM spec batch, D-260..D-262, SEC-97, SEC-98, C-800..C-814) Reconciled with
+  instance settings (SET-3): Entra client credentials (`azure_entra`) and Bedrock
+  `aws_assume_role` are added through one gateway mint service; the gateway never translates
+  wire formats (cross-format use goes through LiteLLM); `anthropic` gets its inference path
+  set; dashboard endpoints follow `gateway.allowed_private`. Briefs `docs/tasks/P4-LLM-1.md` …
+  `P4-LLM-6.md`. Still out: gateway identity, workload-identity federation, sovereign Azure
+  clouds, Converse/Gemini dialects, gateway token counting.
 - **Additional harness adapters — specified (phase 4, P4-HAR, D-122, SEC-66):** the
   `codex` adapter declaring `openai_responses` / `openai_chat`, explicit harness
   selection (`agents.harness`, `hosted.enabled_harnesses`, runner label

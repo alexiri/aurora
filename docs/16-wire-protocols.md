@@ -18,7 +18,7 @@ implementation repo and checked in (CI fails on drift).
 | W8 | Connector contract | connector → API `/v1/connector` | `aun_` + replica | `13` |
 | W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret (ring from phase 2, `08 §4`) | `09` |
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
-| W11 | Upstream | gateway → internet | guarded resolver; (phase 5 (D-138, moved from phase 4), P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers` | `06` |
+| W11 | Upstream | gateway → internet | guarded resolver; (phase 5 (D-138, moved from phase 4), P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers`; (phase 5, P4-LLM spec batch, D-261) and gateway-minted Entra tokens (Azure) and STS `AssumeRole` sessions (Bedrock), from one mint service at pinned token endpoints | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
 | W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
 | W14 | Blob store (phase 5 (D-138, moved from phase 4), P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |

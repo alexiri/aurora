@@ -177,7 +177,13 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   `ANTHROPIC_MODEL=<model>`. The exact variable names are pinned next to the CLI version
   and verified by the live conformance suite (env-gated, per provider), like the phase-0
   ones. A pinned version that lacks the "skip auth" switch for a provider does not declare
-  that dialect.
+  that dialect. (phase 5, P4-LLM spec batch, D-261) The environment is the same for every
+  auth mode of the endpoint (`aws_assume_role`, `aws_sigv4` and a Bedrock `api_key` alike:
+  no `AWS_BEARER_TOKEN_BEDROCK`, no AWS profile, no `GOOGLE_APPLICATION_CREDENTIALS`); with
+  the "skip auth" switches the CLI sends unsigned requests and the gateway signs or injects.
+  The adapter also sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` for these dialects as
+  for `anthropic_messages`, so the only calls on the endpoint host are inference calls
+  (the inference path sets of `08` refuse anything else).
 - MCP configuration: one stdio server `aurora` = `aurora-supervisor mcp-bridge
   --session <conversation_id>`.
 - Tool permission prompts are disabled (the sandbox is the isolation boundary;
@@ -225,6 +231,19 @@ does not enable a second harness.
   agent's harness re-runs that selection: a model override whose endpoint no longer serves
   the new harness is dropped with a notice (the existing rule); with no compatible granted
   key the next turn fails `no_model_key`.
+- **Provider reach per harness** (phase 5, P4-LLM spec batch, D-260). The gateway never
+  translates between wire formats, so a harness reaches a provider only through a shared
+  dialect (the full table is `08 §Phase 4 providers`, *Wire formats and harness reach*):
+  `claude-code` reaches `anthropic`, `bedrock` (`anthropic_bedrock`), `vertex`
+  (`anthropic_vertex`), and `litellm`/`openai_compatible` endpoints declaring
+  `anthropic_messages`; `codex` reaches `openai`, `azure_openai`, and `litellm`/
+  `openai_compatible`/`bedrock` endpoints declaring `openai_responses`. Any other pairing
+  goes through a `litellm` endpoint (LiteLLM translates) or is refused as
+  `no_shared_dialect`. The **auth mode never reaches the harness**: the supervisor gets
+  the same `client_env` for every auth mode of a provider (placeholders and "skip auth"
+  switches, C-809), because the gateway removes whatever the client sends and injects,
+  signs or mints itself; the API passes the key's real auth mode to `client_env` (not a
+  fixed `api_key`).
 - **Switching the harness of an agent that has history.** Sessions are adapter-owned
   files in the agent's home, so the change (a) bumps `harness_session_epoch` of every
   conversation (the next turn starts a fresh harness session; the transcript in Aurora
@@ -279,7 +298,13 @@ specified here is the contract.
   every call carries the turn's context credential), the CA bundle variables of the boot
   document, `CODEX_HOME`, `OPENAI_API_KEY=aurora-placeholder`; no `OPENAI_BASE_URL`
   outside the rendered provider. Azure OpenAI and OpenAI-compatible endpoints use the same
-  provider block with their `base_url`.
+  provider block with their `base_url`. (phase 5, P4-LLM spec batch, C-809) The block's
+  `base_url` is the provider's `OPENAI_BASE_URL` from `client_env` (as for `litellm`
+  today): `openai` `https://api.openai.com/v1`, `azure_openai` `<base>/openai/v1` (the
+  v1 API needs no `api-version`; the placeholder `Authorization` Codex sends is removed and
+  replaced by `api-key` or an Entra token at the gateway), `openai_compatible` `<base>/v1`,
+  `bedrock` with `openai_responses` `<runtime base>/openai/v1`. No Azure- or AWS-specific
+  Codex setting is rendered.
 - **Events.** The adapter maps Codex's JSON events to `HarnessEvent`: agent messages →
   text (message boundaries per the harness's framing, `10 §Answer rule`), reasoning
   summaries → thinking, command/file/MCP tool items → tool started/finished and activity
@@ -312,7 +337,12 @@ provider refusal; it is reported as `gateway_refused` with the gateway code.
 `ThrottlingException`, an OpenAI `insufficient_quota` or a Vertex `PERMISSION_DENIED`
 map to `provider_rate_limited`, `provider_quota` and `provider_auth` the same way in
 every adapter. The new gateway codes `llm_path_not_permitted` and
-`llm_request_too_large` are gateway refusals (`gateway_refused`).
+`llm_request_too_large` are gateway refusals (`gateway_refused`). (phase 5, P4-LLM spec
+batch, D-261) So is a 502 `credential_unavailable` with `details.kind = "llm_mint"`; when
+its `reason` is `mint_rejected` the adapter reports `provider_auth` instead (the
+credential, not the gateway, is at fault), with the gateway code kept in the message.
+Errors inside a 200 stream (an event-stream exception, an SSE `error` event) are classified
+by the adapter from the event's error type with the same table (D-260(d)).
 (phase 5 (D-138, moved from phase 4), RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: the supervisor
 shows it as an activity line ("waiting for approval") and never maps it to `gateway_refused` as a
 terminal error; a turn that ends normally after it is `done`. No adapter changes: the refusal

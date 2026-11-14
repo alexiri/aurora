@@ -1511,9 +1511,11 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | llm_provider | (existing open vocabulary) | gains `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` (`08 §Phase 4 providers`); no schema change | 5 (P4-LLM, D-138) |
-| llm_auth_mode | (existing open vocabulary) | gains `aws_sigv4` (sealed JSON `{ access_key_id, secret_access_key, session_token? }`) and `gcp_service_account` (sealed service-account key JSON); `api_key` is unchanged | 5 (P4-LLM, D-138) |
-| injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; fixed by the provider, read-only | 5 (P4-LLM, D-138) |
-| origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id; for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key (`08 §Phase 4 providers`) | 5 (P4-LLM, D-138) |
+| llm_auth_mode | (existing open vocabulary) | gains `aws_sigv4` (sealed JSON `{ access_key_id, secret_access_key, session_token? }`) and `gcp_service_account` (sealed service-account key JSON); `api_key` is unchanged; (P4-LLM spec batch, D-261) also `aws_assume_role` (sealed JSON `{ access_key_id, secret_access_key, role_arn, session_duration_secs? }`) and `azure_entra` (sealed JSON `{ tenant_id, client_id, client_secret }`) | 5 (P4-LLM, D-138) |
+| injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; (D-261) `aws_assume_role { region, service }`, `entra_token { scope }`; fixed by the provider and auth mode, read-only | 5 (P4-LLM, D-138) |
+| origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id (with `aws_assume_role` the **role's** account, `user_id` the role ARN); for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key; (D-261) for `azure_openai` with `azure_entra` `organization_id` is the Entra tenant id and `user_id` the application (client) id (`08 §Phase 4 providers`) | 5 (P4-LLM, D-138) |
+
+(P4-LLM spec batch, D-260..D-262) **No migration**: the provider, auth-mode and recipe vocabularies are open text/jsonb, minted credentials live only in gateway memory, and endpoints are instance settings (`instance_settings`, SET-1). Migration numbers `20261201000210..219` stay reserved for P4-LLM lanes and are unused unless a lane finds a need (it then adds the row here first). The gateway reads `organizations.external_id` for `aws_assume_role` under its existing `SELECT` on `organizations`.
 
 (P4-GRP-1 landed `groups`, `group_members` and `group_workspace_access`: see §1. P4-GRP-2 landed `groups.external_id`, `scim_tokens` and `scim_users`: see §1.)
 

@@ -95,7 +95,12 @@ For each of those keys the values file is **optional**:
   as whole values.
 - **Removed later** from the values file: the setting moves to the dashboard **with the value
   Helm had** (the API keeps a copy of every locked value), so a `helm upgrade` that drops a key
-  never silently reverts it.
+  never silently reverts it. (phase 5, P4-LLM spec batch, D-262) One exception in effect, not in
+  value: an LLM endpoint on a **private address** passes the gateway's destination guard
+  implicitly only while it is defined here; before dropping such an endpoint from the values
+  file, add its host to `gateway.allowed_private` (Admin › Limits, or `config.gateway.allowed_private`),
+  otherwise agents' requests to it are refused `destination_refused` after the upgrade
+  (Admin › LLM endpoints marks the entry `needs_allowed_private`).
 
 **Upgrading an existing install changes nothing**: every key your values file sets stays locked;
 the release notes and a banner on Admin › Settings list them. To hand a key to the dashboard,
@@ -323,7 +328,7 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.cilium.enabled` | bool | `false` | add CiliumNetworkPolicies for runner and `secrets` hook → kube-apiserver (Cilium matches those as entities, not ipBlocks) and admit the `ingress` entity on the edge ports | Cilium cluster (`15 §Production`) |
 | `networkPolicy.cilium.edgeEntities` | list of Cilium entities | `[ingress]` | entities admitted on the edge ports (host-network ingresses: `[host, remote-node]`) | host-network ingress |
 | `networkPolicy.externalEgress.cidr` / `.except` | CIDR / list | `0.0.0.0/0` / private ranges | external egress (OIDC, SMTP, LLM endpoints, push services) for api/gateway/hookhost/connectors; `except` carves private ranges out (they need explicit rules) | lock egress down |
-| `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; must also be in `gateway.allowed_private`) | private LLM endpoints |
+| `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; an endpoint defined under `config.llm.endpoints` passes the gateway's destination guard implicitly, one added in the dashboard must also be in `gateway.allowed_private`, D-262) | private LLM endpoints |
 | `networkPolicy.connectorHostExtraEgress` | raw NP `egress` entries | `[]` | appended to the connector host's policy (a chat platform on a private range) | private Mattermost |
 | `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): the single switch — it renders `config.terminal.enabled` (mirrored; set `config.terminal.enabled` only when you want it to agree explicitly — both set and unequal fails the render, and `config.terminal.enabled=true` alone fails too, because only the top-level switch renders the chart wiring), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) stay `config.terminal.*` keys. (phase 5, SET-5, D-237(d)) It renders `config.terminal.available` instead of mirroring the feature switch, which becomes an instance setting defaulting to it | the Terminal tab is wanted |
 

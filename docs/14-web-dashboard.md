@@ -911,7 +911,16 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
   project and service-account e-mail). Endpoints with static model lists (Azure OpenAI,
   Vertex) say "models are configured by your administrator". A request refused with
   `llm_path_not_permitted` appears in the request log and agent Computer tab as "Blocked:
-  not a model-inference call". The LLM key form
+  not a model-inference call". (phase 5, P4-LLM spec batch, D-260, D-261, C-811) For Bedrock
+  the form offers the auth modes as a `RadioGroup` with **Assume a role (recommended)** first:
+  role ARN, source access key id and secret, optional session length, and a `CodeBlock` with the
+  organization's external id and a trust-policy snippet that requires it ("Copy"); then
+  "Access keys" and "Bedrock API key". For Azure OpenAI: "Resource key" or "Microsoft Entra
+  application" (tenant id, client id, client secret). After saving, the page shows the verified
+  account (AWS account and role, Entra tenant and application) and never a secret field again.
+  Each endpoint in the picker shows which harnesses it serves ("Works with Claude Code",
+  "Works with Codex"); an endpoint that serves none of the agent's harnesses says "No enabled
+  harness speaks this endpoint's API — use a LiteLLM endpoint to translate". The LLM key form
   offers only endpoints and scopes the governance permits, explains the
   required account ("Keys must belong to the corporate Anthropic
   organization"), shows the verified account after saving, and offers
@@ -1007,6 +1016,16 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
   the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
   a list, locked as a whole.
+- (phase 5, P4-LLM spec batch, D-260, D-262, C-811) **LLM endpoints**: the endpoint dialog shows
+  the chosen provider's own fields (OpenAI organization/project; Azure resource URL and
+  deployment names; Bedrock region and optional VPC endpoint URL; Vertex project and location;
+  compatible base URL, auth header and models path) and hides `allowed_paths` for Bedrock and
+  Vertex. Each row shows the harnesses the endpoint serves as `Badge`s and, when it serves none,
+  a `Notice` ("No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.").
+  A row marked `needs_allowed_private` shows a warning `Badge` "Private address not allowed" with a
+  link to Limits › `gateway.allowed_private`; the preview's `endpoint_resolves_private` warning
+  appears in the save confirmation; `http_needs_private_host` and `endpoint_host_claimed` land on
+  the base URL field.
 - **Secrets** are write-only fields: "Set" / "Not set" with **Replace…** and **Remove**; the value
   is never shown, and the page never receives it.
 - **Org pages**: "enforced by instance" hints (governance, BYO, retention) name the setting; for an
