@@ -155,3 +155,50 @@ admin UI's Add dialog ("format documentation").
 - Non-goals: per-source schedules, addon uninstall of packages still connected (existing removal
   rules apply), auto-updates, private/authenticated repos, non-git sources, review of addon
   *content* beyond the existing permissions review.
+
+## Completion report (2026-11-15)
+Branch `alexiri/p5-platform`: the paused WIP cherry-picked as `334cac7f` (conflicts were docs only; the migration
+renumbered to `20261201000180_addon_sources.sql`, D-159/D-164 → **D-250**), then reviewed hunk by hunk and
+finished in `a6dadc84`, `224d8b31` and the gate-fix commit. Contracts C-590..C-609, SEC-86.
+
+**What the review found and changed (WIP → now):**
+- *Trust*: the WIP verified a package against the whole trust store. Now a package must be signed by **the
+  source's own key** (`signer_not_source_key`), carry the repo's publisher (`publisher_mismatch`), the listed
+  id/version (`identity_mismatch`) and an id nobody else owns (`package_id_taken`); the publisher `aurora` is
+  reserved; the manifest key is stored in its canonical spelling (FIX-107).
+- *Failures*: a version failing digest/signature/identity/lint is stored as an `invalid` row (`status_reason` a
+  short code, the sentence in `violations`) and not retried; the WIP stored nothing. The WIP's `status_reason` would
+  have broken the ≤ 64 CHECK (found by the IT).
+- *Updates never auto-activate*: the WIP only held a **first** version; an update with equal or narrower permissions
+  activated itself (the IT caught it). Now every addon version is `pending_approval` (`first_install` /
+  `addon_update`); the approval click runs the ordinary activation rules.
+- *Dashboard reads, not fetches*: `GET`s fetched the live manifest on every call (N manifests per list). The
+  accepted manifest is now stored on the row (`addon_sources.manifest`), the view is built from it, "removed
+  upstream" is derived from it, and the plugins list's `source_name` / `update_available` come from it (C-600).
+- *Registration*: the WIP fetched the manifest twice (TOCTOU between the key review and the ingest) and swallowed
+  ingest errors; one fetch now feeds the transaction (trusted key + source + critical `addon_source.add`) and the
+  ingestion; a first registration ingests the **newest** version only (C-607), later checks every newer one
+  (the WIP's `semver_newer` ordered a release flag before the numbers — fixed).
+- *Audit*: `addon.ingest` joins the security-critical set and commits with the package row; a failed check writes a
+  critical `addon_source.check` failure row; a failed fetch is a 200 result, not an error (C-596).
+- *Poll*: the config key was dead; it now seeds the schedule of a new source, and registration/interval edits
+  schedule the first check (`never` = no schedule). GitHub/GitLab repository pages are normalised to the raw
+  manifest URL. `fetch.rs`'s unit test (never run) was wrong and now guards the shape rules.
+- *UI*: Admin → Addon sources (list, add with the key review, key re-confirm, schedule, details with removed
+  upstream, remove), plugins list Source column, Update-available badge and "Check for updates"; typed DTOs →
+  OpenAPI → `schema.d.ts`.
+
+**Deviation to confirm (owner/coordinator):** the brief says "one setting for all sources (per-source override: not
+in v1)" **and** lists "Edit schedule" per row, and C-594 is a per-source PATCH. I kept the per-source schedule
+(it is what the UI row and the contract need), with the config key `plugins.addon_sources.update_interval` as the
+**default for new sources**. If the owner wants one instance-wide value, the PATCH and the column go and the key
+becomes the value; nothing else depends on it.
+
+**Verification:** `api it` addons 18/18 (+ the plugins ITs), `addon_sources` unit tests, `aurora-config`,
+web vitest 725/725, typecheck, lint, `next build`, Playwright mocked `e2e/addon-sources.spec.ts` 22/22 (both themes,
+390 px, axe, dialogs, hostile text). Batch gate: see the lane report.
+**Left:** the live "fixture repo over a local HTTPS server" e2e script of the brief's Verification section is
+covered by the API IT with an in-process source (register → approve → publish → check → badge → update) rather than a
+kind/podman script; "use an app" after install is the ordinary connect flow and not repeated here.
+P5-CERN-ADDONS depends on `docs/22-addon-repos.md` (now includes the CLI commands, the release workflow with
+verify-on-push, sign-on-tag, the no-overwrite rule and why run artifacts cannot serve) and this ingestion.

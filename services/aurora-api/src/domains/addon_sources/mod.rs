@@ -176,7 +176,7 @@ fn versions_desc(a: &manifest::Addon) -> Vec<(&String, &manifest::AddonVersion, 
         .iter()
         .filter_map(|(k, ver)| semver_of(k).map(|s| (k, ver, s)))
         .collect();
-    v.sort_by(|a, b| b.2.cmp(&a.2));
+    v.sort_by_key(|a| std::cmp::Reverse(a.2));
     v
 }
 
@@ -450,7 +450,7 @@ async fn fail_check(
     let reason = sanitize::one_line(reason, 200);
     let mut tx = audit::begin(state).await?;
     repo::finish_check(
-        &mut *tx,
+        &mut tx,
         &repo::CheckDone {
             id: source.id,
             owner: source.lease_owner.unwrap_or_default(),
@@ -525,7 +525,7 @@ pub async fn check_source(
             "ingested": ingestion.ingested.len(), "failed_versions": ingestion.failed.len()}));
     let mut tx = audit::begin(state).await?;
     repo::finish_check(
-        &mut *tx,
+        &mut tx,
         &repo::CheckDone {
             id: source.id,
             owner: source.lease_owner.unwrap_or_default(),
@@ -774,7 +774,7 @@ pub async fn register(
         aurora_db::conflict_code(e, &[("trusted_keys_public_key_key", "addon_key_exists")])
     })?;
     let source = repo::insert(
-        &mut *tx,
+        &mut tx,
         &repo::NewSource {
             id,
             name: &m.name,
@@ -879,7 +879,7 @@ pub async fn remove(state: &AppState, actor: &AuditActor, id: Uuid) -> Result<()
         ));
     }
     let (kept, _active) = repo::package_counts(&mut *tx, id).await?;
-    repo::delete(&mut *tx, id).await?;
+    repo::delete(&mut tx, id).await?;
     let ev = AuditEvent::new(actor.clone(), "addon_source.remove", Outcome::Success)
         .target("addon_source", id)
         .metadata(json!({"url": r.url, "packages_kept": kept}));
@@ -901,7 +901,7 @@ pub async fn update_interval_for(
         .await?
         .ok_or_else(|| ApiError::not_found("Addon source not found."))?;
     let mut tx = audit::begin(state).await?;
-    repo::update_interval(&mut *tx, id, interval, next_in_secs(interval, id)).await?;
+    repo::update_interval(&mut tx, id, interval, next_in_secs(interval, id)).await?;
     let ev = AuditEvent::new(actor.clone(), "addon_source.update", Outcome::Success)
         .target("addon_source", id)
         .metadata(json!({"change": "interval",
@@ -953,13 +953,13 @@ pub async fn confirm_key(
                 "The source's trusted key was revoked; register the source again.",
             )
         })?;
-    plugins_repo::update_trusted_key_public_key(&mut *tx, key.id, &m.signing_key)
+    plugins_repo::update_trusted_key_public_key(&mut tx, key.id, &m.signing_key)
         .await
         .map_err(|e| {
             aurora_db::conflict_code(e, &[("trusted_keys_public_key_key", "addon_key_exists")])
         })?;
     repo::confirm_key(
-        &mut *tx,
+        &mut tx,
         id,
         &m.signing_key,
         &fp,

@@ -430,6 +430,21 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/trusted-keys", G::Inst, false),
     r("POST", "/v1/admin/trusted-keys", G::Inst, false),
     r("DELETE", "/v1/admin/trusted-keys/{id}", G::Inst, false),
+    // (P5-ASRC, C-590..C-602) addon sources: instance administrators only
+    r("GET", "/v1/admin/addon-sources", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources/preview", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources/check-all", G::Inst, false),
+    r("GET", "/v1/admin/addon-sources/{id}", G::Inst, false),
+    r("PATCH", "/v1/admin/addon-sources/{id}", G::Inst, false),
+    r("DELETE", "/v1/admin/addon-sources/{id}", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources/{id}/check", G::Inst, false),
+    r(
+        "POST",
+        "/v1/admin/addon-sources/{id}/confirm-key",
+        G::Inst,
+        false,
+    ),
     r("GET", "/v1/admin/audit", G::Inst, false),
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
@@ -1286,6 +1301,13 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),
         ("POST", "/v1/admin/trusted-keys") => {
             json!({"publisher": "x", "name": "x", "public_key": "x"})
+        }
+        ("POST", "/v1/admin/addon-sources" | "/v1/admin/addon-sources/preview") => {
+            json!({"url": "https://matrix.example/repo"})
+        }
+        ("PATCH", "/v1/admin/addon-sources/{id}") => json!({"update_interval": "1d"}),
+        ("POST", "/v1/admin/addon-sources/{id}/confirm-key") => {
+            json!({"new_key_fingerprint": "sha256:000000000000"})
         }
         ("POST", "/v1/agents/{agent}/conversations") => json!({"external_ref": "matrix"}),
         ("PUT", "/v1/agents/{agent}/grants/connections/{conn}") => json!({"mode": "full"}),

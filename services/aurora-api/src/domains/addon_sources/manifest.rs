@@ -168,10 +168,10 @@ pub fn parse(bytes: &[u8]) -> Result<Manifest, ManifestError> {
     let canonical = aurora_registry::signature::canonicalize_key_id(&raw.signing_key)
         .ok_or_else(|| bad("signing_key must be a base64 ed25519 public key"))?;
     let key = canonical.as_str();
-    if let Some(d) = &raw.signing_key_description {
-        if d.trim().is_empty() || d.chars().count() > 80 {
-            return Err(bad("signing_key_description must be 1-80 characters"));
-        }
+    if let Some(d) = &raw.signing_key_description
+        && (d.trim().is_empty() || d.chars().count() > 80)
+    {
+        return Err(bad("signing_key_description must be 1-80 characters"));
     }
     if raw.addons.is_empty() {
         return Err(bad("addons must list at least one addon"));
@@ -239,13 +239,13 @@ pub fn parse(bytes: &[u8]) -> Result<Manifest, ManifestError> {
                     a.id
                 )));
             }
-            if let Some(mc) = &ver.min_core {
-                if aurora_registry::manifest::parse_semver(mc).is_none() {
-                    return Err(bad(format!(
-                        "addon {:?} version {v:?} min_core {mc:?} is not a semver version",
-                        a.id
-                    )));
-                }
+            if let Some(mc) = &ver.min_core
+                && aurora_registry::manifest::parse_semver(mc).is_none()
+            {
+                return Err(bad(format!(
+                    "addon {:?} version {v:?} min_core {mc:?} is not a semver version",
+                    a.id
+                )));
             }
         }
     }
@@ -298,10 +298,10 @@ pub fn normalize_url(raw: &str) -> Result<String, ManifestError> {
     {
         return Err(ManifestError::UrlRefused);
     }
-    if let Some(auth) = raw[8..].split('/').next() {
-        if auth.contains('@') {
-            return Err(ManifestError::UrlRefused);
-        }
+    if let Some(auth) = raw[8..].split('/').next()
+        && auth.contains('@')
+    {
+        return Err(ManifestError::UrlRefused);
     }
     if lower.ends_with("/aurora-addons.yaml") {
         return Ok(raw.trim_end_matches('/').to_owned());
@@ -404,12 +404,8 @@ mod tests {
     #[test]
     fn normalizes_urls() {
         assert_eq!(
-            normalize_url("https://github.com/cern/addons").unwrap(),
-            "https://github.com/cern/addons/aurora-addons.yaml"
-        );
-        assert_eq!(
-            normalize_url("https://github.com/cern/addons/").unwrap(),
-            "https://github.com/cern/addons/aurora-addons.yaml"
+            normalize_url("https://repo.example/cern/addons/").unwrap(),
+            "https://repo.example/cern/addons/aurora-addons.yaml"
         );
         assert_eq!(
             normalize_url("https://raw.example/cern/addons/aurora-addons.yaml").unwrap(),

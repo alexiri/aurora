@@ -83,10 +83,9 @@ type Shared = std::sync::Arc<std::sync::Mutex<Files>>;
 
 /// A [`wiremock::Respond`] reading the current content: the closure gets the request
 /// path and the shared state.
-struct FromState(
-    Shared,
-    Box<dyn Fn(&str, &mut Files) -> ResponseTemplate + Send + Sync>,
-);
+struct FromState(Shared, StateResponder);
+
+type StateResponder = Box<dyn Fn(&str, &mut Files) -> ResponseTemplate + Send + Sync>;
 
 impl wiremock::Respond for FromState {
     fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {

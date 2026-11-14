@@ -1,7 +1,7 @@
 //! Guarded outbound fetches for addon sources (SEC-86, D-250(d)): https only, public
 //! addresses only (`06 §Destination guard` via the connect `Env`), the manifest fetched
-//! **without** redirects, package URLs following **at most one** redirect (the GitHub
-//! release-asset CDN pattern). Digest checks happen before anything is parsed.
+//! **without** redirects, package URLs following **at most one** redirect (the release-asset
+//! CDN pattern of git forges). Digest checks happen before anything is parsed.
 
 use super::manifest::ManifestError;
 use aurora_core::limits::{ADDON_FETCH_TIMEOUT, ADDON_MANIFEST_MAX, PACKAGE_MAX};
@@ -36,7 +36,38 @@ impl<'a> Fetcher<'a> {
             // credential URLs and non-public IP literals (`06 §Destination guard`).
             return env.prepare(raw).map_err(|_| ManifestError::UrlRefused);
         }
-        Ok(reqwest::Url::parse(raw).map_err(|_| ManifestError::UrlRefused)?)
+        // Without the Env (unit tests) the same shape rules apply on the URL itself.
+        let url = reqwest::Url::parse(raw).map_err(|_| ManifestError::UrlRefused)?;
+        let public_host = url.host_str().is_some_and(|h| {
+            match h.trim_matches(['[', ']']).parse::<std::net::IpAddr>() {
+                Ok(std::net::IpAddr::V4(ip)) => {
+                    !(ip.is_loopback()
+                        || ip.is_private()
+                        || ip.is_link_local()
+                        || ip.is_unspecified()
+                        || ip.is_broadcast()
+                        || ip.is_multicast())
+                }
+                Ok(std::net::IpAddr::V6(ip)) => {
+                    let s = ip.segments();
+                    !(ip.is_loopback()
+                        || ip.is_unspecified()
+                        || ip.is_multicast()
+                        || (s[0] & 0xfe00) == 0xfc00
+                        || (s[0] & 0xffc0) == 0xfe80)
+                }
+                Err(_) => !h.is_empty(),
+            }
+        });
+        if url.scheme() == "https"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && public_host
+        {
+            Ok(url)
+        } else {
+            Err(ManifestError::UrlRefused)
+        }
     }
 
     /// GET `url`, at most `max_redirects` hops (each still https and public), body capped
