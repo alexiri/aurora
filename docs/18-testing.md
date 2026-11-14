@@ -615,6 +615,37 @@ done when its tests exist, pass in CI, and the security invariants it touches
   asserted), freeze closes the session, a parked sandbox wakes on open; `kind.sh` env
   overrides (own cluster; ask the coordinator first).
 
+### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+- **API, keys and certificates** (`api it/ssh_keys.rs`, `it/ssh_cert.rs`; P4-SSH-1): key parsing
+  (canonical form rebuilt, comment dropped, options/certificates/RSA/ECDSA/private-key pastes refused,
+  `SHA256:` fingerprint equal to `ssh-keygen -lf`), per-user uniqueness and limit, session-only writes,
+  critical audit rows; the mint auth matrix of SEC-93; certificate fields parsed back with the `ssh-key`
+  crate and verified against the CA public key; `ssh_mint_counters` exact under concurrency from two
+  pools; `GET /v1/ssh` shape; every route 404 while `ssh.enabled` is off.
+- **API, sessions** (`api it/ssh_sessions.rs`; P4-SSH-2): the terminator plane auth (`aut_` only, 401
+  uniform), session open matrix and caps, channel grants (single-use, TTL, stale boot, closed session),
+  heartbeat revocation causes, close exactly once against a concurrent sweep, wake demand on a parked
+  sandbox within the shared budget, keep-awake `kind: "ssh"` stamping and the cap, list/disconnect
+  authority (own, `can_own`, other → 404).
+- **Terminator** (`aurora-terminator` tests, a real `russh` client in-process and a stub API): SEC-92
+  auth matrix with byte-identical refusals; pre-auth limits; channel/request allow-list of `16 §W20`
+  (each refused kind opens nothing downstream); `exit-status`/`exit-signal`, EOF and close ordering;
+  heartbeat failure → close-all; idle and lifetime with shortened limits.
+- **Runner** (`run it/ssh_legs.rs`): `auz_` redemption (`kind: "ssh"`; `aux_`/`auy_` never open an exec
+  and vice versa), first-frame `exec.open` deadline, frame validation (unknown tag/kind → 4502),
+  `SSH_CHANNELS_PER_SANDBOX` cap, W6 reconnect closes every exec 4503, older supervisor → 4502,
+  keep-awake stamps.
+- **Supervisor** (`sup` exec tests): the three modes, stdin EOF, stdout/stderr separation without a
+  tty, exit status and signal, env allow-list and the SEC-34 probe, `sftp-server` path fixed and
+  `unsupported` without it, fd-leak probe (FIX-059 posture), credit bounds under a hostile writer.
+- **Dashboard** (`web/tests`): Account › SSH keys (add, inline errors, delete confirm, sessions list and
+  disconnect), the agent's SSH page gating and instructions, certificate download, 390 px layout.
+- **kind e2e** (`scripts/e2e/ssh.sh`, own lock like the other e2e suites): enable SSH, register a key,
+  `aurora ssh <agent> -- echo aurora-ssh` and plain `ssh` with a downloaded certificate (output asserted),
+  `ssh host 'exit 7'` → 7, `sftp` put/get round trip and `scp` (both protocols) of a 5 MiB file
+  with checksums, `-L`/`-R`/`-A`/`-X` refused while the shell works, a wrong pinned host key refused by
+  the client, a parked sandbox wakes on connect, freeze closes the session within 35 s.
+
 ### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
 - **Fake git host** in the test kit (`tests/kit`): serves a GitHub-shaped and a GitLab-shaped API (ref
   resolution, recursive and paginated trees, blobs, raw files, rate-limit responses, truncated trees, a

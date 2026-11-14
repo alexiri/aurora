@@ -330,7 +330,9 @@ A running sandbox is **kept awake** if any of:
 - an active turn or `joining` follow-up exists;
 - a **busy** process (recent output or CPU) on the current boot, or an **armed
 watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
-- (phase 5, D-138) a lease-current SSH session;
+- (phase 5, D-138; P4-SSH-2, D-239(h)) an **SSH session in use**: `ssh_active_until > now()` (stamped
+  only while a channel of a lease-current session carries bytes, grace `SSH_AWAKE_GRACE` 120 s) and
+  fewer than `SSH_AWAKE_CAP` (4 h) since the first SSH byte of this boot (`§SSH access`);
 - (phase 4, P4-PRV-1, D-145) a **preview in use**: `preview_active_until > now()` and fewer than
   `PREVIEW_AWAKE_CAP` (4 h) since the first preview heartbeat of this boot (`§Port previews`);
 - (phase 4, P4-TERM, D-161) a **terminal session in use**: `terminal_active_until > now()` and
@@ -567,6 +569,71 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   An older runner without the `kind` extension refuses terminal grants (the API answers 4502
   — the tab shows "the runner does not support terminals").
 
+## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+People with access to an agent can `ssh <agent id>@<ssh host>` into its sandbox with an ordinary
+OpenSSH client: an interactive shell, a remote command, `sftp` and `scp`. Off unless the operator
+sets `ssh.enabled` (an internet-facing port is a deliberate deployment choice); independent of
+`terminal.enabled`. Who may connect is the web terminal's rule (`04 §SSH access`).
+
+**Flow.** (1) The person registers an ed25519 public key once (Account › SSH keys). (2) Before
+connecting, `aurora ssh <agent>` (or the dashboard's "Connect with SSH" panel) asks the API for a
+short-lived **user certificate** for that key and agent (`POST /v1/agents/{agent}/ssh-certificate`,
+default 15 min). (3) The client connects to the terminator with the certificate; the terminator
+checks it offline against the CA public keys, the client proves possession of the key, and only then
+does the terminator open a **session** with the API (`/v1/terminator/sessions`), which re-verifies
+everything and records `ssh_sessions`. (4) For each session channel (shell, exec, sftp) the
+terminator asks the API for a single-use **channel grant** (`auz_`), dials the sandbox's runner
+on its stream listener :4108 with it, and the runner bridges the bytes to the supervisor
+(`16 §W20`, the W18/W19 machinery with an exec target). (5) Every 30 s the terminator heartbeats its
+sessions; the API renews the 90 s lease and re-runs the access law; a revoked session is closed.
+
+**Why the runner's :4108 path and not `podman exec`/`kubectl exec`** (D-239(e); the PROGRESS row and
+`21` named substrate exec): exec would run in the container with the **container's environment**,
+where the supervisor's boot material lives (`AURORA_*`), bypassing the scrub the terminal applies
+(SEC-87, SEC-01/SEC-34); it would hand an internet-facing daemon cluster credentials (`pods/exec` on
+the sandboxes namespace, or the podman socket) that open **every** sandbox, where a grant opens one
+channel of one sandbox for 30 s; it would need a second backend per substrate and a second set of
+PTY, limit and keep-awake rules, where :4108 already has them (FIX-059 CLOEXEC, FIX-091 pumps, W18
+credits) and works the same for podman, Kubernetes and runners outside the cluster; and it would
+make the terminator a peer of the runner on the sandbox side, where :4108 adds only one ingress
+peer to the runner's existing listener and nothing to the sandboxes namespace.
+
+- **Wake and keep-awake.** A session open on a parked sandbox is a wake demand (the terminal's path:
+  `terminal_wake_at`, `TERMINAL_WAKE_WINDOW`, and the terminal's per-agent wake budget, shared);
+  a channel opened while the sandbox wakes waits up to `SSH_WAKE_WAIT` (90 s) — the terminator writes
+  one line `Waking the agent's sandbox…` to the channel's stderr — then fails with a notice
+  (`wake_timeout`). While a channel carries bytes the runner stamps `ssh_active_until`
+  (`SSH_AWAKE_GRACE` 120 s after the last byte, `POST /v1/runner/terminal/keep-awake` with
+  `kind: "ssh"`, at most one stamp per grace per sandbox) and the sandbox is kept awake with the
+  reason **`ssh`**, capped at `SSH_AWAKE_CAP` (4 h per boot). An idle connection (client keepalives
+  only) does not hold the sandbox awake: it parks like any idle sandbox, its channels close
+  (`4503`, the terminator writes `The agent's sandbox stopped.` to stderr), and the session stays open
+  until idle timeout or lifetime, so a new channel wakes it again. An SSH session is never a turn, a
+  conversation event or a `last_engaged_at` stamp.
+- **Lifecycle.** Frozen agent, lost access, deleted key, `ssh.enabled` off, disconnect by the person or
+  an owner → revoked at the next heartbeat (≤ 30 s) and closed; restart/park/harness change/runner move
+  → channels closed (4503), session kept; agent deleted → sessions closed (`agent_deleted`) and rows
+  cascade. Idle `SSH_IDLE_TIMEOUT` (600 s without channel bytes or client keepalive replies) and lifetime
+  `SSH_MAX_LIFETIME` (4 h) are enforced by the terminator; the lease (90 s) bounds a crashed terminator:
+  the stale-session sweep closes its rows (`lease_expired`). Every session closes **exactly once**
+  (`03 §ssh_sessions` `state`) with one `agent.ssh.close` audit row.
+- **Runner side.** The runner opens :4108 when previews, the terminal **or SSH** is enabled and registers
+  the `ssh` capability when the API reports `ssh.enabled` at registration; it redeems `auz_` grants
+  (`kind: "ssh"`), checks it holds the sandbox's channel for that boot, caps live SSH legs per sandbox at
+  `SSH_CHANNELS_PER_SANDBOX` (8, beside 64 streams and 2 PTYs), and speaks `exec.*` frames to the
+  supervisor (`12 §SSH channels`). An older runner refuses the unknown grant kind: the channel fails
+  (`relay_error`) and nothing else is affected. The NetworkPolicy admits :4108 from the terminator pods
+  (beside the relay and api pods), `15 §SSH access`.
+- **CLI.** `aurora ssh <agent> [-- <ssh args>]` (P4-SSH-1): resolves the agent (id, or handle within the
+  CLI's workspace), finds a registered key among `~/.ssh/id_ed25519.pub` or `--key <path>` (the
+  private key never leaves the machine and is never read by the CLI), mints a certificate with the
+  CLI's API key, writes it to `~/.config/aurora/ssh/<agent id>-cert.pub` (0600) and the
+  `known_hosts` lines of `GET /v1/ssh` to `~/.config/aurora/ssh/known_hosts`, then execs
+  `ssh -i <key> -o CertificateFile=<cert> -o UserKnownHostsFile=<that file> -o StrictHostKeyChecking=yes
+  -o IdentitiesOnly=yes -p <port> <agent id>@<host> <ssh args>`; a certificate with more than 60 s of
+  validity left is reused. `aurora ssh cert <agent>` only mints and writes the files (for `sftp` and `scp`) and prints the options to use.
+
 ## Reconcile and orphan reaping
 
 Every `RECONCILE_INTERVAL`, by the oldest live replica:
@@ -592,7 +659,7 @@ Two installations sharing a daemon or cluster never touch each other's objects
 Built from `images/sandbox/Containerfile`, published as
 `aurora-sandbox:<version>`:
 
-- **Base layer** (rebuilt rarely, tagged by content hash): AlmaLinux 10 (phase 0–2 named the CERN registry image `gitlab-registry.cern.ch/linuxsupport/alma10-base`; **from phase 3 (RFE-019, D-63)** the specified base is the **public official AlmaLinux image**, `docker.io/library/almalinux:10`, pinned by digest in `images/sandbox/Containerfile` as `ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:<digest recorded at release>`; a deployment that must use a private or mirrored base overrides the build argument `SANDBOX_BASE_IMAGE` — the package set and the image labels do not depend on which base is used; this deployment's override is the CERN `alma10-base` image, `15 §Deployment-specific settings example`), `git`, `curl`, `jq`, `ripgrep`, `fd-find`, `less`,`openssh-client`, `python3` + `pip` + `venv` + `uv`, Node.js LTS + npm, `build-essential`, `chromium` (headless), `unzip`, `zip`, `procps`, `tini`-free. (phase 1, RFE-003) The image carries the label `org.aurora.capabilities=browser` (it ships the Chromium wrapper); a custom image without Chromium omits it and its sandboxes get no open-lane listener.
+- **Base layer** (rebuilt rarely, tagged by content hash): AlmaLinux 10 (phase 0–2 named the CERN registry image `gitlab-registry.cern.ch/linuxsupport/alma10-base`; **from phase 3 (RFE-019, D-63)** the specified base is the **public official AlmaLinux image**, `docker.io/library/almalinux:10`, pinned by digest in `images/sandbox/Containerfile` as `ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:<digest recorded at release>`; a deployment that must use a private or mirrored base overrides the build argument `SANDBOX_BASE_IMAGE` — the package set and the image labels do not depend on which base is used; this deployment's override is the CERN `alma10-base` image, `15 §Deployment-specific settings example`), `git`, `curl`, `jq`, `ripgrep`, `fd-find`, `less`,`openssh-client`, (phase 5, P4-SSH-2) `openssh-server` **for its `sftp-server` binary only** (`/usr/libexec/openssh/sftp-server`; `sshd` is never started: the supervisor is PID 1 and no unit runs, and no host key is generated), `python3` + `pip` + `venv` + `uv`, Node.js LTS + npm, `build-essential`, `chromium` (headless), `unzip`, `zip`, `procps`, `tini`-free. (phase 1, RFE-003) The image carries the label `org.aurora.capabilities=browser` (it ships the Chromium wrapper); a custom image without Chromium omits it and its sandboxes get no open-lane listener.
 
 - **App layer**: `aurora-supervisor` binary, pinned harness runtimes (Claude Code
 CLI at a pinned version installed under `/opt/aurora/harness/claude-code`;

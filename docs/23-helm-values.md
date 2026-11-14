@@ -296,7 +296,9 @@ Many `aurora.toml` keys look like chart values but are **not** — they go in
   (limits `previews.session_ttl_secs`, …; the switch is the chart value
   `relay.enabled`, which mirrors `config.previews.enabled`), the web terminal
   (limits `terminal.awake_cap_secs`, …; the switch is the chart value
-  `terminal.enabled`, which mirrors `config.terminal.enabled`), SCIM
+  `terminal.enabled`, which mirrors `config.terminal.enabled`), SSH access
+  (phase 5: `ssh.public_host`, `ssh.cert_ttl_secs`, `ssh.ca.previous_public_keys`, … in
+  `config.ssh.*`; the switch will be the chart value `ssh.enabled`), SCIM
   (`scim.enabled`, …), Web Push (`push.*`),
   the S3 blob store (`blobs.*`), approval parking (`approvals.park.*`) —
   set these in `config`, the sections' keys and limits are in
@@ -319,6 +321,16 @@ feature:
 - SCIM: `scim.enabled` and `scim.ratePerMinute` are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are config keys (`config.scim.*`, `15 §SCIM directory sync`)
 - approval park + Web Push (phase 5, D-138; not in the chart yet): `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)
 - S3 blob store (phase 5, D-138; not in the chart yet): `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
+- SSH access (phase 5, P4-SSH-2, D-239, C-797; not in the chart yet — P4-SSH-2 adds them to `values.yaml`, moves these rows into a new `## SSH access (terminator)` section and into §NetworkPolicy, and adds `ssh`/`terminator` to the chart-key list of §The config block; `15 §SSH access`):
+  - `ssh.enabled` — bool, default `false`. The single switch: renders the terminator Deployment, its LoadBalancer and ops Services, PodDisruptionBudget and NetworkPolicies, makes the `secrets` hook generate `AURORA_TERMINATOR_TOKEN`, `AURORA_SSH_CA_KEY` and `AURORA_SSH_HOST_KEY` when absent, mounts the CA key into the api pods and the host key into the terminator pods only, opens the runner's :4108 (beside previews and the terminal) and mirrors `config.ssh.enabled` (both set and unequal, or the config key alone, fails the render).
+  - `terminator.replicas` (int ≥ 1, default `2`), `terminator.resources` (requests `100m`/`128Mi`, memory limit `512Mi`), `terminator.nodeSelector` / `terminator.tolerations` (`{}` / `[]`), `terminator.extraEnv` (`[]`) — the generic per-service keys.
+  - `terminator.service.port` — int, default `22`: the published SSH port (container port 2222); set `config.ssh.public_port` to the same value when it is not 22.
+  - `terminator.service.annotations` — map, default `{}` (cloud load-balancer annotations).
+  - `terminator.service.loadBalancerSourceRanges` — CIDR list, default `[]` (no restriction at the balancer; `networkPolicy.sshFrom` still applies).
+  - `terminator.service.externalTrafficPolicy` — `Local` \| `Cluster`, default `Local` (keeps the client address for the per-address limits).
+  - `terminator.service.type` — `LoadBalancer` \| `NodePort`, default `LoadBalancer` (`NodePort` on kind, `deploy/kind`).
+  - `terminator.max_preauth` / `terminator.max_preauth_per_ip` — ints, defaults `256` / `8`, rendered into `[terminator]`.
+  - `networkPolicy.sshFrom` — list of NetworkPolicy peers, default `[]`; **required** when `ssh.enabled` (the render fails while empty, so admitting the whole Internet is an explicit `0.0.0.0/0` + `::/0`, never a silent default, FIX-102 posture).
 - request tracing (phase 5, FIX-146, D-232, C-732 (5); not in the chart yet — FIX-146 Part C moves these into [§NetworkPolicy](#networkpolicy) and §Workloads):
   - `networkPolicy.telemetryTo` — list of raw NetworkPolicy `to` entries, default `[]`. Rendered into the egress of every exporting workload (api, gateway, hookhost, runner, relay, connector host, connector Deployments; never the sandboxes namespace) so they can reach the OTLP collector named by `config.telemetry.otlp_endpoint`; the default-deny policies block it otherwise. Set it whenever an endpoint is set; with an endpoint and an empty `telemetryTo` the chart's `NOTES.txt` warns.
   - web workload environment: `AURORA_TRACING_SAMPLE_RATIO` is rendered **only when `config.telemetry.otlp_endpoint` is set**, with the value of `config.telemetry.sample_ratio` (default `1.0`). The dashboard's root layout reads it at request time; absent, the dashboard loads no tracing code and posts nothing. Not a chart value of its own: it follows the two config keys (`15 §Configuration reference`).

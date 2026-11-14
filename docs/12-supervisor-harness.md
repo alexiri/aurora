@@ -535,6 +535,49 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   grace — a wedged engine cannot hold shutdown), channel loss, a stop, a restart or a freeze
   (the runner closes leg 1 with 4503/4403); nothing is resumed.
 
+### SSH channels (phase 5, P4-SSH-2, D-239, SEC-95; wire in `16 §W20`)
+
+An SSH session channel becomes one **exec** in the sandbox: the terminal's PTY posture plus the
+non-interactive modes SSH clients need. Only the runner sends `exec.open`, and only for an
+API-redeemed `auz_` grant of the current boot; agent tools can never open, signal or read one.
+
+- **Modes** (`exec.open { pty_id, window, mode, command?, tty?, env }`, the `pty_id` space and the
+  `0x02` data tag shared with terminals):
+  - `shell` — the image shell (`$SHELL`, else `/bin/sh`) as a login-less interactive shell; with
+    `tty` it is exactly `§Terminal`'s PTY (own session, controlling terminal, `O_NOCTTY` on the
+    supervisor's side, `TIOCSWINSZ` from `tty.cols/rows`); without `tty` (`ssh -T host`) it reads
+    commands from stdin over pipes.
+  - `exec` — `<shell> -c <command>` (OpenSSH's semantics; `command` ≤ `SSH_EXEC_COMMAND_MAX` 8 KiB, no
+    NUL; never logged, never stored, never audited), with or without `tty` (`ssh -t host cmd`).
+    Legacy `scp -O` arrives here as `scp -t|-f …` and works because the image carries `scp`.
+  - `sftp` — the image's `/usr/libexec/openssh/sftp-server` (fixed path; never a path the client
+    names) over pipes, no `tty`; `exec.refused { unsupported }` when the image lacks it (a custom
+    image). Modern `scp` uses SFTP and lands here.
+- **Identity and environment.** As `§Terminal`: agent uid/gid, cwd `/workspace`, the container
+  environment **minus every `AURORA_*` variable** and minus the boot document. Added: `TERM` from
+  `tty.term` (≤ 64 printable ASCII characters, else `xterm-256color`) and the client's `env`
+  requests that the terminator accepted — only `LANG` and `LC_*`, at most `SSH_ENV_VARS_MAX` (16) of
+  ≤ 256 bytes each; any other name (and every `AURORA_*` name) is dropped by the terminator and
+  again by the supervisor.
+- **Pipes and status.** Without `tty`, stdout travels as `0x02` data and stderr as `0x03` data
+  (supervisor → runner only); with `tty` both are the PTY's output (`0x02`). `exec.eof` from the
+  runner closes the child's stdin (the client's `EOF`). When the child exits the supervisor drains
+  its output, then sends `exec.exit { pty_id, status }` (or `{ signal }`, the signal's name without
+  `SIG`, e.g. `KILL`), then `pty.close { reason: "eof" }`. Closing an exec early hangs up and then
+  kills its process group exactly as a terminal (FIX-091 posture); the PTY master and pipe ends are
+  `CLOEXEC` and never reach any other child (FIX-059 posture).
+- **Refused at this layer** (defence in depth behind the terminator, `16 §W20`): any mode other than
+  the three above, a `command` for `shell`/`sftp`, a `tty` for `sftp`, an `env` name outside the list
+  — `exec.refused { reason: "unsupported" }`. There is **no** port forwarding, agent forwarding, X11
+  or Unix-socket forwarding in the supervisor at all: it never dials or listens for an SSH channel.
+- **Limits.** At most `SSH_CHANNELS_PER_SANDBOX` (8) concurrent execs, separate from
+  `TERMINALS_PER_SANDBOX`, more → `exec.refused { limit }`; idle and lifetime as the runner
+  instructs; everything closes on `shutdown`, channel loss, a stop, a restart or a freeze; nothing is
+  resumed. An exec is not a process row, never a turn, never a transcript event and never stamps
+  `last_engaged_at`; its bytes are never logged, counted beyond byte totals or visible to the
+  harness, the gateway or the loopback proxies. An older supervisor ignores `exec.*` (the runner's
+  `exec.open` times out after 5 s → leg 1 closes 4502): harmless.
+
 ## Outbound files
 
 `send_file` (supervisor-local tool, S-11): the supervisor resolves the path

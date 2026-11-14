@@ -488,6 +488,7 @@ OpenAPI document and the phase tags (FIX-119).
 | GET `/v1/previews/authorize` | browser navigation redirect of the preview origin flow (C-540..C-549) |
 | POST `/v1/relay/register` | relay plane (`aul_` token, C-550..C-559) |
 | POST `/v1/runner/preview-streams/open` | runner plane (`aur_` token) |
+| POST `/v1/terminator/register` | (phase 5, P4-SSH-2) terminator plane (`aut_` token, C-794); also `/sessions`, `/sessions/{id}/channels`, `/sessions/{id}/close`, `/heartbeat` |
 
 ### Health and instance
 | Method & path | Auth | Purpose |
@@ -736,6 +737,32 @@ of the agent's workspace); the browser-side authorization is P4-PRV-2 (`04 §Pre
 the share lifecycle: `11 §Port previews`.
 | GET `/v1/gateway/ca.pem` | S/K | gateway CA certificate |
 
+### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239; C-790..C-799)
+
+Present on every instance but inert: while `ssh.enabled` is false every route below answers 404
+`ssh_disabled` (the key routes included: no key can be registered on an instance without SSH), and
+`GET /v1/instance` reports `features.ssh: false`. Authority: `04 §SSH access`. Errors use the
+standard body.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/me/ssh-keys` | S/K | (phase 5, P4-SSH-1, C-790) the caller's keys: `{ keys: [{ id, name, algorithm: "ssh-ed25519", public_key, fingerprint, created_at, last_used_at }] }` |
+| POST `/v1/me/ssh-keys` | SO | (phase 5, P4-SSH-1, C-790) `{ public_key, name? }` → 201 key; `public_key` is one OpenSSH line (`ssh-ed25519 AAAA… [comment]`, ≤ 4 KiB, no options prefix); 422 `ssh_key_invalid` (unparsable, options, a certificate, private key material), 422 `ssh_key_unsupported_type` (anything but `ssh-ed25519`), 409 `ssh_key_exists`, 409 `ssh_key_limit` (`SSH_KEYS_PER_USER`); audit `ssh_key.create` (critical) |
+| PATCH `/v1/me/ssh-keys/{id}` | SO | (phase 5, P4-SSH-1, C-790) `{ name }`; 404 for another person's key |
+| DELETE `/v1/me/ssh-keys/{id}` | SO | (phase 5, P4-SSH-1, C-790) 204; open sessions authenticated with it are closed at the next heartbeat (`key_deleted`); audit `ssh_key.delete` (critical) |
+| POST `/v1/agents/{agent}/ssh-certificate` | S/K | (phase 5, P4-SSH-1, C-791) `{ public_key }` (an OpenSSH line or the canonical form; must be one of the caller's registered keys) → 201 `{ certificate, serial, principal, valid_after, valid_before, username, host, port, known_hosts: [string] }` (`certificate` is one OpenSSH line `ssh-ed25519-cert-v01@openssh.com AAAA… aurora:<agent id>`; `known_hosts` may be empty until P4-SSH-2 registers a terminator); session or the caller's own API key (service keys and agent credentials 403); `can_ssh`: 404 unknown or invisible agent, 422 `ssh_not_supported` (BYO), 423 `frozen`, 422 `ssh_key_not_registered`, 429 `ssh_mint_rate_limited` (`Retry-After`); audit `agent.ssh_certificate.mint` |
+| GET `/v1/ssh` | S/K | (phase 5, P4-SSH-1, C-792) connection facts for the "Connect with SSH" panel and the CLI: `{ host, port, cert_ttl_secs, host_keys: [{ public_key, fingerprint }], known_hosts: ["[host]:port ssh-ed25519 AAAA…"] }` (the distinct host keys of live terminator replicas; empty with a `terminators_live: 0` flag when none is registered) |
+| GET `/v1/me/ssh-sessions` | S/K | (phase 5, P4-SSH-2, C-793) the caller's open sessions: `{ sessions: [SshSession] }`, `SshSession = { id, agent: { id, name }, workspace_id, key: { id\|null, name\|null, fingerprint }, client_address, opened_at, last_activity_at, channels_total }` (coarse address) |
+| GET `/v1/agents/{agent}/ssh-sessions` | S/K | (phase 5, P4-SSH-2, C-793) open sessions on the agent: `can_own` sees all (each with `user: { id, label }`), a `can_use` caller only their own |
+| DELETE `/v1/ssh-sessions/{id}` | S/K | (phase 5, P4-SSH-2, C-793) disconnect: the session's person or `can_own` of its workspace (404 otherwise); sets `revoke_requested_at`; 202 — the terminator ends the connection within one heartbeat (≤ 30 s); audit `ssh_session.disconnect` |
+| GET `/v1/admin/terminators` | IA | (phase 5, P4-SSH-2, C-793) terminator replicas seen: `{ id, version, host_key_fingerprint, sessions_open, last_seen_at, live }`, shown on Admin › Overview |
+| GET `/v1/instance` | none | (phase 5, P4-SSH-1; existing public route) gains `features.ssh: bool` so the dashboard shows the SSH surfaces only when they can work |
+
+`GET /v1/agents/{agent}/sandbox`'s `keep_awake_reasons` gains `ssh` (phase 5, P4-SSH-2; "SSH session in
+use"). Error codes added: `ssh_disabled` (404), `ssh_not_supported` (422), `ssh_key_invalid` (422),
+`ssh_key_unsupported_type` (422), `ssh_key_exists` (409), `ssh_key_limit` (409),
+`ssh_key_not_registered` (422), `ssh_mint_rate_limited` (429), `ssh_session_not_found` (404).
+
 ### Conversations and turns
 | Method & path | Auth | Purpose |
 |---|---|---|
@@ -856,5 +883,25 @@ All of it is 404 while `previews.enabled` is false.
 
 Cookie-authenticated API requests with `Sec-Fetch-Site: same-site|cross-site` that are not a top-level
 `GET` navigation are refused 403 `csrf_rejected` while `previews.enabled` (`04 §Preview access`
-rule 5); the `/v1/relay`, `/v1/runner` and `/scim/v2` planes use bearer tokens and are not
-affected.
+rule 5); the `/v1/relay`, `/v1/runner`, `/v1/terminator` and `/scim/v2` planes use bearer tokens and
+are not affected.
+
+### Terminator plane (phase 5, P4-SSH-2, D-239; C-794)
+
+All of it is 404 while `ssh.enabled` is false. Bearer `aut_…` (`AURORA_BOOTSTRAP_TERMINATOR_TOKEN`,
+compared by hash in constant time; an unknown or malformed token is 401 with one body for every
+cause) and, after registration, `X-Aurora-Replica: <replica_id>`. Its own rate class
+(`SSH_API_RATE`, per replica), exempt from the management limiter. Wire shapes: `16 §W20`.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| POST `/v1/terminator/register` | `aut_` | `{ version, host_public_key }` → `{ replica_id, protocol: 1, config: { ca_public_keys, heartbeat_secs, lease_secs, wake_wait_secs, idle_timeout_secs, max_lifetime_secs, limits } }`; upserts `ssh_terminator_replicas` |
+| POST `/v1/terminator/sessions` | `aut_` + replica | open a session after the client's signature verified (`04 §SSH access` point 2); `{ certificate, username, client_address }` → 201 `{ session_id, agent_id, sandbox: "running"\|"waking"\|"stopped", lease_secs, expires_at }` or 403 `{ reason }` (`denied` for every access refusal; `limit` over a cap) — the terminator answers both with the same hint-free failure; a parked sandbox gets the wake demand; audit `agent.ssh.open` |
+| POST `/v1/terminator/sessions/{id}/channels` | `aut_` + replica | `{ mode: "shell"\|"exec"\|"sftp", wait_secs?: ≤ 45 }` → `{ grant: "auz_…", expires_in: 30, runner_endpoint }`; 403 `session_closed` (closed, lease passed or `can_ssh` fails: the row is closed at detection); 409 `not_running` with `retry_after_secs` while the sandbox wakes after `wait_secs` (a stopped sandbox gets the wake demand, within the shared budget; over it 429 `wake_limited`); 429 `ssh_channel_limit` |
+| POST `/v1/terminator/heartbeat` | `aut_` + replica | `{ sessions: [{ id, last_activity_at?, channels_open, channels_total, bytes_in, bytes_out }] ≤ 500 }` → `{ revoked: [{ id, reason }], config }`; renews each open session's lease, re-runs `04 §SSH access` point 4, refreshes `ssh_terminator_replicas.last_seen_at`; a listed session that is unknown or already closed comes back revoked |
+| POST `/v1/terminator/sessions/{id}/close` | `aut_` + replica | `{ reason, channels_total, channels_by_mode, bytes_in, bytes_out }` → `{ ok }`; idempotent: the first close wins (close-exactly-once), a repeat answers `{ ok }` and changes nothing |
+| POST `/v1/runner/preview-streams/open` (`kind: "ssh"`) | `aur_` + replica | (runner plane) redeem an `auz_` grant: `16 §W20` |
+| POST `/v1/runner/terminal/keep-awake` (`kind: "ssh"`) | `aur_` + replica | (runner plane) the keep-awake stamp of a byte-carrying SSH channel: `ssh_active_until`, `16 §W20` |
+
+A stale-session sweep (every API replica, every 30 s, claims with `SKIP LOCKED`) closes `open` rows whose
+`lease_until` passed (`lease_expired`) through the same guarded transition.
