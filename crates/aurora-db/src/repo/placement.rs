@@ -63,6 +63,35 @@ pub async fn save<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (P5-ADMDEL, D-234) Remove deleted workspaces from `shared_workspaces`: the owner's and the
+/// instance admin's delete paths call it in the delete's own transaction, before the rows go.
+/// `workspace_ids` are workspace ids; `org_id` additionally drops every workspace of that
+/// organization (an organization delete). No-op without a placement row or a match.
+pub async fn prune_shared_workspaces<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_ids: &[Uuid],
+    org_id: Option<Uuid>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE instance_placement SET shared_workspaces = COALESCE((
+             SELECT jsonb_agg(e) FROM jsonb_array_elements(shared_workspaces) e
+             WHERE NOT ((e->>'workspace_id')::uuid = ANY($1)
+                        OR EXISTS (SELECT 1 FROM workspaces w
+                                   WHERE w.id = (e->>'workspace_id')::uuid AND w.org_id = $2))
+         ), '[]'::jsonb)
+         WHERE jsonb_typeof(shared_workspaces) = 'array'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(shared_workspaces) e
+                       WHERE (e->>'workspace_id')::uuid = ANY($1)
+                          OR EXISTS (SELECT 1 FROM workspaces w
+                                     WHERE w.id = (e->>'workspace_id')::uuid AND w.org_id = $2))",
+    )
+    .bind(workspace_ids)
+    .bind(org_id)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
 /// Serialize placement work per organization (concurrent first sign-ins).
 pub async fn lock_org<'e, E: PgExecutor<'e>>(exec: E, org: Uuid) -> Result<(), DbError> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('placement:' || $1::text, 0))")

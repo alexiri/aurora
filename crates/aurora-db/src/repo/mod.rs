@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod action_approvals;
+pub mod addon_sources;
 pub mod agent_links;
 pub mod agents;
 pub mod api_keys;

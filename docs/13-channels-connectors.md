@@ -353,22 +353,57 @@ integration) are claimable by any live replica of the connector.
     3. **raw HTML outside the allowlist** is removed, keeping its text (XSS);
        allowlisted HTML stays, for the connector to convert (§4.6);
     4. **typed neutral tokens** (`<@user:…>`, `<#space:…>`, `<@here>`) never
-       form (forged mentions and broadcasts).
+       form (forged mentions and broadcasts);
+    5. (D-270) **bare URLs and autolinks become labelled links**: a URL in
+       prose (`https://…`, `<https://…>`, `www.…`, outside code and outside a
+       link) is rewritten to `[url](url)` — the same text and click target
+       (`www.x` → `https://www.x`), rule 2's scheme allowlist applied (`ftp://`,
+       which the server also previews, is no link scheme: it is written `ftp:\//`). A platform's preview fetches a bare URL the
+       moment the post is created, with no click (Mattermost's server does:
+       `docs/20 §Rendering`), so a URL carrying data would leave unprompted.
+       In HTML text the URL becomes `<a href>` (an entity colon where it does not
+       fit an attribute).
+
+    Two more edits keep a platform with a looser dialect from forming what the
+    parser did not (Mattermost: a link destination may hold spaces, a definition
+    may follow a paragraph line, `![x](url =10x10)` is an image): in prose and
+    in HTML text and math, `![` is written `!\[` (math: `! [`), `](` is written
+    `]\(`, and a line that looks like a definition (`[x]:`) is written `[x]\:`;
+    the pipe that would start a table cell **beyond the header's width** is
+    escaped (GFM drops such cells, so no parser shows their content, but
+    Mattermost 11.7.15 renders them — an image, a fetched URL, an `@channel`).
+    Code is never touched.
 
     The core edits only those byte ranges, escaping replacement text for its
     context, and verifies by re-parsing; a block that fails verification
-    falls back to `markdown_as_data` (D-227(d)). Idempotent.
-- **Mentions in an agent's message body** (D-226(b)): a platform `@username`
-  passes through as text (the platform resolves it); a standalone `@here`
-  (outside code, at a word boundary, any case) becomes the core's `<@here>`;
-  `@channel` and `@all` are left as text for the connector to defuse.
+    falls back to `markdown_as_data` (D-227(d); its URLs written `https:\//…`).
+    Idempotent. A connector that converts the neutral text to its own markup
+    **re-checks its output** and posts escaped plain text if it holds an image,
+    a link outside `http`/`https`/`mailto`, an image opener, a label that
+    names another host than its destination without the core's note, or a
+    bare URL: nothing after the sanitizer may produce what the sanitizer
+    refuses.
+- **Mentions in an agent's message body** (D-226(b), D-271): a platform
+  `@username` passes through as text (the platform resolves it); a standalone
+  `@here` (**exactly that spelling**, outside code and outside a link label, at a
+  word boundary) becomes the core's `<@here>`. Every other ping is the
+  connector's to defuse: `@channel`, `@all` and `@here` in any other spelling,
+  and a platform's **group** names (§4.6, `docs/20 §Rendering` — mentions table).
 - **`<@here>`** is emitted only by the core: in platform voice when
   explicitly intentional, or from a standalone `@here` in an agent's message
   body (above). Never from untrusted data; never from a token typed in any
   text.
 - Connectors convert neutral text to platform markup (§4.6) and **must
-  defuse** any platform broadcast syntax (`@channel`, `@all`, `@here`)
-  appearing in text: only the `<@here>` token becomes a live broadcast.
+  defuse** (D-271) every ping that notifies more than one person, in every
+  spelling the platform reads as one — any letter case, punctuation either
+  side, inside emphasis, headings, quotes, lists, table cells and link labels —
+  not only the literal lower-case words: `@channel`, `@all`, `@here` and the
+  platform's group mentions (resolved through its API; **an unresolved `@name`
+  is treated as a group when the lookup is unavailable**). Only the `<@here>`
+  token becomes a live broadcast; one user's `@username` still notifies that
+  user; nothing inside code (spans, fences, indented code, HTML `<code>` /
+  `<pre>` / `<kbd>`) notifies. The connector proves this against the platform's
+  own notification data (`docs/20`).
 - **Content** = `{ text?, card? }`; **Card** = `{ blocks: [Block] }`, blocks:
   `header {text}`, `text {text}`, `fields {pairs: [{label, value}]}`
   (≤12), `context {text}`, `link {label, url}`, `buttons {items: [{label,
@@ -698,10 +733,11 @@ Available to an agent only while it has an `active` presence.
   the current conversation's own thread are always allowed. Otherwise the
   agent's `proactive_messaging`: `off` → refused; `ask` → **action approval**
   (`07`) with a platform-composed summary; `allow` → sent. `text` is an
-  agent's message body (§4.3). (phase 5, FIX-142, D-226(b)) **Broadcasts: only
-  `@here`** — a standalone `@here` becomes the core's `<@here>` and notifies
-  everyone online in the target space; `@channel` and `@all` are always
-  defused, and model text never forms a token itself. A held `send_message`
+  agent's message body (§4.3). (phase 5, FIX-142, D-226(b), D-271) **Broadcasts:
+  only `@here`** — a standalone, exactly spelled `@here` outside code and link
+  labels becomes the core's `<@here>` and notifies everyone online in the target
+  space; `@channel`, `@all`, every other spelling of `@here` and group mentions
+  are always defused, and model text never forms a token itself. A held `send_message`
   whose text carries `@here` adds "Notifies everyone online in the channel
   (@here)" to its approval summary (still platform-composed, never the text).
 - `read_conversation {target?, limit?}`: requires `history`; current thread by
@@ -724,8 +760,9 @@ Available to an agent only while it has an `active` presence.
    one exception is an agent's own message body (§4.3): its Markdown renders,
    changed only by D-227's four security exceptions (no inline images, link
    scheme allowlist and deceptive-label host, HTML allowlist, no typed neutral
-   tokens); its only broadcast is a standalone `@here`, which the core turns
-   into `<@here>`. Connectors pass native constructs through unchanged and
+   tokens) and D-270's fifth (bare URLs and autolinks become `[url](url)`); its
+   only broadcast is a standalone `@here`, which the core turns into
+   `<@here>` — every other ping (D-271) is defused by the connector. Connectors pass native constructs through unchanged and
    convert the rest (§4.6).
 5. **Connectors never see Aurora credentials** (no API keys, no user sessions);
    they receive only their own platform credentials and opaque action tokens,

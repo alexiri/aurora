@@ -23,6 +23,9 @@
 #   - s02/s05  other users' email_verified flag (Mattermost 11.7 hides it over REST),
 #              and "a person with no email" (every Mattermost account has one)
 #   - s05      the POST /link-start step (no person-initiated action in shared mode)
+# After the scenarios it also runs the D-271 mentions proof (connectors/mattermost/tests/mentions_e2e.rs):
+# each ping spelling an agent could write, posted through the connector's outbound path, must
+# notify nobody it should not (the server's mention_count of two online/offline members).
 # Extra arguments are passed to `cargo test` (after `--`).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,6 +44,11 @@ if [ "${1:-}" = "--mattermost" ]; then
   echo "conformance: mattermost mode: $CONFORMANCE_CONNECTOR_BIN against $AURORA_MM_URL"
   cargo test -p aurora-conformance-connector --test scenarios -- --test-threads=1 "$@"
   rc=$?
+  # D-271: every ping spelling, through the connector's real outbound path, judged by the
+  # server's own mention counts (connectors/mattermost/tests/mentions_e2e.rs).
+  cargo test -p aurora-connector-mattermost --test mentions_e2e -- --nocapture
+  rc2=$?
+  [ "$rc" -eq 0 ] && rc=$rc2
   if [ "${AURORA_MM_KEEP:-0}" != 1 ]; then bash "$ROOT/scripts/mattermost/setup.sh" down; fi
   exit $rc
 fi

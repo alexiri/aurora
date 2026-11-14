@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { Notice } from "@/components/ui/notice";
 import { useAdminOverview } from "@/lib/api/org";
 
@@ -16,7 +18,14 @@ export function OwnerlessBanner() {
   return (
     <Notice tone="pending" role="alert" data-testid="ownerless-banner">
       <strong>Organizations without an active owner.</strong>{" "}
-      {orgs.map((o) => o.slug).join(", ")}{" "}
+      {orgs.map((o, i) => (
+        <span key={o.slug}>
+          {i > 0 ? ", " : null}
+          <Link href={`/admin/orgs#org-${o.slug}`} className="font-medium underline">
+            {o.slug}
+          </Link>
+        </span>
+      ))}{" "}
       {orgs.length === 1 ? "has" : "have"} no active owner, so the gateway refuses every credential
       of {orgs.length === 1 ? "its" : "their"} agents. Restore an owner (dashboard &rsaquo;{" "}
       {orgs.length === 1 ? orgs[0].slug : "the organization"} &rsaquo; Members) or run the repair

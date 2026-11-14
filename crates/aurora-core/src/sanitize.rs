@@ -6,6 +6,14 @@
 //! `\r`, U+0085, Unicode spaces) collapses to a single space; `\n` is kept
 //! by [`block`] only.
 
+mod chunk;
+mod safe;
+pub use chunk::markdown_chunks;
+pub use safe::{
+    allowed_link_scheme, anchor_is_closed, break_preview_urls, broadcast_here, has_preview_url,
+    link_host_lie, markdown_fallbacks, markdown_safe,
+};
+
 /// `true` for characters that are removed outright: controls (C0, DEL, C1)
 /// that are not whitespace, plus Unicode general category `Cf`
 /// (includes bidi controls U+202A-202E, U+2066-2069, U+200E/F, U+061C).
