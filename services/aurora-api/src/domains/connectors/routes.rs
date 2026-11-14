@@ -1,6 +1,7 @@
 //! Management routes: instance administration of connectors and the public catalogue.
 
 use super::dto::*;
+use super::host_tokens::{self, HostTokenIssued, HostTokenList, IssueHostTokenRequest};
 use super::{admin, managed};
 use crate::app::AppState;
 use crate::audit::AuditActor;
@@ -12,6 +13,7 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use http::{HeaderValue, StatusCode, header};
 use utoipa_axum::{router::OpenApiRouter, routes};
+use uuid::Uuid;
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -23,6 +25,50 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(admin_overview))
         .routes(routes!(admin_approve))
         .routes(routes!(admin_rotate))
+        .routes(routes!(admin_list_host_tokens, admin_issue_host_token))
+        .routes(routes!(admin_revoke_host_token))
+}
+
+/// Connector-host tokens (C-690): the shared bootstrap token and every per-host token with its
+/// bound connector types, last use and state.
+#[utoipa::path(get, path = "/admin/connector-host-tokens", operation_id = "adminListConnectorHostTokens", tag = "admin",
+    responses((status = 200, body = HostTokenList), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn admin_list_host_tokens(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<HostTokenList>, ApiError> {
+    Ok(Json(host_tokens::list(&s).await?))
+}
+
+/// Issue a connector-host token bound to connector types (C-691); shown once. From the first bound
+/// token on, the shared bootstrap token is refused.
+#[utoipa::path(post, path = "/admin/connector-host-tokens", operation_id = "adminIssueConnectorHostToken", tag = "admin",
+    request_body = IssueHostTokenRequest,
+    responses((status = 201, body = HostTokenIssued), (status = 403, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope), (status = 400, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn admin_issue_host_token(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Json(req): Json<IssueHostTokenRequest>,
+) -> Result<(StatusCode, Json<HostTokenIssued>), ApiError> {
+    let out = host_tokens::issue(&s, req, c.user_id, &AuditActor::instance_admin(&c)).await?;
+    Ok((StatusCode::CREATED, Json(out)))
+}
+
+/// Revoke a connector-host token (C-692): its next call is 401.
+#[utoipa::path(delete, path = "/admin/connector-host-tokens/{id}", operation_id = "adminRevokeConnectorHostToken", tag = "admin",
+    params(("id" = Uuid, Path, description = "Token id")),
+    responses((status = 204), (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn admin_revoke_host_token(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    host_tokens::revoke(&s, id, &AuditActor::instance_admin(&c)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Active connectors available for integrations.

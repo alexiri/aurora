@@ -473,6 +473,17 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - Order: migrate → api → hookhost → gateway → runner → relay (when `relay.enabled`; after the API, whose relay plane
   it registers with, and after the runners, whose :4108 stream listener it dials) → web → connectors.
   Gateways and runners of the previous version keep working during the roll.
+- (FIX-120, D-189) **Connector-host tokens.** Upgrading is two steps, with no downtime: (1) upgrade
+  Aurora (migration `20261201000071` adds the binding columns; every existing token row is the
+  shared, unbound bootstrap token and keeps working); (2) issue one token per connector-host
+  Deployment (Admin → Connectors, or the chart's hook for the Deployments it renders), put it in
+  that Deployment's `AURORA_CONNECTOR_HOST_TOKEN` and roll the Deployment. **From the moment the
+  first bound token is issued the shared bootstrap token is refused (401)**: a host that still
+  presents it keeps its running connectors (a failed poll keeps the running set) until it is
+  rolled, and a rolling update starts the new pod before it stops the old one, so connectors do
+  not stop. Revoking every bound token makes the shared token work again (rollback). Hosts
+  announce their types as before; a token bound to type A that registers type B is refused (403
+  `type_not_bound`, naming B).
 - (phase 4, P4-TERM, FIX-053) Turning the web terminal on in an existing
   deployment is a single-switch upgrade: `helm upgrade … --set
   terminal.enabled=true` (the chart value mirrors `config.terminal.enabled`

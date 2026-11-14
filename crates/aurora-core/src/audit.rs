@@ -20,6 +20,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "connector.updated",
     "admin.connector_delete",
     "admin.connector_rotate",
+    "admin.connector_host_token_issue",
+    "admin.connector_host_token_revoke",
     "admin.runner_create",
     "admin.runner_delete",
     "admin.runner_rotate",

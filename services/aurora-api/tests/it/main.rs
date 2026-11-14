@@ -29,6 +29,7 @@ mod common;
 mod connect;
 mod connector_ops;
 mod connectors;
+mod connectors_host_tokens;
 mod connectors_managed;
 mod conversation_lifecycle;
 mod conversations;
