@@ -534,6 +534,20 @@ impl FakeConnector {
                 if token.is_empty() || token == "dead" {
                     return Err(OpError::new(ErrorCode::CredentialDead, "token rejected"));
                 }
+                // Probe (C-710): no side effects; the fake's "teams" are two fixed choices, and
+                // `{"token": .., "no_probe": true}` makes it behave as a connector without probe.
+                if c.is_probe() {
+                    if c.credentials.get("no_probe").and_then(Value::as_bool) == Some(true) {
+                        return Err(OpError::new(ErrorCode::Unsupported, "probe not supported"));
+                    }
+                    return ok(json!({
+                        "tenant_ref": "", "tenant_label": "Fake Workspace",
+                        "choices": {"team": [
+                            {"value": "T1", "label": "Fake Team One"},
+                            {"value": "T2", "label": "Fake Team Two"}]},
+                        "warnings": ["Fake connector: no admin token."]
+                    }));
+                }
                 let mut res =
                     json!({"tenant_ref": "fake-tenant", "tenant_label": "Fake Workspace"});
                 // `{"token": .., "shared_bot": true}` provisions the integration's shared bot.

@@ -43,6 +43,7 @@ struct W {
 
 struct Users {
     owner: Uuid,
+    wsowner: Uuid,
     wsmember: Uuid,
     plain: Uuid,
     outsider: Uuid,
@@ -212,6 +213,7 @@ impl W {
             outsider: ck(outsider).await,
             users: Users {
                 owner,
+                wsowner: wso,
                 wsmember: wsm,
                 plain,
                 outsider,
@@ -2840,6 +2842,286 @@ async fn deprovision_failure_audit_metric_and_dropped() {
             .await
             .unwrap();
     assert!(!at_rest.contains(SECRET) && !audit.contains(SECRET));
+}
+
+// ------------------------------------------------------------ FIX-127 (C-710..C-714)
+
+fn probe_ok() -> Value {
+    json!({"outcome": "ok", "data": {
+        "tenant_ref": "", "tenant_label": "@daneel on mm.test",
+        "choices": {"team": [{"value": "T1", "label": "Team One"}, {"value": "T2", "label": "Team Two"}]},
+        "warnings": ["No admin token."]}})
+}
+
+/// C-711: the probe returns choices and warnings, sends `mode: "probe"`, needs an org admin,
+/// stores nothing and leaves no plaintext credential in the op payload.
+#[tokio::test]
+async fn probe_returns_choices_stores_nothing_and_scrubs_the_op() {
+    let w = W::new().await;
+    let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
+    let body = w.create_body(&w.fake);
+    // Not an org admin: refused before any op exists.
+    assert_eq!(
+        w.call(&w.wsowner, Method::POST, &path, Some(body.clone()))
+            .await
+            .0,
+        403
+    );
+    let ((s, v), ops) = tokio::join!(
+        w.call(&w.admin, Method::POST, &path, Some(body.clone())),
+        w.serve(&w.fake, 1, |_| probe_ok())
+    );
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(ops[0]["kind"], "credentials.validate");
+    assert_eq!(ops[0]["payload"]["mode"], "probe");
+    assert_eq!(v["choices"]["team"][1]["label"], "Team Two");
+    assert_eq!(v["tenant_label"], "@daneel on mm.test");
+    assert_eq!(v["warnings"][0], "No admin token.");
+    assert!(!v.to_string().contains(SECRET), "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_integrations")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "a probe stores no integration");
+    let payloads: Vec<(Value,)> = sqlx::query_as("SELECT payload FROM channel_ops")
+        .fetch_all(w.h.pool())
+        .await
+        .unwrap();
+    assert!(
+        payloads.iter().all(|(p,)| !p.to_string().contains(SECRET)),
+        "the probe payload is scrubbed"
+    );
+}
+
+#[tokio::test]
+async fn probe_maps_connector_refusals() {
+    let w = W::new().await;
+    let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
+    let body = w.create_body(&w.fake);
+    // A connector without probe support.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.admin, Method::POST, &path, Some(body.clone())),
+        w.serve(&w.fake, 1, |_| op_err("unsupported", "no probe"))
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("probe_unsupported")),
+        "{v}"
+    );
+    // The platform refuses (what the URL guard answers: `invalid`) → like create.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.admin, Method::POST, &path, Some(body)),
+        w.serve(&w.fake, 1, |_| op_err(
+            "invalid",
+            "server_url must point at a public address"
+        ))
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("credentials_invalid")),
+        "{v}"
+    );
+}
+
+/// C-712: states per connector row, and a plain member sees names but no ids or e-mails.
+#[tokio::test]
+async fn connector_availability_states_and_instance_admin_names_only() {
+    let w = W::new().await;
+    let (s, v) = w
+        .call(&w.plain, Method::GET, "/v1/connector-availability", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let state = |v: &Value, id: &str| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["type_id"] == id)
+            .map(|i| i["setup_state"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(state(&v, "fake").as_deref(), Some("active"));
+    assert_eq!(v["instance_admins"], json!([{"name": "U"}]));
+    let text = v.to_string();
+    assert!(!text.contains("root@x.io"), "{text}");
+    let root: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE is_instance_admin")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert!(!text.contains(&root.to_string()), "{text}");
+    for (status, want) in [
+        ("disabled", "disabled"),
+        ("pending_approval", "needs_approval"),
+        ("awaiting_registration", "waiting_for_host"),
+    ] {
+        sqlx::query("UPDATE connectors SET status=$1 WHERE id='fake'")
+            .bind(status)
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+        let (_, v) = w
+            .call(&w.plain, Method::GET, "/v1/connector-availability", None)
+            .await;
+        assert_eq!(state(&v, "fake").as_deref(), Some(want), "{v}");
+    }
+}
+
+fn user_json(r: &str, bot: bool) -> Value {
+    json!({"ref": r, "display_name": r, "handle": r, "email_verified": false, "is_bot": bot})
+}
+
+/// The platform: spaces C1 (the caller and the bot are in), C3 (the bot is in, the caller is
+/// not), D1 (a direct conversation); C9 is not the bot's (members: forbidden).
+fn platform(op: &Value) -> Value {
+    match op["kind"].as_str().unwrap() {
+        "spaces.list" => json!({"outcome": "ok", "data": {"spaces": [
+            {"ref": "C1", "kind": "channel", "label": "general"},
+            {"ref": "C3", "kind": "private", "label": "secret"},
+            {"ref": "D1", "kind": "dm", "label": "dm"}]}}),
+        "space.members" => match op["payload"]["space_ref"].as_str().unwrap() {
+            "C1" => {
+                json!({"outcome": "ok", "data": {"users": [user_json("U-1", false), user_json("B1", true)]}})
+            }
+            "C3" => {
+                json!({"outcome": "ok", "data": {"users": [user_json("U-9", false), user_json("B1", true)]}})
+            }
+            "D1" => {
+                json!({"outcome": "ok", "data": {"users": [user_json("U-1", false), user_json("B1", true)]}})
+            }
+            _ => op_err("forbidden", "bot not in channel"),
+        },
+        _ => json!({"outcome": "ok", "data": {"message_ref": "m1", "thread_ref": "m1"}}),
+    }
+}
+
+/// C-713/C-714: bind from the dashboard only a space the caller is in and the bot is in.
+#[tokio::test]
+async fn dashboard_binding_requires_membership_and_the_bot() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    assert_eq!(w.attach(&w.owner, agent, integ, "shared").await.0, 201);
+    let url = format!("/v1/agents/{agent}/space-bindings");
+    let body = |space: &str| json!({"integration_id": integ, "space_ref": space});
+
+    // Not linked yet.
+    let (s, v) = w
+        .call(&w.wsowner, Method::POST, &url, Some(body("C1")))
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("link_required")),
+        "{v}"
+    );
+    let link = format!("/v1/channel-integrations/{integ}/user-links");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &link,
+            Some(json!({"platform_user_ref": "U-1", "user_id": w.users.wsowner})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+
+    // A workspace member without can_own.
+    assert_eq!(
+        w.call(&w.wsmember, Method::POST, &url, Some(body("C1")))
+            .await
+            .0,
+        403
+    );
+    // Another integration id is a 404.
+    let (s, v) = w
+        .call(
+            &w.wsowner,
+            Method::POST,
+            &url,
+            Some(json!({"integration_id": Uuid::now_v7(), "space_ref": "C1"})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (404, Some("integration_not_found")),
+        "{v}"
+    );
+
+    // The caller is not in the space.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C3"))),
+        w.serve(&w.fake, 2, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("not_a_member")),
+        "{v}"
+    );
+    // A direct conversation.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("D1"))),
+        w.serve(&w.fake, 1, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("space_not_bindable")),
+        "{v}"
+    );
+    // The bot is not in the space: 409 with the invite hint.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C9"))),
+        w.serve(&w.fake, 2, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("bot_not_in_space")),
+        "{v}"
+    );
+    assert!(
+        v["error"]["details"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("@daneel"),
+        "{v}"
+    );
+
+    // Member and bot present: created, audited, announced.
+    let ((s, v), ops) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C1"))),
+        w.serve(&w.fake, 3, platform)
+    );
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["listen"], "mentions");
+    assert_eq!(v["space_label"], "general");
+    assert_eq!(v["bound_by"]["id"], json!(w.users.wsowner));
+    assert!(ops.iter().any(|o| o["kind"] == "message.post"), "announced");
+    let audits: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action='space_binding.create'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(audits, 1);
+    // Again: already bound.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C1"))),
+        w.serve(&w.fake, 2, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("already_bound")),
+        "{v}"
+    );
+
+    // C-714: only spaces the caller is in (C1), never the DM.
+    let mine = format!("/v1/integrations/{integ}/spaces?mine=true");
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::GET, &mine, None),
+        w.serve(&w.fake, 3, platform)
+    );
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["items"][0]["space_ref"], "C1");
+    assert_eq!(v["items"][0]["bot_present"], true);
+    let no_mine = format!("/v1/integrations/{integ}/spaces");
+    assert_eq!(w.call(&w.wsowner, Method::GET, &no_mine, None).await.0, 400);
 }
 
 /// A shared presence has no bot of its own: nothing is enqueued by any delete.

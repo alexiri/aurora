@@ -62,6 +62,32 @@ pub struct CreateIntegrationRequest {
     pub credentials: serde_json::Value,
 }
 
+/// `POST /orgs/{org}/channel-integrations:probe` body (C-711): the create shapes.
+#[derive(Deserialize, ToSchema)]
+pub struct ProbeIntegrationRequest {
+    pub connector_id: String,
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    pub config: serde_json::Value,
+    /// Write-only: used once, never stored or logged.
+    #[schema(value_type = Object)]
+    pub credentials: serde_json::Value,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ProbeChoice {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ProbeIntegrationResponse {
+    /// Per setup field that declares `choices: "from_validate"`.
+    pub choices: std::collections::BTreeMap<String, Vec<ProbeChoice>>,
+    pub tenant_label: Option<String>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct PatchIntegrationRequest {
     /// Replaces the whole config (re-validated).
@@ -233,6 +259,39 @@ pub struct SpaceBinding {
 #[derive(Serialize, ToSchema)]
 pub struct SpaceBindingList {
     pub items: Vec<SpaceBinding>,
+}
+
+/// `POST /agents/{agent}/space-bindings` (C-713).
+#[derive(Deserialize, ToSchema)]
+pub struct CreateBindingRequest {
+    pub integration_id: Uuid,
+    pub space_ref: String,
+    /// Default `mentions`.
+    pub listen: Option<Listen>,
+}
+
+/// `GET /integrations/{id}/spaces` query (C-714).
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct MySpacesQuery {
+    /// Must be `true`.
+    pub mine: Option<bool>,
+    pub query: Option<String>,
+    /// 1..=50, default 25.
+    pub limit: Option<u32>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct MySpace {
+    pub space_ref: String,
+    pub label: String,
+    /// `channel` or `private`.
+    pub kind: String,
+    pub bot_present: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct MySpacesList {
+    pub items: Vec<MySpace>,
 }
 
 #[derive(Deserialize, ToSchema)]

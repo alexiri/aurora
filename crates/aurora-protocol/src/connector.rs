@@ -1066,17 +1066,47 @@ pub struct CredentialsValidateOp {
     #[serde(default)]
     pub config: Value,
     pub credentials: Value,
+    /// (FIX-127, C-710) `"probe"`: validate what can be, change nothing on the platform and
+    /// return `choices`/`warnings`; absent = the full validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+impl CredentialsValidateOp {
+    /// The only defined mode string.
+    pub const PROBE: &'static str = "probe";
+
+    pub fn is_probe(&self) -> bool {
+        self.mode.as_deref() == Some(Self::PROBE)
+    }
+}
+
+/// One option of a field that declares `choices: "from_validate"` (C-710).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ValidateChoice {
+    pub value: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CredentialsValidateResult {
+    /// Empty in probe mode.
+    #[serde(default)]
     pub tenant_ref: String,
+    /// In probe mode: what could be named without the unset field, else empty.
+    #[serde(default)]
     pub tenant_label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_bot: Option<SharedBot>,
     /// May only narrow the manifest's capabilities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<BTreeMap<String, Value>>,
+    /// (C-710, probe mode) per field choices.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub choices: BTreeMap<String, Vec<ValidateChoice>>,
+    /// (C-710, probe mode) user-readable notes, never a credential.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// A typed operation payload.
