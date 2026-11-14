@@ -2694,19 +2694,26 @@ async fn two_libraries_racing_the_proposal_cap_never_exceed_it() {
             put("alpha/SKILL.md", md("Alpha", "a")),
             put("sub/gamma/SKILL.md", md("Gamma", "g")),
             put("beta/SKILL.md", md("Beta", "b")),
+            put("held/delta/SKILL.md", md("Delta", "d")),
         ],
     );
     let l1 = w.library_at("one", "").await;
     let l2 = w.library_at("two", "sub").await;
+    // The filler proposal hangs off a third library that does not refresh in this run: on a
+    // refreshed library's unchanged skill it would be superseded mid-run (the repository is
+    // back at the pinned state), freeing the budget — then both fit, depending on which
+    // library the concurrent refresh reaches first.
+    let l3 = w.library_at("three", "held").await;
     add_org_id(&w, l1, "alpha", &sha).await;
-    let beta = add_org_id(&w, l1, "beta", &sha).await;
+    add_org_id(&w, l1, "beta", &sha).await;
     add_org_id(&w, l2, "gamma", &sha).await;
+    let delta = add_org_id(&w, l3, "delta", &sha).await;
     // the organization already holds all but ~30 000 bytes of open proposals: one of the two
     // new ~20 000-byte proposals fits, both do not
     sqlx::query("INSERT INTO skill_library_updates (id, skill_id, library_id, kind, status, commit_sha, content_sha256, bytes) VALUES ($1,$2,$3,'removed','pending','x','\\x00',$4)")
         .bind(Uuid::now_v7())
-        .bind(beta)
-        .bind(l1)
+        .bind(delta)
+        .bind(l3)
         .bind(4_194_304_i32 - 30_000)
         .execute(w.h.pool())
         .await
@@ -2719,7 +2726,8 @@ async fn two_libraries_racing_the_proposal_cap_never_exceed_it() {
             put("sub/gamma/SKILL.md", big("Gamma")),
         ],
     );
-    sqlx::query("UPDATE skill_libraries SET next_refresh_at = now() - interval '1 second', refresh_lease_until = NULL, lease_owner = NULL")
+    sqlx::query("UPDATE skill_libraries SET next_refresh_at = CASE WHEN id = $1 THEN now() + interval '1 hour' ELSE now() - interval '1 second' END, refresh_lease_until = NULL, lease_owner = NULL")
+        .bind(l3)
         .execute(w.h.pool())
         .await
         .unwrap();
