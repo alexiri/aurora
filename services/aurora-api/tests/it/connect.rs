@@ -63,6 +63,10 @@ apps:
         kind: hook
         authorize: true
         fields: [ { name: account, label: Account, type: text, store: metadata, required: false } ]
+      - id: hook_form
+        kind: hook
+        authorize: false
+        fields: [ { name: account, label: Account, type: text, store: metadata, required: false } ]
     agent: { default_blocklist: [ "blocked.example" ] }
     token: { kind: hook, max_lifetime_secs: 3600 }
     hosts:
@@ -748,6 +752,72 @@ async fn hook_authorize_and_exchange_via_stub_host() {
     assert_eq!(label, "Hooked");
     // hook host down => connect_hook_failed
     drop(stub);
+}
+
+/// (FIX-133, D-240) A form-only hook method gets the connection's access in the exchange form
+/// under the reserved `aurora_access` key (so the hook can narrow its token); a reconnect without
+/// `access` passes the connection's current one; a user-supplied `aurora_access` is refused.
+#[tokio::test]
+async fn hook_exchange_form_carries_the_connection_access() {
+    let stub = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/internal/v1/hooks/connect.exchange"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"ok": {"connected": {
+            "credentials": [{"key": "access_token", "value": "hat"}], "metadata": [],
+            "scopes": [], "label": "Hooked", "expires_at": null, "tenant_host": null}}})),
+        )
+        .mount(&stub)
+        .await;
+    let w = world(Some(stub.uri())).await;
+    let mut b = w.connect_body("hook_form");
+    let go = |b: Value| {
+        let w = &w;
+        async move {
+            w.call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+                .await
+        }
+    };
+    // Default and explicit access.
+    let (s, _, v) = go(b.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    b["access"] = json!("read");
+    let (s, _, v) = go(b.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    let id = v["connection"]["id"].clone();
+    // A reconnect that does not say passes the current access.
+    b.as_object_mut().unwrap().remove("access");
+    b["reconnect_connection_id"] = id;
+    let (s, _, v) = go(b.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    let forms: Vec<Option<String>> = stub
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let input = &r.body_json::<Value>().unwrap()["input"];
+            input["source"]["form"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["key"] == "aurora_access")
+                .map(|e| e["value"].as_str().unwrap().to_owned())
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        [
+            Some("write".into()),
+            Some("read".into()),
+            Some("read".into())
+        ]
+    );
+    // The reserved key is not a form field: a user cannot set it.
+    b.as_object_mut().unwrap().remove("reconnect_connection_id");
+    b["fields"] = json!({"aurora_access": "write"});
+    let (s, _, v) = go(b).await;
+    assert_eq!(s, 400, "{v}");
 }
 
 #[tokio::test]

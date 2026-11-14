@@ -295,6 +295,15 @@ enum Kind {
 }
 
 impl Ctx<'_> {
+    /// (FIX-133, D-240) The access the connection will have: the chosen one, else a reconnect's
+    /// current one, else `write`.
+    fn effective_access(&self) -> &str {
+        self.access
+            .as_deref()
+            .or_else(|| self.reconnect.as_ref().map(|r| r.access.as_str()))
+            .unwrap_or("write")
+    }
+
     /// The host `{instance}` stands for: the registered instance's, else the app's `default_host`.
     fn instance_host(&self) -> Option<&str> {
         match &self.instance {
@@ -772,7 +781,15 @@ pub async fn start(
                     cookie: Some(flow::cookie(&cookie, flow::cookie_ttl())),
                 });
             }
-            let input = exchange_input(&ctx, &h.id, json!({"form": kv(&p.raw)}), &cf, None, &cx);
+            // (FIX-133) The reserved `aurora_access` key tells the hook what the connection may
+            // do so it can narrow the token it mints (GitHub-enforced); it is set here after the
+            // form was validated, so a user-supplied value never reaches the guest.
+            let mut form = p.raw.clone();
+            form.insert(
+                "aurora_access".into(),
+                Value::String(ctx.effective_access().to_owned()),
+            );
+            let input = exchange_input(&ctx, &h.id, json!({"form": kv(&form)}), &cf, None, &cx);
             match state
                 .connect
                 .hooks

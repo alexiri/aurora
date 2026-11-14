@@ -167,6 +167,14 @@ fn connect_method_rules_reject_each_invalid_case() {
             "tool_method_unknown",
         ),
         (
+            "form field uses the reserved aurora_ key space",
+            METHODS.replace(
+                "{ name: private_key, label: Key, type: file, required: true }",
+                "{ name: private_key, label: Key, type: file, required: true }\n          - { name: aurora_access, label: Access, type: text, store: metadata }",
+            ),
+            "field_name_reserved",
+        ),
+        (
             "two recommended",
             METHODS.replace(
                 "        token: { kind: hook",

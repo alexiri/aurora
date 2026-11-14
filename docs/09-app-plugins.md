@@ -863,6 +863,13 @@ declared; `tenant-host` must fall in the declared zone; `continue.url` must be
 https on a declared host or an `oauth_clients` authorize host; summaries are
 clamped to `SUMMARY_LIMITS`.
 
+**Reserved key `aurora_access` (FIX-133, D-240).** A hook learns the connection's access
+(`read` | `write`, §3.4, `07`) without any WIT change: the API adds `aurora_access` to the
+`connect.exchange` form after validating it, and the gateway adds it to the `token.mint` metadata
+(overriding anything stored under that name). A hook that can narrow its credential (GitHub App
+installation tokens) does so for `read` and treats any value but `write` as `read`. Field names
+starting with `aurora_` are reserved (`field_name_reserved`), so a user cannot supply the key.
+
 ### 8.3 The hook host (`aurora-hookhost`)
 
 - Stateless internal service (port 4104), no database access and no encryption

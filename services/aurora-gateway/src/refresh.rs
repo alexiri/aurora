@@ -369,13 +369,22 @@ impl TokenManager {
     ) -> Result<(Map<String, Value>, DateTime<Utc>), RefreshError> {
         let minter = self.minter.as_ref().ok_or(RefreshError::Unavailable)?;
         let (client, client_secret) = self.client_fields(st).await?;
+        // (FIX-133, D-240) The reserved `aurora_access` key carries the connection's access so the
+        // hook can narrow the token it mints; it overrides anything stored under that name.
+        let mut metadata = job.conn.metadata.clone();
+        if let Some(m) = metadata.as_object_mut() {
+            m.insert(
+                "aurora_access".into(),
+                Value::String(if job.conn.read_only { "read" } else { "write" }.into()),
+            );
+        }
         let out = minter
             .mint(MintInput {
                 package_id: job.package_id.clone(),
                 package_digest: job.package_digest.clone(),
                 app_id: job.conn.app_id.clone(),
                 credentials: current.clone(),
-                metadata: job.conn.metadata.clone(),
+                metadata,
                 tenant_host: job.conn.tenant_host.clone(),
                 instance_host: job.conn.instance_host.clone(),
                 client,

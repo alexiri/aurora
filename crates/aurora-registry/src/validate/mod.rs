@@ -737,6 +737,20 @@ fn method_rules(cx: &mut Ctx<'_>) {
                 format!("connect method id `{}` appears twice", c.id()),
             );
         }
+        // (FIX-133, D-240) `aurora_*` form keys are Aurora's own channel to the hooks
+        // (`aurora_access`): a package may not declare one, so a user can never supply it.
+        for (j, f) in c.form_fields().iter().enumerate() {
+            if f.name.starts_with("aurora_") {
+                cx.v(
+                    "field_name_reserved",
+                    &format!("{p}/fields/{j}/name"),
+                    format!(
+                        "`{}` is reserved: field names may not start with `aurora_`",
+                        f.name
+                    ),
+                );
+            }
+        }
         for (key, v, max) in [
             ("label", c.label(), METHOD_LABEL_MAX),
             ("description", c.description(), METHOD_DESCRIPTION_MAX),

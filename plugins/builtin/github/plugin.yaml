@@ -57,6 +57,7 @@ apps:
       - { name: login }
       - { name: app_id }
       - { name: installation_id }
+      - { name: repositories }
     connect:
       - id: github_app
         kind: hook
@@ -69,6 +70,7 @@ apps:
           - { name: app_id, label: GitHub App ID or client ID, type: text, store: metadata, required: true, placeholder: "123456", help_url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app }
           - { name: installation_id, label: Installation ID, type: text, store: metadata, required: true, placeholder: "12345678", help_url: https://docs.github.com/en/rest/apps/apps#list-installations-for-the-authenticated-app }
           - { name: private_key, label: Private key (.pem file), type: file, store: credentials, required: true, help_url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps }
+          - { name: repositories, label: Limit to repositories (optional), type: text, store: metadata, placeholder: "api, web", help_url: https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app }
       - id: token
         kind: fields
         label: Personal access token
@@ -283,6 +285,7 @@ apps:
       - { name: app_id }
       - { name: installation_id }
       - { name: ghes_host }
+      - { name: repositories }
     connect:
       - id: github_app
         kind: hook
@@ -296,6 +299,7 @@ apps:
           - { name: app_id, label: GitHub App ID or client ID, type: text, store: metadata, required: true, placeholder: "123456" }
           - { name: installation_id, label: Installation ID, type: text, store: metadata, required: true, placeholder: "12345678" }
           - { name: private_key, label: Private key (.pem file), type: file, store: credentials, required: true }
+          - { name: repositories, label: Limit to repositories (optional), type: text, store: metadata, placeholder: "api, web" }
       - id: token
         kind: fields
         label: Personal access token
