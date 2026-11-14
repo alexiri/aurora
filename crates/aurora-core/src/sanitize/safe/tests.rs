@@ -176,7 +176,14 @@ fn typed_neutral_tokens_never_form_but_mentions_pass_through() {
 fn broadcast_here_only_in_prose_at_word_boundaries() {
     for (src, want) in [
         ("@here the build is red", "<@here> the build is red"),
-        ("ok @Here, look", "ok <@here>, look"),
+        // D-271(b): only the exact, standalone `@here` is the broadcast: other spellings (case
+        // variants, a link label) are no @here for the core and the connector defuses them.
+        ("ok @Here, look", "ok @Here, look"),
+        ("@HERE @hErE", "@HERE @hErE"),
+        (
+            "[x @here y](https://x.example)",
+            "[x @here y](https://x.example)",
+        ),
         ("**@here** now", "**<@here>** now"),
         ("see @here.", "see <@here>."),
         ("a `@here` b", "a `@here` b"),
@@ -185,7 +192,11 @@ fn broadcast_here_only_in_prose_at_word_boundaries() {
         ("@hereby", "@hereby"),
         ("x@here", "x@here"),
         ("@channel @all @alex", "@channel @all @alex"),
-        ("[@here](https://x.example)", "[<@here>](https://x.example)"),
+        ("[@here](https://x.example)", "[@here](https://x.example)"),
+        (
+            "[a][r] @here\n\n[r]: https://x.example",
+            "[a][r] <@here>\n\n[r]: https://x.example",
+        ),
     ] {
         assert_eq!(broadcast_here(&md(src)), want, "{src}");
     }

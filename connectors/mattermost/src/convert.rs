@@ -744,7 +744,8 @@ pub fn convert(neutral: &str) -> String {
                 let raw = &neutral[r.clone()];
                 let (closing, name) = tag_name(raw);
                 if closing
-                    && (mark(&name).is_some() || matches!(name.as_str(), "code" | "kbd" | "a"))
+                    && (mark(&name).is_some()
+                        || matches!(name.as_str(), "code" | "kbd" | "pre" | "a"))
                 {
                     // A closer that belongs to an opener we converted is handled with it
                     // (`closers`); a stray one is dropped.
@@ -753,7 +754,8 @@ pub fn convert(neutral: &str) -> String {
                 } else if closing {
                     let c = html.convert(raw);
                     edits.push((r.start, r.end, c));
-                } else if matches!(name.as_str(), "code" | "kbd") {
+                } else if matches!(name.as_str(), "code" | "kbd" | "pre") {
+                    // (`<pre>` inside a line is code too: D-271(e) — nothing in code notifies.)
                     // Code is literal: the pair becomes one code span around the source text
                     // between the tags, however many backticks it holds. Unpaired: dropped.
                     match find_close(&evs, i, &name) {
@@ -1051,6 +1053,16 @@ mod tests {
             convert("!<a href=\"https://x.example\">x</a>\n"),
             "!\u{200B}[x](https://x.example)\n"
         );
+    }
+
+    /// D-271(e): HTML code is code, in a line too — nothing in it notifies.
+    #[test]
+    fn inline_html_code_becomes_a_code_span() {
+        assert_eq!(
+            convert("a <pre>@alice</pre> b <code>@all</code> c <kbd>@here</kbd>\n"),
+            "a `@alice` b `@all` c `@here`\n"
+        );
+        assert_eq!(convert("a <pre>x\n"), "a x\n");
     }
 
     #[test]

@@ -1024,18 +1024,23 @@ fn is_wordish(c: char) -> bool {
         )
 }
 
-/// D-226(b): a standalone `@here` (outside code, at word boundaries, any case) in prose becomes
-/// the core's `<@here>` broadcast token. `foo@here.org`, `@hereby`, code spans and fences are
-/// left alone. Apply it to the output of [`markdown_safe`], never to untrusted data.
+/// D-226(b), D-271(b): a standalone `@here` (exactly that spelling, outside code and outside a
+/// link label, at word boundaries) in prose becomes the core's `<@here>` broadcast token.
+/// `@Here`, `foo@here.org`, `@hereby`, a link label, code spans and fences are left alone — the
+/// connector defuses what is left. Apply it to the output of [`markdown_safe`], never to
+/// untrusted data.
 pub fn broadcast_here(s: &str) -> String {
     let mut edits: Vec<(usize, usize)> = Vec::new();
     let mut in_code = false;
+    let mut in_link = 0usize;
     // Raw `<code>`, `<kbd>` and `<pre>` are code for this rule too (their text is shown as typed).
     let mut html_code = 0usize;
     for (e, r) in Parser::new_ext(s, options()).into_offset_iter() {
         match &e {
             Event::Start(Tag::CodeBlock(_)) => in_code = true,
             Event::End(pulldown_cmark::TagEnd::CodeBlock) => in_code = false,
+            Event::Start(Tag::Link { .. }) => in_link += 1,
+            Event::End(pulldown_cmark::TagEnd::Link) => in_link = in_link.saturating_sub(1),
             Event::InlineHtml(h) => {
                 let t = h.trim_start_matches('<').to_ascii_lowercase();
                 let (closing, name) = t
@@ -1056,15 +1061,14 @@ pub fn broadcast_here(s: &str) -> String {
             _ => {}
         }
         let Event::Text(t) = e else { continue };
-        if in_code || html_code > 0 {
+        if in_code || html_code > 0 || in_link > 0 {
             continue;
         }
         if &s[r.clone()] != t.as_ref() {
             continue;
         }
         let mut from = 0;
-        let low = t.to_ascii_lowercase();
-        while let Some(p) = low[from..].find("@here") {
+        while let Some(p) = t[from..].find("@here") {
             let a = from + p;
             let b = a + 5;
             from = b;
