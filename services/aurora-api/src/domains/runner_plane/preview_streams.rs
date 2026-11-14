@@ -52,7 +52,11 @@ pub fn advertised_host_ok(h: &str) -> bool {
         }
         match tail {
             "" => return true,
-            t => (None, t.strip_prefix(':')),
+            // Anything after `]` must be `:port` (`[v6]x` is not a host).
+            t => match t.strip_prefix(':') {
+                Some(p) => (None, Some(p)),
+                None => return false,
+            },
         }
     } else {
         match h.split_once(':') {
