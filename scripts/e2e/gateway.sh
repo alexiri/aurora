@@ -162,16 +162,16 @@ trap 'kill -KILL "$WATCHER" 2>/dev/null' EXIT   # replaced by cleanup's trap bel
     podman run -d --rm --name aurora-e2e-fd-nginx --network=host \
       -v "$FD_CONF/nginx.conf:/etc/nginx/nginx.conf:ro,Z" \
       -v "$FD_RUN:/fd:ro,Z" "$NGINX_IMAGE" >/dev/null 9>&- || { echo "cannot start the nginx front door" >&2; exit 1; }
-    if [ "${FRONTDOOR_HAPROXY:-}" = "1" ]; then
-      podman run -d --rm --name aurora-e2e-fd-haproxy --network=host \
-        -v "$FD_CONF/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z" \
-        -v "$FD_RUN:/fd:ro,Z" "$HAPROXY_IMAGE" >/dev/null 9>&- || { echo "cannot start the haproxy front door" >&2; exit 1; }
-    fi
-    for name in aurora-e2e-fd-nginx $( [ "${FRONTDOOR_HAPROXY:-}" = "1" ] && echo aurora-e2e-fd-haproxy ); do
+    # Both doors start under FRONTDOOR=1: AURORA_E2E_FRONTDOOR_HAPROXY is exported above, so a
+    # door that was not started would turn the haproxy test into a 502 instead of a skip.
+    podman run -d --rm --name aurora-e2e-fd-haproxy --network=host \
+      -v "$FD_CONF/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z" \
+      -v "$FD_RUN:/fd:ro,Z" "$HAPROXY_IMAGE" >/dev/null 9>&- || { echo "cannot start the haproxy front door" >&2; exit 1; }
+    for name in aurora-e2e-fd-nginx aurora-e2e-fd-haproxy; do
       podman ps --filter "name=$name" --filter "status=running" --format '{{.Names}}' | grep -qx "$name" || {
         echo "front door $name is not running:" >&2; podman logs "$name" 2>&1 | tail -20 >&2; exit 1; }
     done
-    echo "front doors up: nginx :8091$( [ "${FRONTDOOR_HAPROXY:-}" = "1" ] && echo ', haproxy :8092' ) (mock upstream :8093)"
+    echo "front doors up: nginx :8091, haproxy :8092 (mock upstream :8093)"
   fi
 
   cargo test -p aurora-e2e-gateway -- --test-threads=1 "$@"
