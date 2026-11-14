@@ -51,8 +51,14 @@ Nobody else needs the private key, and it is never committed. Rotating it means 
 ## What the owner provides
 
 - The secret `AURORA_PROJECT_SIGNING_KEY` in the GitHub environment `release` (done 2026-11-08).
-- Restrict the `release` environment to `master` and `v*` tags if desired; `images-api` runs only on
-  push events, and pull requests never use the environment.
+- **Required (FIX-119): restrict the `release` environment** in the repository settings (Settings → Environments →
+  `release`): *deployment branches and tags* = `master` and `v*` only, and **required reviewers** (at least one).
+  The job-level `if: github.event_name == 'push'` lives in a workflow file that a pull request can edit, so it is
+  not a protection by itself: a pull request that changes `ci.yml` to push-trigger a job with
+  `environment: release` would be refused by the environment's branch rule, not by the workflow. The
+  guard `scripts/guards/release-environment.sh` checks the workflow half: `environment: release` appears in
+  exactly one job, and that job is push-only. The settings half cannot be checked from the repository; verify it
+  whenever the key is rotated.
 - Nothing else for built-ins. Trusted publisher keys for third-party packages are a separate
   admin function (Admin, Trusted keys) and cannot sign built-ins.
 

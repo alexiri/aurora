@@ -30,6 +30,13 @@ if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; 
 echo "== limits-readers (FIX-116: every limits.rs constant has a reader and a docs/02 row)"
 bash scripts/guards/limits-readers.sh
 
+echo "== docs-routes (FIX-119: docs/05 catalogue vs web/openapi.json, phase tags, docs/17 invariant table contiguous)"
+python3 -I scripts/guards/docs-routes.py --self-test
+python3 -I scripts/guards/docs-routes.py
+
+echo "== release-environment (FIX-119: environment: release in exactly one push-only job)"
+bash scripts/guards/release-environment.sh
+
 echo "== e2e-skip (FIX-101: a SKIPPED: line fails an e2e script in CI; gated suites use require_or_skip)"
 bash scripts/guards/e2e-skip.sh
 
