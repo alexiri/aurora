@@ -174,8 +174,10 @@
   "commonmark:spec_test_643": "3 raw html",
   "footnote:footnotes_test_16": "5 bare url",
   "footnote:footnotes_test_17": "3 raw html",
+  "gfm_table:gfm_table_test_7": "7 table cells beyond the header",
   "math:math_test_27": "1 image",
   "math:math_test_31": "2 link scheme",
   "math:math_test_36": "1 image opener in math",
+  "math:math_test_43": "7 table cells beyond the header",
   "math:math_test_5": "1 image opener in math"
 }

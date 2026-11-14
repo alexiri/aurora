@@ -367,7 +367,10 @@ integration) are claimable by any live replica of the connector.
     parser did not (Mattermost: a link destination may hold spaces, a definition
     may follow a paragraph line, `![x](url =10x10)` is an image): in prose and
     in HTML text and math, `![` is written `!\[` (math: `! [`), `](` is written
-    `]\(`, and a line that looks like a definition (`[x]:`) is written `\[x]:`.
+    `]\(`, and a line that looks like a definition (`[x]:`) is written `[x]\:`;
+    the pipe that would start a table cell **beyond the header's width** is
+    escaped (GFM drops such cells, so no parser shows their content, but
+    Mattermost 11.7.15 renders them — an image, a fetched URL, an `@channel`).
     Code is never touched.
 
     The core edits only those byte ranges, escaping replacement text for its

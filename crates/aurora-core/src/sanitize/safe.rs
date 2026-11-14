@@ -156,7 +156,10 @@ fn break_image_openers(s: &str) -> String {
 /// changing the math (LaTeX ignores it; a backslash would be a LaTeX error on Mattermost with
 /// inline LaTeX on — checked on 11.7.15, FIX-142 step 4).
 fn tame_math(s: &str) -> String {
-    s.replace("![", "! [").replace("](", "] (")
+    let s = s.replace("![", "! [").replace("](", "] (");
+    // A URL in math cannot be a link, and a server that reads raw text would fetch it (D-270):
+    // a space after the colon (LaTeX ignores it) makes it none.
+    break_schemes(&s, " ")
 }
 
 fn scheme_of(url: &str) -> Option<&str> {
@@ -465,6 +468,25 @@ fn text_of(s: &str) -> String {
     out
 }
 
+/// Whether an `<a>` just opened is closed in `rest` by a `</a>` that comes before the next `<a`
+/// (a nested or repeated opener would take that closer, leaving this one unpaired).
+pub fn anchor_is_closed(rest: &str) -> bool {
+    let low = rest.to_ascii_lowercase();
+    let Some(close) = low.find("</a") else {
+        return false;
+    };
+    let open = [
+        low.find("<a "),
+        low.find("<a>"),
+        low.find("<a\t"),
+        low.find("<a\n"),
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    open.is_none_or(|o| close < o)
+}
+
 /// The text between the tags of an HTML block: image openers broken and, outside an `<a>`, bare
 /// URLs made links (D-270) — as `<a href>` where the URL fits an attribute, else the colon is an
 /// entity (`https&#58;//…`), which a platform's URL matcher does not read.
@@ -558,7 +580,9 @@ fn sanitize_html(s: &str) -> String {
             continue;
         }
         if clean == "<a>" || clean.starts_with("<a ") {
-            in_a = true;
+            // Text is inside an anchor only when the anchor is closed later: an unpaired `<a>`
+            // is dropped by a connector and its text would be bare.
+            in_a = anchor_is_closed(&s[i..]);
         }
         if let Some(h) = href {
             open_a = Some((out.len() + clean.len(), h));
@@ -649,6 +673,9 @@ fn unescape_md(s: &str) -> String {
 /// A bare URL as a labelled link (D-270): same text, same target. The destination uses the `<…>`
 /// form only when it holds something that would end a plain one.
 fn labelled_link(label_md: &str, dest: &str) -> String {
+    // (a pipe in a destination would split a table cell)
+    let dest = dest.replace('|', "%7C");
+    let dest = dest.as_str();
     let plain = !dest.chars().any(|c| {
         c.is_whitespace() || c.is_control() || matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | '\\')
     });
@@ -676,7 +703,7 @@ fn autolink_label(url: &str) -> String {
 
 /// Edits for a run of prose text `src[start..end]` (outside code): image openers broken
 /// (`![` → `!\[`), link joints the parser did not form broken (`](` → `]\(`) and definition
-/// look-alikes at a line start broken (`[x]:` → `\[x]:`) — a platform with a looser dialect
+/// look-alikes at a line start broken (`[x]:` → `[x]\:`) — a platform with a looser dialect
 /// (Mattermost: a destination with spaces, a definition after a paragraph line) would form what
 /// the parser did not — and, outside links, bare URLs made labelled links (D-270).
 fn prose_edits(
@@ -708,7 +735,10 @@ fn prose_edits(
                 && r[c + 1..].starts_with(':')
                 && !r[..c].contains(['\n', '['])
             {
-                let at = start + line_at + (line.len() - t.len());
+                // The colon is escaped, not the bracket: an escaped `\[` would balance an earlier
+                // `[` of the paragraph and make the whole stretch a definition (no events, the
+                // sanitizer blind to it).
+                let at = start + line_at + (line.len() - t.len()) + 1 + c + 1;
                 edits.push((at, at, "\\".to_owned()));
             }
         }
@@ -722,6 +752,59 @@ fn prose_edits(
                 start + u.end,
                 labelled_link(label, &unescape_md(label)),
             ));
+        }
+    }
+}
+
+/// The pipes of a table row line that are not backslash-escaped (the cell separators, GFM).
+fn row_pipes(line: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut esc = false;
+    for (i, c) in line.char_indices() {
+        if esc {
+            esc = false;
+        } else if c == '\\' {
+            esc = true;
+        } else if c == '|' {
+            out.push(i);
+        }
+    }
+    out
+}
+
+/// GFM drops the cells of a body row beyond the header's width — the parser shows nothing of their
+/// content — but Mattermost renders them (an image, a URL it fetches, an `@channel`: checked on
+/// 11.7.15). The pipe that would start an extra cell, and every one after it, is escaped, so the
+/// rest of the row is text of the last cell and every other rewrite reaches it.
+fn table_excess_edits(
+    src: &str,
+    range: &Range<usize>,
+    columns: usize,
+    edits: &mut Vec<(usize, usize, String)>,
+) {
+    let from = src[..range.start].rfind('\n').map_or(0, |p| p + 1);
+    let mut at = from;
+    for (n, line) in src[from..range.end].split_inclusive('\n').enumerate() {
+        let line_at = at;
+        at += line.len();
+        if n < 2 {
+            continue; // the header and the delimiter row
+        }
+        let body = line.trim_end_matches(['\n', '\r']);
+        let prefix = body.len() - body.trim_start_matches([' ', '>']).len();
+        let row = &body[prefix..];
+        let pipes = row_pipes(row);
+        let trimmed = row.trim_end();
+        let leading = row.starts_with('|');
+        let trailing = pipes.last().is_some_and(|p| *p + 1 == trimmed.len());
+        let cells = (pipes.len() + 1).saturating_sub(usize::from(leading) + usize::from(trailing));
+        if columns == 0 || cells <= columns {
+            continue;
+        }
+        // The separator after the `columns`-th cell.
+        let first = if leading { columns } else { columns - 1 };
+        for p in pipes.iter().skip(first) {
+            edits.push((line_at + prefix + p, line_at + prefix + p, "\\".to_owned()));
         }
     }
 }
@@ -743,6 +826,9 @@ fn rewrite(src: &str) -> String {
         match ev {
             Event::Start(Tag::CodeBlock(_)) => in_code = true,
             Event::End(pulldown_cmark::TagEnd::CodeBlock) => in_code = false,
+            Event::Start(Tag::Table(aligns)) => {
+                table_excess_edits(src, r, aligns.len(), &mut edits);
+            }
             // Prose: an image opener is broken wherever it is not code (D-227(1), review rule (c)).
             Event::Text(_) if !in_code && r.start >= text_until => {
                 // A run of adjacent text events (the parser splits prose at every `[`, `]`, `_`…):
@@ -1002,16 +1088,33 @@ fn markdown_safe_inner(clean: &str) -> String {
 /// A block that could not be verified, as escaped data. URLs in it are broken (`https:\//…`,
 /// which still reads as the address) so no platform's preview fetches them (D-270).
 fn data_fallback(block: &str) -> String {
-    let data = markdown_as_data(block, usize::MAX);
-    let mut out = String::with_capacity(data.len() + 8);
+    break_schemes(&markdown_as_data(block, usize::MAX), "\\")
+}
+
+/// `ins` after the colon of every `http://` / `https://` in `s`, wherever it sits (also inside
+/// another URL: `https://web.archive.org/…/https://x`) — no platform reads the result as a URL.
+fn break_schemes(s: &str, ins: &str) -> String {
+    let low = s.to_ascii_lowercase();
+    let mut out = String::with_capacity(s.len() + 8);
     let mut at = 0;
-    for u in bare_url_ranges(&data) {
-        let colon = data[u.clone()].find(':').map_or(u.start, |c| u.start + c);
-        out.push_str(&data[at..=colon]);
-        out.push('\\');
+    let mut from = 0;
+    while let Some(p) = low[from..].find("http") {
+        let a = from + p;
+        let after = &low[a + 4..];
+        let colon = if after.starts_with("s://") {
+            a + 5
+        } else if after.starts_with("://") {
+            a + 4
+        } else {
+            from = a + 4;
+            continue;
+        };
+        out.push_str(&s[at..=colon]);
+        out.push_str(ins);
         at = colon + 1;
+        from = colon + 1;
     }
-    out.push_str(&data[at..]);
+    out.push_str(&s[at..]);
     out
 }
 

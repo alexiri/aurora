@@ -195,7 +195,7 @@ impl Html {
             ("a", false) => {
                 // The core keeps an `href` only for http, https and mailto; without one the
                 // label stays and the tag goes. Only a paired tag becomes a link.
-                if rest.to_ascii_lowercase().contains("</a") {
+                if aurora_core::sanitize::anchor_is_closed(rest) {
                     let href = attr(inner, "href");
                     if href.is_some() {
                         out.push('[');
@@ -343,12 +343,19 @@ impl Html {
 /// no image opener (`![`, which Mattermost's own dialect — `![x](url =10x10)`, a definition
 /// that interrupts a paragraph — can complete) outside code.
 pub fn is_safe(text: &str) -> bool {
-    // After the links (and code) are taken out, no bare URL may be left: the server fetches a
-    // bare URL of a post unprompted (D-270).
-    links_are_honest(text).is_some_and(|rest| {
+    links_are_honest(text).is_some() && no_image_or_bad_link(text)
+}
+
+/// Whether a bare URL is left in `text` once code, links and definitions are taken out: the server
+/// fetches a bare URL of a post unprompted (D-270). Agent text has none by the time it reaches
+/// the connector (the core writes `[url](url)`); the core's own platform voice keeps its
+/// URLs (a link prompt must be clickable), so [`is_safe`] does not demand this. `true` too when
+/// a link in `text` is not honest.
+pub fn has_bare_url(text: &str) -> bool {
+    links_are_honest(text).is_none_or(|rest| {
         let low = rest.to_ascii_lowercase();
-        !low.contains("http://") && !low.contains("https://")
-    }) && no_image_or_bad_link(text)
+        low.contains("http://") || low.contains("https://")
+    })
 }
 
 /// Whether the byte at `i` of `m` is backslash-escaped.
@@ -687,8 +694,10 @@ pub fn convert(neutral: &str) -> String {
                         text.push_str(l.trim());
                     }
                 }
-                // The text is flattened into a list item: nothing in it may open an image.
-                defs.push((label.to_string(), break_image_openers(&text)));
+                // The text is flattened into a list item: its raw HTML is converted like any
+                // other (an unpaired `<a href>` must not leave a URL behind), and nothing in it
+                // may open an image.
+                defs.push((label.to_string(), break_image_openers(&convert(&text))));
                 // Remove the whole definition (and the blank line after it).
                 edits.push((r.start, r.end, String::new()));
                 consumed = r.end;
@@ -778,15 +787,16 @@ pub fn convert(neutral: &str) -> String {
                             } else {
                                 ""
                             };
-                            edits.push((
-                                r.start,
-                                end,
-                                format!(
-                                    "{apart}[{}]({})",
-                                    escape_label(&convert(inner)),
-                                    dest(&href)
-                                ),
-                            ));
+                            let label = convert(inner);
+                            // A link cannot hold a link: when the label already has links (the
+                            // core wrote `[url](url)` for the URLs in it), the content stays as
+                            // it is and the anchor's tags go.
+                            let rep = if label.contains("](") {
+                                label
+                            } else {
+                                format!("{apart}[{}]({})", escape_label(&label), dest(&href))
+                            };
+                            edits.push((r.start, end, rep));
                             consumed = end;
                         }
                         (Some(k), None) => {
@@ -1011,7 +1021,9 @@ mod tests {
             "[x](https://a.example) and then https://evil.example/?d=S",
             "HTTP://EVIL.EXAMPLE/?d=S",
         ] {
-            assert!(!super::is_safe(bare), "{bare:?}");
+            assert!(super::has_bare_url(bare), "{bare:?}");
+            // (the core's own platform voice keeps its URLs: `is_safe` does not refuse them)
+            assert!(super::is_safe(bare), "{bare:?}");
         }
         for ok in [
             "[https://a.example](https://a.example)",
@@ -1021,6 +1033,7 @@ mod tests {
             "no url here, only www.example.org",
         ] {
             assert!(super::is_safe(ok), "{ok:?}");
+            assert!(!super::has_bare_url(ok), "{ok:?}");
         }
     }
 
