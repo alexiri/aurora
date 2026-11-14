@@ -1891,18 +1891,18 @@ async fn s13_terminal_shells_complete_alias_colour_and_resolve_the_wrappers() {
     )
     .0 == 0;
     let steps: [&str; 12] = [
-        "ech\t",                                         // 1: Tab completes `echo`
-        "\u{15}alias ll\r",                              // 2: Ctrl-U clears the line first
-        "alias ls\r",                                    // 3
-        "mkdir -p ~/cdir && ls ~\r",                     // 4: colour without --color
-        "echo PATH=$PATH\r",                             // 5
-        "which claude codex\r",                          // 6
-        "claude --version; echo rc=$?\r",                // 7
-        "bash -c 'type ll'; echo rc=$?\r",               // 8: a turn's shell never sees the alias
-        "echo history-probe\r",                          // 9
-        "\u{1b}[A",                                      // 10: Up recalls it
+        "ech\t",                                           // 1: Tab completes `echo`
+        "\u{15}alias ll\r",                                // 2: Ctrl-U clears the line first
+        "alias ls\r",                                      // 3
+        "mkdir -p ~/cdir && ls ~\r",                       // 4: colour without --color
+        "echo PATH=$PATH\r",                               // 5
+        "which claude codex\r",                            // 6
+        "claude --version; echo rc=$?\r",                  // 7
+        "bash -c 'type ll'; echo rc=$?\r",                 // 8: a turn's shell never sees the alias
+        "echo history-probe\r",                            // 9
+        "\u{1b}[A",                                        // 10: Up recalls it
         "echo bootvars=$(env | grep -c '^AURORA_BOOT')\r", // 11
-        "\r",                                            // 12
+        "\r",                                              // 12
     ];
     for (shell, tag) in [("/bin/bash", "bash"), ("/usr/bin/zsh", "zsh")] {
         let parts = terminal_steps(c, &conv, &format!("term-{tag}"), shell, &steps).await;
@@ -1988,10 +1988,6 @@ async fn s13b_terminal_codex_wrapper_reaches_the_gateway_and_a_disabled_harness_
     let up = aurora_testkit::responses::MockResponses::start_on("127.0.0.2").await;
     let toml = format!(
         r#"
-[hosted]
-enabled_harnesses = ["codex"]
-default_harness = "codex"
-
 [llm]
 enabled_providers = ["litellm"]
 provider_preference = ["litellm"]
@@ -2010,6 +2006,7 @@ default_model = "say"
     let st = Stack::start_with(
         Opts {
             image: Some(image),
+            only_harness: Some("codex".into()),
             ..Opts::default()
         },
         &toml,
