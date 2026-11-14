@@ -53,6 +53,25 @@ Logs: summary lines only under `docs/audit/phase4-logs/`; raw logs were kept out
 | 8 | `UPGRADE_STRICT=1 UPGRADE_BASE=baabe11f bash scripts/e2e/upgrade.sh` (phase-0 base) | **1** | 32 passed, 4 failed (the three above + `after restart the request did not reach the upstream (TLS path broken)`) | 6m10s |
 | 8 | diagnostic only: the same p3 run with `sleep 100` added before the restart POST (edit reverted, not committed) | 0 | **38 passed, 0 failed** | ~5m |
 
+| 7 | `AURORA_E2E_CLUSTER=aurora-audit4-e2e bash scripts/e2e/kind.sh --fresh` | 0 | NetworkPolicy enforced (allowed before, blocked after default-deny); `k1`..`k5` passed, **`k6` (previews) skipped** by its gate (no `AURORA_E2E_PREVIEWS_DOMAIN`): 6 ok | 17m35s |
+| 7 | `… kind.sh --release-images` (the `--fresh` cluster reused) | 0 | release-profile images; same result, `k6` skipped | 29m33s |
+| 7 | `AURORA_E2E_PREVIEWS_DOMAIN=previews.e2e.aurora.dev … kind.sh --fresh` (relay on) | 0 | `aurora-relay` pod Running; `k1`..`k6` **6 passed incl. `k6_preview_round_trip_http_and_websocket`**; probes: sandbox→relay path to runner svc/pod :4108 `CONNECT` rc=0 (the k6 probe set), api :4101 control | 8m30s |
+
+Step 7 notes. **`aurora-terminator`: phase 5 (D-138), skipped.** `aurora-relay` (D-138 phase-4 service) is in the chart behind
+`relay.enabled` and a `terminal.enabled`-gated runner :4108 rule. NetworkPolicy (`deploy/helm/aurora/templates/networkpolicy.yaml`),
+default-deny posture plus the allow-dns policy:
+- **relay** (own policy, Ingress+Egress): ingress only from the edge namespace (`networkPolicy.edgeNamespaceSelector`) on TCP **4112**;
+  egress only to the api on **4101** and to the runner on **4108**; DNS via `allow-dns`; **no `aurora.external` egress** (FIX-069), nothing
+  else (no gateway, no database, no sandbox namespace).
+- Peers' side: the api's :4101 ingress adds the relay peer when `relay.enabled`; the runner's :4108 ingress admits the relay (previews)
+  and/or the api (the terminal's WebSocket proxy, when `terminal.enabled`) — never the sandbox namespace; the api's internal 4111 and the
+  sandbox-facing ports stay shut to it.
+- Enforcement was *probed* by the kind run (the default-deny check, `k4` SEC-02/SEC-09 probes from a sandbox pod, `k6` relay-path
+  probes); the per-rule allow/block set above is read from the rendered template, not probed port by port.
+Operator note: a plain `kind.sh` never installs the relay, so the previews scenario is only exercised with
+`AURORA_E2E_PREVIEWS_DOMAIN` set — the exit command as written in AUDIT-004 step 7 (`--fresh`, `--release-images`) leaves `k6` skipped;
+I ran the third invocation to cover it (release-profile images were not used for the relay run).
+
 Step 8 e2e notes (all runs: load ≤ 7 on 16 CPUs, `uptime` in the summaries): see F-1 for the upgrade failure.
 Upgrade base: `phase3-exit.md` names `a2d921ff` as its audited commit (it never ran an upgrade from it; `upgrade.sh` gained phase-1+
 base support in FIX-024), so it was used as the "phase-3 exit commit"; the phase-0 base `baabe11f` was run for comparison.
