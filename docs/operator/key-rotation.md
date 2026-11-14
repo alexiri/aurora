@@ -53,10 +53,11 @@ not yet received the new key refuses what the others sign with it.
    replica (`kubectl get pods` lists them; port-forward to the pod, not the Service, so every replica is asked):
 
    ```bash
-   # the internal secret, base64 as stored (the same value the services hold)
-   SECRET="$(kubectl -n aurora get secret aurora-aurora-secrets -o jsonpath='{.data.AURORA_INTERNAL_SECRET}' | base64 -d)"
-   # an entry of that ring: take its id (the part before ':') and its key; use the ACTIVE id and key
-   ID=<ring id>; KEY=<the base64 after "<id>:">
+   # the internal secret as stored in the Secret (<fullname>-secrets; `kubectl get secret` lists it)
+   SECRET="$(kubectl -n aurora get secret <fullname>-secrets -o jsonpath='{.data.AURORA_INTERNAL_SECRET}' | base64 -d)"
+   # A bare value (no ':') is ring entry `v0`: ID=v0, KEY=$SECRET. For a ring `id:key,id2:key2`, use the
+   # entry you want to ask about: ID=<id before ':'>, KEY=<the base64 after it>.
+   ID=v0; KEY="$SECRET"
 
    for pod in $(kubectl -n aurora get pods -l app.kubernetes.io/component=gateway -o name); do
      kubectl -n aurora port-forward "$pod" 14103:4103 >/dev/null & pf=$!; sleep 2
@@ -66,8 +67,13 @@ not yet received the new key refuses what the others sign with it.
    # hookhost: component=hookhost, port 4104;  api: component=api, port 4111 (both rings)
    ```
 
+   Rehearsed on kind (2026-11-14, a bare-value install): each replica answers
+   `{"internal_secret":{"active":"v0","keys":[{"fingerprint":"4a24fe9e","id":"v0"}]},"service":"hookhost"}`
+   (the gateway adds its state, the api also the `signing_key` ring); ids and fingerprints only, never values.
+
    `aurora-api keys status` reads only the environment of the process it runs in: run it with
-   `kubectl exec deploy/aurora-api -- aurora-api keys status` for one api replica. (The first-draft instruction
+   `kubectl exec deploy/aurora-api -- /usr/local/bin/aurora-api keys status` for one api replica (the release
+   image's path, as in the `secrets rekey` step below; not rehearsed: the kind e2e uses thin dev images). (The first-draft instruction
    to `curl` the internal addresses directly could not be performed from anywhere an operator runs commands.
    If `kubectl port-forward` is not allowed in your cluster, check the ids from each pod's log line at start —
    the services log the ring ids, never values — before activating.)
