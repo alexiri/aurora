@@ -33,7 +33,8 @@ base64 = { workspace = true }
 http = { workspace = true }
 # markdown_safe (FIX-142): the offset parser behind the minimal-edit sanitizer.
 pulldown-cmark = { workspace = true }
-serde = { workspace = true }
+url = { workspace = true }
+serde ={ workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

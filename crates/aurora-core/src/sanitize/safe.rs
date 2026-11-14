@@ -143,6 +143,20 @@ fn escape_inline(s: &str) -> String {
     out
 }
 
+/// Break every `![` (an image opener) of prose: `!\[`. Nothing after the sanitizer may form what
+/// the sanitizer refuses — a connector that converts HTML or math to Markdown, or a platform
+/// whose dialect reads more as an image than CommonMark does (Mattermost's `=WxH` size syntax,
+/// a definition interrupting a paragraph), must find no opener to complete.
+fn break_image_openers(s: &str) -> String {
+    s.replace("![", "!\\[")
+}
+
+/// Math is opaque to the Markdown parser but not to a platform with LaTeX off, where `$…$` is
+/// prose: no image opener and no `](` link joint survives in it.
+fn tame_math(s: &str) -> String {
+    break_image_openers(s).replace("](", "]\\(")
+}
+
 fn scheme_of(url: &str) -> Option<&str> {
     let i = url.find(':')?;
     let s = &url[..i];
@@ -168,15 +182,12 @@ fn host_of(url: &str) -> Option<String> {
         let d = d.split(['?', ',', ' ']).next()?;
         return (!d.is_empty()).then(|| d.to_owned());
     }
-    let after = l.split_once("://")?.1;
-    let auth = after.split(['/', '?', '#']).next()?;
-    let auth = auth.rsplit('@').next()?;
-    let host = if let Some(v6) = auth.strip_prefix('[') {
-        v6.split(']').next()?
-    } else {
-        auth.split(':').next()?
-    };
-    (!host.is_empty()).then(|| host.to_owned())
+    // WHATWG rules, as a browser applies them: `http:evil.example/x` and `https://evil.example\@cern.ch`
+    // both go to evil.example.
+    let u = url::Url::parse(url.trim()).ok()?;
+    u.host_str()
+        .filter(|h| !h.is_empty())
+        .map(|h| h.to_ascii_lowercase())
 }
 
 /// The host a label claims when it looks like a URL or a domain (`https://cern.ch/x`, `cern.ch`).
@@ -420,10 +431,10 @@ fn sanitize_html(s: &str) -> String {
     while i < s.len() {
         let rest = &s[i..];
         let Some(p) = rest.find('<') else {
-            out.push_str(rest);
+            out.push_str(&break_image_openers(rest));
             break;
         };
-        out.push_str(&rest[..p]);
+        out.push_str(&break_image_openers(&rest[..p]));
         i += p;
         let rest = &s[i..];
         let next = rest[1..].chars().next();
@@ -500,12 +511,30 @@ fn rewrite(src: &str) -> String {
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     let mut consumed = 0usize;
     let mut link_ends: Vec<usize> = Vec::new();
+    let mut in_code = false;
     for (i, (ev, r)) in evs.iter().enumerate() {
         if r.start < consumed {
             continue;
         }
         link_ends.retain(|e| *e > r.start);
         match ev {
+            Event::Start(Tag::CodeBlock(_)) => in_code = true,
+            Event::End(pulldown_cmark::TagEnd::CodeBlock) => in_code = false,
+            // Prose: an image opener is broken wherever it is not code (D-227(1), review rule (c)).
+            Event::Text(_) if !in_code => {
+                let raw = &src[r.clone()];
+                for (p, _) in raw.match_indices("![") {
+                    edits.push((r.start + p + 1, r.start + p + 1, "\\".to_owned()));
+                }
+            }
+            Event::InlineMath(_) | Event::DisplayMath(_) => {
+                let raw = &src[r.clone()];
+                let tame = tame_math(raw);
+                if tame != raw {
+                    edits.push((r.start, r.end, tame));
+                }
+                consumed = r.end;
+            }
             Event::Start(Tag::Image { dest_url, .. }) => {
                 let alt = tidy_alt(&plain_text(&evs, i));
                 let rep = match (allowed_url(dest_url) && link_ends.is_empty())
@@ -601,6 +630,21 @@ fn rewrite(src: &str) -> String {
     defang_tokens(&out)
 }
 
+/// Removing markup (a comment, a stripped tag) can change how the rest parses, exposing text the
+/// first pass saw as HTML: run the rewrite until it stops changing (a few passes at most; each
+/// only escapes more).
+fn rewrite_to_fixed_point(src: &str) -> String {
+    let mut out = rewrite(src);
+    for _ in 0..3 {
+        let next = rewrite(&out);
+        if next == out {
+            break;
+        }
+        out = next;
+    }
+    out
+}
+
 /// Exception 4: break every typed neutral token with a zero-width space after the `<`
 /// (the sanitizer's own input cleaning strips it again, so the result stays idempotent).
 fn defang_tokens(s: &str) -> String {
@@ -685,7 +729,7 @@ pub fn markdown_safe(s: &str, max: usize) -> String {
 }
 
 fn markdown_safe_inner(clean: &str) -> String {
-    let out = rewrite(clean);
+    let out = rewrite_to_fixed_point(clean);
     if verified(&out) {
         return out;
     }
@@ -696,7 +740,7 @@ fn markdown_safe_inner(clean: &str) -> String {
     let mut joined = String::with_capacity(clean.len());
     for w in starts.windows(2) {
         let block = &clean[w[0]..w[1]];
-        let o = rewrite(block);
+        let o = rewrite_to_fixed_point(block);
         if verified(&o) {
             joined.push_str(&o);
         } else {
@@ -727,14 +771,33 @@ fn is_wordish(c: char) -> bool {
 pub fn broadcast_here(s: &str) -> String {
     let mut edits: Vec<(usize, usize)> = Vec::new();
     let mut in_code = false;
+    // Raw `<code>`, `<kbd>` and `<pre>` are code for this rule too (their text is shown as typed).
+    let mut html_code = 0usize;
     for (e, r) in Parser::new_ext(s, options()).into_offset_iter() {
         match &e {
             Event::Start(Tag::CodeBlock(_)) => in_code = true,
             Event::End(pulldown_cmark::TagEnd::CodeBlock) => in_code = false,
+            Event::InlineHtml(h) => {
+                let t = h.trim_start_matches('<').to_ascii_lowercase();
+                let (closing, name) = t
+                    .strip_prefix('/')
+                    .map_or((false, t.as_str()), |n| (true, n));
+                let name: String = name
+                    .chars()
+                    .take_while(char::is_ascii_alphanumeric)
+                    .collect();
+                if matches!(name.as_str(), "code" | "kbd" | "pre") {
+                    if closing {
+                        html_code = html_code.saturating_sub(1);
+                    } else if !t.trim_end().ends_with("/>") {
+                        html_code += 1;
+                    }
+                }
+            }
             _ => {}
         }
         let Event::Text(t) = e else { continue };
-        if in_code {
+        if in_code || html_code > 0 {
             continue;
         }
         if &s[r.clone()] != t.as_ref() {

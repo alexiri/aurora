@@ -171,5 +171,7 @@
   "commonmark:spec_test_643": "3 raw html",
   "footnote:footnotes_test_17": "3 raw html",
   "math:math_test_27": "1 image",
-  "math:math_test_31": "2 link scheme"
+  "math:math_test_31": "2 link scheme",
+  "math:math_test_36": "1 image opener in math",
+  "math:math_test_5": "1 image opener in math"
 }
