@@ -29304,6 +29304,8 @@ export interface operations {
             query?: {
                 /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
                 status?: string;
+                /** @description (C-700) Only this agent's approvals; an unknown or foreign agent yields an empty page. */
+                agent_id?: string;
                 limit?: number;
                 cursor?: string;
             };

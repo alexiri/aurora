@@ -27454,6 +27454,16 @@
             }
           },
           {
+            "name": "agent_id",
+            "in": "query",
+            "description": "(C-700) Only this agent's approvals; an unknown or foreign agent yields an empty page.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
