@@ -82,6 +82,7 @@ apps:
       - { name: app_id }
       - { name: installation_id }
       - { name: repositories }
+      - { name: token_scopes }
     connect:
       - id: github_app
         kind: hook
@@ -98,21 +99,24 @@ apps:
       - id: token
         kind: fields
         label: Personal access token
-        description: "Acts as you, on everything your account can reach. The quickest way to start for personal use; a fine-grained token can be limited to chosen repositories."
+        description: "Acts as you. Use a fine-grained token: GitHub itself then limits it to the repositories and permissions you pick (the link below pre-fills read access to contents, issues, pull requests and Actions). A classic token is all or nothing per scope (repo is read AND write); with one, choose Read only above and Aurora blocks writes for you."
         fields:
           - name: access_token
             label: Personal access token
             type: secret
             store: credentials
             required: true
-            placeholder: "Fine-grained or classic personal access token"
-            help_url: https://github.com/settings/personal-access-tokens
+            placeholder: "Fine-grained (github_pat_…) or classic personal access token"
+            help_url: "https://github.com/settings/personal-access-tokens/new?name=Aurora+read-only&description=Read-only+access+for+Aurora+agents&expires_in=90&contents=read&issues=read&pull_requests=read&actions=read"
         probe:
           method: GET
           url: "https://api.github.com/user"
           expect_status: [200]
           label: /login
-          metadata: { login: /login }
+          # A classic token's scopes come back in X-OAuth-Scopes; GitHub sends none for a
+          # fine-grained token (its permissions are not exposed by any endpoint), so then nothing
+          # is stored.
+          metadata: { login: /login, token_scopes: "header:x-oauth-scopes" }
       - id: oauth
         kind: oauth2
         label: OAuth
@@ -341,6 +345,7 @@ apps:
       - { name: installation_id }
       - { name: ghes_host }
       - { name: repositories }
+      - { name: token_scopes }
     connect:
       - id: github_app
         kind: hook
@@ -358,7 +363,7 @@ apps:
       - id: token
         kind: fields
         label: Personal access token
-        description: "Acts as you, on everything your account can reach. The quickest way to start for personal use."
+        description: "Acts as you. A fine-grained token (where your server supports them) is limited by GitHub to the repositories and permissions you pick; a classic token is all or nothing per scope (repo is read AND write), so with one choose Read only above and Aurora blocks writes for you."
         fields:
           - name: access_token
             label: Personal access token
@@ -371,7 +376,7 @@ apps:
           url: "https://{instance}/api/v3/user"
           expect_status: [200]
           label: /login
-          metadata: { login: /login }
+          metadata: { login: /login, token_scopes: "header:x-oauth-scopes" }
       - id: oauth
         kind: oauth2
         label: OAuth

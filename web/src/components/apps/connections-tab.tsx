@@ -142,6 +142,14 @@ function ConnectionRow({
           Some requested scopes were not granted: {c.missing_scopes.join(", ")}. Reconnect and approve them to restore full access.
         </p>
       ) : null}
+      {c.metadata.token_scopes ? (
+        <p className="text-xs text-ink-2">
+          Token scopes (reported by the provider): <span className="break-words font-mono text-ink">{c.metadata.token_scopes}</span>
+          {c.access !== "read" && /(^|[ ,])repo($|[ ,])/.test(c.metadata.token_scopes)
+            ? ". The repo scope allows writes: make this connection read-only to block them."
+            : null}
+        </p>
+      ) : null}
       {c.database ? (
         <Notice tone="neutral" aria-label={`How to connect to ${c.label}`} className="space-y-1 text-xs">
           <p>

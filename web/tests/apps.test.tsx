@@ -190,6 +190,18 @@ describe("connection missing scopes", () => {
     await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: {} }));
     expect(screen.queryByLabelText(/TLS verification is off/)).toBeNull();
   });
+  it("shows the scopes a classic token reported and warns that repo allows writes (FIX-133)", async () => {
+    await show(conn({ metadata: { token_scopes: "repo, read:org" } }));
+    expect(screen.getByText(/Token scopes/)).toHaveTextContent("repo, read:org");
+    expect(screen.getByText(/Token scopes/)).toHaveTextContent("make this connection read-only");
+  });
+  it("shows no repo warning on a read-only connection or without a repo scope", async () => {
+    await show(conn({ access: "read", metadata: { token_scopes: "repo" } }));
+    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
+    cleanup();
+    await show(conn({ metadata: { token_scopes: "read:user, public_repo" } }));
+    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
+  });
   it("shows no connection help for other apps", async () => {
     await show(conn({ database: null }));
     expect(screen.queryByLabelText("How to connect to me@acme.io")).toBeNull();

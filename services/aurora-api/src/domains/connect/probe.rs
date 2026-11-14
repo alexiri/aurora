@@ -14,6 +14,8 @@ const ENC: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 const BODY_MAX: usize = 1024 * 1024;
+/// A probe value read from a response header is cut to this many characters.
+const HEADER_META_MAX: usize = 500;
 
 #[derive(Debug)]
 pub struct ProbeFail {
@@ -307,9 +309,21 @@ pub async fn run(
         out.label = doc.pointer(p).and_then(sval).and_then(|s| clean_label(&s));
     }
     for (name, ptr) in &probe.metadata {
-        if app.metadata.iter().any(|m| &m.name == name)
-            && let Some(s) = doc.pointer(ptr).and_then(sval)
-        {
+        if !app.metadata.iter().any(|m| &m.name == name) {
+            continue;
+        }
+        // (FIX-133) `header:<name>` reads a response header instead of a JSON pointer: GitHub
+        // reports a classic token's scopes in `X-OAuth-Scopes` (a fine-grained token has none).
+        let v = match ptr.strip_prefix("header:") {
+            Some(h) => resp
+                .headers()
+                .get(h)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().chars().take(HEADER_META_MAX).collect::<String>())
+                .filter(|s| !s.is_empty() && !s.chars().any(char::is_control)),
+            None => doc.pointer(ptr).and_then(sval),
+        };
+        if let Some(s) = v {
             out.metadata.insert(name.clone(), Value::String(s));
         }
     }

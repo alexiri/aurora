@@ -42,14 +42,14 @@ apps:
       - { name: api_token, secret: true, optional: true }
       - { name: access_token, secret: true, optional: true }
       - { name: refresh_token, secret: true, optional: true }
-    metadata: [ { name: org }, { name: tls_verification } ]
+    metadata: [ { name: org }, { name: tls_verification }, { name: token_scopes } ]
     connect:
       - id: api_key
         kind: fields
         fields:
           - { name: api_token, label: T, type: secret, required: true }
           - { name: tls_verification, label: TLS, type: select, store: metadata, options: [ { value: verify, label: V }, { value: "off", label: Off } ] }
-        probe: { url: "https://api.acme.example/me", label: /email, metadata: { org: /org/name } }
+        probe: { url: "https://api.acme.example/me", label: /email, metadata: { org: /org/name, token_scopes: "header:x-oauth-scopes" } }
       - id: oauth
         kind: oauth2
         client: goog
@@ -300,6 +300,11 @@ async fn fields_connect_with_probe_blocklist_and_no_credentials_leak() {
     assert_eq!(v["kind"], "connected");
     assert_eq!(v["connection"]["label"], "me@acme.io");
     assert_eq!(v["connection"]["metadata"]["org"], "Acme");
+    // (FIX-133) A probe metadata pointer `header:<name>` stores a response header.
+    assert_eq!(
+        v["connection"]["metadata"]["token_scopes"],
+        "repo, read:org"
+    );
     assert_eq!(v["missing_scopes"], json!([]));
     assert!(!v.to_string().contains("sekret-token"));
     let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
