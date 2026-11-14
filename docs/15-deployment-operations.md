@@ -103,8 +103,12 @@ every key below is read from the configuration at start, as the reference table 
 
 A lock is per leaf key. **Whole-list** keys lock as a whole (no merging of Helm and dashboard
 entries in one list). **Keyed lists** lock per entry: an entry the configuration defines is
-locked ("Managed by Helm") and dashboard entries sit beside it; an entry id defined in both is the
-configuration's. Both kinds are named in the table.
+locked ("Managed by Helm") and dashboard entries with other ids sit beside it. A dashboard write
+whose entry id is a configuration entry's is refused with a field error (422 `settings_invalid`,
+code `entry_id_in_helm`); if the configuration later adds an entry with a stored entry's id, the
+configuration's entry replaces it at the next start (mirroring, below). The keyed lists are
+`auth.oidc_providers`, `secrets.stores` and `llm.endpoints` (by `id`) and `ratelimit.api.classes`
+(by class name). Both kinds are named in the table.
 
 **Helm mirroring.** At every start the API (one replica at a time, under an advisory lock) writes
 the configuration's value of each locked key into the stored section when it differs
@@ -162,7 +166,7 @@ starts even when the stored settings are invalid. On Kubernetes:
 | Section | Admin › page | Keys | Lists | Readers → live |
 |---|---|---|---|---|
 | `governance` | Governance (SET-2) | `governance.llm.allowed_key_scopes`, `.minimum_posture`, `.require_key_origin`, `.known_llm_hosts_extra`; `governance.egress.minimum_posture`, `.baseline_allowlist`, `.open_lane_minimum`; `governance.agent_tokens.max_age_days`; `byo.enabled`, `byo.minimum_posture`, `byo.default_source_cidrs`, `byo.require_context_credentials` | whole: `allowed_key_scopes`, `known_llm_hosts_extra`, `baseline_allowlist`, `default_source_cidrs` | API governance service (org validation, pickers, BYO create/regenerate) and the gateway's instance governance (built at start today) swap on reload; the gateway then drops its effective-governance and credential-identity caches (scope `all`), so `byo.enabled` and the floors apply without the rolling restart `08 §11.9` used to need. A change runs `08 §11.2`'s re-evaluation (stored origins, model overrides) for every organization as a background job, and a tightened token maximum age `08 §7`'s retrofit |
-| `llm` | LLM endpoints (SET-3) | `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints` | whole: all three | API (secret create, pickers, model readiness, setup wizard) and gateway (endpoint table, reserved LLM hosts, known LLM hosts minus endpoint hosts) rebuild on reload; gateway resolution caches dropped (`all`); the same re-evaluation as `governance` |
+| `llm` | LLM endpoints (SET-3) | `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints` | whole: `enabled_providers`, `provider_preference`; keyed by `id`: `endpoints` (a Helm endpoint is locked, dashboard endpoints with other ids beside it) | API (secret create, pickers, model readiness, setup wizard) and gateway (endpoint table, reserved LLM hosts, known LLM hosts minus endpoint hosts) rebuild on reload; gateway resolution caches dropped (`all`); the same re-evaluation as `governance` |
 | `sign_in` | Sign-in (SET-4) | `auth.signup_mode`, `auth.org_creation`, `auth.session_idle_secs`, `auth.session_absolute_secs`, `auth.cli_key_ttl_days`, `auth.oidc_providers` | keyed by `id`: `oidc_providers` | API only: the provider registry and discovery cache rebuild on reload (a sign-in in flight with a removed provider fails `oidc_provider_unknown`); a shorter session lifetime applies to existing sessions at their next request, a longer one to new sessions only; `cli_key_ttl_days` to keys minted afterwards |
 | `email` | Email (SET-4) | `email.smtp_url`, `email.from`, `email.smtp_username`, `email.smtp_password` (secret) | — | API mailer rebuilt on reload |
 | `secrets` | Secret stores (FIX-124) | `secrets.default_store`, `secrets.stores` (Vault store definitions and `reference_scopes`) | keyed by `id`: `stores` | API and gateway rebuild their store registry (FIX-124) |

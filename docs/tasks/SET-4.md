@@ -94,8 +94,9 @@ entry, `docs/operator/sign-in.md`, `docs/05` identity row, `web/openapi.json`, `
 1. IT: add a provider live (fake OIDC issuer fixture) → its button appears and a sign-in through it
    works on another replica without restart; the client secret is sealed inline and appears in no
    response, export, audit row, log or e-mail (canary).
-2. IT: a provider in the test config is locked as an entry (409 with `entry_id`); dashboard entries
-   coexist; an `id` in both is the config's.
+2. IT: a provider in the test config is locked as an entry (read-only, unchanged by any PUT);
+   dashboard entries with other ids coexist; a dashboard entry reusing its `id` → 422
+   `entry_id_in_helm` on `/auth.oidc_providers/<id>/id`.
 3. IT: removing the last provider → 422 `last_oidc_provider`; removing a provider with identities →
    preview `identities_orphaned` with the count; a mapping to `instance_admin` → preview
    `grants_instance_admin` and loosening.

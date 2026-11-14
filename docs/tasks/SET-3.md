@@ -3,11 +3,14 @@
 ## Goal
 An instance admin configures the LLM providers and endpoints (`llm.enabled_providers`,
 `llm.provider_preference`, `llm.endpoints`) on **Admin › LLM endpoints** instead of in Helm values,
-with a reachability test, and the API and every gateway apply the change without a restart. A list
-set in Helm stays locked as a whole.
+with a reachability test, and the API and every gateway apply the change without a restart.
+Endpoints lock **per entry** (coordinator review, 2026-11-14): an endpoint defined in Helm is locked
+("Managed by Helm"), and admins add and edit endpoints with other ids next to it. The provider list
+and preference order lock as whole values when Helm sets them.
 
 ## Linked requirements
-- **D-236**, **D-237** (section `llm`, all three keys whole lists), D-238.
+- **D-236**, **D-237** (section `llm`; `llm.endpoints` a keyed list by `id`,
+  `llm.enabled_providers` and `llm.provider_preference` whole values), D-238.
 - Contract **C-779** (entry shape, endpoint test route, `secrets_become_non_permitted` warning);
   C-772..C-774 (generic routes).
 - Spec: `15 §Instance settings` row `llm`; `15 §Configuration reference` rows `llm.*` (the entry
@@ -35,9 +38,14 @@ set in Helm stays locked as a whole.
 ### In scope
 1. **Registry entries** for section `llm` with the existing validation (credential-like keys
    refused, https only except loopback, `allowed_paths` rules, unknown `key_origin.method` with the
-   nearest suggestion, provider-specific keys) — reuse the functions, never re-implement them. Each
-   entry's `id` is unique; `default_model` warning becomes a preview warning. Update
-   `movable-keys.txt`.
+   nearest suggestion, provider-specific keys) — reuse the functions, never re-implement them.
+   `llm.endpoints` is registered as a **keyed list by `id`** (SET-1's keyed-list support, as for
+   OIDC providers and secret stores); `enabled_providers` and `provider_preference` as whole values.
+   Endpoint ids are unique across Helm and dashboard entries: a dashboard endpoint reusing a Helm
+   endpoint's id → 422 `settings_invalid`, field `/llm.endpoints/<id>/id`, code `entry_id_in_helm`
+   (C-773, C-779); an endpoint Helm adds later with a stored endpoint's id replaces it at the next
+   start (mirroring), so a secret's `llm_endpoint_id` always names one endpoint. The
+   `default_model` warning becomes a preview warning. Update `movable-keys.txt`.
 2. **Cross-section rules** run on the merged view: `governance.llm.require_key_origin` needs a
    `key_origin` on every endpoint (422 naming `/llm.endpoints/<id>/key_origin` or the governance
    key); `llm.provider_preference` ⊆ `enabled_providers`.
@@ -57,14 +65,18 @@ set in Helm stays locked as a whole.
    (reorderable list with up/down buttons, keyboard accessible); endpoints as an `ItemList`, each
    opening a `FormDialog` (`xl`) with the provider-specific fields shown for the chosen provider
    (P4-LLM fields hidden until that provider is enabled in the build), allowed models, key origin,
-   allowed paths, and **Test connection**; a locked list shows every endpoint read-only with
-   "Configured in Helm (`config.llm.endpoints`)". The setup wizard's LLM step links here.
+   allowed paths, and **Test connection**; Helm endpoints appear in the same list with a "Managed
+   by Helm" `Badge` and open read-only ("Configured in Helm (`config.llm.endpoints`)"), dashboard
+   endpoints beside them are editable and removable; the dialog's id field shows
+   `entry_id_in_helm` when the id is taken by a Helm endpoint. Locked provider list or preference
+   order render read-only with their Helm keys. The setup wizard's LLM step links here.
 8. Docs: `docs/operator/llm-endpoints.md` (dashboard first; Helm as the locked alternative; what
    removing an endpoint does to existing keys).
 
 ### Out of scope
 - New providers (P4-LLM), credential handling, org governance of endpoints (unchanged).
-- Merging Helm and dashboard endpoints in one list (whole-list lock, D-237(e)).
+- Editing a Helm-defined endpoint from the dashboard (it is locked as an entry; remove it from the
+  values file to hand it over with its current definition).
 
 ## Constraints / file ownership
 Owns: registry entries for `llm`, the LLM readers listed in Context, gateway endpoint-table rebuild,
@@ -79,13 +91,21 @@ After SET-2 (same gateway modules). Shared primitives, tokens, both themes, 390 
    without restart (gateway IT); remove it → the secret is non-permitted, skipped by the gateway,
    owner notified; preview lists the org and the count.
 3. IT: `require_key_origin = true` (test config) + an endpoint without `key_origin` → 422 naming it.
-4. IT: a list set in the test config → GET shows it locked, PUT with `llm.endpoints` → 409.
+4. IT (per-entry lock): with one endpoint `central` in the test config, GET returns it in
+   `entries[]` with `source: helm`, `locked: true`; a PUT adding dashboard endpoint `team` succeeds
+   and both are effective (API and gateway); the PUT never changes `central`; a PUT with a
+   dashboard endpoint `id: "central"` → 422 `entry_id_in_helm` on `/llm.endpoints/central/id`;
+   restarting without `central` in the config keeps it as a dashboard entry with its last
+   definition (mirroring).
+4a. IT (whole values): `llm.enabled_providers` set in the test config → GET shows it locked and a
+   PUT with a different value → 409 `setting_locked`; `provider_preference` likewise.
 5. IT: endpoint test — reachable fixture, `destination_refused` for a private address without
    `allowed_private`, `timeout`; no `authorization` header sent (fixture asserts).
 6. IT: known LLM hosts: adding an endpoint on `api.openai.com` removes it from the known list in the
    gateway (a sanctioned-only org can then use the endpoint, not a generic secret on that host).
 7. Web tests: provider checkboxes and order, endpoint dialog per provider, Test connection result,
-   locked list rendering, preview warning; 390 px, both themes.
+   Helm endpoints read-only beside editable dashboard endpoints, the `entry_id_in_helm` field
+   error, locked provider list rendering, preview warning; 390 px, both themes.
 8. fmt, clippy, targeted api + gateway tests, full suites at the end, guards exit 0, web checks and
    production build.
 

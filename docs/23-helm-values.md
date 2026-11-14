@@ -88,8 +88,11 @@ For each of those keys the values file is **optional**:
 - **Set** under `config.*` (or through the chart value that renders it): the setting is
   **locked** — the dashboard shows "Configured in Helm (`config.<key>`)" and no edit control, and
   the API refuses changes (409 `setting_locked`). Lists lock as a whole, except the keyed lists
-  `auth.oidc_providers` and `secrets.stores` (per entry `id`; the `vault.*` store is one such
-  entry) and `ratelimit.api.classes` (per class).
+  `auth.oidc_providers`, `secrets.stores` and `config.llm.endpoints` (per entry `id`; the `vault.*`
+  store is one such entry) and `ratelimit.api.classes` (per class): an entry you define is locked
+  ("Managed by Helm"), admins add entries with other ids beside it, and an app-defined entry may not
+  reuse a Helm entry's id. `config.llm.enabled_providers` and `config.llm.provider_preference` lock
+  as whole values.
 - **Removed later** from the values file: the setting moves to the dashboard **with the value
   Helm had** (the API keeps a copy of every locked value), so a `helm upgrade` that drops a key
   never silently reverts it.

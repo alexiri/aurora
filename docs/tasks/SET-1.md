@@ -132,7 +132,9 @@ Shared primitives only, tokens only, both themes, no horizontal scroll at 390 px
    and keyed-list locking; a cross-section rule failing on the merged view names the other key.
 2. Registry test: `movable-keys.txt` equals the registry; no D-237(b) key is movable (SEC-89).
 3. IT (test section): GET shows sources and locks; PUT round-trip; absent key → default; locked key
-   → 409 `setting_locked`; stale generation → 409 `stale_revision`; two concurrent PUTs → one 409.
+   → 409 `setting_locked`; stale generation → 409 `stale_revision`; two concurrent PUTs → one 409;
+   keyed test list: a config entry stays locked beside dashboard entries, and a dashboard entry
+   reusing its id → 422 `entry_id_in_helm` (C-773).
 4. IT: 412 without a re-authentication within 600 s; 403 for an org owner, an API key and a
    non-admin; failing audit insert → 503 and the row unchanged (SEC-90).
 5. IT: a secret set via `$secret` is sealed inline, `keep` keeps it, absent clears it; a canary

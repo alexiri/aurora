@@ -958,9 +958,10 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   re-authentication step as account deletion and retries once; 422 errors land on their fields,
   and an error on a key of another section names it with a link. A success shows a status notice
   "Saved. Applied to every replica within seconds."
-- **Keyed lists** (OIDC providers, secret stores, rate-limit class overrides) are an `ItemList` of
-  entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open read-only),
-  edited in a `FormDialog`; **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
+- **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
+  `ItemList` of entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open
+  read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
+  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
   a list, locked as a whole.
 - **Secrets** are write-only fields: "Set" / "Not set" with **Replace…** and **Remove**; the value
   is never shown, and the page never receives it.
