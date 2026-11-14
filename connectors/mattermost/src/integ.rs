@@ -21,6 +21,7 @@ use crate::events::{
     Bots, MmChannel, MmFileInfo, MmPost, MmUser, WsEvent, command_from_text, dedupe_posts,
     mentioned_usernames, message_posted, now_ms, rfc3339_ms, space,
 };
+use crate::lanes::Lanes;
 use crate::render::{Lookups, MentionRefs, mention_refs};
 use crate::ws::{WsConn, WsError};
 
@@ -70,6 +71,8 @@ pub struct Settings {
     /// Test profile: declare only these capabilities.
     pub capabilities: Option<Vec<String>>,
     pub test_control: bool,
+    /// Which addresses the tenant-supplied server URL may point at (docs/20 §Platform URL).
+    pub net: crate::api::NetPolicy,
 }
 
 impl Settings {
@@ -104,6 +107,8 @@ pub struct Integ {
     /// `(kind, channel, user)` of recent membership events: the same change is seen
     /// on every bot's socket.
     recent_membership: Mutex<HashMap<String, (Instant, Option<Uuid>)>>,
+    /// Per-channel ordered handling of socket events (docs/20 §Event ordering).
+    lanes: Lanes<(WsEvent, Option<Uuid>)>,
 }
 
 /// Capabilities left after the integration's own narrowing (`config._capabilities`).
@@ -160,7 +165,7 @@ impl Integ {
     ) -> Result<Self, String> {
         let server =
             str_field(&integration.config, "server_url").ok_or("config.server_url missing")?;
-        let mm = Mm::new(&server)?;
+        let mm = Mm::with_policy(&server, &settings.net)?;
         let bot_token = str_field(&integration.credentials, "bot_token")
             .ok_or("credentials.bot_token missing")?;
         let bot = integration
@@ -201,6 +206,7 @@ impl Integ {
             bot_sockets: Mutex::new(HashMap::new()),
             bots_gen: tokio::sync::watch::channel(0).0,
             recent_membership: Mutex::new(HashMap::new()),
+            lanes: Lanes::default(),
         })
     }
 
@@ -626,6 +632,11 @@ impl Integ {
         let Some(channel) = p.get("channel_id").and_then(Value::as_str) else {
             return;
         };
+        // Like posts and edits: a reaction in another team's channel is not ours.
+        match self.channel(channel).await {
+            Ok(c) if c.team_id.is_empty() || c.team_id == self.team_id => {}
+            _ => return,
+        }
         let at = r
             .get("create_at")
             .and_then(Value::as_i64)
@@ -674,6 +685,18 @@ impl Integ {
             &payload,
         )
         .await;
+    }
+
+    /// Queues a socket event on its channel's lane: events of one channel are handled in the
+    /// order they arrived (a post and its deletion must not swap places while a lookup is slow),
+    /// channels in parallel. Events that name no channel share one lane.
+    pub fn dispatch_ws_event(self: &Arc<Self>, ev: WsEvent, via: Option<Uuid>) {
+        let key = ev.lane_key();
+        let me = self.clone();
+        self.lanes.dispatch(&key, (ev, via), move |(ev, via)| {
+            let me = me.clone();
+            async move { me.handle_ws_event(ev, via).await }
+        });
     }
 
     pub async fn handle_ws_event(self: &Arc<Self>, ev: WsEvent, via: Option<Uuid>) {
@@ -871,9 +894,8 @@ impl Integ {
                                     tokio::spawn(async move { me.catch_up_once().await });
                                 }
                                 last_seq = Some(ev.seq);
-                                let me = self.clone();
                                 let via = bot.as_ref().map(|(id, _)| *id);
-                                tokio::spawn(async move { me.handle_ws_event(ev, via).await });
+                                self.dispatch_ws_event(ev, via);
                             }
                             Ok(None) => break,
                             Err(e) => {

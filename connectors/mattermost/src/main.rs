@@ -165,6 +165,7 @@ async fn serve(cli: Cli, cfg: &ConnectorConfig) -> std::io::Result<()> {
         api_url: Some(core_url.trim_end_matches('/').to_owned()),
         capabilities: cli.capabilities.clone(),
         test_control: cli.test_control,
+        net: aurora_connector_mattermost::api::NetPolicy::from_env(),
     };
     if settings.public_url.is_none() {
         tracing::warn!("no public URL configured: buttons, menus and slash commands are disabled");

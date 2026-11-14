@@ -472,6 +472,8 @@ async fn world() -> W {
             ),
             ("AURORA_CONNECTOR_PUBLISHER".into(), "e2e-mm".into()),
             ("AURORA_CONNECTOR_TOKEN_CHECK_SECS".into(), "2".into()),
+            // The test Mattermost listens on loopback; production refuses private server URLs.
+            ("AURORA_MM_ALLOW_PRIVATE_NETWORKS".into(), "true".into()),
             ("AURORA_LOG_LEVEL".into(), "debug".into()),
         ],
     );
