@@ -544,7 +544,8 @@ pub fn via_proxy(gw: &str, token: &str, ca_pem: &str) -> reqwest::Client {
     reqwest::Client::builder()
         .proxy(proxy)
         .add_root_certificate(reqwest::Certificate::from_pem(ca_pem.as_bytes()).unwrap())
-        .timeout(Duration::from_secs(60))
+        // Above the 60 s approval-timeout floor (s6b waits for a hold to expire).
+        .timeout(Duration::from_secs(90))
         .build()
         .unwrap()
 }
