@@ -10,15 +10,15 @@ The API image ships signed app packages in `/usr/share/aurora/plugins` (`plugins
 only archives signed by the compiled-in Aurora project key (publisher `aurora`) load. Unsigned archives, archives signed by any other key (a trusted key included) and invalid archives are refused and logged as `plugin file refused`.
 `plugins.allow_unsigned` does not apply to this directory. A built-in package activates automatically on first sight and on upgrade, unless its permissions widened compared with the version you approved before; then it waits for instance-administrator approval.
 
+**One app per service** (FIX-123, D-195(a)): ways to authenticate to the same service are **connect methods** of one app, and the connect window asks "How do you want to connect?" with a short description and a *Recommended* badge. `github` (and `github-ghes`) offer a GitHub App installation, OAuth and a personal access token; `aws-keys` offers *Assume a role* and *Access keys*. The retired packages `github-app` and `aws-role` are no longer shipped. **Upgrading an instance that has them:** the new `github` and `aws-keys` versions (2.0.0) add hooks and egress, a permission widening, so each waits for one instance-administrator approval (*Admin, Plugins*; the release notes say so). On approval, in the same transaction, every connection of `github-app` / `github-app-ghes` / `aws-role` moves to `github` / `github-ghes` / `aws-keys` with its connect method recorded (`github_app`, `assume_role`); connection ids, stored credentials, grants and history are untouched. Registered GitHub Enterprise Server instances, skill libraries and per-organization app availability move along, the host-claim decisions between the old pairs are deleted, and the retired package is disabled (`superseded_by_<package>`). Rerunning finds nothing to move. Until approval the old packages keep working; a fresh instance starts with one GitHub and one AWS tile and no built-in host-claim conflict.
+
 What ships (the package directories in `plugins/builtin/`):
 
 | Package | Product | Self-hosted instances |
 |---------|---------|-----------------------|
 | `atlassian` | Atlassian | yes |
-| `aws-keys` | AWS (access keys) | no |
-| `aws-role` | AWS (assume role) | no |
-| `github` | GitHub | yes |
-| `github-app` | GitHub App | yes |
+| `aws-keys` | AWS (assume a role or access keys) | no |
+| `github` | GitHub (GitHub App, OAuth or personal token) | yes |
 | `gitlab` | GitLab | yes |
 | `google-workspace` | Google Workspace | no |
 | `indico` | Indico | yes |

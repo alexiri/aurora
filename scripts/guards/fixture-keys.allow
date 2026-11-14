@@ -3,4 +3,4 @@
 # must carry this exact line, or the guard fails:
 #   # aurora-fixture-key: throw-away, generated for fixtures, never valid upstream
 # One repo-relative path per line.
-plugins/builtin/github-app/tests/hooks.yaml
+plugins/builtin/github/tests/hooks.yaml

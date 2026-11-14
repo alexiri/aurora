@@ -12,7 +12,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response:
@@ -34,7 +34,7 @@
   request: { method: GET, url: "https://s3.us-east-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.us-east-1.amazonaws.com/" }
         response: { status: 200, body: *ok }
@@ -47,7 +47,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response:
@@ -59,7 +59,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response:
@@ -71,7 +71,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response:
@@ -83,7 +83,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response: { status: 200, body: "<html>not an STS answer</html>" }
@@ -93,7 +93,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response: { status: 200, body: "<AssumeRoleResponse><AssumeRoleResult><Credentials><AccessKeyId>ASIDFIXTURE00001</AccessKeyId><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleResult></AssumeRoleResponse>" }
@@ -103,7 +103,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response: { status: 503, body: "Service Unavailable" }
@@ -113,7 +113,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     egress_override: [other.example.test]
     input: { credentials: *src, metadata: *md, context: *ctx }
     expect: { error: egress-denied, message_contains: "egress denied" }
@@ -121,14 +121,14 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     input: { credentials: *src, metadata: *md, context: {} }
     expect: { error: internal, message_contains: "external id" }
 - name: token.mint without the source key asks to reconnect
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     steps:
       - input: { credentials: {}, metadata: *md, context: *ctx }
         expect: { error: reauth-required, message_contains: "source access key" }
@@ -138,7 +138,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: token.mint
-    app_id: aws-role
+    app_id: aws-keys
     steps:
       - input: { credentials: *src, metadata: { region: eu-west-1 }, context: *ctx }
         expect: { error: reauth-required, message_contains: "role ARN" }
@@ -148,7 +148,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response: { status: 200, body: *ok }
@@ -176,7 +176,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response: { status: 200, body: *ok }
@@ -197,7 +197,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response:
@@ -217,7 +217,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response:
@@ -237,7 +237,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     http_cassette:
       - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
         response: { status: 200, body: "{}" }
@@ -255,7 +255,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     steps:
       - input:
           method_id: role
@@ -296,7 +296,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     input:
       method_id: role
       source:
@@ -311,7 +311,7 @@
   request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
   hook:
     point: connect.exchange
-    app_id: aws-role
+    app_id: aws-keys
     egress_override: [other.example.test]
     input:
       method_id: role

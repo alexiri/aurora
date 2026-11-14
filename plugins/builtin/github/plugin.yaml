@@ -1,12 +1,20 @@
 package:
   id: github
-  version: 1.1.1
+  version: 2.0.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: GitHub
-  description: Repositories, issues, pull requests, files and Actions runs on github.com and GitHub Enterprise Server (REST API v3, GraphQL and git over HTTPS), connected with a token or OAuth
+  description: Repositories, issues, pull requests, files and Actions runs on github.com and GitHub Enterprise Server (REST API v3, GraphQL and git over HTTPS), connected as a GitHub App installation, with OAuth or with a personal access token
   homepage: https://github.com
+permissions:
+  hooks: [connect.exchange, token.mint]
+  # Egress is declared per package, not per app: the hooks pin each app to its own host. The
+  # `github` app only ever calls api.github.com; the `github-ghes` app only ever calls the host of
+  # its registered instance ({instance}), and a ghes_host that differs from it is denied.
+  egress:
+    connect.exchange: [api.github.com, "{instance}"]
+    token.mint: [api.github.com, "{instance}"]
 oauth_clients:
   - id: github
     authorize_url: https://github.com/login/oauth/authorize
@@ -38,17 +46,33 @@ apps:
       api_spec: https://github.com/github/rest-api-description/raw/main/descriptions/api.github.com/api.github.com.yaml
       web_hosts: [github.com]
       connect_note:
-        text: "Connects to github.com. For GitHub Enterprise Server use the GitHub Enterprise Server app. Prefer the GitHub App package where you can: it uses fine-grained, repository-scoped permissions."
+        text: "Connects to github.com. For GitHub Enterprise Server use the GitHub Enterprise Server app. Choose how to connect: a GitHub App installation (fine-grained, repository-scoped permissions, recommended for teams), OAuth, or a personal access token (both act as you)."
         url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
-      label_hint: GitHub username
+      label_hint: GitHub username or installation
     credentials:
       - { name: access_token, secret: true }
       - { name: refresh_token, secret: true, optional: true }
+      - { name: private_key, secret: true, optional: true }
     metadata:
       - { name: login }
+      - { name: app_id }
+      - { name: installation_id }
     connect:
+      - id: github_app
+        kind: hook
+        label: GitHub App
+        description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams."
+        recommended: true
+        authorize: false
+        token: { kind: hook, max_lifetime_secs: 3600 }
+        fields:
+          - { name: app_id, label: GitHub App ID or client ID, type: text, store: metadata, required: true, placeholder: "123456", help_url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app }
+          - { name: installation_id, label: Installation ID, type: text, store: metadata, required: true, placeholder: "12345678", help_url: https://docs.github.com/en/rest/apps/apps#list-installations-for-the-authenticated-app }
+          - { name: private_key, label: Private key (.pem file), type: file, store: credentials, required: true, help_url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps }
       - id: token
         kind: fields
+        label: Personal access token
+        description: "Acts as you, on everything your account can reach. The quickest way to start for personal use; a fine-grained token can be limited to chosen repositories."
         fields:
           - name: access_token
             label: Personal access token
@@ -65,6 +89,8 @@ apps:
           metadata: { login: /login }
       - id: oauth
         kind: oauth2
+        label: OAuth
+        description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered by an administrator."
         client: github
         scopes:
           - { scope: "read:user", name: Read your profile, access: read }
@@ -124,8 +150,11 @@ apps:
     tools:
       read:
         items:
-          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET] }
-          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET] }
+          # Acting as a user: an installation token has no user, so these two exist only for the
+          # OAuth and personal-token methods; `list_installation_repos` only for the GitHub App.
+          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET], connect_methods: [token, oauth] }
+          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET], connect_methods: [token, oauth] }
+          - { id: list_installation_repos, name: List repositories of the installation, host: api.github.com, path: /installation/repositories, methods: [GET], connect_methods: [github_app] }
           - { id: get_repo, name: Get a repository, host: api.github.com, path: "/repos/*/*", methods: [GET] }
           - { id: list_issues, name: List issues, host: api.github.com, path: "/repos/*/*/issues", methods: [GET] }
           - { id: get_issue, name: Get an issue, host: api.github.com, path: "/repos/*/*/issues/*", methods: [GET] }
@@ -227,8 +256,11 @@ apps:
         and git over HTTPS (clone URLs of the form https://github.com/<owner>/<repo>.git). Aurora adds
         the credentials; never ask for or write a token. Send JSON request bodies so approvals can show
         what a change does. A token can only do what its owner allowed: if a request answers 403 or 404
-        for a repository you expect to exist, the connection lacks access to it. Pull requests are issues
-        too: comment on them through the issue comment endpoint.
+        for a repository you expect to exist, the connection lacks access to it. A connection made with
+        a GitHub App installation reaches only the repositories the app is installed on and only the
+        permissions it was granted; endpoints that act as a user (such as /user) are not available to
+        it, so list the repositories with GET /installation/repositories. Pull requests are issues too:
+        comment on them through the issue comment endpoint.
   - about:
       id: github-ghes
       name: GitHub Enterprise Server
@@ -236,20 +268,38 @@ apps:
       category: development
       api_docs: https://docs.github.com/en/enterprise-server@latest/rest
       connect_note:
-        text: "An administrator registers the GitHub Enterprise Server host first (Instances); then choose it when connecting."
+        text: "An administrator registers the GitHub Enterprise Server host first (Instances); then choose it when connecting. For a GitHub App installation enter the same host name again as the server host, together with the app id, installation id and the private key."
         url: https://docs.github.com/en/enterprise-server@latest/rest
-      label_hint: GitHub username
+      label_hint: GitHub username or installation
     instances:
       label: GitHub Enterprise Server host
       probe: { method: GET, path: /api/v3/meta, expect_status: [200, 401] }
     credentials:
       - { name: access_token, secret: true }
       - { name: refresh_token, secret: true, optional: true }
+      - { name: private_key, secret: true, optional: true }
     metadata:
       - { name: login }
+      - { name: app_id }
+      - { name: installation_id }
+      - { name: ghes_host }
     connect:
+      - id: github_app
+        kind: hook
+        label: GitHub App
+        description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams."
+        recommended: true
+        authorize: false
+        token: { kind: hook, max_lifetime_secs: 3600 }
+        fields:
+          - { name: ghes_host, label: Server host (must be the registered instance), type: text, store: metadata, required: true, placeholder: "github.example.com" }
+          - { name: app_id, label: GitHub App ID or client ID, type: text, store: metadata, required: true, placeholder: "123456" }
+          - { name: installation_id, label: Installation ID, type: text, store: metadata, required: true, placeholder: "12345678" }
+          - { name: private_key, label: Private key (.pem file), type: file, store: credentials, required: true }
       - id: token
         kind: fields
+        label: Personal access token
+        description: "Acts as you, on everything your account can reach. The quickest way to start for personal use."
         fields:
           - name: access_token
             label: Personal access token
@@ -265,6 +315,8 @@ apps:
           metadata: { login: /login }
       - id: oauth
         kind: oauth2
+        label: OAuth
+        description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered on the server by an administrator."
         client: github-ghes
         scopes:
           - { scope: "read:user", name: Read your profile, access: read }
@@ -327,8 +379,9 @@ apps:
     tools:
       read:
         items:
-          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET] }
-          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET] }
+          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET], connect_methods: [token, oauth] }
+          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET], connect_methods: [token, oauth] }
+          - { id: list_installation_repos, name: List repositories of the installation, host: "{instance}", path: /api/v3/installation/repositories, methods: [GET], connect_methods: [github_app] }
           - { id: get_repo, name: Get a repository, host: "{instance}", path: "/api/v3/repos/*/*", methods: [GET] }
           - { id: list_issues, name: List issues, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [GET] }
           - { id: get_issue, name: Get an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues/*", methods: [GET] }
@@ -430,5 +483,8 @@ apps:
         git over HTTPS (https://<host>/<owner>/<repo>.git), where <host> is the host of the GitHub
         Enterprise Server connection. Aurora adds the credentials; never ask for or write a token, and
         never send a request for this connection to another host. Send JSON request bodies so approvals
-        can show what a change does. Pull requests are issues too: comment on them through the issue
-        comment endpoint.
+        can show what a change does. A connection made with a GitHub App installation reaches only the
+        repositories the app is installed on and only the permissions it was granted; endpoints that
+        act as a user (such as /api/v3/user) are not available to it, so list the repositories with
+        GET /api/v3/installation/repositories. Pull requests are issues too: comment on them through
+        the issue comment endpoint.

@@ -1,22 +1,22 @@
 # github.com write tools of the GitHub App: classified as write tools, with approval summaries and a
 # `negative <tool>:` case. All credentials are fake.
-- name: "create_issue: summary shows repository and title"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: create_issue: summary shows repository and title"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
     url: "https://api.github.com/repos/example/demo/issues"
     headers: { content-type: application/json }
     body: '{"title":"Broken build","body":"CI is red"}'
   expect:
-    app: github-app
+    app: github
     tool: create_issue
     summary: { title: "Create issue", fields: { Owner: example, Repository: demo, Title: "Broken build" } }
-- name: "negative create_issue: PUT selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative create_issue: PUT selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://api.github.com/repos/example/demo/issues" }
-  expect: { app: github-app }
-- name: "update_issue: summary shows the issue and the new state"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+  expect: { app: github }
+- name: "github app: update_issue: summary shows the issue and the new state"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: PATCH
     url: "https://api.github.com/repos/example/demo/issues/7"
@@ -25,12 +25,12 @@
   expect:
     tool: update_issue
     summary: { title: "Update issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed } }
-- name: "negative update_issue: POST selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative update_issue: POST selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://api.github.com/repos/example/demo/issues/7" }
-  expect: { app: github-app }
-- name: "create_issue_comment: summary shows the comment"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+  expect: { app: github }
+- name: "github app: create_issue_comment: summary shows the comment"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
     url: "https://api.github.com/repos/example/demo/issues/7/comments"
@@ -39,12 +39,12 @@
   expect:
     tool: create_issue_comment
     summary: { title: "Comment on issue or pull request", fields: { Owner: example, Repository: demo, Issue: "7", Comment: "Fixed in the next release" } }
-- name: "negative create_issue_comment: PUT selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative create_issue_comment: PUT selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://api.github.com/repos/example/demo/issues/7/comments" }
-  expect: { app: github-app }
-- name: "create_pull: summary shows title, head and base"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+  expect: { app: github }
+- name: "github app: create_pull: summary shows title, head and base"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
     url: "https://api.github.com/repos/example/demo/pulls"
@@ -53,12 +53,12 @@
   expect:
     tool: create_pull
     summary: { title: "Create pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", From: feature-x, Into: main } }
-- name: "negative create_pull: PUT selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative create_pull: PUT selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://api.github.com/repos/example/demo/pulls" }
-  expect: { app: github-app }
-- name: "merge_pull: summary shows the pull request and merge method"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+  expect: { app: github }
+- name: "github app: merge_pull: summary shows the pull request and merge method"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: PUT
     url: "https://api.github.com/repos/example/demo/pulls/12/merge"
@@ -67,12 +67,12 @@
   expect:
     tool: merge_pull
     summary: { title: "Merge pull request", fields: { Owner: example, Repository: demo, "Pull request": "12", Method: squash } }
-- name: "negative merge_pull: POST selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative merge_pull: POST selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://api.github.com/repos/example/demo/pulls/12/merge" }
-  expect: { app: github-app }
-- name: "write_contents: PUT summary shows file, branch and message"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+  expect: { app: github }
+- name: "github app: write_contents: PUT summary shows file, branch and message"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: PUT
     url: "https://api.github.com/repos/example/demo/contents/README.md"
@@ -81,20 +81,20 @@
   expect:
     tool: write_contents
     summary: { title: "Change repository file", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme" } }
-- name: "write_contents: DELETE is the same write tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: write_contents: DELETE is the same write tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: DELETE
     url: "https://api.github.com/repos/example/demo/contents/README.md"
     headers: { content-type: application/json }
     body: '{"message":"Remove readme","sha":"abc123","branch":"feature-x"}'
   expect: { tool: write_contents }
-- name: "negative write_contents: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative write_contents: PATCH selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://api.github.com/repos/example/demo/contents/README.md" }
-  expect: { app: github-app }
-- name: "create_ref: summary shows the ref and its source commit"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+  expect: { app: github }
+- name: "github app: create_ref: summary shows the ref and its source commit"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
     url: "https://api.github.com/repos/example/demo/git/refs"
@@ -103,12 +103,12 @@
   expect:
     tool: create_ref
     summary: { title: "Create branch or tag", fields: { Owner: example, Repository: demo, Ref: "refs/heads/feature-x", From: abc123 } }
-- name: "negative create_ref: PUT selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative create_ref: PUT selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://api.github.com/repos/example/demo/git/refs" }
-  expect: { app: github-app }
-- name: "graphql_mutation: summary shows the operation and fields"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+  expect: { app: github }
+- name: "github app: graphql_mutation: summary shows the operation and fields"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
     url: "https://api.github.com/graphql"
@@ -117,18 +117,18 @@
   expect:
     tool: graphql_mutation
     summary: { title: "GraphQL mutation", fields: { Operation: AddStar, Fields: addStar } }
-- name: "negative graphql_mutation: GET selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
+- name: "github app: negative graphql_mutation: GET selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://api.github.com/graphql" }
-  expect: { app: github-app }
-- name: "git_push: the push service is the write tool"
-  connection: { credentials: { access_token: "tok-git-1" } }
+  expect: { app: github }
+- name: "github app: git_push: the push service is the write tool"
+  connection: { method: github_app, credentials: { access_token: "tok-git-1" } }
   request: { method: POST, url: "https://github.com/example/demo.git/git-receive-pack" }
   expect:
     tool: git_push
     summary: { title: "Push code", fields: { Owner: example, Repository: demo.git } }
     upstream: { headers: { authorization: "Basic eC1hY2Nlc3MtdG9rZW46dG9rLWdpdC0x" } }
-- name: "negative git_push: a fetch is not a push"
-  connection: { credentials: { access_token: "tok-git-1" } }
+- name: "github app: negative git_push: a fetch is not a push"
+  connection: { method: github_app, credentials: { access_token: "tok-git-1" } }
   request: { method: POST, url: "https://github.com/example/demo.git/git-upload-pack" }
-  expect: { app: github-app, tool: git_fetch }
+  expect: { app: github, tool: git_fetch }

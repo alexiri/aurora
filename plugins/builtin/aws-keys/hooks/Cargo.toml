@@ -1,5 +1,5 @@
 [package]
-name = "aws-role-hooks"
+name = "aws-keys-hooks"
 version = "0.0.0"
 edition = "2024"
 publish = false

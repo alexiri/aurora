@@ -11,11 +11,11 @@
 #
 # `egress_override` stands for the egress list as the hook host resolves it: `{instance}` becomes the
 # connection's registered instance host (here github.example.com).
-- name: token.mint (github-app) mints an installation token for the installation
+- name: token.mint (github) mints an installation token for the installation
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response:
@@ -28,11 +28,11 @@
         access_token: "tok-fixture-old"
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { credentials: { access_token: "tok-fixture-inst-1" } }
-- name: token.mint (github-app) accepts a PKCS#8 key
+- name: token.mint (github) accepts a PKCS#8 key
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 201, body: '{"token":"tok-fixture-inst-2","expires_at":"2099-01-01T00:00:00Z"}' }
@@ -41,11 +41,11 @@
         private_key: &key8 "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCkqlxuR+4RxiKz\njl44xQQr0t0LThFHtFDqBTiEt9BJ0pPvkUy0lzRucCoNdrpmoZKGzTzHNvrGspMw\nw2opoisKdciwEyrlb4f00eDQbEijr+5QEQxf7mnlPb8/WAfQGx7JyJ0MghwyxiCL\n53s0CcvLYl72Ec7fBlqroWTK3JQz8P3REZIWMslDndygrc0c8rV0aJUI9ZYQkcFs\nN5la7qFMzXmfHhR7/v4UuxK7RkOE+TElC9AWo7zN1dxC5h1SEJr9UTimR1lhUrjb\n2uJdaWbIjFr3PLwhCFUXpzC2pF8j551A4zZYjVcC92HDrG/Iox0+3IVJrJOvAsc+\n0tOvCd77AgMBAAECggEAOzxt8948bnhwk1dr3dBCJ+G7Uw3KeZkMYqNuKZBWhbgT\nL+N9TJn4aqI+/ojvlWwaYhQDAUdt/3zOJoSl9EQ6Z5DnmS/MBq2Qoym9Tj0mBHyN\npo/7e6cwwR7tZcQtS1f2Q3C/zngf3MQZgTrMv3OmtIu2zZ6qZODMTWHJ+JBRYD2E\n5JA+6wAUHwWp7bDSdlf4eKiJZxMwP29lffPDbh+S0fmpz+aUfsC41Yug/0WgP4xn\nz9wVca+eINvZ/oxekZYCsyC4NJrkFDFtDNYxRPyXQjn7f5LEcZhER0gT2YrKY31w\nDQrAJlDeJ/xP7laxeFNQEuY6U4lgb5Q/Cie4Ch1YQQKBgQDmBOORw44GyouKvHzh\nTbcVGoskKiiuUDoMYdt0OjqKim0wgmSncqQhVeMzl65D+XzyTtfapYhYl88pkmOM\niqhzLRR9790mPQUD1i3nNrOON+NRd4VE1ybh6XoL9fy/wMMOw3/ai3IkPzK4s+PQ\n9X6eR0aNh01h4mYBmrKtuktuNQKBgQC3Q7264Uqv5JhCkPESTRQHBa3QmmKsTh1z\nvpjwB+nZll9J9sI9HUcl0f4cAIOW5kx5mZ0ZKzXNJHUThXD2b8tP7yAG1oW6wLFr\nB401OzwCy7eRmqohrR6gyn3PV/5cbkOHr+o1Tp2J4lGl59bebD0pgiihkSoTNhsu\nEuVQlpt+bwKBgH7PpTLAcDW4RtQ29FY2RUBiQOGwSHtJiac38AgU7h9hD6+Vw645\nWtlyA293KUEac9MWupQ1fITzNOgDZ9ScwR+2c7y2l+Kz82bZFreJBdbbYvyP+y4n\nu60CziF3/V8uA5vJFlzDUis/mFQSAQA7yBG00+XE+VmEup4ZznZO5bUdAoGBAKox\nELvCiZe7lOMMs7QpPJYg4gA9v7EAgj2BHYqb7sIQ8cFAlbYnwHERCQl8OLgke5TZ\n4ZkEFdzDJK7SV8ukmo1LJtTy2BJM7PbWdn6e2eZGxd1EYwcPPMhaBGhP8XppM/GI\nntqOfaMVOHn4SgUZQ9uOcqlIpGhe8PLivW8PzqulAoGACgxihPX8tyxTKzfwVkJB\nDXEp5yx6S69krkSPYubdegAdN/IjcKiP8/VPqgkYbVi+NTRNHINsgDMoYjOoXWqm\n4E2jTp3Gn6MLqhbiUAa+zBnh5o92xdbA9Wuw4cgD9ubO6NolWypXeH4ZrW/Lc8LE\nrVnQDsSC7zs3IfHrePj7Nyc=\n-----END PRIVATE KEY-----\n"
       metadata: { app_id: "Iv1.fixtureclientid", installation_id: "7" }
     expect: { credentials: { access_token: "tok-fixture-inst-2" } }
-- name: token.mint (github-app) never uses ghes_host
+- name: token.mint (github) never uses ghes_host
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 201, body: '{"token":"tok-fixture-inst-3","expires_at":"2099-01-01T00:00:00Z"}' }
@@ -53,11 +53,11 @@
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7", ghes_host: "evil.example.com" }
     expect: { credentials: { access_token: "tok-fixture-inst-3" } }
-- name: token.mint (github-app) maps 401 to reauth-required
+- name: token.mint (github) maps 401 to reauth-required
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 401, body: '{"message":"A JSON web token could not be decoded"}' }
@@ -65,11 +65,11 @@
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: reauth-required, message_contains: "rejected the app credentials" }
-- name: token.mint (github-app) maps 404 (uninstalled) to reauth-required
+- name: token.mint (github) maps 404 (uninstalled) to reauth-required
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 404, body: '{"message":"Not Found"}' }
@@ -77,11 +77,11 @@
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: reauth-required, message_contains: "installation not found" }
-- name: token.mint (github-app) maps 403 (suspended) to upstream
+- name: token.mint (github) maps 403 (suspended) to upstream
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 403, body: '{"message":"This installation has been suspended"}' }
@@ -89,11 +89,11 @@
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: upstream, message_contains: "suspended" }
-- name: token.mint (github-app) rejects an answer without a token
+- name: token.mint (github) rejects an answer without a token
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 201, body: '{"expires_at":"2099-01-01T00:00:00Z"}' }
@@ -101,48 +101,48 @@
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: upstream, message_contains: "without a token" }
-- name: token.mint (github-app) without a private key asks to reconnect
+- name: token.mint (github) without a private key asks to reconnect
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     input:
       credentials: {}
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: reauth-required, message_contains: "private key is missing" }
-- name: token.mint (github-app) with an unusable stored key asks to reconnect and does not echo it
+- name: token.mint (github) with an unusable stored key asks to reconnect and does not echo it
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     input:
       credentials: { private_key: "not-a-pem-fixture" }
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: reauth-required, message_contains: "stored private key is unusable" }
-- name: token.mint (github-app) without an installation id asks to reconnect
+- name: token.mint (github) without an installation id asks to reconnect
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     input:
       credentials: { private_key: *key }
       metadata: { app_id: "123456" }
     expect: { error: reauth-required, message_contains: "installation id" }
-- name: token.mint (github-app) outside its egress list is denied
+- name: token.mint (github) outside its egress list is denied
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app
+    app_id: github
     egress_override: [other.example.test]
     input:
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: egress-denied, message_contains: "egress denied" }
-- name: token.mint (github-app-ghes) mints on the registered instance host
+- name: token.mint (github-ghes) mints on the registered instance host
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [github.example.com]
     http_cassette:
       - request: { method: POST, url: "https://github.example.com/api/v3/app/installations/7/access_tokens" }
@@ -151,41 +151,41 @@
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7", ghes_host: "GitHub.Example.com" }
     expect: { credentials: { access_token: "tok-fixture-inst-4" } }
-- name: token.mint (github-app-ghes) with a ghes_host other than the registered instance is denied
+- name: token.mint (github-ghes) with a ghes_host other than the registered instance is denied
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [github.example.com]
     input:
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7", ghes_host: "evil.example.com" }
     expect: { error: egress-denied, message_contains: "does not match the registered instance" }
-- name: token.mint (github-app-ghes) can never reach api.github.com
+- name: token.mint (github-ghes) can never reach api.github.com
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [api.github.com]
     input:
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7", ghes_host: "github.example.com" }
     expect: { error: egress-denied, message_contains: "does not match the registered instance" }
-- name: token.mint (github-app-ghes) without ghes_host asks to reconnect
+- name: token.mint (github-ghes) without ghes_host asks to reconnect
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [github.example.com]
     input:
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7" }
     expect: { error: reauth-required, message_contains: "ghes_host" }
-- name: token.mint (github-app-ghes) refuses a ghes_host with a scheme, path or credentials
+- name: token.mint (github-ghes) refuses a ghes_host with a scheme, path or credentials
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [github.example.com]
     steps:
       - input:
@@ -200,21 +200,21 @@
           credentials: { private_key: *key }
           metadata: { app_id: "123456", installation_id: "7", ghes_host: "admin@github.example.com" }
         expect: { error: reauth-required, message_contains: "ghes_host" }
-- name: token.mint (github-app-ghes) outside its egress list is denied
+- name: token.mint (github-ghes) outside its egress list is denied
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: token.mint
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [other.example.test]
     input:
       credentials: { private_key: *key }
       metadata: { app_id: "123456", installation_id: "7", ghes_host: "github.example.com" }
     expect: { error: egress-denied, message_contains: "egress denied" }
-- name: connect.exchange (github-app) validates the form by minting once
+- name: connect.exchange (github) validates the form by minting once
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 201, body: '{"token":"tok-fixture-inst-5","expires_at":"2099-01-01T00:00:00Z"}' }
@@ -227,11 +227,11 @@
         credentials: { access_token: "tok-fixture-inst-5" }
         metadata: { app_id: "123456", installation_id: "7" }
         label: "GitHub App 123456 (installation 7)"
-- name: connect.exchange (github-app) reports a rejected key without echoing it
+- name: connect.exchange (github) reports a rejected key without echoing it
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app
+    app_id: github
     http_cassette:
       - request: { method: POST, url: "https://api.github.com/app/installations/7/access_tokens" }
         response: { status: 401, body: '{"message":"A JSON web token could not be decoded"}' }
@@ -240,21 +240,21 @@
       source:
         form: { app_id: "123456", installation_id: "7", private_key: *key }
     expect: { error: invalid-input, message_contains: "check the app id and the private key" }
-- name: connect.exchange (github-app) refuses a key that is not an RSA PEM
+- name: connect.exchange (github) refuses a key that is not an RSA PEM
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app
+    app_id: github
     input:
       method_id: installation
       source:
         form: { app_id: "123456", installation_id: "7", private_key: "not-a-pem-fixture" }
     expect: { error: invalid-input, message_contains: "not a valid RSA private key" }
-- name: connect.exchange (github-app) requires the key and the ids
+- name: connect.exchange (github) requires the key and the ids
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app
+    app_id: github
     steps:
       - input: { method_id: installation, source: { form: { app_id: "123456", installation_id: "7" } } }
         expect: { error: invalid-input, message_contains: "private key is required" }
@@ -262,22 +262,22 @@
         expect: { error: invalid-input, message_contains: "installation id" }
       - input: { method_id: installation, source: { form: { installation_id: "7", private_key: *key } } }
         expect: { error: invalid-input, message_contains: "App id" }
-- name: connect.exchange (github-app) outside its egress list is denied
+- name: connect.exchange (github) outside its egress list is denied
   request: { method: GET, url: "https://api.github.com/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app
+    app_id: github
     egress_override: [other.example.test]
     input:
       method_id: installation
       source:
         form: { app_id: "123456", installation_id: "7", private_key: *key }
     expect: { error: egress-denied, message_contains: "egress denied" }
-- name: connect.exchange (github-app-ghes) connects on the registered instance host
+- name: connect.exchange (github-ghes) connects on the registered instance host
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [github.example.com]
     http_cassette:
       - request: { method: POST, url: "https://github.example.com/api/v3/app/installations/7/access_tokens" }
@@ -290,22 +290,22 @@
       connected:
         credentials: { access_token: "tok-fixture-inst-6" }
         metadata: { app_id: "123456", installation_id: "7", ghes_host: "github.example.com" }
-- name: connect.exchange (github-app-ghes) with a server host other than the registered instance is denied
+- name: connect.exchange (github-ghes) with a server host other than the registered instance is denied
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [github.example.com]
     input:
       method_id: installation
       source:
         form: { ghes_host: "evil.example.com", app_id: "123456", installation_id: "7", private_key: *key }
     expect: { error: egress-denied, message_contains: "does not match the registered instance" }
-- name: connect.exchange (github-app-ghes) requires a valid server host
+- name: connect.exchange (github-ghes) requires a valid server host
   request: { method: GET, url: "https://github.example.com/api/v3/installation/repositories" }
   hook:
     point: connect.exchange
-    app_id: github-app-ghes
+    app_id: github-ghes
     egress_override: [github.example.com]
     steps:
       - input: { method_id: installation, source: { form: { app_id: "123456", installation_id: "7", private_key: *key } } }

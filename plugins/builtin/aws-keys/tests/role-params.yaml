@@ -1,8 +1,9 @@
 # Parameter-level tools (P4-GRANTS, Q8, D-124, SEC-68): ec2_describe and sts_get_caller_identity
 # match on the `Action` form parameter. Every other case falls through (to the generic held
 # ec2_call, or to no tool, which `grants.block_untooled` then blocks). Fake credentials.
-- name: "ec2_describe: Describe* in a form body is a read tool"
+- name: "assume role: ec2_describe: Describe* in a form body is a read tool"
   connection: &conn
+    method: assume_role
     credentials:
       source_access_key_id: "AKIDFIXTURESRC0001"
       source_secret_access_key: "fixture-source-secret-1"
@@ -16,12 +17,12 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=DescribeInstances&Version=2016-11-15"
   expect:
-    app: aws-role
+    app: aws-keys
     tool: ec2_describe
     upstream:
       url: "https://ec2.eu-west-1.amazonaws.com/"
       headers: { x-amz-security-token: "fixture-session-token-1" }
-- name: "negative ec2_describe: RunInstances (other value) is the held ec2_call"
+- name: "assume role: negative ec2_describe: RunInstances (other value) is the held ec2_call"
   connection: *conn
   request:
     method: POST
@@ -29,7 +30,7 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=RunInstances&Version=2016-11-15"
   expect: { tool: ec2_call }
-- name: "negative ec2_describe: missing Action"
+- name: "assume role: negative ec2_describe: missing Action"
   connection: *conn
   request:
     method: POST
@@ -37,7 +38,7 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Version=2016-11-15"
   expect: { tool: ec2_call }
-- name: "negative ec2_describe: repeated Action"
+- name: "assume role: negative ec2_describe: repeated Action"
   connection: *conn
   request:
     method: POST
@@ -45,7 +46,7 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=DescribeInstances&Action=TerminateInstances"
   expect: { tool: ec2_call }
-- name: "negative ec2_describe: Action in both the query and the body"
+- name: "assume role: negative ec2_describe: Action in both the query and the body"
   connection: *conn
   request:
     method: POST
@@ -53,7 +54,7 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=DescribeInstances"
   expect: { tool: ec2_call }
-- name: "negative ec2_describe: not a urlencoded body"
+- name: "assume role: negative ec2_describe: not a urlencoded body"
   connection: *conn
   request:
     method: POST
@@ -61,7 +62,7 @@
     headers: { content-type: application/json }
     body: "Action=DescribeInstances"
   expect: { tool: ec2_call }
-- name: "negative ec2_describe: compressed body"
+- name: "assume role: negative ec2_describe: compressed body"
   connection: *conn
   request:
     method: POST
@@ -69,7 +70,7 @@
     headers: { content-type: application/x-www-form-urlencoded, content-encoding: gzip }
     body: "Action=DescribeInstances"
   expect: { tool: ec2_call }
-- name: "negative ec2_describe: body longer than the buffer (truncated)"
+- name: "assume role: negative ec2_describe: body longer than the buffer (truncated)"
   connection: *conn
   request:
     method: POST
@@ -78,7 +79,7 @@
     body: "Action=DescribeInstances"
     body_truncated: true
   expect: { tool: ec2_call }
-- name: "sts_get_caller_identity: GetCallerIdentity in a form body is a read tool, signed for STS"
+- name: "assume role: sts_get_caller_identity: GetCallerIdentity in a form body is a read tool, signed for STS"
   connection: *conn
   request:
     method: POST
@@ -86,64 +87,64 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=GetCallerIdentity&Version=2011-06-15"
   expect:
-    app: aws-role
+    app: aws-keys
     tool: sts_get_caller_identity
     upstream:
       url: "https://sts.eu-west-1.amazonaws.com/"
       headers: { x-amz-security-token: "fixture-session-token-1" }
-- name: "negative sts_get_caller_identity: AssumeRole (other value) matches no tool"
+- name: "assume role: negative sts_get_caller_identity: AssumeRole (other value) matches no tool"
   connection: *conn
   request:
     method: POST
     url: "https://sts.eu-west-1.amazonaws.com/"
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fx&RoleSessionName=s&Version=2011-06-15"
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: missing Action"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: missing Action"
   connection: *conn
   request:
     method: POST
     url: "https://sts.eu-west-1.amazonaws.com/"
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Version=2011-06-15"
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: repeated Action"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: repeated Action"
   connection: *conn
   request:
     method: POST
     url: "https://sts.eu-west-1.amazonaws.com/"
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=GetCallerIdentity&Action=AssumeRole"
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: AssumeRole in the query, GetCallerIdentity in the body"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: AssumeRole in the query, GetCallerIdentity in the body"
   connection: *conn
   request:
     method: POST
     url: "https://sts.eu-west-1.amazonaws.com/?Action=AssumeRole"
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=GetCallerIdentity"
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: a GET query request matches no tool"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: a GET query request matches no tool"
   connection: *conn
   request: { method: GET, url: "https://sts.eu-west-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: wrong content type"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: wrong content type"
   connection: *conn
   request:
     method: POST
     url: "https://sts.eu-west-1.amazonaws.com/"
     headers: { content-type: text/plain }
     body: "Action=GetCallerIdentity"
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: compressed body"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: compressed body"
   connection: *conn
   request:
     method: POST
     url: "https://sts.eu-west-1.amazonaws.com/"
     headers: { content-type: application/x-www-form-urlencoded, content-encoding: br }
     body: "Action=GetCallerIdentity"
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: truncated body"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: truncated body"
   connection: *conn
   request:
     method: POST
@@ -151,52 +152,52 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=GetCallerIdentity"
     body_truncated: true
-  expect: { app: aws-role, no_tool: true }
+  expect: { app: aws-keys, no_tool: true }
 # Credential-minting STS actions match no tool, so `grants.block_untooled` blocks them before any
 # rule (proved end to end by gw/it/apps.rs::sts_credential_minting_actions_are_blocked_and_never_signed).
-- name: "negative sts_get_caller_identity: AssumeRoleWithWebIdentity"
+- name: "assume role: negative sts_get_caller_identity: AssumeRoleWithWebIdentity"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=AssumeRoleWithWebIdentity&Version=2011-06-15" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: AssumeRoleWithSAML"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: AssumeRoleWithSAML"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=AssumeRoleWithSAML&Version=2011-06-15" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: GetSessionToken"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: GetSessionToken"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetSessionToken&Version=2011-06-15" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: GetFederationToken"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: GetFederationToken"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetFederationToken&Name=x" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: GetAccessKeyInfo"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: GetAccessKeyInfo"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetAccessKeyInfo&AccessKeyId=AKIDEXAMPLE" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: lowercase action"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: lowercase action"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=getcalleridentity" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: odd-cased action"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: odd-cased action"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetCallerIDentity" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: odd-cased parameter name"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: odd-cased parameter name"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "ACTION=GetCallerIdentity" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: Action in the query and the body with different values"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: Action in the query and the body with different values"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/?Action=GetCallerIdentity", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=AssumeRole" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: X-Amz-Target variant"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: X-Amz-Target variant"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { x-amz-target: "AWSSecurityTokenServiceV20110615.GetCallerIdentity", content-type: application/x-amz-json-1.1 }, body: "{}" }
-  expect: { app: aws-role, no_tool: true }
+  expect: { app: aws-keys, no_tool: true }
 # FIX-085 (SEC-68): a raw `;` may separate pairs for the upstream, and parameter names may be
 # read without case. One `Action` for us can be two for it, so none of these is a tool.
-- name: "negative ec2_describe: a semicolon may start a second Action"
+- name: "assume role: negative ec2_describe: a semicolon may start a second Action"
   connection: *conn
   request:
     method: POST
@@ -204,7 +205,7 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "Action=DescribeInstances;Action=TerminateInstances&Version=2016-11-15"
   expect: { tool: ec2_call }
-- name: "negative ec2_describe: the same parameter in two spellings is repeated"
+- name: "assume role: negative ec2_describe: the same parameter in two spellings is repeated"
   connection: *conn
   request:
     method: POST
@@ -212,11 +213,11 @@
     headers: { content-type: application/x-www-form-urlencoded }
     body: "ACTION=TerminateInstances&Action=DescribeInstances&Version=2016-11-15"
   expect: { tool: ec2_call }
-- name: "negative sts_get_caller_identity: a semicolon may start a second Action"
+- name: "assume role: negative sts_get_caller_identity: a semicolon may start a second Action"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetCallerIdentity;Action=AssumeRole&Version=2011-06-15" }
-  expect: { app: aws-role, no_tool: true }
-- name: "negative sts_get_caller_identity: ACTION=AssumeRole beside Action=GetCallerIdentity"
+  expect: { app: aws-keys, no_tool: true }
+- name: "assume role: negative sts_get_caller_identity: ACTION=AssumeRole beside Action=GetCallerIdentity"
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "ACTION=AssumeRole&Action=GetCallerIdentity&Version=2011-06-15" }
-  expect: { app: aws-role, no_tool: true }
+  expect: { app: aws-keys, no_tool: true }
