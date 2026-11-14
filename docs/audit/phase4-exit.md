@@ -57,6 +57,11 @@ Logs: summary lines only under `docs/audit/phase4-logs/`; raw logs were kept out
 | 7 | `… kind.sh --release-images` (the `--fresh` cluster reused) | 0 | release-profile images; same result, `k6` skipped | 29m33s |
 | 7 | `AURORA_E2E_PREVIEWS_DOMAIN=previews.e2e.aurora.dev … kind.sh --fresh` (relay on) | 0 | `aurora-relay` pod Running; `k1`..`k6` **6 passed incl. `k6_preview_round_trip_http_and_websocket`**; probes: sandbox→relay path to runner svc/pod :4108 `CONNECT` rc=0 (the k6 probe set), api :4101 control | 8m30s |
 
+| 8 | `AURORA_DEV_CLUSTER=aurora-audit4-dev AURORA_DEV_PORT=4150 deploy/dev/kind-dev.sh up --llm-mock` | 0 | cluster + images + release up (warm cache) | 6m00s |
+| 8 | `… scripts/e2e/first-run.sh` run 1 / run 2 (same stack, fresh user each) | 0 / 0 | 1 passed each (journey 30.7 s / 30.1 s, mock answer "pong") | 33s / 31s |
+| 8 | `… first-run.sh e2e/no-default-model.spec.ts` | 0 | 2 passed (`first-run` + `no-default-model`) | 71s |
+| 8 | `… first-run.sh e2e/onboarding-journeys.spec.ts` | 0 | 4 passed (`first-run` + onboarding journeys 1–3) | 1m46s |
+
 Step 7 notes. **`aurora-terminator`: phase 5 (D-138), skipped.** `aurora-relay` (D-138 phase-4 service) is in the chart behind
 `relay.enabled` and a `terminal.enabled`-gated runner :4108 rule. NetworkPolicy (`deploy/helm/aurora/templates/networkpolicy.yaml`),
 default-deny posture plus the allow-dns policy:
