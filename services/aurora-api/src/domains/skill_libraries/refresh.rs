@@ -14,7 +14,7 @@ use base64::Engine as _;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::content::{self, Candidate, LoadError, Reader};
+use super::content::{self, Candidate, LoadError, ReadError, Reader};
 use super::service::block_for;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
@@ -135,11 +135,11 @@ pub async fn refresh_library_within(
         .max(limits::LIBRARY_REFRESH_INTERVAL_MIN.as_secs());
     let result = match tokio::time::timeout(budget, compare(state, &lib, owner)).await {
         Ok(r) => r,
-        Err(_) => Err("the refresh took too long and was stopped; it will retry".to_owned()),
+        Err(_) => Err("the refresh took too long and was stopped; it will retry".into()),
     };
     metrics::histogram!("aurora_skill_library_refresh_duration_seconds")
         .record(started.elapsed().as_secs_f64());
-    let (status, error, failures, head, label) = match &result {
+    let (status, error, failures, head, label, next) = match &result {
         Ok(d) => (
             if d.over_budget {
                 "over_budget"
@@ -154,21 +154,42 @@ pub async fn refresh_library_within(
             } else {
                 "unchanged"
             },
+            next_in_secs(interval, 0),
         ),
-        Err(reason) => (
+        // (FIX-096) The git host throttled us: not a failure of the library. Keep its state and
+        // failure count and come back after the host's (capped) `Retry-After`.
+        Err(Fail {
+            retry_after: Some(secs),
+            ..
+        }) => (
+            if lib.status == "over_budget" {
+                "over_budget"
+            } else if lib.status == "error" {
+                "error"
+            } else {
+                "active"
+            },
+            lib.last_error.clone(),
+            lib.refresh_failures,
+            None,
+            "throttled",
+            *secs as f64,
+        ),
+        Err(Fail { reason, .. }) => (
             "error",
             Some(one_line(reason, 200)),
             lib.refresh_failures + 1,
             None,
             "error",
+            next_in_secs(interval, lib.refresh_failures + 1),
         ),
     };
     metrics::counter!("aurora_skill_library_refresh_total", "result" => label).increment(1);
-    let next = next_in_secs(interval, failures);
     let done = RefreshDone {
         id: lib.id,
         owner,
         head_sha: head,
+        head_epoch: lib.head_epoch,
         status,
         error: error.as_deref(),
         failures,
@@ -192,9 +213,42 @@ fn blobs_of(v: &Option<serde_json::Value>) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Done, String> {
-    fn db<E>(_: E) -> String {
-        "the database is unavailable".to_owned()
+/// Why a pass did not finish; with `retry_after` the git host throttled it (not a failure).
+struct Fail {
+    reason: String,
+    retry_after: Option<u64>,
+}
+
+impl From<String> for Fail {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            retry_after: None,
+        }
+    }
+}
+
+impl From<&str> for Fail {
+    fn from(reason: &str) -> Self {
+        reason.to_owned().into()
+    }
+}
+
+impl From<ReadError> for Fail {
+    fn from(e: ReadError) -> Self {
+        Self {
+            reason: e.reason(),
+            retry_after: match e {
+                ReadError::Throttled(s) => Some(s),
+                _ => None,
+            },
+        }
+    }
+}
+
+async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Done, Fail> {
+    fn db<E>(_: E) -> Fail {
+        "the database is unavailable".into()
     }
     let conn = lib.connection_id.ok_or("connection_deleted")?;
     let mut c = state.pool.acquire().await.map_err(db)?;
@@ -220,10 +274,8 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
         conn,
         repo: &lib.repo,
     };
-    let head = reader
-        .resolve(lib.reference.as_deref())
-        .await
-        .map_err(|e| e.reason())?;
+    let head = reader.resolve(lib.reference.as_deref()).await?;
+    repo::record_head(&mut c, lib.id, &head).await.map_err(db)?;
     // An unchanged head costs this one call (a library over budget re-checks: space may be free).
     if lib.last_head_sha.as_deref() == Some(head.as_str()) && lib.status != "over_budget" {
         return Ok(Done {
@@ -233,12 +285,9 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
         });
     }
     let skills = repo::library_skills(&mut c, lib.id).await.map_err(db)?;
-    let entries = reader.tree(&head).await.map_err(|e| e.reason())?;
+    let entries = reader.tree(&head).await?;
     let cands = content::assemble(&block, &lib.path, &entries);
     let by_dir: BTreeMap<&str, &Candidate> = cands.iter().map(|c| (c.dir.as_str(), c)).collect();
-    let mut pending_bytes = repo::pending_bytes_org(&mut c, lib.org_id)
-        .await
-        .map_err(db)?;
     let mut done = Done {
         head: head.clone(),
         over_budget: false,
@@ -279,7 +328,7 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
                     continue;
                 }
                 match content::load(&reader, cand).await {
-                    Err(LoadError::Read(e)) => return Err(e.reason()),
+                    Err(LoadError::Read(e)) => return Err(e.into()),
                     Err(LoadError::Invalid(r)) => {
                         let r = one_line(&r, 300);
                         let h = content::marker_sha256("invalid", &r, &cand.blobs());
@@ -324,6 +373,17 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
             continue;
         }
         let replaced = pending.as_ref().map_or(0, |p| i64::from(p.bytes));
+        // (FIX-096) Sum and insert under the org's lock: two libraries of one organization
+        // refreshing at once must not both pass the cap.
+        let mut tx = state.pool.begin().await.map_err(db)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("skill_library_pending:{}", lib.org_id))
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let pending_bytes = repo::pending_bytes_org(&mut tx, lib.org_id)
+            .await
+            .map_err(db)?;
         if pending_bytes - replaced + i64::from(bytes)
             > limits::LIBRARY_PENDING_BYTES_PER_ORG as i64
         {
@@ -331,7 +391,7 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
             break;
         }
         let u = repo::insert_update(
-            &mut c,
+            &mut tx,
             &NewUpdate {
                 skill_id: s.id,
                 library_id: lib.id,
@@ -351,7 +411,7 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
             Err(aurora_db::DbError::UniqueViolation { .. }) => continue,
             Err(e) => return Err(db(e)),
         };
-        pending_bytes += i64::from(bytes) - replaced;
+        tx.commit().await.map_err(db)?;
         done.proposed += 1;
         audit::record(
             state,

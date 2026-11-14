@@ -963,9 +963,18 @@ other workspace); `skill_files` is unchanged.
 | last_error | text null | sanitized, ≤ 200 chars, never a token or a URL with credentials |
 | refresh_lease_until, lease_owner | timestamptz null, uuid null | the per-library lease of the refresh job (`LIBRARY_LEASE`) |
 | check_requested_at | timestamptz null | the last "Check now" (at most once per `LIBRARY_CHECK_NOW_INTERVAL`, 429 `library_check_too_soon`) (D-154) |
+| head_epoch | integer not null default 0 | bumped whenever an add clears `last_head_sha`; a refresh writes its head only if the epoch is the one it read (compare-and-set; FIX-096) |
 | created_by_user_id | uuid null FK→users (set null) | |
 | unique | (org_id, label) (`skill_libraries_label_uq`) | |
 | index | (org_id); (next_refresh_at) where status in (active, error, over_budget) | |
+
+### `skill_library_heads` (FIX-096, D-178 Q-R5-3, D-210; heads browse and add accept)
+| Column | Type | Notes |
+|---|---|---|
+| library_id | uuid FK→skill_libraries (cascade) | pk part |
+| commit_sha | text | pk part; a commit the library's ref pointed at (recorded by refresh, browse, create, patch) |
+| seen_at | timestamptz not null default now() | the newest 20 per library are kept (`HEADS_KEPT`) |
+| index | (library_id, seen_at desc) | |
 
 ### `skill_library_updates` (phase 4, P4-GSL, D-148; proposed updates)
 | Column | Type | Notes |

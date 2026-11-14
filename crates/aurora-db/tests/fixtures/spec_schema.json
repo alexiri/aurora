@@ -936,6 +936,7 @@
       "check_requested_at",
       "connection_id",
       "created_by_user_id",
+      "head_epoch",
       "id",
       "label",
       "last_error",
@@ -950,6 +951,11 @@
       "refresh_lease_until",
       "repo",
       "status"
+    ],
+    "skill_library_heads": [
+      "commit_sha",
+      "library_id",
+      "seen_at"
     ],
     "skill_library_updates": [
       "bytes",

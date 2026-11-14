@@ -647,6 +647,18 @@ async fn approve_update(
     if u.content_sha256.as_deref() != Some(quoted.as_slice()) {
         return Err(superseded());
     }
+    // (D-178 Q-R5-6) Pausing a library also stops approval of what it already proposed;
+    // rejecting stays possible.
+    if let Some(lid) = row.library_id
+        && repo::get_library(&mut tx, lid)
+            .await?
+            .is_some_and(|l| l.status == "paused")
+    {
+        return Err(ApiError::conflict(
+            "library_paused",
+            "This library is paused; resume it before approving its updates.",
+        ));
+    }
     let owner = Owner {
         agent: row.agent_id,
         workspace: row.workspace_id,
