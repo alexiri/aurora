@@ -463,6 +463,33 @@ fn text_of(s: &str) -> String {
     out
 }
 
+/// The text between the tags of an HTML block: image openers broken and, outside an `<a>`, bare
+/// URLs made links (D-270) — as `<a href>` where the URL fits an attribute, else the colon is an
+/// entity (`https&#58;//…`), which a platform's URL matcher does not read.
+fn html_text(piece: &str, in_a: bool) -> String {
+    let piece = break_image_openers(piece);
+    if in_a {
+        return piece;
+    }
+    let mut out = String::with_capacity(piece.len());
+    let mut at = 0;
+    for u in bare_url_ranges(&piece) {
+        out.push_str(&piece[at..u.start]);
+        let url = &piece[u.clone()];
+        if safe_href(url) && !url.contains('&') {
+            out.push_str(&format!("<a href=\"{url}\">{url}</a>"));
+        } else {
+            let colon = url.find(':').unwrap_or(0);
+            out.push_str(&url[..colon]);
+            out.push_str("&#58;");
+            out.push_str(&url[colon + 1..]);
+        }
+        at = u.end;
+    }
+    out.push_str(&piece[at..]);
+    out
+}
+
 /// Sanitize raw HTML text (an HTML block, or one inline tag): comments, doctype/CDATA/PI and
 /// tags outside the allowlist are removed (their text stays), allowlisted tags lose every
 /// attribute but the harmless ones, `<img>` becomes `🖼 alt`.
@@ -470,13 +497,14 @@ fn sanitize_html(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     let mut open_a: Option<(usize, String)> = None;
+    let mut in_a = false;
     while i < s.len() {
         let rest = &s[i..];
         let Some(p) = rest.find('<') else {
-            out.push_str(&break_image_openers(rest));
+            out.push_str(&html_text(rest, in_a));
             break;
         };
-        out.push_str(&break_image_openers(&rest[..p]));
+        out.push_str(&html_text(&rest[..p], in_a));
         i += p;
         let rest = &s[i..];
         let next = rest[1..].chars().next();
@@ -517,6 +545,7 @@ fn sanitize_html(s: &str) -> String {
             continue;
         };
         if clean == "</a>" {
+            in_a = false;
             out.push_str(&clean);
             if let Some((at, dest)) = open_a.take()
                 && let Some(suf) = deceptive_suffix(&text_of(&out[at..]), &dest)
@@ -525,6 +554,9 @@ fn sanitize_html(s: &str) -> String {
                 out.push_str(&suf);
             }
             continue;
+        }
+        if clean == "<a>" || clean.starts_with("<a ") {
+            in_a = true;
         }
         if let Some(h) = href {
             open_a = Some((out.len() + clean.len(), h));
@@ -546,6 +578,152 @@ fn href_of(tag: &str) -> Option<String> {
         .and_then(|(_, v)| v)
 }
 
+/// Byte ranges of the bare `http(s)://` URLs in `raw` (a run of prose): to the next whitespace or
+/// `<`, without the trailing punctuation and unbalanced closing brackets GFM leaves out.
+fn bare_url_ranges(raw: &str) -> Vec<Range<usize>> {
+    let low = raw.to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(p) = low[from..].find("http") {
+        let a = from + p;
+        let after = &low[a + 4..];
+        let scheme = if after.starts_with("s://") {
+            8
+        } else if after.starts_with("://") {
+            7
+        } else {
+            from = a + 4;
+            continue;
+        };
+        let body = a + scheme;
+        let mut end = body
+            + raw[body..]
+                .find(|c: char| c.is_whitespace() || c == '<')
+                .unwrap_or(raw.len() - body);
+        loop {
+            let u = &raw[a..end];
+            let Some(c) = u.chars().next_back() else {
+                break;
+            };
+            let unbalanced =
+                |open: char, close: char| u.matches(close).count() > u.matches(open).count();
+            if matches!(
+                c,
+                '.' | ',' | ':' | ';' | '!' | '?' | '\'' | '"' | '*' | '_' | '~'
+            ) || (c == ')' && unbalanced('(', ')'))
+                || (c == ']' && unbalanced('[', ']'))
+            {
+                end -= c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end > body {
+            out.push(a..end);
+        }
+        from = end.max(a + 4);
+    }
+    out
+}
+
+/// A markdown escape `\X` (X ASCII punctuation) undone.
+fn unescape_md(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\'
+            && let Some(n) = it.peek()
+            && n.is_ascii_punctuation()
+        {
+            out.push(*n);
+            it.next();
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A bare URL as a labelled link (D-270): same text, same target. The destination uses the `<…>`
+/// form only when it holds something that would end a plain one.
+fn labelled_link(label_md: &str, dest: &str) -> String {
+    let plain = !dest.chars().any(|c| {
+        c.is_whitespace() || c.is_control() || matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | '\\')
+    });
+    if plain {
+        format!("[{label_md}]({dest})")
+    } else {
+        format!("[{label_md}]({})", dest_form(dest))
+    }
+}
+
+/// The label of an autolink `<url>` rewritten to a link: the URL's text, escaped.
+fn autolink_label(url: &str) -> String {
+    let mut out = String::with_capacity(url.len());
+    for c in url.chars() {
+        if matches!(
+            c,
+            '\\' | '[' | ']' | '*' | '_' | '~' | '`' | '<' | '>' | '&'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Edits for a run of prose text `src[start..end]` (outside code): image openers broken
+/// (`![` → `!\[`), link joints the parser did not form broken (`](` → `]\(`) and definition
+/// look-alikes at a line start broken (`[x]:` → `\[x]:`) — a platform with a looser dialect
+/// (Mattermost: a destination with spaces, a definition after a paragraph line) would form what
+/// the parser did not — and, outside links, bare URLs made labelled links (D-270).
+fn prose_edits(
+    src: &str,
+    start: usize,
+    end: usize,
+    link_free: bool,
+    edits: &mut Vec<(usize, usize, String)>,
+) {
+    let raw = &src[start..end];
+    for (p, _) in raw.match_indices("![") {
+        edits.push((start + p + 1, start + p + 1, "\\".to_owned()));
+    }
+    for (p, _) in raw.match_indices("](") {
+        edits.push((start + p + 1, start + p + 1, "\\".to_owned()));
+    }
+    // A definition look-alike: up to three spaces, `[`, a label without `]`, `]:`.
+    let mut line_at = 0usize;
+    // Indentation in front of the run on its own line (the parser leaves it out of the text).
+    let before = &src[src[..start].rfind('\n').map_or(0, |p| p + 1)..start];
+    for line in raw.split_inclusive('\n') {
+        let lead = if line_at == 0 { before } else { "" };
+        if lead.chars().all(|c| c == ' ') {
+            let t = line.trim_start_matches(' ');
+            let indent = lead.len() + line.len() - t.len();
+            if indent <= 3
+                && let Some(r) = t.strip_prefix('[')
+                && let Some(c) = r.find(']')
+                && r[c + 1..].starts_with(':')
+                && !r[..c].contains(['\n', '['])
+            {
+                let at = start + line_at + (line.len() - t.len());
+                edits.push((at, at, "\\".to_owned()));
+            }
+        }
+        line_at += line.len();
+    }
+    if link_free {
+        for u in bare_url_ranges(raw) {
+            let label = &raw[u.clone()];
+            edits.push((
+                start + u.start,
+                start + u.end,
+                labelled_link(label, &unescape_md(label)),
+            ));
+        }
+    }
+}
+
 /// One pass of the exceptions 1–3 (byte-range edits), then exception 4.
 fn rewrite(src: &str) -> String {
     let evs: Vec<(Event<'_>, Range<usize>)> =
@@ -554,6 +732,7 @@ fn rewrite(src: &str) -> String {
     let mut consumed = 0usize;
     let mut link_ends: Vec<usize> = Vec::new();
     let mut in_code = false;
+    let mut text_until = 0usize;
     for (i, (ev, r)) in evs.iter().enumerate() {
         if r.start < consumed {
             continue;
@@ -563,11 +742,21 @@ fn rewrite(src: &str) -> String {
             Event::Start(Tag::CodeBlock(_)) => in_code = true,
             Event::End(pulldown_cmark::TagEnd::CodeBlock) => in_code = false,
             // Prose: an image opener is broken wherever it is not code (D-227(1), review rule (c)).
-            Event::Text(_) if !in_code => {
-                let raw = &src[r.clone()];
-                for (p, _) in raw.match_indices("![") {
-                    edits.push((r.start + p + 1, r.start + p + 1, "\\".to_owned()));
+            Event::Text(_) if !in_code && r.start >= text_until => {
+                // A run of adjacent text events (the parser splits prose at every `[`, `]`, `_`…):
+                // what the platform reads is the run as written.
+                let mut end = r.end;
+                let mut j = i;
+                // (An escaped character's event starts after its backslash: that gap is fine.)
+                while let Some((Event::Text(_), rr)) = evs.get(j + 1)
+                    && rr.start >= end
+                    && matches!(&src[end..rr.start], "" | "\\")
+                {
+                    end = rr.end;
+                    j += 1;
                 }
+                text_until = end;
+                prose_edits(src, r.start, end, link_ends.is_empty(), &mut edits);
             }
             Event::InlineMath(_) | Event::DisplayMath(_) => {
                 let raw = &src[r.clone()];
@@ -600,7 +789,15 @@ fn rewrite(src: &str) -> String {
             }) => {
                 let label = plain_text(&evs, i);
                 // `<a@b.c>` is an e-mail autolink: its destination carries no scheme but is a mailto.
-                if allowed_url(dest_url) || matches!(link_type, LinkType::Email) {
+                if allowed_url(dest_url) && matches!(link_type, LinkType::Autolink) {
+                    // `<https://x>` is fetched by a platform's preview like a bare URL (D-270).
+                    edits.push((
+                        r.start,
+                        r.end,
+                        labelled_link(&autolink_label(dest_url), dest_url),
+                    ));
+                    consumed = r.end;
+                } else if allowed_url(dest_url) || matches!(link_type, LinkType::Email) {
                     link_ends.push(r.end);
                     if !matches!(link_type, LinkType::Autolink | LinkType::Email)
                         && let Some(suf) = deceptive_suffix(&label, dest_url).or_else(|| {
@@ -789,7 +986,7 @@ fn markdown_safe_inner(clean: &str) -> String {
             joined.push_str(&o);
         } else {
             FALLBACKS.fetch_add(1, Ordering::Relaxed);
-            joined.push_str(&markdown_as_data(block, usize::MAX));
+            joined.push_str(&data_fallback(block));
             joined.push('\n');
         }
     }
@@ -797,7 +994,23 @@ fn markdown_safe_inner(clean: &str) -> String {
         return joined;
     }
     FALLBACKS.fetch_add(1, Ordering::Relaxed);
-    markdown_as_data(&clean, usize::MAX)
+    data_fallback(&clean)
+}
+
+/// A block that could not be verified, as escaped data. URLs in it are broken (`https:\//…`,
+/// which still reads as the address) so no platform's preview fetches them (D-270).
+fn data_fallback(block: &str) -> String {
+    let data = markdown_as_data(block, usize::MAX);
+    let mut out = String::with_capacity(data.len() + 8);
+    let mut at = 0;
+    for u in bare_url_ranges(&data) {
+        let colon = data[u.clone()].find(':').map_or(u.start, |c| u.start + c);
+        out.push_str(&data[at..=colon]);
+        out.push('\\');
+        at = colon + 1;
+    }
+    out.push_str(&data[at..]);
+    out
 }
 
 fn is_wordish(c: char) -> bool {
