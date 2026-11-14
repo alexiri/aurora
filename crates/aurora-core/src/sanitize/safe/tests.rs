@@ -696,6 +696,19 @@ fn link_host_lie_names_the_real_host() {
         Some("evil.example".to_owned())
     );
     assert_eq!(link_host_lie("cern.ch", "https://www.cern.ch/x"), None);
+    // Closing punctuation after the name does not hide it.
+    for label in [
+        "https://cern.ch]",
+        "cern.ch.",
+        "(cern.ch)",
+        "https://cern.ch,",
+    ] {
+        assert_eq!(
+            link_host_lie(label.trim_start_matches('('), "https://evil.example/x"),
+            Some("evil.example".to_owned()),
+            "{label}"
+        );
+    }
     assert_eq!(link_host_lie("read this", "https://evil.example"), None);
     assert_eq!(
         link_host_lie("cern.ch", "https://evil.example\\@cern.ch"),

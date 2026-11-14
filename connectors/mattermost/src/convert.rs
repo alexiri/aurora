@@ -343,7 +343,36 @@ impl Html {
 /// no image opener (`![`, which Mattermost's own dialect — `![x](url =10x10)`, a definition
 /// that interrupts a paragraph — can complete) outside code.
 pub fn is_safe(text: &str) -> bool {
-    links_are_honest(text) && no_image_or_bad_link(text)
+    // After the links (and code) are taken out, no bare URL may be left: the server fetches a
+    // bare URL of a post unprompted (D-270).
+    links_are_honest(text).is_some_and(|rest| {
+        let low = rest.to_ascii_lowercase();
+        !low.contains("http://") && !low.contains("https://")
+    }) && no_image_or_bad_link(text)
+}
+
+/// Whether the byte at `i` of `m` is backslash-escaped.
+fn escaped(m: &str, i: usize) -> bool {
+    m[..i].chars().rev().take_while(|c| *c == '\\').count() % 2 == 1
+}
+
+/// The text of a label as it is displayed: entities and backslash escapes decoded, emphasis
+/// and code markers gone.
+fn displayed(label: &str) -> String {
+    Parser::new_ext(label, options())
+        .filter_map(|e| match e {
+            Event::Text(t) | Event::Code(t) => Some(t.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A reference key the way a parser compares them: whitespace collapsed, case folded.
+fn norm_key(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 static REF_DEF: LazyLock<Regex> = LazyLock::new(|| {
@@ -375,11 +404,7 @@ fn link_ok(label: &str, dest: &str, after: &str) -> bool {
     if !aurora_core::sanitize::allowed_link_scheme(dest) {
         return false;
     }
-    let label: String = label
-        .chars()
-        .filter(|c| !matches!(c, '*' | '_' | '`' | '~'))
-        .collect();
-    match aurora_core::sanitize::link_host_lie(&label, dest) {
+    match aurora_core::sanitize::link_host_lie(&displayed(label), dest) {
         Some(host) => after.starts_with(&format!(" (→ {host})")),
         None => true,
     }
@@ -423,19 +448,25 @@ fn inline_dest(rest: &str) -> Option<(String, usize)> {
     Some((dest, end))
 }
 
-fn links_are_honest(text: &str) -> bool {
+/// Reads the links of `text` the way Mattermost does and checks them (`link_ok`). `Some(rest)`
+/// when every link is honest: `rest` is the text with code, links and definitions blanked out.
+fn links_are_honest(text: &str) -> Option<String> {
     let m = masked(text);
+    let mut blank: Vec<Range<usize>> = Vec::new();
     // Inline links, `[label](dest)`.
     let mut from = 0;
     while let Some(p) = m[from..].find("](") {
         let close = from + p;
         from = close + 2;
-        if m[..close].ends_with('\\') {
+        if escaped(&m, close) {
             continue;
         }
         let mut depth = 0usize;
         let mut start = None;
         for (i, c) in m[..close].char_indices().rev() {
+            if escaped(&m, i) {
+                continue;
+            }
             match c {
                 ']' => depth += 1,
                 '[' if depth == 0 => {
@@ -447,24 +478,25 @@ fn links_are_honest(text: &str) -> bool {
             }
         }
         let Some(start) = start else { continue };
-        if m[..start].ends_with('\\') {
-            continue;
-        }
         let Some((dest, span)) = inline_dest(&m[close + 2..]) else {
             continue;
         };
         if !link_ok(&m[start + 1..close], &dest, &m[close + 2 + span..]) {
-            return false;
+            return None;
         }
+        blank.push(start..close + 2 + span);
     }
     // Reference links: definitions anywhere (Mattermost lets one interrupt a paragraph).
     let defs: std::collections::HashMap<String, String> = REF_DEF
         .captures_iter(&m)
-        .map(|c| (c[1].to_lowercase(), c[2].to_owned()))
+        .map(|c| (norm_key(&c[1]), c[2].to_owned()))
         .collect();
+    for d in REF_DEF.find_iter(&m) {
+        blank.push(d.range());
+    }
     for c in REF_USE.captures_iter(&m) {
         let whole = c.get(0).map_or(0..0, |w| w.range());
-        if m[whole.end..].starts_with(['(', ':']) || m[..whole.start].ends_with('\\') {
+        if m[whole.end..].starts_with(['(', ':']) || escaped(&m, whole.start) {
             continue;
         }
         let label = &c[1];
@@ -472,13 +504,22 @@ fn links_are_honest(text: &str) -> bool {
             Some(r) if !r.as_str().is_empty() => r.as_str(),
             _ => label,
         };
-        if let Some(dest) = defs.get(&key.to_lowercase())
-            && !link_ok(label, dest, &m[whole.end..])
-        {
-            return false;
+        if let Some(dest) = defs.get(&norm_key(key)) {
+            if !link_ok(label, dest, &m[whole.end..]) {
+                return None;
+            }
+            blank.push(whole);
         }
     }
-    true
+    let mut rest = m.into_bytes();
+    for r in blank {
+        for x in &mut rest[r] {
+            if *x != b'\n' {
+                *x = b' ';
+            }
+        }
+    }
+    Some(String::from_utf8_lossy(&rest).into_owned())
 }
 
 fn no_image_or_bad_link(text: &str) -> bool {
@@ -908,6 +949,41 @@ mod tests {
             "```\n[https://cern.ch](https://evil.example/login)\n```",
             "[x][r]\n\n[r]: https://x.example/",
             "[ref] alone and [a](https://a.example)",
+        ] {
+            assert!(super::is_safe(ok), "{ok:?}");
+        }
+    }
+
+    /// Final review (2): the label is compared as displayed (entities and escapes decoded), the
+    /// reference keys are normalised the way a parser does it, an escaped bracket does not
+    /// start or end a label — and a bare URL left in the text (D-270) is refused.
+    #[test]
+    fn the_last_line_check_compares_labels_as_displayed_and_refuses_bare_urls() {
+        for lie in [
+            "[https://cern\\.ch](https://evil.example/a b)",
+            "[https://cern&#46;ch](https://evil.example/a b)",
+            "para\n[r]: https://evil.example/login\n[https://cern&#46;ch][r]",
+            "para\n[cern  ch]: https://evil.example/login\n[https://cern.ch][cern ch]",
+            "para\n[CERN CH]: https://evil.example/login\n[https://cern.ch][cern   ch]",
+            "[https://cern.ch\\]](https://evil.example/a b)",
+            "[**https://cern.ch**](https://evil.example/a b)",
+        ] {
+            assert!(!super::is_safe(lie), "{lie:?}");
+        }
+        for bare in [
+            "see https://evil.example/?d=S",
+            "<https://evil.example/?d=S>",
+            "[x](https://a.example) and then https://evil.example/?d=S",
+            "HTTP://EVIL.EXAMPLE/?d=S",
+        ] {
+            assert!(!super::is_safe(bare), "{bare:?}");
+        }
+        for ok in [
+            "[https://a.example](https://a.example)",
+            "see [x](https://a.example/p?q=1) and [y][r]\n\n[r]: https://b.example/",
+            "`https://a.example`",
+            "```\nhttps://a.example\n```",
+            "no url here, only www.example.org",
         ] {
             assert!(super::is_safe(ok), "{ok:?}");
         }

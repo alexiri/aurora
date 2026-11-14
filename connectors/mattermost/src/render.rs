@@ -145,10 +145,13 @@ pub fn render_text(neutral: &str, lk: &Lookups) -> String {
         tracing::warn!(
             "converted Mattermost text failed the safety re-check; posting it as plain text"
         );
-        defuse(&aurora_core::sanitize::markdown_as_data(
-            &neutral_without_marker(neutral),
-            usize::MAX,
-        ))
+        // A URL stays readable but is no URL to the server's preview fetch (`https:\//…`, D-270).
+        static URL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?i)(https?):/").unwrap_or_else(|_| unreachable!())
+        });
+        let data =
+            aurora_core::sanitize::markdown_as_data(&neutral_without_marker(neutral), usize::MAX);
+        defuse(&URL.replace_all(&data, "$1:\\/"))
     }
 }
 

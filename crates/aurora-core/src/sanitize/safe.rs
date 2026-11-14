@@ -206,6 +206,8 @@ fn label_host(label: &str) -> Option<String> {
     let host = l.split(['/', '?', '#']).next()?;
     let host = host.rsplit('@').next()?;
     let host = host.split(':').next()?;
+    // Closing punctuation after the name is still the name (`https://cern.ch]`, `cern.ch.`).
+    let host = host.trim_end_matches(['.', ',', ';', '!', '?', '\'', '"', ')', ']']);
     let tld = host.rsplit_once('.')?.1;
     (host
         .chars()

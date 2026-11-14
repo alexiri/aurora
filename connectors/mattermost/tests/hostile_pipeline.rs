@@ -89,6 +89,10 @@ const S: &str = "https://evil.example/?d=SECRET";
 #[test]
 fn the_reviewed_inputs_leave_no_image_and_no_bad_link() {
     let cases = [
+        // D-270: a bare URL / autolink never reaches Mattermost as one.
+        format!("see {S} now"),
+        format!("<{S}>"),
+        format!("<div>{S}</div>"),
         format!("!<a href=\"{S}\">x</a>"),
         format!("<div>\n![x]({S})\n</div>"),
         format!("<span>![x]({S})</span>"),
@@ -179,6 +183,20 @@ fn fragments() -> impl Strategy<Value = String> {
         "<@here>",
         "<@user:U1>",
         "[https://cern.ch](http:e.example/l)",
+        "see https://e.example/?d=SECRET now",
+        "<https://e.example/?d=SECRET>",
+        "- https://e.example/1\n- <https://e.example/2>",
+        "<div>https://e.example/?d=S</div>",
+        "<b>https://e.example/b</b> and <i>https://e.example/c</i>",
+        "> quoted https://e.example/q",
+        "# https://e.example/h",
+        "| a |\n|---|\n| https://e.example/t |",
+        "**https://e.example/s**",
+        "[https://cern\\.ch](https://e.example/a b)",
+        "[https://cern&#46;ch][r]\n\n[r]: https://e.example/",
+        "x\n[r]: https://e.example/\n[https://cern.ch][r]",
+        "[https://cern.ch\\]](https://e.example/a b)",
+        "para\n[cern  ch]: https://e.example/login\n[https://cern.ch][cern ch]",
         "[https://cern.ch](https://e.example/a b)",
         "[https://cern.ch](https://e.example\\@cern.ch)",
         "para\n[r]: https://e.example/\n[https://cern.ch][r]",
