@@ -241,8 +241,8 @@ pub async fn put_settings(
             "exclusive": p.exclusive,
         }));
     crate::audit::commit_critical(tx, &ev).await?;
-    let scim_value = next.get("scim").unwrap_or(&serde_json::Value::Null);
-    let scim = OrgScim::from_settings(org, scim_value);
+    // `update_scim_settings` returns the stored `settings.scim` object itself.
+    let scim = OrgScim::from_settings(org, &next);
     Ok(Json(settings_payload(&state, &scim)))
 }
 

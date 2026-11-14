@@ -85,6 +85,7 @@ mod scim_idp_replay;
 mod scim_link;
 mod scim_protocol;
 mod scim_scope;
+mod scim_settings_put;
 mod secrets;
 mod secrets_migrate;
 mod skill_library;
