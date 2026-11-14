@@ -66,8 +66,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   instance_already_wide: "This self-hosted app is already available to every organization.",
   instance_host_shared:
     "Another registration of this host exists. Delete it first, then make this one available to every organization.",
-  instance_probe_failed:
-    "The server did not answer as expected. Check the host, that it is reachable from the gateway (private addresses need the operator's gateway.allowed_private), and try again.",
+  // Fallback; the specific text is `probeFailedMessage` (FIX-144, `details.reason`).
+  instance_probe_failed: "That host could not be reached from the Aurora server.",
   instance_required: "Choose which instance to connect to.",
   instance_oauth_client_required:
     "Ask an administrator to register an OAuth application for this instance first (Credentials, OAuth clients).",
@@ -145,6 +145,80 @@ export function hostConflictMessage(c: HostConflict, ownOrg = false): string {
         ? `That host is already registered as a self-hosted ${app} in this organization.`
         : `That host is already registered as a self-hosted ${app} by another organization — ask an instance administrator.`;
   }
+}
+
+/** `details` of a 422 `instance_probe_failed` (FIX-144, C-730). Unknown `reason`s mean `unreachable`. */
+export interface ProbeFailure {
+  reason?: string;
+  status?: number | null;
+  url?: string;
+  expected?: number[];
+  location?: string;
+}
+
+export function probeFailure(err: unknown): ProbeFailure | null {
+  if (!(err instanceof ApiError) || err.code !== "instance_probe_failed") return null;
+  const d = err.details;
+  return typeof d === "object" && d !== null ? (d as ProbeFailure) : {};
+}
+
+const REASON_PHRASES: Record<number, string> = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+
+function urlParts(u: string | undefined): { host: string; path: string } | null {
+  if (!u) return null;
+  try {
+    const p = new URL(u);
+    return { host: p.host, path: p.pathname };
+  } catch {
+    return null;
+  }
+}
+
+/** The sentence for a failed registration check: what the host actually answered (FIX-144). */
+export function probeFailedMessage(d: ProbeFailure, appName: string, host: string): string {
+  const path = urlParts(d.url)?.path ?? "the check path";
+  const app = appName || "The app";
+  const status = d.status ?? undefined;
+  switch (d.reason) {
+    case "unexpected_status": {
+      if (status === 404) {
+        return `${host} answered 404 Not Found at ${path}. ${app} answers there when it is served at the root of the host. Servers under a path, such as https://${host}/jira, are not supported yet.`;
+      }
+      if (status !== undefined && status >= 300 && status < 400) {
+        const loc = d.location ? urlParts(d.location) : null;
+        const head = `${host} redirected ${path}${d.location ? ` to ${d.location}` : ""}.`;
+        if (loc && loc.host.toLowerCase() !== host.toLowerCase()) return `${head} Register that host instead.`;
+        return `${head} ${app} may be served under a path, which is not supported yet.`;
+      }
+      if (status !== undefined) {
+        const phrase = REASON_PHRASES[status];
+        const want = (d.expected ?? []).join(" or ");
+        return `${host} answered ${status}${phrase ? ` ${phrase}` : ""} at ${path}${want ? `; ${app} answers ${want} there` : ""}. Check that this host runs ${app}.`;
+      }
+      break;
+    }
+    case "destination_refused":
+      return `The gateway may not connect to ${host}: it resolves to a private address. An operator can allow it with gateway.allowed_private.`;
+    case "dns":
+      return `${host} could not be found from the Aurora server. Check the spelling. An internal name must resolve in the cluster's DNS.`;
+    case "timeout":
+      return `${host} did not answer within 10 seconds. Check that the Aurora server can reach it (firewall, proxy).`;
+    case "connect":
+      return `${host} refused the connection on port 443.`;
+    case "tls":
+      return `${host}'s TLS certificate is not trusted by Aurora. If a private CA signed it, an operator can add that CA (extra CA bundle).`;
+  }
+  return `${host} could not be reached from the Aurora server.`;
 }
 
 export function errorMessage(err: unknown): string {

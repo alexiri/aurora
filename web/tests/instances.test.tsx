@@ -139,6 +139,34 @@ describe("instances admin section", () => {
     expect(calls.filter((c) => c.method === "POST")[1].body).toEqual({ app_id: "desk", host: "desk.acme.example", label: "desk.acme.example" });
   });
 
+  it("a failed host check says what happened, in the host field (FIX-144)", async () => {
+    stub({
+      ...catalogue,
+      "GET /v1/orgs/o1/app-instances": () => json(200, { items: [], next_cursor: null }),
+      "POST /v1/orgs/o1/app-instances": () =>
+        json(422, {
+          error: {
+            code: "instance_probe_failed",
+            message: "x",
+            details: {
+              fields: [{ path: "/host", message: "x" }],
+              reason: "unexpected_status",
+              status: 404,
+              url: "https://its.cern.ch/api/health",
+              expected: [200],
+            },
+          },
+        }),
+    });
+    wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Register a self-hosted app" }));
+    fireEvent.change(await screen.findByLabelText("App"), { target: { value: "desk" } });
+    fireEvent.change(screen.getByLabelText("Host"), { target: { value: "its.cern.ch" } });
+    fireEvent.click(screen.getByRole("button", { name: "Register" }));
+    expect(await screen.findByText(/its\.cern\.ch answered 404 Not Found at \/api\/health\./)).toBeTruthy();
+    expect(screen.queryByText(/could not be reached from the gateway/)).toBeNull();
+  });
+
   it("deleting asks for confirmation and says what happens", async () => {
     const calls = stub({
       ...catalogue,

@@ -1,6 +1,7 @@
 use super::dto::*;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::connect::env::classify_send_error;
 use crate::domains::plugins::{ingest, registry};
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::{ApiError, FieldError, ids};
@@ -143,20 +144,41 @@ fn own_address_setting(state: &AppState, host: &str) -> Option<&'static str> {
 }
 
 /// Run the manifest's probe against the host through the destination guard.
-async fn run_probe(state: &AppState, host: &str, probe: &InstanceProbe) -> Result<(), ApiError> {
-    let fail = |reason: &str, status: Option<u16>| {
-        field_error(
-            "instance_probe_failed",
-            "/host",
-            "The instance did not answer the probe as expected.",
-            Some(json!({ "status": status, "reason": reason })),
-        )
-    };
+async fn run_probe(
+    state: &AppState,
+    host: &str,
+    app_name: &str,
+    probe: &InstanceProbe,
+) -> Result<(), ApiError> {
     let env = &state.connect;
     let raw = format!("https://{host}{}", probe.path);
+    // The URL shown to the person: what was probed, without a query (C-730).
+    let shown = reqwest::Url::parse(&raw).ok().map(|mut u| {
+        u.set_query(None);
+        u
+    });
+    let fail = |reason: &str, status: Option<u16>, location: Option<String>| {
+        let url = shown.as_ref().map_or(raw.clone(), ToString::to_string);
+        let message = probe_message(
+            reason,
+            status,
+            host,
+            &probe.path,
+            app_name,
+            &probe.expect_status,
+            location.as_deref(),
+        );
+        let mut d = json!({
+            "status": status, "reason": reason, "url": url, "expected": probe.expect_status,
+        });
+        if let (Some(l), Some(o)) = (location, d.as_object_mut()) {
+            o.insert("location".into(), Value::String(l));
+        }
+        field_error("instance_probe_failed", "/host", &message, Some(d))
+    };
     let url = env
         .prepare(&raw)
-        .map_err(|_| fail("destination_refused", None))?;
+        .map_err(|_| fail("destination_refused", None, None))?;
     let method = match probe.method {
         ProbeMethod::Get => reqwest::Method::GET,
         ProbeMethod::Head => reqwest::Method::HEAD,
@@ -165,25 +187,95 @@ async fn run_probe(state: &AppState, host: &str, probe: &InstanceProbe) -> Resul
     let resp = env
         .http_instance
         .request(method, url)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(env.probe_timeout())
         .send()
         .await
-        .map_err(|e| {
-            let refused = format!("{e:?}").contains("destination refused");
-            fail(
-                if refused {
-                    "destination_refused"
-                } else {
-                    "unreachable"
-                },
-                None,
-            )
-        })?;
+        .map_err(|e| fail(classify_send_error(&e), None, None))?;
     let status = resp.status().as_u16();
     if probe.expect_status.contains(&status) {
-        Ok(())
-    } else {
-        Err(fail("unexpected_status", Some(status)))
+        return Ok(());
+    }
+    let location = resp
+        .status()
+        .is_redirection()
+        .then(|| {
+            let l = resp
+                .headers()
+                .get(reqwest::header::LOCATION)?
+                .to_str()
+                .ok()?;
+            let base = shown.as_ref()?;
+            let abs = base.join(l).ok()?.to_string();
+            (abs.len() <= 512).then_some(abs)
+        })
+        .flatten();
+    Err(fail("unexpected_status", Some(status), location))
+}
+
+/// The person-readable sentence for a failed registration check (the dashboard words it the same
+/// way, `probeFailedMessage`).
+fn probe_message(
+    reason: &str,
+    status: Option<u16>,
+    host: &str,
+    path: &str,
+    app: &str,
+    expected: &[u16],
+    location: Option<&str>,
+) -> String {
+    match (reason, status) {
+        ("unexpected_status", Some(404)) => format!(
+            "{host} answered 404 Not Found at {path}. {app} answers there when it is served at the root of the host. Servers under a path, such as https://{host}/jira, are not supported yet."
+        ),
+        ("unexpected_status", Some(s)) if (300..400).contains(&s) => {
+            let mut m = format!("{host} redirected {path}");
+            match location {
+                Some(l) => {
+                    m.push_str(&format!(" to {l}."));
+                    let same = reqwest::Url::parse(l)
+                        .ok()
+                        .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case(host)))
+                        .unwrap_or(true);
+                    if same {
+                        m.push_str(&format!(
+                            " {app} may be served under a path, which is not supported yet."
+                        ));
+                    } else {
+                        m.push_str(" Register that host instead.");
+                    }
+                }
+                None => m.push('.'),
+            }
+            m
+        }
+        ("unexpected_status", Some(s)) => {
+            let phrase = reqwest::StatusCode::from_u16(s)
+                .ok()
+                .and_then(|c| c.canonical_reason())
+                .unwrap_or("");
+            let want = expected
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" or ");
+            format!(
+                "{host} answered {s} {phrase} at {path}; {app} answers {want} there. Check that this host runs {app}."
+            )
+        }
+        ("destination_refused", _) => format!(
+            "The gateway may not connect to {host}: it resolves to a private address. An operator can allow it with gateway.allowed_private."
+        ),
+        ("dns", _) => format!(
+            "{host} could not be found from the Aurora server. Check the spelling. An internal name must resolve in the cluster's DNS."
+        ),
+        ("timeout", _) => format!(
+            "{host} did not answer within 10 seconds. Check that the Aurora server can reach it (firewall, proxy)."
+        ),
+        ("connect", _) => format!("{host} refused the connection on port 443."),
+        ("tls", _) => format!(
+            "{host}'s TLS certificate is not trusted by Aurora. If a private CA signed it, an operator can add that CA (extra CA bundle)."
+        ),
+        _ => format!("{host} could not be reached from the Aurora server."),
     }
 }
 
@@ -393,7 +485,7 @@ pub async fn create(
         return Err(instance_conflict(h));
     }
     if let Some(p) = app.instances.as_ref().and_then(|i| i.probe.as_ref()) {
-        run_probe(state, &req.host, p).await?;
+        run_probe(state, &req.host, &app.about.name, p).await?;
     }
     let id = ids::new_id();
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;

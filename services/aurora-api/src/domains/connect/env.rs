@@ -14,6 +14,8 @@ pub struct Env {
     pub allow: PrivateAllow,
     pub hooks: HookClient,
     pub override_origin: Option<reqwest::Url>,
+    /// How long the registration probe waits for an answer (10 s; tests shorten it).
+    probe_timeout_ms: std::sync::atomic::AtomicU64,
 }
 
 /// Publicly routable unicast addresses only (FIX-106: the gateway's destination-guard table,
@@ -22,21 +24,98 @@ pub fn is_public(ip: IpAddr) -> bool {
     !aurora_core::ranges::is_special(ip)
 }
 
+/// Why a guarded resolver gave no address (typed, so callers never match on message text).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveError {
+    /// The name resolved, but no address passed the destination guard.
+    Refused,
+    /// The name did not resolve to any address.
+    NotFound,
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Refused => "destination refused",
+            Self::NotFound => "name not found",
+        })
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
+/// Look `host` up and keep what `keep` allows.
+async fn resolve_guarded(
+    host: &str,
+    keep: impl Fn(IpAddr) -> bool,
+) -> Result<Vec<SocketAddr>, ResolveError> {
+    let all: Vec<SocketAddr> = tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|_| ResolveError::NotFound)?
+        .collect();
+    if all.is_empty() {
+        return Err(ResolveError::NotFound);
+    }
+    let addrs: Vec<SocketAddr> = all.into_iter().filter(|a| keep(a.ip())).collect();
+    if addrs.is_empty() {
+        return Err(ResolveError::Refused);
+    }
+    Ok(addrs)
+}
+
 struct Guarded;
 
 impl Resolve for Guarded {
     fn resolve(&self, name: Name) -> Resolving {
         Box::pin(async move {
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((name.as_str(), 0))
-                .await?
-                .filter(|a| is_public(a.ip()))
-                .collect();
-            if addrs.is_empty() {
-                return Err("destination refused".into());
-            }
+            let addrs = resolve_guarded(name.as_str(), is_public).await?;
             Ok(Box::new(addrs.into_iter()) as Addrs)
         })
     }
+}
+
+/// A rustls error, possibly inside nested `io::Error`s (an `io::Error`'s `source()` skips the
+/// error it wraps, so the wrapped one is reached through `get_ref`).
+fn is_tls_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    if err.downcast_ref::<rustls::Error>().is_some() {
+        return true;
+    }
+    err.downcast_ref::<std::io::Error>()
+        .and_then(std::io::Error::get_ref)
+        .is_some_and(|inner| is_tls_error(inner))
+}
+
+/// Why a request to a registered instance failed before an answer (C-730 `reason`), from the typed
+/// error and its source chain.
+#[must_use]
+pub fn classify_send_error(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        return "timeout";
+    }
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    let mut connect = e.is_connect();
+    while let Some(err) = cur {
+        if let Some(r) = err.downcast_ref::<ResolveError>() {
+            return match r {
+                ResolveError::Refused => "destination_refused",
+                ResolveError::NotFound => "dns",
+            };
+        }
+        if is_tls_error(err) {
+            return "tls";
+        }
+        if err
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
+        {
+            return "timeout";
+        }
+        if let Some(h) = err.downcast_ref::<hyper_util::client::legacy::Error>() {
+            connect |= h.is_connect();
+        }
+        cur = err.source();
+    }
+    if connect { "connect" } else { "unreachable" }
 }
 
 /// `gateway.allowed_private` as the API's connect/probe flows honour it (same entry grammar as the
@@ -135,13 +214,7 @@ impl Resolve for GuardedAllow {
         let allow = self.0.clone();
         Box::pin(async move {
             let host = name.as_str().to_owned();
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
-                .await?
-                .filter(|a| allow.permits(a.ip(), &host))
-                .collect();
-            if addrs.is_empty() {
-                return Err("destination refused".into());
-            }
+            let addrs = resolve_guarded(&host, |ip| allow.permits(ip, &host)).await?;
             Ok(Box::new(addrs.into_iter()) as Addrs)
         })
     }
@@ -176,7 +249,23 @@ impl Env {
             allow,
             hooks: HookClient::new(hookhost_url, internal_ring)?,
             override_origin: None,
+            probe_timeout_ms: std::sync::atomic::AtomicU64::new(10_000),
         })
+    }
+
+    /// The registration probe's timeout.
+    pub fn probe_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.probe_timeout_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
+    /// Shorten the registration probe's timeout (tests).
+    pub fn set_probe_timeout(&self, d: Duration) {
+        let ms = u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+        self.probe_timeout_ms
+            .store(ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Validate an outbound URL (https, host not an IP literal in a private range) and apply
@@ -206,6 +295,34 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    /// (FIX-144) The probe's reason for a name the guard refuses (resolves to a private address
+    /// without `allowed_private`), a name that does not resolve, and one that `allowed_private`
+    /// opens (then the dial itself fails: nothing listens on port 1).
+    #[tokio::test]
+    async fn the_resolver_failures_are_classified_by_type() {
+        let reason = |env: &Env, url: &'static str| {
+            let c = env.http_instance.clone();
+            async move {
+                let e = c.get(url).send().await.unwrap_err();
+                classify_send_error(&e)
+            }
+        };
+        let ring = aurora_crypto::SecretRing::default();
+        let strict = Env::new("http://hooks.example:4104", &ring, &[]).unwrap();
+        assert_eq!(
+            reason(&strict, "https://localhost:1/").await,
+            "destination_refused"
+        );
+        assert_eq!(reason(&strict, "https://nx.invalid:1/").await, "dns");
+        let open = Env::new(
+            "http://hooks.example:4104",
+            &ring,
+            &["localhost".to_owned()],
+        )
+        .unwrap();
+        assert_eq!(reason(&open, "https://localhost:1/").await, "connect");
     }
 
     /// (FIX-106) Translated and reserved forms that embed or stand for a private IPv4 address are

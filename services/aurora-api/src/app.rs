@@ -251,6 +251,13 @@ impl AppState {
         self
     }
 
+    /// Shorten the registration probe's timeout (tests).
+    #[must_use]
+    pub fn with_probe_timeout(self, d: std::time::Duration) -> Self {
+        self.connect.set_probe_timeout(d);
+        self
+    }
+
     /// Replace the library gateway client (tests: a fake that reads a fake git host).
     #[must_use]
     pub fn with_library_gateway(

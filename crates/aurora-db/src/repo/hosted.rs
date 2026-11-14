@@ -1130,6 +1130,8 @@ pub struct HomeAppConn {
     pub connection_id: Uuid,
     pub app_id: String,
     pub label: String,
+    /// The registered instance's host when the connection is bound to one (D-74).
+    pub instance_host: Option<String>,
 }
 
 /// Active connections the agent holds a grant on, stable order.
@@ -1138,8 +1140,9 @@ pub async fn home_app_connections(
     agent: Uuid,
 ) -> Result<Vec<HomeAppConn>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT c.id AS connection_id, c.app_id, c.label
+        "SELECT c.id AS connection_id, c.app_id, c.label, ai.host AS instance_host
          FROM grants g JOIN app_connections c ON c.id = g.connection_id
+         LEFT JOIN app_instances ai ON ai.id = c.instance_id
          WHERE g.agent_id = $1 AND c.status = 'active'
          ORDER BY c.app_id, g.created_at, g.id",
     )

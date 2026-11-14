@@ -24,7 +24,14 @@ import {
   type InstanceScope,
 } from "@/lib/api/apps";
 import { api } from "@/lib/api/client";
-import { errorMessage, fieldErrors, hostConflict, hostConflictMessage } from "@/lib/api/errors";
+import {
+  errorMessage,
+  fieldErrors,
+  hostConflict,
+  hostConflictMessage,
+  probeFailedMessage,
+  probeFailure,
+} from "@/lib/api/errors";
 import { useAdminOrgs } from "@/lib/api/freeze";
 import { useMe } from "@/lib/api/queries";
 import { unwrap } from "@/lib/api/unwrap";
@@ -133,6 +140,8 @@ function RegisterDialog({
   const [label, setLabel] = useState("");
   const app = bound.find((a) => a.app_id === appId);
   const errs = fieldErrors(create.error);
+  const probe = probeFailure(create.error);
+  const hostError = probe ? probeFailedMessage(probe, app?.name ?? "", host.trim()) : errs.host;
 
   function reset() {
     setAppId("");
@@ -190,7 +199,7 @@ function RegisterDialog({
         id="ai-host"
         label="Host"
         hint="The host name only, in lower case, for example gitlab.example.com. No https://, port, path or IP address."
-        error={errs.host}
+        error={hostError}
       >
         <input
           id="ai-host"
@@ -212,7 +221,7 @@ function RegisterDialog({
           onChange={(e) => setLabel(e.target.value)}
         />
       </Field>
-      {create.isError && !errs.app_id && !errs.label ? (
+      {create.isError && !errs.app_id && !errs.label && !probe ? (
         <HostConflictNotice
           error={create.error}
           scope={scope}

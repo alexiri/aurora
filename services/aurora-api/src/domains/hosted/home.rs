@@ -179,6 +179,16 @@ async fn render_inputs(
                 .filter(|x| x.app_id == c.app_id)
                 .map(|x| {
                     let mut a = json!({"id": x.connection_id, "label": x.label});
+                    // (C-730) Where a self-hosted connection lives; absent for other apps.
+                    let host = x.instance_host.as_deref().or_else(|| {
+                        app.instances
+                            .as_ref()
+                            .and_then(|i| i.default_host.as_deref())
+                    });
+                    if let Some(h) = host {
+                        a["address"] =
+                            json!(format!("https://{}", aurora_core::sanitize::label(h)));
+                    }
                     // Only a database account carries its libpq service name (C-231).
                     if let Some(d) = databases
                         .iter()

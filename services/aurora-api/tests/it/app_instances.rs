@@ -782,6 +782,152 @@ async fn the_probe_runs_and_a_failure_registers_nothing() {
     assert_eq!(w.up.received_requests().await.unwrap().len(), 1);
 }
 
+/// Point the probe at `origin` (replacing the instance host, tests only) with an optional timeout.
+fn reroute(w: &mut W, origin: &str, timeout: Option<std::time::Duration>) {
+    w.h.state = w.h.state.clone().with_connect_override(origin);
+    if let Some(t) = timeout {
+        w.h.state = w.h.state.clone().with_probe_timeout(t);
+    }
+    w.h.app = test_router(w.h.state.clone());
+}
+
+async fn probe_details(w: &W, host: &str) -> Value {
+    let (s, v) = w.register(&w.owner, w.org, "desk", host).await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "instance_probe_failed");
+    assert_eq!(field_path(&v), "/host");
+    let mut d = v["error"]["details"].clone();
+    d["message"] = v["error"]["message"].clone();
+    d
+}
+
+/// (FIX-144, C-730) A 404 says what was probed and what was expected; a 3xx carries its location.
+#[tokio::test]
+async fn a_failed_probe_names_the_status_the_url_and_the_redirect() {
+    let w = world().await;
+    w.up.reset().await; // no mock: the upstream answers 404
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "unexpected_status");
+    assert_eq!(d["status"], 404);
+    assert_eq!(d["url"], "https://its.cern.ch/api/health");
+    assert_eq!(d["expected"], json!([200]));
+    assert!(d.get("location").is_none(), "{d}");
+    let m = d["message"].as_str().unwrap();
+    assert!(
+        m.contains("its.cern.ch answered 404 Not Found at /api/health."),
+        "{m}"
+    );
+
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/jira/api/health"))
+        .mount(&w.up)
+        .await;
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["status"], 302);
+    assert_eq!(d["location"], "https://its.cern.ch/jira/api/health");
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("redirected /api/health to https://its.cern.ch/jira/api/health."),
+        "{d}"
+    );
+
+    w.up.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "https://sso.cern.ch/x"))
+        .mount(&w.up)
+        .await;
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["location"], "https://sso.cern.ch/x");
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("Register that host instead.")
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_instances")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn a_probe_to_a_closed_port_is_a_connect_failure() {
+    let mut w = world().await;
+    reroute(&mut w, "http://127.0.0.1:1", None);
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "connect", "{d}");
+    assert!(d["status"].is_null());
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("refused the connection")
+    );
+}
+
+#[tokio::test]
+async fn a_slow_upstream_is_a_timeout() {
+    let mut w = world().await;
+    w.up.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5)))
+        .mount(&w.up)
+        .await;
+    let origin = w.up.uri();
+    reroute(&mut w, &origin, Some(std::time::Duration::from_millis(200)));
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "timeout", "{d}");
+}
+
+/// An untrusted certificate is a `tls` failure (a real handshake against a self-signed server).
+#[tokio::test]
+async fn an_untrusted_certificate_is_a_tls_failure() {
+    let ck = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_owned()]).unwrap();
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        ck.key_pair.serialize_der(),
+    ));
+    let cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(vec![ck.cert.der().clone()], key)
+    .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let a = acceptor.clone();
+            // the client aborts the handshake: nothing to serve
+            tokio::spawn(async move {
+                let _ = a.accept(tcp).await;
+            });
+        }
+    });
+    let mut w = world().await;
+    reroute(&mut w, &format!("https://127.0.0.1:{port}"), None);
+    let d = probe_details(&w, "its.cern.ch").await;
+    server.abort();
+    assert_eq!(d["reason"], "tls", "{d}");
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("certificate is not trusted")
+    );
+}
+
 #[tokio::test]
 async fn the_probe_goes_through_the_destination_guard() {
     // No test override: the real guarded client. The name cannot resolve to a public address
@@ -792,9 +938,13 @@ async fn the_probe_goes_through_the_destination_guard() {
         .await;
     assert_eq!(s, 422, "{v}");
     assert_eq!(v["error"]["code"], "instance_probe_failed");
-    let reason = v["error"]["details"]["reason"].as_str().unwrap();
+    // (FIX-144) the name does not resolve: a typed `dns`, not a generic failure
+    assert_eq!(v["error"]["details"]["reason"], "dns", "{v}");
     assert!(
-        ["unreachable", "destination_refused"].contains(&reason),
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not be found"),
         "{v}"
     );
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_instances")
