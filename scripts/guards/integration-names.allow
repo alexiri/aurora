@@ -13,6 +13,11 @@
 # (P4-GSL) A sample `Link` header in a unit test of the host-neutral pagination parser.
 ^crates/aurora-registry/src/library\.rs$:gitlab\.example
 
+# (FIX-123, D-215) The table of built-in apps that became connect methods of another app: an upgrade
+# shim that moves the connections of installs still holding the old apps. It is the one place the
+# core names built-in packages, and it is data, not integration behaviour.
+^crates/aurora-registry/src/superseded\.rs$:.*
+
 # Bundled top-10k common-password list (I-11) is data, not integration code.
 ^services/aurora-api/data/common-passwords\.txt$:.*
 

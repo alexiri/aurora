@@ -12,6 +12,7 @@ pub mod manifest;
 pub mod package;
 pub mod signature;
 pub mod snapshot;
+pub mod superseded;
 pub mod template;
 pub mod upgrade;
 pub mod validate;

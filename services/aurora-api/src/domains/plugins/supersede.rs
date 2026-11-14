@@ -1,8 +1,8 @@
 //! Superseded apps (FIX-123, D-195(a), D-215, 09 §10 *Superseded apps*).
 //!
-//! `github-app` became the `github_app` connect method of `github` (and `github-app-ghes` of
-//! `github-ghes`), `aws-role` the `assume_role` method of `aws-keys`. When a version that has the
-//! target app with that method is activated, [`apply`] runs **inside the activation transaction**
+//! Some built-in apps became connect methods of another app (the table is
+//! `aurora_registry::superseded`). When a version that has the target app with that method is
+//! activated, [`apply`] runs **inside the activation transaction**
 //! (before the snapshot is compiled, so the retired package's host claims are gone by then):
 //! the old app's connections, instances, skill libraries and availability move to the new app,
 //! the host-claim decisions between the old and the new package are deleted, and the retired
