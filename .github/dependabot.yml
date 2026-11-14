@@ -1,0 +1,105 @@
+# OPS-021: automated dependency updates. Review policy: docs/ops/dependencies.md.
+#
+# One weekly run per ecosystem. Minor and patch updates of an ecosystem arrive as ONE grouped PR
+# (so CI runs once per week per ecosystem); a major update is its own PR; security updates are
+# raised immediately and ungrouped, whatever the schedule (Dependabot security updates are
+# independent of `schedule`). Items pinned on purpose carry an `ignore` entry with the reason.
+version: 2
+
+updates:
+  # --- Rust: the root workspace (Cargo.lock) ---------------------------------------------------
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Europe/Zurich }
+    open-pull-requests-limit: 5
+    labels: [dependencies, rust]
+    commit-message: { prefix: "deps(cargo)" }
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # The hook host's wasmtime line is pinned to one major (workspace Cargo.toml, HOOK-001/002):
+      # a major bump changes the component-model host API and the epoch/limits behaviour and is
+      # done by hand together with aurora-hookhost's tests. Minor/patch updates are welcome.
+      - dependency-name: wasmtime
+        update-types: ["version-update:semver-major"]
+      - dependency-name: wasmtime-wasi
+        update-types: ["version-update:semver-major"]
+
+  # --- Rust: standalone hook guests of the built-in plugins (own Cargo.lock and [workspace]) ----
+  # Each ships inside a signed built-in package (D-77); one PR per hook crate keeps the review small.
+  - package-ecosystem: cargo
+    directories:
+      - /plugins/builtin/aws-keys/hooks
+      - /plugins/builtin/github/hooks
+      - /plugins/builtin/google-workspace/hooks
+    schedule: { interval: weekly, day: monday, time: "06:30", timezone: Europe/Zurich }
+    open-pull-requests-limit: 3
+    labels: [dependencies, rust]
+    commit-message: { prefix: "deps(hooks)" }
+    groups:
+      hooks-minor-patch:
+        update-types: [minor, patch]
+
+  # --- Dashboard: pnpm, web/ ---------------------------------------------------------------------
+  # Dependabot reads pnpm-lock.yaml under the `npm` ecosystem.
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly, day: tuesday, time: "06:00", timezone: Europe/Zurich }
+    open-pull-requests-limit: 5
+    labels: [dependencies, javascript]
+    commit-message: { prefix: "deps(web)" }
+    groups:
+      web-minor-patch:
+        update-types: [minor, patch]
+
+  # --- The sandbox image's Claude Code CLI ---------------------------------------------------------
+  - package-ecosystem: npm
+    directory: /images/sandbox/harness/claude-code
+    schedule: { interval: weekly, day: tuesday, time: "06:30", timezone: Europe/Zurich }
+    open-pull-requests-limit: 1
+    labels: [dependencies, javascript]
+    commit-message: { prefix: "deps(sandbox)" }
+    ignore:
+      # The CLI version is pinned in two places that must agree (FIX-103): this package.json and
+      # PINNED_VERSION in services/aurora-supervisor/src/adapters/claude_code/mod.rs, and a new
+      # version needs the claude-code conformance run. Bumped by hand; never automatically.
+      - dependency-name: "@anthropic-ai/claude-code"
+
+  # --- GitHub Actions: every workflow action is pinned by commit SHA (OPS-019/020) ---------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: wednesday, time: "06:00", timezone: Europe/Zurich }
+    open-pull-requests-limit: 3
+    labels: [dependencies, github-actions]
+    commit-message: { prefix: "deps(actions)" }
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  # --- Container images ----------------------------------------------------------------------------
+  # Dependabot parses `Dockerfile*` and Kubernetes manifests only, not `Containerfile`:
+  # the base-image digests of images/**/Containerfile are therefore NOT updated by it
+  # (docs/ops/dependencies.md §Container images says how they are reviewed instead).
+  - package-ecosystem: docker
+    directories:
+      - /images/sandbox
+      - /images/services
+      - /deploy/dev/llm-mock
+      - /deploy/kind
+    schedule: { interval: weekly, day: wednesday, time: "06:30", timezone: Europe/Zurich }
+    open-pull-requests-limit: 3
+    labels: [dependencies, docker]
+    commit-message: { prefix: "deps(images)" }
+    groups:
+      images-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # I-30: the LLM mock stack is pinned by digest on purpose (a changed mock changes what the
+      # claude-code conformance run proves); bumped by hand with a conformance run.
+      - dependency-name: ghcr.io/berriai/litellm
+      - dependency-name: ghcr.io/vidaiuk/vidaimock
+      # MM-003: Mattermost 11.7 is the supported (production) version; the preview image in
+      # scripts/mattermost/setup.sh is pinned to 11.7.15 by digest.
+      - dependency-name: mattermost/mattermost-preview
+      - dependency-name: docker.io/mattermost/mattermost-preview
