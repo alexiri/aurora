@@ -3,7 +3,7 @@
 import type { ComponentType, ReactNode, SVGProps } from "react";
 
 import { Avatar } from "@/components/agent-avatar";
-import { BotIcon, CalendarIcon, EyeIcon, LinkIcon, MessageIcon, PlugIcon, SearchIcon, UsersIcon } from "@/components/ui/icons";
+import { BotIcon, CalendarIcon, EyeIcon, LinkIcon, MessageIcon, PlugIcon, UsersIcon } from "@/components/ui/icons";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs } from "@/components/ui/tabs";
 import type { Conversation } from "@/lib/api/conversations";
@@ -22,6 +22,17 @@ const KIND: Record<string, { icon: Icon; tint: string }> = {
   peer: { icon: BotIcon, tint: "bg-accent-soft text-accent-ink" },
   api: { icon: PlugIcon, tint: "bg-subtle text-ink-2" },
 };
+
+/** The round tile of a conversation kind (search results use it at 28 px). */
+export function KindTile({ kind, size, className }: { kind: string; size: number; className?: string }) {
+  const k = KIND[kind] ?? KIND.api;
+  const Glyph = k.icon;
+  return (
+    <span aria-hidden="true" style={{ width: size, height: size }} className={cn("inline-flex shrink-0 items-center justify-center rounded-full", k.tint, className)}>
+      <Glyph width={Math.round(size / 2)} height={Math.round(size / 2)} />
+    </span>
+  );
+}
 
 /** A row: the kind tile (36 px), the title, the kind line or the Working dot, and the last activity on the right. */
 export function ConversationRow({
@@ -84,14 +95,20 @@ export function ConversationList({
   selectedId,
   archived,
   onArchivedChange,
+  searchBox,
+  results,
   query,
-  onQueryChange,
   onSelect,
   now,
   status,
   className,
   waitingIds,
 }: {
+  /** (P5-CHAT-4) The search box with its chips; it replaces the title filter. */
+  searchBox: ReactNode;
+  /** (P5-CHAT-4) While a message search shows, its results replace the Active/Archived switch and the rows. */
+  results?: ReactNode;
+  /** The words in the box, only for the "No conversations match" line. */
   /** (P5-AGENT-2) Ids of conversations with a pending approval, for approvers only (omit for everyone else). */
   waitingIds?: ReadonlySet<string>;
   groups: ListGroups;
@@ -100,7 +117,6 @@ export function ConversationList({
   archived: boolean;
   onArchivedChange: (archived: boolean) => void;
   query: string;
-  onQueryChange: (q: string) => void;
   onSelect: (id: string) => void;
   now: Date;
   /** A loading or error state of the list query, shown above the rows. */
@@ -123,17 +139,11 @@ export function ConversationList({
   return (
     <nav aria-label="Conversations" className={cn("flex min-h-0 flex-col gap-3 p-3", className)}>
       <h2 className="font-display text-base font-semibold text-ink">Conversations</h2>
-      <div className="relative">
-        <SearchIcon aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-        <input
-          type="search"
-          aria-label="Filter conversations"
-          placeholder="Filter by title"
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          className="min-h-11 w-full rounded-control border border-line-strong bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-muted md:min-h-9 dark:bg-canvas"
-        />
-      </div>
+      {searchBox}
+      {results ? (
+        results
+      ) : (
+        <>
       <Tabs
         label="Conversation state"
         idBase="chat-list"
@@ -165,6 +175,8 @@ export function ConversationList({
           </div>
         ) : null}
       </div>
+        </>
+      )}
     </nav>
   );
 }
