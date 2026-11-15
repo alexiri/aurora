@@ -68,11 +68,12 @@ Apps & services › Apps, and "Org › Apps" means the org's Apps & services ›
    - Add the pages.
    - Apps & services › Apps' **Details** goes to the workspace page.
    - Every app name in the OAuth clients, Self-hosted apps, Packages (app rows) and Connections tabs of
-     Apps & services, at every level, links to the setup page at the viewer's level.
+     Apps & services, at every level that has them (workspaces have no Self-hosted apps or Packages tab),
+     links to the setup page at the viewer's level.
    - The org's Apps & services › Apps tab gets the posture control at its top (reuse
      `apps-posture-panel` content, same `PUT`), above the availability list, with one Save. Governance ›
-     Apps is retired (P5-IA-1 redirects it). Remove the panel from `governance-view.tsx` if P5-IA-1/-3
-     haven't already.
+     Apps is retired (P5-IA-1 redirects it). This task owns removing the Apps tab and panel
+     from `governance-view.tsx`.
 3. **Tests.**
    - Vitest: the copy table over the P5-UX-8 test fixtures (GitHub no clients; Linear with a workspace
      client; AWS with the external id; GitLab without an instance); the `can` → action mapping; links

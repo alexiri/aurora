@@ -1786,7 +1786,7 @@ Rule: `14 §App setup`, `07 §Authoring` (simulate), `09 §3.4` (C-939, C-942 ke
   - Apps & services › Apps' **Details** opens this page (the details dialog's content moves into a section of it). Both pages sit inside their level's Apps & services topic (C-960).
   - The old `/o/<org>/w/<ws>/apps/<app>/connect` route keeps redirecting to the journey.
   - Test ids `ws-app-setup` and `org-app-setup`.
-- C-933 **Indexes link to the setup page.** Every app name in the OAuth clients, Self-hosted apps, Packages (app rows) and Connections tabs of Apps & services, at every level, links to its setup page at the viewer's level. The org's Apps & services › Apps tab renders the posture control (C-20, the same `PUT` as the retired Governance › Apps tab) at its top, above the availability list, with one Save. Governance › Apps redirects there (C-960).
+- C-933 **Indexes link to the setup page.** Every app name in the OAuth clients, Self-hosted apps, Packages (app rows) and Connections tabs of Apps & services, at every level that has them (C-960), links to its setup page at the viewer's level. The org's Apps & services › Apps tab renders the posture control (C-20, the same `PUT` as the retired Governance › Apps tab) at its top, above the availability list, with one Save. Governance › Apps redirects there (C-960).
 - C-934 **Agent app access** `GET /v1/agents/{agent}/apps/{app}/access` (**S/K**, `can_use` of the agent's workspace; rate class `simulate`).
   - Answer: `{ connections: [{ connection_id, label, scope, access, tools: [{ tool_id, name, access: "read"|"write", decision: "allow"|"ask"|"block", reasons: [{ layer: "connection"|"grant"|"workspace_rule"|"org_rule"|"governance"|"package", label, rule_id?, link }] }], unreachable: { tool_ids, because } }] }`.
   - `reasons[0]` is the deciding layer.
@@ -1802,7 +1802,7 @@ Rule: `14 §App setup`, `07 §Authoring` (simulate), `09 §3.4` (C-939, C-942 ke
     - give agents access now (C-504 bulk grant over agents of any workspace the caller owns, implicit included);
     - done.
   - The org's Apps & services › Apps **Connect…** and the org setup page start it. Workspace owners see org connections in the journey (C-955 `existing`, already including the org's) labelled "Shared by <org>".
-- C-937 **Org connections tab**. The org's Apps & services › Connections tab lists org connections with Reconnect (C-842 reconnect), access toggle (C-740 `PATCH access`), Disable, Delete; empty state with **Connect an app for the organization**. Workspace owners (I-27 read access) see the list without actions.
+- C-937 **Org connections tab**. The org's Apps & services › Connections tab lists org connections with Reconnect (C-842 reconnect), access toggle (C-740 `PATCH access`), Disable, Delete; empty state with **Connect an app for the organization**. The org tab is org owners/admins only (C-961). Workspace owners (I-27 read access) see org connections read-only on their **workspace's** Apps & services › Connections tab and on the Access tab, labelled "Shared by <org>" with "Managed by <org> admins".
 - C-938 **Grant editor defaults** (`14 §App setup` §10).
   - `GrantSubject` and `GrantForm` take the connection's `access`.
   - Custom on `access = read`: read tools `allow`, write tools collapsed and not sent (they stay blocked). Custom on `access = write`: read tools `allow`, write tools `ask`.
@@ -1816,12 +1816,12 @@ Rule: `14 §App setup`, `07 §Authoring` (simulate), `09 §3.4` (C-939, C-942 ke
   - Each changed package bumps its patch version.
 - C-940 **Guide placeholders**. `GET /v1/apps/{app}/guide?workspace_id=|org_id=` renders `{{aurora.callback_url}}`, `{{aurora.external_id}}`, `{{aurora.page:<name>}}` and `{{aurora.app_setup}}` for the caller before returning Markdown.
   - Names: `oauth_clients`, `self_hosted`, `packages` (tabs of the Apps & services topic at each level, C-960), and `app_setup`.
-  - A page placeholder becomes a Markdown link to that page at the highest level the caller can open, or the text "(an organization admin can do this)" / "(an Aurora administrator can do this)" when the caller can open none.
+  - A page placeholder becomes a Markdown link to that page at the highest level the caller can open, or the text "(an organization admin can do this)" / "(an Aurora administrator can do this)" when the caller can open none. Workspaces have no `self_hosted` or `packages` tab (C-960), so for those a workspace owner gets the org tab if they are an org admin, else the sentence.
   - `external_id` is filled only for an org member, else "(shown to members of your organization)".
   - Unknown placeholders never reach a viewer (C-941). The raw guide stays available to package tooling (`aurora plugin docs`).
 - C-941 **Guide checks** (`09 §6`):
   - `guide_unknown_placeholder` (error): a `{{aurora.…}}` token outside the C-940 set.
-  - `scripts/guards` or `check-builtin.sh` refuses, in builtin guides only, the literal strings `<your Aurora URL>`, `<external_url>`, `Admin, Apps,` and the page name "Instances" (renamed "Self-hosted apps", FIX-132).
+  - `scripts/guards` or `check-builtin.sh` refuses, in builtin guides and builtin `connect_note`s only, the literal strings `<your Aurora URL>`, `<external_url>`, `Admin, Apps,` and the page name "Instances" (renamed "Self-hosted apps", FIX-132).
 - C-942 **`connect[].show_context`** (manifest, optional): a list of context variables (`org_external_id` only for now). The connect form, the journey's sign-in step and the setup page show it as a labelled value with Copy above the method's fields, read from `GET /v1/orgs/{org}` (`external_id`, already readable by any org member).
   - `aws-keys` `assume_role` declares it.
   - The Bedrock assume-role LLM key form shows the same block (C-811, not built until now).
@@ -1871,7 +1871,7 @@ Rule: `14 §Information architecture` › "One structure for every level" (norma
     - `/o/<org>/groups` → `/o/<org>/people?tab=groups`
     - `/o/<org>/groups/<id>` → `/o/<org>/people/groups/<id>`
     - `/o/<org>/settings/directory` → `/o/<org>/people?tab=directory-sync`
-    - `/o/<org>/credentials?tab=secrets|llm|connections|oauth` → `/o/<org>/apps?tab=services`, `/o/<org>/ai-models?tab=keys`, `/o/<org>/apps?tab=connections`, `/o/<org>/apps?tab=oauth-clients`
+    - `/o/<org>/credentials?tab=secrets|llm|connections|oauth` → `/o/<org>/apps?tab=services`, `/o/<org>/ai-models?tab=keys`, `/o/<org>/apps?tab=connections`, `/o/<org>/apps?tab=oauth-clients`; `/o/<org>/credentials` with no tab or an unknown one → `/o/<org>/apps?tab=services` (today's fallback tab is Secrets)
     - `/o/<org>/apps` → `/o/<org>/apps?tab=apps`
     - `/o/<org>/governance?tab=model|egress|apps|byo|compliance` → `/o/<org>/ai-models?tab=access`, `/o/<org>/internet-access`, `/o/<org>/apps?tab=apps`, `/o/<org>/agents?tab=byo`, `/o/<org>/ai-models?tab=keys-to-fix`
     - `/o/<org>/policy` → `/o/<org>/internet-access`
@@ -1888,7 +1888,8 @@ Rule: `14 §Information architecture` › "One structure for every level" (norma
     - `…/credentials?tab=apps|connections|secrets|oauth|proposals` → `…/apps?tab=apps|connections|services|oauth-clients|proposals`
     - `…/credentials?tab=llm` → `…/ai-models`
     - `…/policy` → `…/internet-access`
-    - `…/settings?tab=access` → `…/people`
+    - `…/settings?tab=access` → `…/people`; the other workspace Settings tabs (`general`, `api-keys`, `audit`, `danger`) keep their paths.
+  - Query parameters the new pages accept: `connect=`, `reconnect=` (C-842), `add=1` on `…/people` (opens Add people, P5-UX-5), and `package=` / `client_key=` on the OAuth clients tabs (P5-UX-6, P5-UX-9).
   - The C-842 / C-891 deep links (`connect=`, `reconnect=`) survive the redirect.
   - The gateway link builder (C-891) emits the new paths.
   - Every `href` in the web app goes through one route helper module (`web/src/lib/routes.ts`), and a test fails on a hard-coded old path.

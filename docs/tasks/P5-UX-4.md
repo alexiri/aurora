@@ -49,7 +49,7 @@ nobody can use, and explains effective access in words.
      it reads **Choose an agent** and is disabled.
    - Apply this to every caller, including the journey's agent step (P5-UX-3 passes `contextAgentId`).
 4. **"No agent can use this" (C-917).**
-   - Secret, LLM-key and connection rows with `grant_count = 0` show a `warning` `Badge` **No agent can use
+   - Service, LLM-key and connection rows with `grant_count = 0` show a `warning` `Badge` **No agent can use
      this** and a **Give access** button that opens `AccessDialog`.
    - The agent's Access tab gains a collapsed group "Not given to <Agent> (n)" listing the workspace's
      credentials with no grant to this agent, each with **Give access**. LLM keys are listed under the
@@ -61,15 +61,17 @@ nobody can use, and explains effective access in words.
      `selected_by_details` for a grant, a workspace rule and an org rule.
    - Vitest: the preselection rule (context, sole agent, several agents, none grantable) and the button
      text; the badge; the labels.
-   - Playwright: save a secret in a one-agent workspace → **Give Daneel access** is enabled and preselected
-     → after it, the agent's Access tab lists the secret as selected and "given on this page".
+   - Playwright: save a service in a one-agent workspace → **Give Daneel access** is enabled and
+     preselected → after it, the agent's Access tab lists the service as selected and "given on this
+     page".
 
 ## Constraints / file ownership
 
 - Owns: the four list DTOs and queries, `domains/grants/effective.rs` (details only),
   `give-access.tsx`, `credentials-view.tsx` and `connections-tab.tsx` (badge only), `access-tab.tsx`,
   `llm-form.tsx` and `generic-form.tsx` (pass-through only).
-- Not beside P5-UX-3 (both touch the give-access callers) or P5-UX-7 (Credentials list).
+- Not beside P5-UX-3 (both touch the give-access callers), P5-UX-7 (Apps & services Overview list), or
+  P5-UX-11 and P5-UX-14 (both also edit `connections-tab.tsx`): serialize.
   Order: P5-UX-4 → P5-UX-3 → P5-UX-7, or P5-UX-3 first, implementing preselection locally (see P5-UX-3).
 
 ## Acceptance criteria

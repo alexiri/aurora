@@ -95,17 +95,17 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-FILES-2 | Files page: browse, upload (files, folders, drag and drop), download, rename, delete | D-316, C-904 | M | Next.js | P5-FILES-1 | `P5-FILES-2.md` | ready (queued in lane p5-platform) |
 | P5-FILES-3 | Files viewer: CodeMirror editor with conflict dialog, raster image preview | D-316, C-905, SEC-126 | M | Next.js | P5-FILES-2 | `P5-FILES-3.md` | ready (queued in lane p5-platform) |
 | P5-FILES-4 | Files end to end: `scripts/e2e/files.sh` + Playwright journey | D-316, C-907 | S–M | tests | P5-FILES-1..3 | `P5-FILES-4.md` | ready (queued in lane p5-platform) |
-| P5-UX-1 | Role-aware nav, refusals in words (never "Could not reach the server" for a 403), empty states ask only non-actors, Welcome links that exist, first-run fixes | D-323, C-915, C-916, C-927 | M | Next.js | — | `P5-UX-1.md` | ready (spec on branch `alexiri/p5-ux`, not merged; not placed) |
+| P5-UX-1 | Role-aware nav, refusals in words (never "Could not reach the server" for a 403), empty states ask only non-actors, Welcome links that exist, first-run fixes | D-323, C-915, C-916, C-927 | M | Next.js | P5-IA-1 | `P5-UX-1.md` | ready (spec on branch `alexiri/p5-ux`, not merged; not placed) |
 | P5-UX-2 | Connect plan (method readiness, who unblocks), manifest `audience`/`limit`/`scope_presets`, connect with a grant (sealed through OAuth), probe causes, journey links | D-321, D-322, D-337, SEC-130, C-955..C-959 | M | Rust | — | `P5-UX-2.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-3 | "Give <Agent> <App>" connect journey: agent Access › Add an app, Welcome, refusals and Apps tab; C-842 controls under Advanced | D-337, D-321, C-914, C-927 | M–L | Next.js | P5-UX-2; P5-UX-4 (soft) | `P5-UX-3.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-4 | Give-access preselection, "No agent can use this" (`grant_count`), effective access in words (`selected_by_details`) | D-324, C-917, C-918 | S–M | both | — | `P5-UX-4.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-5 | Workspace owners add people by e-mail; pending access applied at verified first sign-in; never lets a non-member into the org (D-328) | D-325, D-328, SEC-128, C-919, C-920, migration (next free when placed) | M | both | P5-UX-1 | `P5-UX-5.md` | ready (spec on branch, not merged; not placed) |
-| P5-UX-6 | Admin defaults: starter grant on by default + backfill, display-name template, wizard Apps step (apps without an OAuth client), builtins in the kind dev image, stale docs | D-326, C-922..C-924 | M | both | P5-UX-2 (soft) | `P5-UX-6.md` | ready (spec on branch, not merged; not placed) |
+| P5-UX-6 | Admin defaults: starter grant on by default + backfill, display-name template, wizard Apps step (apps without an OAuth client), builtins in the kind dev image, stale docs | D-326, C-922..C-924 | M | both | P5-IA-4; P5-UX-2 (soft) | `P5-UX-6.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-7 | Credentials › Overview and a plain-language Policy summary with Common changes; operator labels renamed | D-327, C-925, C-926 | M | Next.js | P5-UX-3, P5-UX-4 | `P5-UX-7.md` | ready (spec on branch, not merged; not placed) |
 | FIX-159 | **High priority.** Simulate decides app requests like the gateway: shared app/tool identification in `aurora-registry`, connection candidates and winner rule in the simulator, simulate == gateway table test (today every connection grant is `target_mismatch` and a blocked request can show `allow`) | D-329, C-930 | M | Rust | — | `FIX-159.md` | ready (spec on branch `alexiri/p5-ux`, not merged; not placed) |
 | P5-UX-8 | App setup status `GET /v1/apps/{app}/setup` (methods ready or missing what, clients by level, instances, availability, connections, callback URL, external id, what the caller can do); the connect plan becomes a projection | D-330, C-931 | M | Rust | P5-UX-2 (same function, soft) | `P5-UX-8.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-9 | One setup page per app (workspace and org views) with inline actions at the viewer's level; indexes link to it; posture on Org › Apps | D-330, C-932, C-933 | M | Next.js | P5-UX-8; P5-UX-3, P5-UX-13 (soft) | `P5-UX-9.md` | ready (spec on branch, not merged; not placed) |
-| P5-UX-10 | "What can <Agent> do in <App>": per-tool decision with the deciding layer (`GET /v1/agents/{agent}/apps/{app}/access`), unreachable grant settings called out; Policy lists grant-derived rules read-only | D-331, C-934, C-935 | M | both | FIX-159 | `P5-UX-10.md` | ready (spec on branch, not merged; not placed) |
+| P5-UX-10 | "What can <Agent> do in <App>": per-tool decision with the deciding layer (`GET /v1/agents/{agent}/apps/{app}/access`), unreachable grant settings called out; Policy lists grant-derived rules read-only | D-331, C-934, C-935 | M | both | FIX-159, P5-IA-2 | `P5-UX-10.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-11 | Connect an app for the whole organization from the dashboard (journey org mode, starter or give-now), org connection actions, chooser leads with the org | D-332, C-936, C-937, C-947 (with P5-UX-15) | M | Next.js | P5-UX-3 (soft) | `P5-UX-11.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-12 | Access editor starts from the connection (read-only: reads Allow, writes folded; read-write: writes Ask), read-only note everywhere, tool descriptions instead of HTTP patterns, builtin descriptions + `ec2_call` rename | D-333, C-938, C-939 | M | both | — | `P5-UX-12.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-13 | Setup guides with `{{aurora.*}}` placeholders filled for the viewer, guide checks, builtin guides rewritten (no "Admin, Apps," pages), external id shown on AWS and Bedrock assume-role forms (`show_context`) | D-334, C-940..C-942 | M | both | — | `P5-UX-13.md` | ready (spec on branch, not merged; not placed) |
@@ -231,17 +231,24 @@ Live reservations (numbers inside a block that a lane has already used are recor
 - **Phase 5:** review of the coordinator defaults recorded in D-268.
 - **Phase 5, P5-UX (spec on branch `alexiri/p5-ux`):** merge the spec batch? (Q-UX-1 and Q-UX-2 answered, D-328.) Suggested order once merged (one coherent design, D-342):
 1. **FIX-159 first** (high priority: Simulate can show a false allow).
-2. **Structure:** **P5-IA-1** (shell and routes) before every brief that adds pages. Then P5-IA-2 (ladder, Internet access) → P5-IA-3 ∥ P5-IA-4 → P5-IA-5. P5-IA-4/5 are coordinated with SET-4/5 on the settings form files.
+2. **Structure:** **P5-IA-1** (shell and routes) before every brief that touches pages or navigation (P5-UX-1 included). Then P5-IA-2 (ladder, Internet access) → P5-IA-3 → P5-IA-4 → P5-IA-5, sequential because they share the settings form components. P5-IA-4/5 are coordinated with SET-4/5 on the settings form files.
 3. **Backend, independent:** P5-UX-2 → P5-UX-8, P5-UX-4, P5-UX-14, P5-UX-12/-13/-15. These are serialized where they share builtin `plugin.yaml` files (12, 13, 15) and the probe code (14 with 2).
 4. **Screens after P5-IA-1:**
    - P5-UX-1 (refusals and empty states; navigation is P5-IA-1's);
    - P5-UX-3 after P5-UX-2;
    - P5-UX-7 after P5-UX-3/-4 and with P5-IA-2;
    - P5-UX-5 after P5-UX-1;
-   - P5-UX-6 after P5-UX-2;
+   - P5-UX-6 after P5-UX-2 and P5-IA-4;
    - P5-UX-9 after P5-UX-8;
    - P5-UX-10 after FIX-159 and P5-IA-2;
    - P5-UX-11 after P5-UX-3.
+
+Shared files to serialize:
+- `connections-tab.tsx`: P5-UX-4, -11, -14.
+- `getting-started.tsx`: P5-UX-1 → -3 → -5.
+- `apps-tab.tsx`: P5-UX-3 → -9.
+- Builtin `plugin.yaml` files: P5-UX-2, -12, -13, -15.
+- Settings form components: P5-IA-3 → -4 → -5 and SET-4/5.
 
 The Orchestrator places the lanes.
 - **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). (The P6-MODELS questions were answered 2026-11-15, D-302.) Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.

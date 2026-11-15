@@ -118,8 +118,10 @@ This task changes those defaults.
 
 ## Dependencies
 
-P5-UX-2 for the shared readiness function (soft, see Scope 4). Not beside P5-UX-5 if both change the
-sign-in placement code: P5-UX-5 first.
+P5-UX-2 for the shared readiness function (soft, see Scope 4). **After P5-IA-4**: P5-IA-4 moves the
+wizard to Administration › Overview and the placement form to People & sign-in › New users; this task
+then edits their content (`setup-view.tsx`, `placement-view.tsx`), not their place. Not beside P5-UX-5 if
+both change the sign-in placement code: P5-UX-5 first.
 
 ## Suggested agent/model and reason
 

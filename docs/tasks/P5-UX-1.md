@@ -22,13 +22,12 @@ empty states ask only people who cannot act, and fixes the small first-run defec
 ## Placement in the new structure (D-342)
 
 The owner approved one structure for every level (D-338, `14 §Information architecture`):
-- **Navigation visibility per role is P5-IA-1's** (C-961). If P5-IA-1 has merged, skip Scope 2. If not,
-  implement Scope 2 with C-961's member list, not the old Credentials / Apps / Governance one.
-- **This task keeps** the refusals (Scope 3), the empty states (Scope 4), the Welcome links (Scope 5) and
-  the first-run fixes (Scope 6).
-- **Links and names.** Every link goes through `web/src/lib/routes.ts` (P5-IA-1; add the helper here if it
-  doesn't exist yet). Every page name follows the vocabulary table: People, not Settings › Access; Apps &
-  services, not Credentials.
+- **This task runs after P5-IA-1.** Navigation, role visibility, `routes.ts` and `useViewerRoles` are
+  P5-IA-1's (C-961). This task owns the refusals (Scope 3), the empty states (Scope 4), the Welcome links
+  (Scope 5) and the first-run fixes (Scope 6). It does not edit `app-shell.tsx`.
+- **Links and names.** Every link goes through `web/src/lib/routes.ts`. Every page name follows the
+  vocabulary table: People, not Settings › Access; Apps & services and Services, not Credentials and
+  Secrets.
 
 ## Context (facts found 2026-11-15)
 
@@ -56,13 +55,9 @@ The owner approved one structure for every level (D-338, `14 §Information archi
 
 ## Scope
 
-1. **Role hook.** Add `useViewerRoles(org, ws?)` → `{ orgRole, wsRole, isOrgAdmin, canOwn, canApprove }`
-   in `web/src/lib/api/roles.ts`, from the existing queries. Replace the ad-hoc `my_role === "owner"`
-   checks this task touches; do not sweep the rest of the app.
-2. **Nav (C-915, C-961)**, only if P5-IA-1 has not merged: an org member's sidebar shows Workspaces and
-   read-only AI models, Internet access and Agents. Until P5-IA-1 creates those topics, that means
-   Workspaces and Governance, with Credentials and Apps hidden. P5-IA-1 replaces this with
-   `visibleTopics`.
+1. **Role hook.** Use P5-IA-1's `useViewerRoles` (`web/src/lib/api/roles.ts`). Replace the ad-hoc
+   `my_role === "owner"` checks this task touches; do not sweep the rest of the app.
+2. **Nav:** none here (P5-IA-1, C-961).
 3. **Refusals (C-915).**
    - Add `forbiddenError(requiredRole)` returning an `ApiError`, and use it in every gate listed above.
      Any other bare `{ code }` error object found by `grep` gets the same treatment.
@@ -84,8 +79,8 @@ The owner approved one structure for every level (D-338, `14 §Information archi
    - Where a role can act, pass the primary action instead.
    - The "ask" text names owners with `useOwnerNames`.
 5. **Welcome links (C-927, interim).**
-   - "Connect an app" → the workspace's Apps & services › Apps (`routes.ts`; `…/credentials?tab=apps`
-     before P5-IA-1, which redirects) until P5-UX-3 replaces it with the journey.
+   - "Connect an app" → the workspace's Apps & services › Apps (`routes.ts`) until P5-UX-3 replaces it
+     with the journey.
    - "Invite a teammate" is hidden until P5-UX-5 merges; P5-UX-5 adds it back pointing at the
      workspace's People › Add people.
    - Each remaining link gets a test that its href resolves to an existing route (a route-table test over
@@ -102,22 +97,25 @@ The owner approved one structure for every level (D-338, `14 §Information archi
    6. The agent header names the computer state in words: Off, Starting, On, Stopping, Failed, with
       the reason on hover or tap.
    7. The admin landing never flashes "You are not in an organization yet" before redirecting to
-      `/admin/setup` (gate the root page's empty-org view on the setup-status query).
+      Administration › Overview (`/admin`; gate the root page's empty-org view on the setup-status
+      query).
 7. **Tests.** Vitest for:
    - the hook;
    - `errorMessage` over `ApiError`, plain objects and transport errors;
    - `EmptyState` typing (a `// @ts-expect-error` case for `ask` without `canAct`);
    - each fix.
 
-   Playwright: a member sees no Credentials or Apps in the org nav; a member on `/o/<org>/members`
-   (direct URL) reads "Only organization owners and admins can open this page."; an owner's empty
-   Secrets shows **Add a secret** and no "Ask" line.
+   Playwright:
+   - a member opening `/o/<org>/people` by direct URL reads "Only organization owners and admins can
+     open this page.";
+   - an owner's empty Services tab shows **Add a service** and no "Ask" line;
+   - a member's empty Services tab shows the "Ask <owner names>" line and no button.
 
 ## Constraints / file ownership
 
-- Owns: `app-shell.tsx`, `org-gate.tsx`, the listed gate callers, `states.tsx`, `errors.ts` (shared
-  with P5-UX-3: append), `lib/api/roles.ts` (new), the empty-state callers, `getting-started.tsx`
-  (`OptionalNext` only), and the files of the seven fixes.
+- Owns: `org-gate.tsx`, the listed gate callers, `states.tsx`, `errors.ts` (shared with P5-UX-3:
+  append), the empty-state callers, `getting-started.tsx` (`OptionalNext` only; P5-UX-3 and P5-UX-5
+  edit it after this task), and the files of the seven fixes. Not `app-shell.tsx` (P5-IA-1).
 - Do not touch `connect-dialog.tsx` beyond the label and help-link renderers it shares with other forms
   (P5-UX-3 owns the dialog).
 - `14 §Visual design` for every changed screen.
@@ -133,7 +131,8 @@ The owner approved one structure for every level (D-338, `14 §Information archi
 
 ## Dependencies
 
-None. It can run first; P5-UX-3 and P5-UX-5 later replace the interim Welcome links.
+P5-IA-1 merged (routes, navigation, role hook). P5-UX-3 and P5-UX-5 later replace the interim Welcome
+links, in that order.
 
 ## Suggested agent/model and reason
 

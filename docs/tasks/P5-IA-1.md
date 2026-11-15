@@ -37,8 +37,8 @@ content moves under the new routes **unchanged**; the content work is P5-IA-2..5
 - **Tour.** `web/src/components/onboarding/tour.tsx` `TOUR_STOPS` (~19–28) drops stops whose nav link is
   missing (~87).
 - **Header.** `PageHeader`: `web/src/components/ui/page-header.tsx`.
-- **Role data.** `useOrg().my_role`, `useWorkspace().my_role`, `useCanApprove`. P5-UX-1 adds
-  `useViewerRoles` (`lib/api/roles.ts`); if it hasn't merged, add it here and P5-UX-1 uses it.
+- **Role data.** `useOrg().my_role`, `useWorkspace().my_role`, `useCanApprove`. This task adds
+  `useViewerRoles` (`lib/api/roles.ts`); P5-UX-1, which runs after it, uses it.
 - **Gateway links.** The C-891 link builder lives in the gateway.
 
 ## Scope
@@ -65,8 +65,8 @@ content moves under the new routes **unchanged**; the content work is P5-IA-2..5
    - Approvals only for approvers;
    - Administration only for instance admins.
 
-   Read-only pages hide write controls and show one line naming who can change them. This replaces P5-UX-1
-   Scope 2 (nav gating); if P5-UX-1 merged first, keep its refusal work and replace only the nav.
+   Read-only pages hide write controls and show one line naming who can change them. This task owns all
+   navigation gating; P5-UX-1 (after this task) owns refusals and empty states.
 5. **Administration entry and level badge (C-962).**
    - **Administration** goes in the sidebar footer and the account menu for instance admins.
    - The org switcher lists organizations only.

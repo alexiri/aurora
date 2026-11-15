@@ -79,8 +79,9 @@ click away. There is no API change and no policy-semantics change.
      - block a host;
      - only allow listed websites (requests without a credential: `block`).
 3. **Wording (C-926)**, on the workspace and org Internet access pages alike:
-   - "No default (defer)" → **Let the organization decide** (at org level: **Let Administration
-     decide**)
+   - "No default (defer)" → workspace: **Let the organization decide**; org: **None: only rules decide**
+     (there is no instance rule scope, so nothing above the org decides; a request no rule matches is
+     allowed, `07 §Evaluation`)
    - "Uncredentialed requests" → **Requests without a credential**
    - "Browser tunnels (open lane)" → **Browser connections (not inspected)**
    - Simulate → **Test a request**, with Speaker and Lane under **More**

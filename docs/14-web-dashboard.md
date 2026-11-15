@@ -1091,8 +1091,9 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
 `ResourceTable` pattern), the fingerprint wraps.
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
-(Phase 5, P5-UX-1, D-323, C-915: the org nav shows a member only Workspaces and Governance; every other
-item, Credentials and Apps included, is owners/admins and is not listed for a member.)
+(Phase 5, P5-IA-1, D-338, C-961: navigation and page names follow §Information architecture › "One
+structure for every level". An org member sees Workspaces and read-only AI models, Internet access and
+Agents; every other topic is owners/admins and is not listed for a member.)
 - **Workspaces** (all members: those they can access; owners/admins: all).
 - **Members**: list, roles, suspend/remove, invitations. (phase 2, RFE-021)
   Suspend/remove first opens the **offboarding view** — "Removing Alice disables
@@ -1812,8 +1813,8 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   4. *Say hello*: opens Chat with a suggested first message.
   Optional, below: connect an app, write instructions for the agent, set up a schedule,
   invite a teammate (owners). (Phase 5, P5-UX-1/3/5, C-927: "connect an app" opens the connect
-  journey of §First run and connecting for this agent; "invite a teammate" opens Settings › Access
-  › **Add people** and shows only to a viewer who may add people.)
+  journey of §First run and connecting for this agent; "invite a teammate" opens the workspace's
+  **People** › **Add people** and shows only to a viewer who may add people.)
 - A member who **cannot** do a step (not owner) sees who can: "Ask a workspace owner
   (Ada Lovelace) to add an LLM key", never a dead button.
 - "Skip for now" goes to Overview, where the same guide sits at the top until complete
@@ -1822,13 +1823,14 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
 ### 3. Tour and contextual help
 
 - **"Show me around"** (offered at the end of Welcome, replayable from the account
-  menu): 6–8 coach marks over the real navigation (Agents, Chat, Credentials, Policy,
-  Approvals, Activity, Members, Settings — the members stop only where the org nav
-  shows it, since the workspace nav has none, FIX-027). Each has one or two sentences on what lives
+  menu): 6–8 coach marks over the real navigation ((phase 5, P5-IA-1, C-975) one stop per topic
+  the viewer sees, from `visibleTopics`, with the topic names of §Information architecture: Overview,
+  Agents (with Chat and Access › Add an app), Apps & services, AI models, Internet access, Approvals,
+  Activity, People, Settings). Each has one or two sentences on what lives
   there and when you need it. Keyboard-operable (Next, Back, Esc), focus-managed,
   respects reduced motion, and on 390 px opens the navigation drawer as it goes.
-- **Empty states teach**: every empty list touched by the journey (LLM keys, Secrets,
-  Connections, Policy rules, Approvals, Schedules) gets one sentence of what it is, one
+- **Empty states teach**: every empty list touched by the journey (LLM keys, Services,
+  Connections, Internet access rules, Approvals, Schedules) gets one sentence of what it is, one
   of when you need it, and the primary action. Role-aware like the guide.
 - **Errors link to the guide step** that fixes them (`no_model_key`,
   `no_default_model`, missing grant).
@@ -1951,15 +1953,15 @@ secret fields.
 
 ### 3. Give-access defaults and unused credentials (P5-UX-4, D-324, C-917, C-918)
 
-- **Preselection.** Every "Give agents access" picker (after saving a secret, an LLM key or a connection,
-  the Access dialog of a credential, and the journey's agent step) preselects:
+- **Preselection.** Every "Give agents access" picker (after saving a service, an LLM key or a
+  connection, the Access dialog of any of them, and the journey's agent step) preselects:
   - the agent whose page opened it;
   - otherwise the only agent the caller may grant to, when the workspace has exactly one;
   - otherwise none.
 
   The primary button names the result: **Give Daneel access** or **Give 2 agents access**. With nothing
   selected it reads **Choose an agent** and is disabled.
-- **"Not used by any agent".** Secret, LLM key and connection rows show a `warning` badge **No agent can
+- **"Not used by any agent".** Service, LLM key and connection rows show a `warning` badge **No agent can
   use this** with **Give access**, from `grant_count` (C-917) on the list items. The agent's Access tab
   lists such workspace credentials in a collapsed "Not given to <Agent> (n)" group, each with **Give
   access**.
@@ -2038,7 +2040,8 @@ link to the topic pages that hold each setting.
   The rules and defaults follow under **Rules and defaults**, in the scope-ladder layout (above / here /
   below), with renamed labels (C-926). At org level this page also holds what was Governance › Egress
   (posture, allow-list, browser connections):
-  - "No default (defer)" becomes **Let the organization decide**;
+  - "No default (defer)" becomes **Let the organization decide** on a workspace page and **None: only
+    rules decide** on the org page (there is no instance rule scope);
   - "Uncredentialed requests" becomes **Requests without a credential**;
   - "Browser tunnels (open lane)" becomes **Browser connections (not inspected)**;
   - Simulate becomes **Test a request**, with Speaker and Lane under its **More** disclosure.
@@ -2056,7 +2059,8 @@ suites.
 and the org owner above her. They were setting up Linear, AWS, PostgreSQL and GitLab for their agents.
 Everything they needed existed, but spread over the instance, the org, the workspace, the connection, the
 grant and the policy, with no page saying how they fit together:
-- seven setup guides send people to an "Admin, Apps, <app>" page that does not exist;
+- six setup guides (GitHub, GitLab, Atlassian, Microsoft 365, Linear, Notion) send people to an "Admin,
+  Apps, <app>" page that does not exist;
 - the AWS external id is shown nowhere;
 - OAuth clients live on three pages;
 - the dashboard cannot create an org-wide connection;
@@ -2130,7 +2134,8 @@ pieces those pages rely on.
   org-scope connection, org owners and admins only. The journey (P5-UX-3) runs without the agent step.
   Its Done step offers:
   - **Give it to every new person's agent** (a starter grant, C-521, default org only);
-  - **Give agents access now**: the picker over the org's workspaces, own and shared first;
+  - **Give agents access now**: the picker over the workspaces the caller owns (implicit ownership
+    included), own and shared first (C-936);
   - **Done**: workspace owners give it to their agents themselves.
 - Workspace owners see org connections in the journey's App and Account steps ("Shared by <org>") and
   on the Access tab. They can grant them (07, existing rule) but never edit, reconnect or delete them.
@@ -2169,7 +2174,9 @@ pieces those pages rely on.
 
   Page placeholders become links to the Apps & services tab the viewer can open, at the highest level
   they can act on: a workspace owner's workspace tab, an org admin's org tab, an instance admin's
-  Administration tab. A viewer who cannot open the page sees the role that can.
+  Administration tab. Workspaces have no Self-hosted apps or Packages tab, so for a workspace owner
+  `page:self_hosted` falls through to the org tab if they are an org admin, and otherwise to the sentence
+  naming the role that can. A viewer who cannot open the page sees the role that can.
 - **Guide checks** (C-941): an unknown `{{aurora.*}}` placeholder is a package error. The builtin check
   refuses the literal patterns `<your Aurora URL>`, `<external_url>`, "Admin, Apps," and "Instances" as
   a page name.
@@ -2211,7 +2218,7 @@ All screens of this section follow §Visual design and are axe-clean. The setup 
 
 ## Key flows
 
-- **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Admin › Self-hosted apps for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.
+- **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Self-hosted apps (phase 5, D-338: Administration or the org's Apps & services › Self-hosted apps) for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.
 - (Phase 5, P5-UX-3, D-337, C-914) **Connect from the Apps tab opens the connect journey** of
   §First run and connecting (agent step, preset access, the suggested method; everything below
   stays reachable under its **Advanced**). Reconnect keeps the dialog described here.
@@ -2223,7 +2230,8 @@ All screens of this section follow §Visual design and are axe-clean. The setup 
   above**) **Connect dialog, not a window.** Connect (Apps tab) and Reconnect (Connections tab)
   open the connect form as a `Dialog` (`size="lg"`) on the page itself, like Details; nothing
   of the dashboard opens in another browser window. A deep link
-  (`…/credentials?tab=apps&connect=<app>`) opens the Apps tab with the dialog open, and the old
+  (`…/credentials?tab=apps&connect=<app>`; phase 5, C-960: `…/apps?tab=apps&connect=<app>`, the old path
+  redirects) opens the Apps tab with the dialog open, and the old
   `…/apps/<app>/connect` route only redirects there. An OAuth method's **Continue to sign in**
   opens the provider's sign-in page in a separate window with no handle on the dashboard (no
   `opener`). Meanwhile the dialog says "Waiting for you to sign in to <App>…" and offers

@@ -38,9 +38,11 @@ mirrors C-960.
   (`tenancy/routes.rs` ~156–161). An app needs it when its `permissions.context` includes
   `org_external_id`.
 - Instances: `/o/<org>/instances` and `/admin/instances` (FIX-132 "Self-hosted apps").
-- If P5-UX-2 has merged, its plan function exists; extend it rather than writing a second one. If not,
-  write the function here and leave P5-UX-2 to project from it. The order is decided at placement; report
-  which.
+- **One function, one direction (C-931).** `setup_status` is the source and the connect plan (C-955) is
+  a projection of it.
+  - If P5-UX-2 merged first, move its plan logic into `setup_status` and turn the plan route into a
+    projection, with its tests unchanged.
+  - If this task runs first, write `setup_status` and let P5-UX-2 project from it.
 
 ## Scope
 
