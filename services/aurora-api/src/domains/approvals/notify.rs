@@ -269,7 +269,7 @@ pub fn spawn(state: AppState) {
         );
         return;
     }
-    if state.config.email.smtp_url.is_none() {
+    if !state.auth().smtp {
         tracing::warn!("approval e-mails disabled: email.smtp_url is unset, mails are only logged");
     }
     tokio::spawn(async move {

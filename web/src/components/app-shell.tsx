@@ -391,7 +391,6 @@ const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/setup", label: "Setup", icon: CheckCircleIcon },
   { href: "/admin/users", label: "Users", icon: UsersIcon },
   { href: "/admin/orgs", label: "Organizations", icon: BuildingIcon },
-  { href: "/admin/identity", label: "Identity", icon: ShieldIcon },
   { href: "/admin/placement", label: "Sign-up & placement", icon: UsersIcon },
   // (phase 5, SET-1) Instance settings: the index now, a link per section as SET-2..SET-5 land.
   { href: "/admin/settings", label: "Settings", icon: SettingsIcon },

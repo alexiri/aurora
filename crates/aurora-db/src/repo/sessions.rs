@@ -50,10 +50,14 @@ pub async fn find_by_hash<'e, E: PgExecutor<'e>>(
     exec: E,
     hash: &[u8; 32],
     idle_secs: u64,
+    absolute_secs: u64,
 ) -> Result<Option<SessionRecord>, DbError> {
+    // The stored expiry and the one recomputed from the lifetime in force: the earlier wins, so a
+    // shorter `auth.session_absolute_secs` ends existing sessions at their next request (SET-4).
     Ok(sqlx::query_as(
         "SELECT s.id, s.user_id, s.last_seen_at, s.expires_at, s.revoked_at,
                 (s.revoked_at IS NULL AND s.expires_at > now()
+                 AND s.created_at + make_interval(secs => $3::float8) > now()
                  AND s.last_seen_at > now() - make_interval(secs => $2::float8)
                  AND u.disabled_at IS NULL) AS live,
                 u.email::text AS user_email, u.is_instance_admin
@@ -62,6 +66,7 @@ pub async fn find_by_hash<'e, E: PgExecutor<'e>>(
     )
     .bind(&hash[..])
     .bind(idle_secs as f64)
+    .bind(absolute_secs as f64)
     .fetch_optional(exec)
     .await?)
 }
@@ -142,15 +147,18 @@ pub async fn is_live<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
     idle_secs: u64,
+    absolute_secs: u64,
 ) -> Result<bool, DbError> {
     let live: Option<bool> = sqlx::query_scalar(
         "SELECT (s.revoked_at IS NULL AND s.expires_at > now()
+                 AND s.created_at + make_interval(secs => $3::float8) > now()
                  AND s.last_seen_at > now() - make_interval(secs => $2::float8)
                  AND u.disabled_at IS NULL)
          FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = $1",
     )
     .bind(id)
     .bind(idle_secs as f64)
+    .bind(absolute_secs as f64)
     .fetch_optional(exec)
     .await?;
     Ok(live.unwrap_or(false))

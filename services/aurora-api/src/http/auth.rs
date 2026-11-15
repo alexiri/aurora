@@ -374,8 +374,14 @@ pub const STREAM_RECHECK: Duration = Duration::from_secs(10);
 pub async fn principal_live(state: &AppState, c: &Caller) -> Result<bool, ApiError> {
     Ok(match &c.principal {
         Principal::Session { id } => {
-            let live =
-                sessions::is_live(&state.pool, *id, state.config.auth.session_idle_secs).await?;
+            let lifetimes = state.auth();
+            let live = sessions::is_live(
+                &state.pool,
+                *id,
+                lifetimes.auth.session_idle_secs,
+                lifetimes.auth.session_absolute_secs,
+            )
+            .await?;
             if live {
                 // An open stream is activity: keep the session from idling out under it.
                 if let Err(e) = sessions::touch(&state.pool, *id).await {
@@ -458,7 +464,7 @@ pub fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 pub fn session_cookie(state: &AppState, token: &str) -> String {
     format!(
         "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}{}",
-        state.config.auth.session_absolute_secs,
+        state.auth().auth.session_absolute_secs,
         if state.net.cookie_secure {
             "; Secure"
         } else {
@@ -532,10 +538,16 @@ async fn authenticate_session(state: &AppState, tok: &str) -> Result<Caller, Api
         return Ok(c);
     }
     let generation = state.session_cache.generation();
-    let rec = sessions::find_by_hash(&state.pool, &h, state.config.auth.session_idle_secs)
-        .await?
-        .filter(|r| r.live)
-        .ok_or_else(unauth)?;
+    let lifetimes = state.auth();
+    let rec = sessions::find_by_hash(
+        &state.pool,
+        &h,
+        lifetimes.auth.session_idle_secs,
+        lifetimes.auth.session_absolute_secs,
+    )
+    .await?
+    .filter(|r| r.live)
+    .ok_or_else(unauth)?;
     if let Err(e) = sessions::touch(&state.pool, rec.id).await {
         tracing::warn!(error = %e, "session touch failed");
     }

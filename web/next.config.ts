@@ -10,7 +10,11 @@ const nextConfig: NextConfig = {
   // `/admin` before `/admin/setup` is even requested; on a loaded dev server those two sequential
   // renders took longer than the e2e's 5 s (fix-027-selectors.spec.ts).
   async redirects() {
-    return [{ source: "/admin", destination: "/admin/setup", permanent: false }];
+    return [
+      { source: "/admin", destination: "/admin/setup", permanent: false },
+      // SET-4: the Identity page is replaced by Admin › Settings › Sign-in (role mappings are edited on the provider).
+      { source: "/admin/identity", destination: "/admin/settings/sign-in", permanent: false },
+    ];
   },
   async rewrites() {
     // Dev only: in production the edge proxy routes /v1/* to the API.

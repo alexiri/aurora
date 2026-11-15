@@ -451,7 +451,6 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/storage", G::Inst, false),
     r("POST", "/v1/admin/storage/refresh", G::Inst, false),
     // (P4-IDP-1, C-511) read-only role mapping table
-    r("GET", "/v1/admin/identity", G::Inst, false),
     // (P4-GRP-1, C-460..C-469, SEC-71) directory groups: the org-addressed and the
     // workspace-addressed routes; the by-group-id routes need a seeded group and are proven in
     // `groups.rs` (see EXEMPT).
@@ -493,6 +492,13 @@ const ROWS: &[Row] = &[
         G::Inst,
         true,
     ),
+    r(
+        "POST",
+        "/v1/admin/settings/sign_in/provider-test",
+        G::Inst,
+        true,
+    ),
+    r("POST", "/v1/admin/settings/email/test", G::Inst, true),
     r("GET", "/v1/admin/secret-stores", G::Inst, true),
     r("PUT", "/v1/admin/secret-stores/{id}", G::Inst, true),
     r("DELETE", "/v1/admin/secret-stores/{id}", G::Inst, true),

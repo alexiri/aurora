@@ -19,6 +19,40 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(preview))
         .routes(routes!(governance_orgs))
         .routes(routes!(llm_endpoint_test))
+        .routes(routes!(sign_in_provider_test))
+        .routes(routes!(email_test))
+}
+
+/// Discover an OIDC issuer without saving anything (C-780): the discovery document through the
+/// destination guard, 10 s. No secret is needed or used.
+#[utoipa::path(post, path = "/admin/settings/sign_in/provider-test", operation_id = "adminTestOidcProvider",
+    tag = "admin", request_body = super::sign_in::ProviderTestRequest,
+    responses((status = 200, body = super::sign_in::ProviderTestResult),
+        (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn sign_in_provider_test(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Json(req): Json<super::sign_in::ProviderTestRequest>,
+) -> Result<Json<super::sign_in::ProviderTestResult>, ApiError> {
+    Ok(Json(super::sign_in::provider_test(&s, req).await?))
+}
+
+/// Send one test message to the caller's own address with the proposed or effective e-mail
+/// settings (C-781). Nothing is saved; the password is never logged or returned.
+#[utoipa::path(post, path = "/admin/settings/email/test", operation_id = "adminTestEmail",
+    tag = "admin", request_body = super::sign_in::EmailTestRequest,
+    responses((status = 200, body = super::sign_in::EmailTestResult),
+        (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn email_test(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Json(req): Json<super::sign_in::EmailTestRequest>,
+) -> Result<Json<super::sign_in::EmailTestResult>, ApiError> {
+    Ok(Json(super::sign_in::email_test(&s, &c.0.email, req).await?))
 }
 
 /// Probe an LLM endpoint without a credential (C-779): one GET of its models path through the
@@ -77,11 +111,13 @@ async fn get_index(
         (status = 404, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn get_section(
-    _c: InstanceAdmin,
+    c: InstanceAdmin,
     State(s): State<AppState>,
     Path(section): Path<String>,
 ) -> Result<Json<SettingsSection>, ApiError> {
-    Ok(Json(service::section_view(&s, &section).await?))
+    Ok(Json(
+        service::section_view(&s, &section, Some(c.0.user_id)).await?,
+    ))
 }
 
 /// Replace a section's dashboard values (C-773): compare-and-set on `generation`, re-authentication
@@ -102,6 +138,7 @@ async fn put_section(
     Path(section): Path<String>,
     Json(req): Json<PutSection>,
 ) -> Result<Json<SettingsSection>, ApiError> {
+    let user = c.0.user_id;
     let via = Via::Admin(c.0);
     service::apply(
         &s,
@@ -115,7 +152,7 @@ async fn put_section(
         false,
     )
     .await?;
-    Ok(Json(service::section_view(&s, &section).await?))
+    Ok(Json(service::section_view(&s, &section, Some(user)).await?))
 }
 
 /// What a PUT would change, which values loosen and which organizations are affected (C-774).
@@ -130,13 +167,13 @@ async fn put_section(
         (status = 422, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn preview(
-    _c: InstanceAdmin,
+    c: InstanceAdmin,
     State(s): State<AppState>,
     Path(section): Path<String>,
     Json(req): Json<PutSection>,
 ) -> Result<Json<SettingsPreview>, ApiError> {
     Ok(Json(
-        service::preview(&s, &section, req.generation, &req.values).await?,
+        service::preview(&s, &section, req.generation, &req.values, Some(c.0.user_id)).await?,
     ))
 }
 

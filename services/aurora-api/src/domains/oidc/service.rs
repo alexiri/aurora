@@ -57,13 +57,16 @@ pub fn unknown_provider() -> ApiError {
     ApiError::not_found("Unknown sign-in provider.")
 }
 
-pub fn provider<'a>(state: &'a AppState, id: &str) -> Result<&'a OidcProvider, ApiError> {
+/// The provider now in force (SET-4: the registry follows the `sign_in` settings, so a removed
+/// provider is unknown at once, `oidc_provider_unknown`). Owned: a swap mid-flow never changes it.
+pub fn provider(state: &AppState, id: &str) -> Result<OidcProvider, ApiError> {
     state
-        .config
+        .auth()
         .auth
         .oidc_providers
         .iter()
         .find(|p| p.id == id)
+        .cloned()
         .ok_or_else(unknown_provider)
 }
 
@@ -115,13 +118,23 @@ type Cc = CoreClient<
     openidconnect::EndpointMaybeSet,
 >;
 
+/// The provider's client secret: the environment's (Helm-defined or mirrored provider), else the
+/// one the dashboard sealed in the inline store (SET-4), opened for this use only.
+async fn client_secret(state: &AppState, p: &OidcProvider) -> Result<Option<String>, String> {
+    if let Some(s) = state.auth().oidc_client_secrets.get(&p.id) {
+        return Ok(Some(s.expose().clone()));
+    }
+    match &p.client_secret {
+        Some(sealed) => crate::domains::settings::live::open_sealed(&state.vault, sealed)
+            .await
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
 async fn core_client(state: &AppState, p: &OidcProvider) -> Result<Cc, String> {
     let meta = state.oidc.metadata(p).await?;
-    let secret = state
-        .config
-        .oidc_client_secrets
-        .get(&p.id)
-        .map(|s| ClientSecret::new(s.expose().clone()));
+    let secret = client_secret(state, p).await?.map(ClientSecret::new);
     Ok(
         CoreClient::from_provider_metadata(meta, ClientId::new(p.client_id.clone()), secret)
             .set_redirect_uri(redirect_url(state, &p.id)?),
@@ -154,10 +167,12 @@ async fn current_session(
     let tok = session_token
         .filter(|t| t.starts_with(aurora_core::token::TokenPrefix::Session.as_str()))
         .ok_or_else(unauth)?;
+    let lifetimes = state.auth();
     let rec = sessions::find_by_hash(
         &state.pool,
         &aurora_core::token::hash(tok),
-        state.config.auth.session_idle_secs,
+        lifetimes.auth.session_idle_secs,
+        lifetimes.auth.session_absolute_secs,
     )
     .await?
     .filter(|r| r.live)
@@ -181,7 +196,7 @@ pub async fn start(
     } else {
         None
     };
-    let client = core_client(state, p).await.map_err(internal)?;
+    let client = core_client(state, &p).await.map_err(internal)?;
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let nonce = Nonce::new_random();
     let ttl = i64::try_from(aurora_core::limits::OAUTH_STATE_TTL.as_secs()).unwrap_or(600);
@@ -466,7 +481,7 @@ pub async fn callback(
     };
     let p = provider(state, provider_id).map_err(|_| plain(Fail("oidc_failed")))?;
     let flow = open_state(state, provider_id, params.state.as_deref(), cookie).map_err(plain)?;
-    finish_callback(state, client, p, params, &flow)
+    finish_callback(state, client, &p, params, &flow)
         .await
         .map_err(|Fail(code)| CallbackFail {
             code,
@@ -775,7 +790,8 @@ async fn create_user(
     let claimed = desired.grants_anything();
     // (P4-ONB-1, D-140) What `open` does with a new user depends on the saved placement. On a
     // fresh instance nothing is saved yet: only instance admins sign in until it is.
-    let open_plan = if state.config.signup_mode == SignupMode::Open {
+    let signup_mode = state.auth().signup_mode;
+    let open_plan = if signup_mode == SignupMode::Open {
         let privileged = listed || desired.admin.is_some();
         let plan = placement::service::open_plan(&mut *tx, privileged).await?;
         if plan == OpenPlan::SetupPending {
@@ -785,7 +801,7 @@ async fn create_user(
     } else {
         None
     };
-    let allowed = match state.config.signup_mode {
+    let allowed = match signup_mode {
         SignupMode::Open => {
             open_plan != Some(OpenPlan::Closed) || jit_org.is_some() || invited || claimed
         }
@@ -796,7 +812,7 @@ async fn create_user(
         return Err(Fail("signup_closed"));
     }
     let admitted_by_claim = claimed
-        && match state.config.signup_mode {
+        && match signup_mode {
             SignupMode::Open => false,
             SignupMode::SsoJit => jit_org.is_none() && !invited,
             SignupMode::InviteOnly => !listed && !invited,

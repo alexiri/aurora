@@ -29,6 +29,9 @@ const KEY_ORIGIN_KEYS: &[&str] = &[
 /// `key_unknown`), exactly as at startup — the typed configuration would only say "unknown field".
 pub fn entry_problems(key: &str, entry: &Value) -> Vec<EntryProblem> {
     let mut out = Vec::new();
+    if key == super::sign_in::PROVIDERS_KEY {
+        return super::sign_in::entry_problems(entry);
+    }
     if key != "llm.endpoints" {
         return out;
     }

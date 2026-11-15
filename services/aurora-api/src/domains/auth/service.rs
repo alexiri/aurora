@@ -49,7 +49,7 @@ pub(crate) async fn issue_session(
     client: &Client,
 ) -> Result<String, ApiError> {
     let tok = token::generate(TokenPrefix::Session).expose().clone();
-    let secs = i64::try_from(state.config.auth.session_absolute_secs).unwrap_or(i64::MAX / 4_000);
+    let secs = i64::try_from(state.auth().auth.session_absolute_secs).unwrap_or(i64::MAX / 4_000);
     sessions::create(
         conn,
         &NewSession {
