@@ -267,8 +267,11 @@ pub fn endpoint_field_errors(e: &LlmEndpoint, source: EntrySource) -> Vec<Endpoi
                 err("base_url", "base_url_not_allowed");
             }
         }
-        "azure_openai" => match e.base_url.as_deref() {
-            Some(u) if bare_origin(u).is_some_and(|(s, _)| s == "https") => {}
+        // `https`; plain `http` only to a loopback host (`08 §Configuration`: tests and development, e.g. the mock
+        // resources of the e2e suites), never a reachable one.
+        "azure_openai" => match e.base_url.as_deref().and_then(bare_origin) {
+            Some(("https", _)) => {}
+            Some(("http", host)) if is_loopback(host) => {}
             _ => err("base_url", "base_url_invalid"),
         },
         "bedrock" => {
@@ -484,6 +487,20 @@ mod tests {
                 ..ep("azure_openai")
             };
             assert_eq!(codes(&e), [("base_url", "base_url_invalid")], "{bad}");
+        }
+        // plain http only to a loopback host (tests and development)
+        for ok in [
+            "http://127.0.0.1:8080",
+            "http://localhost:9",
+            "http://[::1]:7",
+        ] {
+            let e = LlmEndpoint {
+                base_url: s(ok),
+                models: vec!["m".into()],
+                default_model: s("m"),
+                ..ep("azure_openai")
+            };
+            assert!(codes(&e).is_empty(), "{ok}: {:?}", codes(&e));
         }
         assert_eq!(
             codes(&ep("azure_openai")),
