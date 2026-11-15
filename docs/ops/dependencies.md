@@ -75,7 +75,10 @@ notes, and run `bash scripts/guards/run-all.sh` plus an image build. This is a k
   Fix on the Dependabot branch: `pnpm -C web install --lockfile-only`, commit the lockfile.
 - **GitHub-side merges of several Cargo PRs can corrupt `Cargo.lock`** (textual merge of adjacent
   entries; seen with PRs #8 + #9: `toml_datetime` listed twice). After merging more than one cargo PR
-  in a row, run `cargo metadata --locked` on master.
+  in a row, run `cargo metadata --locked` on master. Better: merge one, then `@dependabot rebase` the
+  next before merging it.
+- **Docker dependency names drop the registry**: Dependabot reports `ghcr.io/berriai/litellm` as
+  `berriai/litellm`, so an `ignore` entry lists both spellings (PR #3 slipped past the first one).
 
 ## Checking the configuration
 

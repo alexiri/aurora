@@ -108,8 +108,12 @@ updates:
     ignore:
       # I-30: the LLM mock stack is pinned by digest on purpose (a changed mock changes what the
       # claude-code conformance run proves); bumped by hand with a conformance run.
+      # Dependabot names ghcr images without the registry (PR #3 bumped "berriai/litellm" past the
+      # first entry), so both spellings are listed.
       - dependency-name: ghcr.io/berriai/litellm
+      - dependency-name: berriai/litellm
       - dependency-name: ghcr.io/vidaiuk/vidaimock
+      - dependency-name: vidaiuk/vidaimock
       # MM-003: Mattermost 11.7 is the supported (production) version; the preview image in
       # scripts/mattermost/setup.sh is pinned to 11.7.15 by digest.
       - dependency-name: mattermost/mattermost-preview
