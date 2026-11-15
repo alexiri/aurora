@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 93 | 47 | 5 (SET-2, FIX-146, P4-LLM-4, SET-3, FIX-157 (lane `fix-noreauth`)) | 37 | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 100 | 47 | 5 (SET-2, FIX-146, P4-LLM-4, SET-3, FIX-157 (lane `fix-noreauth`)) | 44 (incl. P5-UX-1..7, spec on branch `alexiri/p5-ux`) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 4 | 0 | 0 | 1 (P4-S3: specified and briefed, moved from phase 5, D-318) | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **415** | **358** | **6** | **38** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **422** | **358** | **6** | **45** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
@@ -95,6 +95,13 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-FILES-2 | Files page: browse, upload (files, folders, drag and drop), download, rename, delete | D-316, C-904 | M | Next.js | P5-FILES-1 | `P5-FILES-2.md` | ready (queued in lane p5-platform) |
 | P5-FILES-3 | Files viewer: CodeMirror editor with conflict dialog, raster image preview | D-316, C-905, SEC-126 | M | Next.js | P5-FILES-2 | `P5-FILES-3.md` | ready (queued in lane p5-platform) |
 | P5-FILES-4 | Files end to end: `scripts/e2e/files.sh` + Playwright journey | D-316, C-907 | S–M | tests | P5-FILES-1..3 | `P5-FILES-4.md` | ready (queued in lane p5-platform) |
+| P5-UX-1 | Role-aware nav, refusals in words (never "Could not reach the server" for a 403), empty states ask only non-actors, Welcome links that exist, first-run fixes | D-323, C-915, C-916, C-927 | M | Next.js | — | `P5-UX-1.md` | ready (spec on branch `alexiri/p5-ux`, not merged; not placed) |
+| P5-UX-2 | Connect plan (method readiness, who unblocks), manifest `audience`/`limit`/`scope_presets`, connect with a grant (sealed through OAuth), probe causes, journey links | D-320..D-322, SEC-127, C-909..C-913 | M | Rust | — | `P5-UX-2.md` | ready (spec on branch, not merged; not placed) |
+| P5-UX-3 | "Give <Agent> <App>" connect journey: agent Access › Add an app, Welcome, refusals and Apps tab; C-842 controls under Advanced | D-320, D-321, C-914, C-927 | M–L | Next.js | P5-UX-2; P5-UX-4 (soft) | `P5-UX-3.md` | ready (spec on branch, not merged; not placed) |
+| P5-UX-4 | Give-access preselection, "No agent can use this" (`grant_count`), effective access in words (`selected_by_details`) | D-324, C-917, C-918 | S–M | both | — | `P5-UX-4.md` | ready (spec on branch, not merged; not placed) |
+| P5-UX-5 | Workspace owners add people by e-mail; pending access applied at verified first sign-in; org setting `workspace_owner_invites` | D-325, SEC-128, C-919..C-921, migration (next free when placed) | M | both | P5-UX-1 | `P5-UX-5.md` | ready (spec on branch, not merged; Q-UX-1, Q-UX-2 open) |
+| P5-UX-6 | Admin defaults: starter grant on by default + backfill, display-name template, wizard Apps step (apps without an OAuth client), builtins in the kind dev image, stale docs | D-326, C-922..C-924 | M | both | P5-UX-2 (soft) | `P5-UX-6.md` | ready (spec on branch, not merged; not placed) |
+| P5-UX-7 | Credentials › Overview and a plain-language Policy summary with Common changes; operator labels renamed | D-327, C-925, C-926 | M | Next.js | P5-UX-3, P5-UX-4 | `P5-UX-7.md` | ready (spec on branch, not merged; not placed) |
 | P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after P5-FILES-4) |
 | P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1, P5-FILES-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
 | SPEC-SETTINGS | Instance settings move from Helm into the app (Helm-set values locked) — spec batch | D-195, D-236..D-238, SEC-89/90 | L | docs | — | `SPEC-SETTINGS.md` | done (merged 76bb566a) |
@@ -152,6 +159,7 @@ At most three implementation lanes at a time, disjoint ownership; a lane starts 
 - **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
 - **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-153 → FIX-154 (owner 2026-11-15) ‖ FIX-146 ‖ P5-FILES-1 → 2 → 3 → 4 (owner 2026-11-15, D-316: before P4-SSH; FILES-1 builds the `exec.*` engine P4-SSH-2 extends) ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
 - **Wave 3 queue** (placed 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 3 queue): `p5-apps` P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → FIX-151 → 6 → 7 (7 only after FIX-150, P4-UTOK and P4-EVAL-2 are merged: `domains/tools/`) ‖ P5-ICS → P5-CALDAV; `p5-agent` FIX-150 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3; `p5-platform` P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P5-CALINV (P4-S3 moved to phase 6, D-318).
+- **Not placed yet**: P5-UX-1..7 (spec on branch `alexiri/p5-ux`, awaiting the owner's merge; order in §Open questions).
 - **No spec yet**: none in phase 5 (P4-NARR, P4-UTOK and P4-EVAL specified 2026-11-15; P5-SLACK moved to phase 6, D-285).
 
 ### Exit criteria (phase 5)
@@ -175,7 +183,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-159, D-320, C-909, SEC-127, migration `20261201000243`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-159, D-328, C-930, SEC-129, migration `20261201000243`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -194,11 +202,13 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
 | P5-GUIDE-1..7 (spec merged 2026-11-15; always-index, recipes, `aurora-agent`, platform tools on demand) | D-170..D-172, D-295..D-298 (used; D-299 released) | C-640..C-657 (used), C-658, C-659 | migration for P5-GUIDE-1 takes the next free number when placed | SEC-91, SEC-117..SEC-120 (used; SEC-117 replaces the branch's colliding SEC-90) |
 | P5-FILES-1..4 (spec merged 2026-11-15; Files page over SFTP, owner D-316) | D-316 (used) | C-898..C-907 (used) | `20261201000241`, `…000242` | SEC-125, SEC-126 (used) |
+| P5-UX-1..7 (spec on branch `alexiri/p5-ux`, 2026-11-15; first run and connecting, owner walkthrough) | D-320..D-327 (used) | C-909..C-927 (used), C-928, C-929 | P5-UX-5's migration takes the next free number when placed | SEC-127, SEC-128 (used) |
 | P5-MODELS-1..3 (spec merged 2026-11-15; the harness chooses models, owner D-302) | D-302..D-304 (used) | C-875..C-884 (used), C-885..C-889 | migrations for P5-MODELS-1 and -2 take the next free numbers when placed | SEC-122, SEC-123 (used) |
 
 ## Open questions for the owner
 
 - **Phase 5:** review of the coordinator defaults recorded in D-268.
+- **Phase 5, P5-UX (spec on branch `alexiri/p5-ux`):** merge the spec batch? Q-UX-1 (may a workspace owner let a non-member into the org? recommended: no by default, org setting `workspace_owner_invites`) and Q-UX-2 (may "Add people" tell a workspace owner whether one exact address is already a member? recommended: yes, rate-limited and audited), both in `docs/tasks/P5-UX-5.md`. Suggested order once merged: P5-UX-1 ∥ P5-UX-2 → P5-UX-4 → P5-UX-3 → P5-UX-7; P5-UX-5 after P5-UX-1; P5-UX-6 after P5-UX-2. The Orchestrator places the lanes.
 - **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). (The P6-MODELS questions were answered 2026-11-15, D-302.) Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
 
 ## Open security findings

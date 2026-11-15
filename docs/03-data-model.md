@@ -1597,6 +1597,23 @@ tables above in the same change (and this section shrinks).
 
 `effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
 
+#### `workspace_pending_access` (adding people by e-mail; phase 5, P5-UX-5, D-325)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid PK | | 5 (P5-UX-5) |
+| workspace_id | uuid FK → workspaces ON DELETE CASCADE | | 5 (P5-UX-5) |
+| org_id | uuid FK → organizations ON DELETE CASCADE | the workspace's org (denormalized for the sign-in lookup) | 5 (P5-UX-5) |
+| email_normalized | text not null | normalized like `invitations.email`; UNIQUE (workspace_id, email_normalized) | 5 (P5-UX-5) |
+| role | text not null | CHECK in (`member`, `approver`): a pending row never carries `owner` (SEC-128) | 5 (P5-UX-5) |
+| invited_by | uuid FK → users ON DELETE SET NULL | | 5 (P5-UX-5) |
+| created_at | timestamptz not null default now() | | 5 (P5-UX-5) |
+| expires_at | timestamptz not null | `created_at + PENDING_ACCESS_TTL` (30 days); an index on it serves the sweeper | 5 (P5-UX-5) |
+
+Index `(org_id, email_normalized)` serves the sign-in lookup. The gateway role gets nothing on this table.
+`organizations.settings.workspace_owner_invites` (jsonb key, no column): `"off"` (default when absent) or
+`"on"` (C-921). The placement document (C-520, wherever placement is stored today) gains
+`personal_workspace.display_name_template` (C-923); no column.
+
 #### `turns` (request tracing; phase 5, FIX-146, D-232)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

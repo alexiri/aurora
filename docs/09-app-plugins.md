@@ -295,6 +295,19 @@ key pair are two methods of `aws-keys`). Every method (any `kind`) accepts, all 
 - The connect window asks "How do you want to connect?" when an app has more than one method,
   showing `label`, `description` and a **Recommended** badge; a reconnect keeps the connection's
   method unless the person picks another.
+- (Phase 5, P5-UX-2, D-321, C-910) **Journey keys**, all optional and additive (contract 1):
+  - `audience: person|admin` (default `person`). `admin` marks a method that needs material only an
+    administrator holds (the GitHub App installation: App ID, installation id, private key). The connect
+    journey never suggests it; it stays under **Advanced**.
+  - `fields[].limit: true`. An optional field that the journey shows with the access choice, for
+    example "Only these repositories". The linter refuses `limit` on a required field.
+  - `scope_presets: { read: [scope], write: [scope] }`. The scopes that "Read only" and "Read and
+    change" request. Each must be one of the method's scopes, and `read` may hold only `access: read`
+    scopes. Without it, `read` is the method's read scopes and `write` is all of them.
+
+  The connect plan (C-909) reports, per method, whether it is ready for a workspace (an `oauth2` method
+  needs a client that §11 step 2 can resolve), and the journey (`14 §First run and connecting`) picks
+  the first ready `person` method in the order: `recommended`, `oauth2`, `fields`, `hook`.
 
 Server-owned values are never taken from client input: templates and hooks
 read them from **context variables** listed in `permissions.context`:

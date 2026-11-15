@@ -292,6 +292,32 @@ Briefs P5-MODELS-1 (Rust), -2 (Rust), -3 (Next.js and recipe), after P4-LLM-5. O
 instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§Adapter claude-code`,
 `§Adapter codex`; `16`; `03`; `05`; `15`; `14`; `02 §Limits`; `17` (SEC-122, SEC-123); `18`;
 `API_CONTRACTS` C-875..C-884.
+
+### First run and connecting (phase 5, P5-UX, owner walkthrough 2026-11-15, D-320..D-327) — specified
+
+Owner, after a first-run walkthrough on the kind cluster: "the experience of figuring out how to
+connect their agent to things and how they have to configure their workspace is entirely too
+complicated". The owner singled out "one Connect journey per app" as the core of the fix.
+
+- **Connect journey.** "Give <Agent> <App>" starts from the agent and ends with a connection and a
+  grant made in one request (also across an OAuth sign-in, sealed and re-authorized, SEC-127). The
+  person chooses the app, what the agent may do, an optional limit, and signs in with the one method
+  that works for them; the full controls stay under Advanced.
+- **Who unblocks it.** A connect plan says which methods are ready for this person and who can fix the
+  others, by name.
+- **Role-aware pages.** No link leads a person to a page they cannot open, refusals name the role
+  needed, and empty states ask only people who cannot act.
+- **No silent gaps.** Give-access pickers preselect the obvious agent, and credentials no agent can use
+  are flagged.
+- **Adding people.** Workspace owners add people by e-mail, with pending access applied at a verified
+  first sign-in (SEC-128).
+- **Admin defaults.** Starter grants on by default, with backfill; human workspace names; the wizard
+  lists apps nobody can sign in to yet.
+- **Simple layers.** A plain Overview on Credentials and a plain-language summary on Policy.
+
+Briefs P5-UX-1..7. Owning sections: `14 §First run and connecting`; `09 §3.4`; `04 §Workspace
+access by e-mail`, `§New-user placement`; `05`; `03 §Planned changes`; `02 §Limits`; `17` (SEC-127,
+SEC-128); `API_CONTRACTS` C-909..C-927.
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 Also in phase 6, already specified: the **S3-compatible blob store** (P4-S3, D-120; moved from phase 5
