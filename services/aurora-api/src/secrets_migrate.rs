@@ -252,16 +252,6 @@ enum Moved {
 /// Run the migration. Errors only for problems that stop the whole run (bad target store, the
 /// database); per-row problems are counted in the summary.
 pub async fn run(pool: &PgPool, vault: &SecretVault, opts: &Options) -> Result<Summary, String> {
-    let target = vault
-        .registry()
-        .get(&opts.to)
-        .ok_or_else(|| format!("unknown store '{}'", opts.to))?;
-    if !target.capabilities().managed {
-        return Err(format!(
-            "store '{}' does not support managed values",
-            opts.to
-        ));
-    }
     // One real run at a time, whoever starts it (the CLI or the dashboard job, on any replica):
     // a transaction-scoped advisory lock held for the whole run, released when it ends or the
     // process dies. A dry run writes nothing and takes no lock.
@@ -279,6 +269,26 @@ pub async fn run(pool: &PgPool, vault: &SecretVault, opts: &Options) -> Result<S
         }
         Some(tx)
     };
+    run_unlocked(pool, vault, opts).await
+}
+
+/// [`run`] without the migration lock: for a caller that holds it, and for the tests of the
+/// per-row compare-and-swap, which race two runs on purpose.
+pub async fn run_unlocked(
+    pool: &PgPool,
+    vault: &SecretVault,
+    opts: &Options,
+) -> Result<Summary, String> {
+    let target = vault
+        .registry()
+        .get(&opts.to)
+        .ok_or_else(|| format!("unknown store '{}'", opts.to))?;
+    if !target.capabilities().managed {
+        return Err(format!(
+            "store '{}' does not support managed values",
+            opts.to
+        ));
+    }
     let mut summary = Summary::default();
     for src in &SOURCES {
         if opts.purpose.is_some_and(|p| p != src.purpose) {

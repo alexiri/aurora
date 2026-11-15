@@ -1216,17 +1216,6 @@ async fn start_migration(
             cache.counts = None;
         }
         let finished = Utc::now();
-        {
-            let mut jobs = lock_jobs();
-            if let Some(j) = jobs.get_mut(&key) {
-                j.view.state = outcome.to_owned();
-                j.view.finished_at = Some(finished);
-                j.view.error.clone_from(&error);
-                if !per.is_empty() {
-                    j.view.per_purpose.clone_from(&per);
-                }
-            }
-        }
         let ev = AuditEvent::new(actor, "secret_stores.migrate_finish", Outcome::Success)
             .target("secret_store", &target)
             .metadata(json!({
@@ -1242,6 +1231,16 @@ async fn start_migration(
                 }
             }
             Err(e) => tracing::error!(error = %e, "secret migration finish not audited"),
+        }
+        // Last: a page that sees the job finished also finds its audit row.
+        let mut jobs = lock_jobs();
+        if let Some(j) = jobs.get_mut(&key) {
+            j.view.state = outcome.to_owned();
+            j.view.finished_at = Some(finished);
+            j.view.error.clone_from(&error);
+            if !per.is_empty() {
+                j.view.per_purpose.clone_from(&per);
+            }
         }
     });
     Ok((http::StatusCode::ACCEPTED, Json(view)))

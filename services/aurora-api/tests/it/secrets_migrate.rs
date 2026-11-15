@@ -6,7 +6,7 @@
 
 use crate::common::*;
 use async_trait::async_trait;
-use aurora_api::secrets_migrate::{Options, Summary, run};
+use aurora_api::secrets_migrate::{Options, Summary, run, run_unlocked};
 use aurora_config::{SecretStoreConfig, SecretsSection};
 use aurora_core::Secret;
 use aurora_secrets::{
@@ -810,8 +810,8 @@ async fn race(w: &World, store: &str) {
         );
         let (o1, o2) = (World::quick(store), World::quick(store));
         (
-            tokio::spawn(async move { run(&p1, &v1, &o1).await.unwrap() }),
-            tokio::spawn(async move { run(&p2, &v2, &o2).await.unwrap() }),
+            tokio::spawn(async move { run_unlocked(&p1, &v1, &o1).await.unwrap() }),
+            tokio::spawn(async move { run_unlocked(&p2, &v2, &o2).await.unwrap() }),
         )
     };
     let (a, b) = (a.await.unwrap(), b.await.unwrap());
