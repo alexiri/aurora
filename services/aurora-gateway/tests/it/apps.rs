@@ -296,6 +296,7 @@ async fn start_with_ca(
         aurora_llm::ProviderRegistry::from_config(&aurora_config::LlmSection {
             enabled_providers: vec![],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![],
         })
         .unwrap(),
@@ -1257,6 +1258,7 @@ async fn refresh_targets(
         aurora_llm::ProviderRegistry::from_config(&aurora_config::LlmSection {
             enabled_providers: vec![],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![],
         })
         .unwrap(),

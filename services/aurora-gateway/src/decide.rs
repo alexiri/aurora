@@ -156,6 +156,9 @@ struct Hook {
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
     /// Injected values placed in the URL (FIX-104).
     echo: Vec<Vec<u8>>,
+    /// (P4-LLM-1, C-808) `(provider, endpoint id)` of an injected LLM key: the response is classified for the
+    /// request log and `aurora_gateway_llm_upstream_total`.
+    llm: Option<(String, String)>,
 }
 
 impl PostHook for Hook {
@@ -181,6 +184,33 @@ impl PostHook for Hook {
             self.log
                 .record(ctx.row(r.status().as_u16(), Some(status.as_u16()), code.as_deref()));
             return Some(r);
+        }
+        // (P4-LLM-1, C-808) Classify an injected LLM request's answer by status (and Bedrock's error-type header):
+        // the request log's `error_code` and the upstream metric. Never reads a body, never alters the answer.
+        if let Some((provider, endpoint)) = &self.llm
+            && ctx.injected > 0
+        {
+            let class = if status.is_success() {
+                "ok"
+            } else {
+                let error_type = (provider == "bedrock")
+                    .then(|| {
+                        headers
+                            .get("x-amzn-errortype")
+                            .and_then(|v| v.to_str().ok())
+                    })
+                    .flatten();
+                let c = aurora_llm::classify(provider, status.as_u16(), error_type);
+                code = c.error_code().map(str::to_owned);
+                c.as_str()
+            };
+            metrics::counter!(
+                "aurora_gateway_llm_upstream_total",
+                "provider" => provider.clone(),
+                "endpoint" => endpoint.clone(),
+                "class" => class
+            )
+            .increment(1);
         }
         let challenge = self.passthrough_challenge
             && status.as_u16() == 401
@@ -1393,7 +1423,11 @@ impl PolicyHandler {
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let echo =
                 inject::url_needles([value.expose().as_slice()], &new_path, query.as_deref());
-            let hook = self.hook(&rv, ctx, fb, false, backstop, echo);
+            let llm = (c.kind == aurora_policy::facts::SecretKind::Llm)
+                .then(|| c.provider.clone().zip(c.llm_endpoint.clone()))
+                .flatten();
+            let mut hook = self.hook(&rv, ctx, fb, false, backstop, echo);
+            hook.llm = llm;
             return Outcome::Forward(PreparedRequest {
                 scheme,
                 host,
@@ -1905,12 +1939,13 @@ impl PolicyHandler {
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
         echo: Vec<Vec<u8>>,
-    ) -> Box<dyn PostHook> {
+    ) -> Box<Hook> {
         let connect_url = match &ctx.app_id {
             Some(a) => self.url(rv, &format!("apps/{a}")),
             None => self.url(rv, "apps"),
         };
         Box::new(Hook {
+            llm: None,
             ctx,
             log: self.log.clone(),
             fallback,

@@ -547,6 +547,7 @@ fn no_llm() -> LlmSection {
     LlmSection {
         enabled_providers: vec![],
         provider_preference: vec![],
+        dev_upstream_overrides: Default::default(),
         endpoints: vec![],
     }
 }
@@ -884,6 +885,7 @@ async fn llm_key_bearer_and_strips_x_api_key() {
     let llm = |p: u16| LlmSection {
         enabled_providers: vec!["litellm".into()],
         provider_preference: vec![],
+        dev_upstream_overrides: Default::default(),
         endpoints: vec![LlmEndpoint {
             id: "central".into(),
             provider: "litellm".into(),
@@ -1640,6 +1642,7 @@ async fn sec04_llm_key_only_to_the_configured_origin() {
         let llm = LlmSection {
             enabled_providers: vec!["litellm".into()],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![LlmEndpoint {
                 id: "central".into(),
                 provider: "litellm".into(),

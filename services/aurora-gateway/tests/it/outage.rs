@@ -498,6 +498,7 @@ async fn start(o: Opts) -> Gw {
         aurora_llm::ProviderRegistry::from_config(&aurora_config::LlmSection {
             enabled_providers: vec![],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![],
         })
         .unwrap(),
@@ -936,6 +937,7 @@ async fn a_policy_read_that_cannot_connect_is_an_outage_and_is_refused_as_degrad
         aurora_llm::ProviderRegistry::from_config(&aurora_config::LlmSection {
             enabled_providers: vec![],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![],
         })
         .unwrap(),

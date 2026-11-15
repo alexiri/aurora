@@ -248,10 +248,18 @@ fn to_candidate(r: SecretMetaRow, org: Uuid, llm: &ProviderRegistry) -> Result<S
             .as_deref()
             .and_then(|p| llm.provider(p))
             .ok_or("unknown llm provider")?;
-        (
-            SecretKind::Llm,
-            Injection::Llm(provider.injection(&AuthMode::ApiKey)),
-        )
+        // (C-806) The recipe follows the secret's own auth mode and its endpoint's entry (OpenAI organization,
+        // the compatible `auth_header`).
+        let mode = r
+            .llm_auth_mode
+            .as_deref()
+            .and_then(AuthMode::parse)
+            .unwrap_or(AuthMode::ApiKey);
+        let recipe = match r.llm_endpoint_id.as_deref().and_then(|id| llm.endpoint(id)) {
+            Some(ep) => provider.injection_for(ep, &mode),
+            None => provider.injection(&mode),
+        };
+        (SecretKind::Llm, Injection::Llm(recipe))
     } else {
         let recipe: InjectionRecipe =
             serde_json::from_value(r.injection).map_err(|e| format!("recipe: {e}"))?;

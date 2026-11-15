@@ -125,12 +125,17 @@ impl LogWriter for Capture {
     }
 }
 
+/// `(path, headers)` of one upstream request.
+type Seen = (String, Vec<(String, String)>);
+
 #[derive(Default)]
 struct Counters {
     verifies: AtomicUsize,
     messages: AtomicUsize,
     /// Requests to any other path (FIX-105: management and storage routes).
     other: AtomicUsize,
+    /// (P4-LLM-1) `(path, headers)` of every request the upstream received.
+    seen: Mutex<Vec<Seen>>,
 }
 
 fn org_of(key: &str) -> &'static str {
@@ -158,7 +163,29 @@ async fn mock(
         })
         .unwrap_or("")
         .to_owned();
+    c.seen.lock().unwrap().push((
+        req.uri().path().to_owned(),
+        req.headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_owned()))
+            .collect(),
+    ));
     let mut r = Response::new(Full::new(Bytes::from(format!("key={key}"))));
+    // (P4-LLM-1) OpenAI-style answers: a status picked by the key, an SSE stream on `/v1/responses`.
+    // (Only for the `openai` endpoint, recognised by the project header the gateway sets.)
+    if req.uri().path() == "/v1/responses" && req.headers().contains_key("openai-project") {
+        r.headers_mut()
+            .insert("content-type", "text/event-stream".parse().unwrap());
+        *r.body_mut() = Full::new(Bytes::from(SSE));
+    }
+    for (needle, status) in [("e401", 401), ("e429", 429), ("e500", 500)] {
+        if key.contains(needle) && req.uri().path() == "/v1/chat/completions" {
+            *r.status_mut() = http::StatusCode::from_u16(status).unwrap();
+            *r.body_mut() = Full::new(Bytes::from(
+                "{\"error\":{\"code\":\"insufficient_quota\",\"message\":\"upstream\"}}",
+            ));
+        }
+    }
     match req.uri().path() {
         "/v1/models" => {
             c.verifies.fetch_add(1, Ordering::SeqCst);
@@ -203,7 +230,15 @@ struct Opts {
     /// (FIX-105) `Some(allowed_paths)`: the endpoint is a LiteLLM one (`central`) instead of
     /// Anthropic's, with those operator-declared extra paths.
     litellm: Option<Vec<String>>,
+    /// (P4-LLM-1, D-260(b)) `allowed_paths` of the Anthropic endpoint.
+    anthropic_paths: Vec<String>,
+    /// (P4-LLM-1) The endpoint is an `openai` one (`openai`) whose fixed origin is replaced by the mock
+    /// (`llm.dev_upstream_overrides`), configured with `organization = org-cfg`, `project = proj-cfg`.
+    openai: bool,
 }
+
+/// Byte-exact SSE body the mock streams (acceptance 3: passthrough).
+const SSE: &str = "event: response.created\ndata: {\"a\":1}\n\n: keep-alive\n\ndata: [DONE]\n\n";
 
 fn doc() -> Value {
     json!({"llm": {"posture": "open", "endpoints": {"anthropic": {"allowed": true}}}})
@@ -224,6 +259,8 @@ impl Default for Opts {
             secrets: vec![("sk-good", true, Some(verified("org_ok")))],
             known_hosts: vec![],
             litellm: None,
+            anthropic_paths: vec![],
+            openai: false,
         }
     }
 }
@@ -296,7 +333,9 @@ async fn start(o: Opts) -> Env {
             name: format!("key{i}"),
             kind: "llm".into(),
             llm_provider: Some(
-                if o.litellm.is_some() {
+                if o.openai {
+                    "openai"
+                } else if o.litellm.is_some() {
                     "litellm"
                 } else {
                     "anthropic"
@@ -305,7 +344,9 @@ async fn start(o: Opts) -> Env {
             ),
             llm_auth_mode: Some("api_key".into()),
             llm_endpoint_id: Some(
-                if o.litellm.is_some() {
+                if o.openai {
+                    "openai"
+                } else if o.litellm.is_some() {
                     "central"
                 } else {
                     "anthropic"
@@ -334,9 +375,27 @@ async fn start(o: Opts) -> Env {
     }
     let src = Arc::new(Src(Mutex::new(rows), Mutex::new(policy)));
     let cfg = match &o.litellm {
+        _ if o.openai => LlmSection {
+            enabled_providers: vec!["openai".into()],
+            provider_preference: vec![],
+            dev_upstream_overrides: [(
+                "https://api.openai.com".to_owned(),
+                format!("http://{llm_addr}"),
+            )]
+            .into(),
+            endpoints: vec![LlmEndpoint {
+                id: "openai".into(),
+                provider: "openai".into(),
+                allowed_models: o.instance_models.clone(),
+                organization: Some("org-cfg".into()),
+                project: Some("proj-cfg".into()),
+                ..Default::default()
+            }],
+        },
         Some(paths) => LlmSection {
             enabled_providers: vec!["litellm".into()],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![LlmEndpoint {
                 id: "central".into(),
                 provider: "litellm".into(),
@@ -348,10 +407,12 @@ async fn start(o: Opts) -> Env {
         None => LlmSection {
             enabled_providers: vec!["anthropic".into()],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![LlmEndpoint {
                 id: "anthropic".into(),
                 provider: "anthropic".into(),
                 allowed_models: o.instance_models.clone(),
+                allowed_paths: o.anthropic_paths.clone(),
                 key_origin: Some(aurora_config::KeyOrigin {
                     method: "provider_account".into(),
                     allowed_organization_ids: vec!["org_ok".into()],
@@ -361,7 +422,7 @@ async fn start(o: Opts) -> Env {
             }],
         },
     };
-    let llm = Arc::new(if o.litellm.is_some() {
+    let llm = Arc::new(if o.litellm.is_some() || o.openai {
         aurora_llm::ProviderRegistry::from_config(&cfg).unwrap()
     } else {
         aurora_llm::ProviderRegistry::from_config_with_anthropic_base(
@@ -907,6 +968,52 @@ async fn backstop_counts_missing_headers_without_refusing() {
     assert_eq!(env.gov.header_missing_total(), 1);
 }
 
+/// (P4-LLM-1, D-260(c), D-268(d), SEC-65) The Anthropic key is injected on the inference routes only (on by
+/// default): Files, Batches and the other APIs are refused before policy and before any credential is opened;
+/// `allowed_paths` adds what the operator lists.
+#[tokio::test]
+async fn anthropic_key_is_injected_only_on_inference_paths() {
+    let env = start(Opts {
+        secrets: vec![("sk-good", true, Some(verified("org_ok")))],
+        anthropic_paths: vec!["/v1/files".into()],
+        ..Opts::default()
+    })
+    .await;
+    for (method, path) in [
+        ("POST", "/v1/messages"),
+        ("POST", "/v1/messages/count_tokens"),
+        ("GET", "/v1/models"),
+        ("GET", "/v1/files"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{\"model\":\"m\"}").await;
+        assert_eq!(r.status, 200, "{method} {path}: {}", r.body);
+    }
+    env.mem.set_unavailable(true);
+    let other_before = env.counters.other.load(Ordering::SeqCst);
+    for (method, path) in [
+        ("GET", "/v1/files/file_1"),
+        ("POST", "/v1/messages/batches"),
+        ("GET", "/v1/messages/batches/b1"),
+        ("POST", "/v1/skills"),
+        ("GET", "/v1/organizations/me"),
+        ("GET", "/v1/messages"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert!(
+            has(&r, "llm_path_not_permitted"),
+            "{method} {path}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("sk-good"), "{}", r.body);
+    }
+    assert_eq!(
+        env.counters.other.load(Ordering::SeqCst),
+        other_before,
+        "nothing reached the endpoint"
+    );
+}
+
 /// (D-177, SEC-65, FIX-105) A sanctioned LiteLLM key is injected on the inference routes only:
 /// the management API and the other OpenAI routes are refused before policy and before any
 /// credential is opened; an operator-listed path is admitted.
@@ -969,4 +1076,156 @@ async fn litellm_key_is_injected_only_on_inference_paths() {
         other_before,
         "nothing reached the endpoint"
     );
+}
+
+fn header_of<'a>(
+    seen: &'a [(String, Vec<(String, String)>)],
+    path: &str,
+    name: &str,
+) -> Vec<&'a str> {
+    seen.iter()
+        .filter(|(p, _)| p == path)
+        .flat_map(|(_, h)| h.iter())
+        .filter(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+        .collect()
+}
+
+/// (P4-LLM-1, C-806, C-809, C-808, acceptance 3) `openai` through the whole pipeline: the agent's own credential and
+/// `OpenAI-*` headers are replaced by the key and the configured organization and project; an SSE answer passes byte
+/// for byte; non-inference paths are refused before the value is opened; the model allow-list fails closed;
+/// an upstream 401/429/500 reaches the client unchanged and is classified in the request log by status alone.
+#[tokio::test]
+async fn openai_key_pipeline_headers_paths_models_sse_and_classification() {
+    let env = start(Opts {
+        openai: true,
+        doc: json!({"llm": {"posture": "open", "endpoints": {"openai": {"allowed": true}}}}),
+        secrets: vec![("sk-good", true, None)],
+        instance_models: vec!["gpt-a".into()],
+        ..Opts::default()
+    })
+    .await;
+    let body = json!({"model": "gpt-a"}).to_string();
+    let r = request(
+        &env,
+        env.llm,
+        "POST",
+        "/v1/chat/completions",
+        "Authorization: Bearer agent-own\r\nx-api-key: agent-own\r\napi-key: agent-own\r\nOpenAI-Organization: org-agent\r\nOpenAI-Project: proj-agent\r\nOpenAI-Beta: assistants=v2\r\n",
+        body.as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    {
+        let seen = env.counters.seen.lock().unwrap();
+        let p = "/v1/chat/completions";
+        assert_eq!(header_of(&seen, p, "authorization"), ["Bearer sk-good"]);
+        assert!(header_of(&seen, p, "x-api-key").is_empty());
+        assert!(header_of(&seen, p, "api-key").is_empty());
+        assert_eq!(header_of(&seen, p, "openai-organization"), ["org-cfg"]);
+        assert_eq!(header_of(&seen, p, "openai-project"), ["proj-cfg"]);
+        assert!(
+            !format!("{seen:?}").contains("agent-own") && !format!("{seen:?}").contains("agent"),
+            "no agent credential reaches the upstream: {seen:?}"
+        );
+    }
+    // SSE passthrough, byte for byte.
+    let r = request(
+        &env,
+        env.llm,
+        "POST",
+        "/v1/responses",
+        "",
+        json!({"model": "gpt-a", "stream": true})
+            .to_string()
+            .as_bytes(),
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.body, SSE);
+    // The model allow-list fails closed: another model, an unparsable and a truncated body.
+    let r = request(
+        &env,
+        env.llm,
+        "POST",
+        "/v1/chat/completions",
+        "",
+        b"{\"model\":\"gpt-z\"}",
+    )
+    .await;
+    assert!(has(&r, "llm_model_not_allowed"), "{}", r.body);
+    let big = format!(
+        "{{\"pad\":\"{}\",\"model\":\"gpt-a\"}}",
+        "a".repeat(300 * 1024)
+    );
+    let r = request(
+        &env,
+        env.llm,
+        "POST",
+        "/v1/chat/completions",
+        "",
+        big.as_bytes(),
+    )
+    .await;
+    assert!(has(&r, "llm_model_not_allowed"), "{}", r.body);
+    // Files, fine-tuning, images, assistants and the rest: refused before policy and before the value is opened.
+    env.mem.set_unavailable(true);
+    let other_before = env.counters.other.load(Ordering::SeqCst);
+    for (method, path) in [
+        ("GET", "/v1/files"),
+        ("POST", "/v1/files"),
+        ("POST", "/v1/fine_tuning/jobs"),
+        ("POST", "/v1/images/generations"),
+        ("GET", "/v1/assistants"),
+        ("GET", "/v1/organization/admin_api_keys"),
+        ("GET", "/v1/chat/completions"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert!(
+            has(&r, "llm_path_not_permitted"),
+            "{method} {path}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("sk-good"), "{}", r.body);
+    }
+    assert_eq!(env.counters.other.load(Ordering::SeqCst), other_before);
+    env.mem.set_unavailable(false);
+    // Classification (C-808): the status and body are the upstream's; the log row carries the class.
+    for (key, status, code) in [
+        ("sk-e401", 401u16, "llm_auth"),
+        ("sk-e429", 429, "llm_rate_limited"),
+        ("sk-e500", 500, "llm_overloaded"),
+    ] {
+        let env = start(Opts {
+            openai: true,
+            doc: json!({"llm": {"posture": "open", "endpoints": {"openai": {"allowed": true}}}}),
+            secrets: vec![(key, true, None)],
+            ..Opts::default()
+        })
+        .await;
+        let r = request(
+            &env,
+            env.llm,
+            "POST",
+            "/v1/chat/completions",
+            "",
+            b"{\"model\":\"m\"}",
+        )
+        .await;
+        assert_eq!(r.status, status, "{key}: {}", r.body);
+        assert!(
+            r.body.contains("insufficient_quota") && r.body.contains("upstream"),
+            "{}",
+            r.body
+        );
+        env.log.flush().await;
+        let rows = env.captured.0.lock().unwrap().clone();
+        assert!(
+            rows.iter()
+                .any(|row| row.error_code.as_deref() == Some(code)
+                    && row.upstream_status == Some(i32::from(status))),
+            "{key}: {rows:?}"
+        );
+    }
 }

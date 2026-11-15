@@ -466,7 +466,12 @@ impl RawConfig {
             check_auth(&mut c, &self.auth, s, external_url.as_deref());
         check_email(&mut c, &self.email, s.smtp_password.is_some());
         check_secret_stores(&mut c, &self.secrets);
-        check_llm(&mut c, &self.llm, &self.governance);
+        check_llm(
+            &mut c,
+            &self.llm,
+            &self.governance,
+            self.gateway.insecure_loopback_injection,
+        );
         let governance = check_governance(&mut c, self);
         check_hosted(&mut c, &self.hosted);
         let agents = check_agents(&mut c, &self.agents);
@@ -706,7 +711,12 @@ impl RawConfig {
             self.database.max_connections,
         );
         check_secret_stores(&mut c, &self.secrets);
-        check_llm(&mut c, &self.llm, &self.governance);
+        check_llm(
+            &mut c,
+            &self.llm,
+            &self.governance,
+            self.gateway.insecure_loopback_injection,
+        );
         let governance = check_governance(&mut c, self);
         let g = &self.gateway;
         let internal_bind = resolve_bind(
@@ -2290,10 +2300,17 @@ fn check_allowed_paths(c: &mut Ctx, key: &str, provider: &str, paths: &[String])
     if paths.is_empty() {
         return;
     }
-    if !matches!(provider, "litellm" | "openai_compatible") {
+    // the five P4-LLM providers are checked by `endpoint_field_errors` (C-800)
+    if matches!(
+        provider,
+        "bedrock" | "vertex" | "openai" | "azure_openai" | "openai_compatible"
+    ) {
+        return;
+    }
+    if !matches!(provider, "litellm" | "anthropic") {
         c.err(
             key,
-            "only `litellm` and `openai_compatible` endpoints have an inference-path set",
+            "only endpoints of a provider with an inference-path set have `allowed_paths`",
         );
         return;
     }
@@ -2319,7 +2336,55 @@ fn check_allowed_paths(c: &mut Ctx, key: &str, provider: &str, paths: &[String])
     }
 }
 
-fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
+/// (C-812) `llm.dev_upstream_overrides`: a key is a provider's fixed origin, a target a loopback `http(s)://host[:port]`;
+/// only with `gateway.insecure_loopback_injection`, never inside Kubernetes.
+fn check_dev_upstream_overrides(c: &mut Ctx, l: &LlmSection, insecure_loopback: bool) {
+    if l.dev_upstream_overrides.is_empty() {
+        return;
+    }
+    let key = "llm.dev_upstream_overrides";
+    if !insecure_loopback {
+        c.err(
+            key,
+            "tests and development only: needs gateway.insecure_loopback_injection = true",
+        );
+    }
+    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+        c.err(key, "refused inside a Kubernetes cluster");
+    }
+    for (origin, target) in &l.dev_upstream_overrides {
+        if !matches!(
+            origin.as_str(),
+            "https://api.openai.com" | "https://api.anthropic.com"
+        ) {
+            c.err(format!("{key}.{origin}"), "must be a fixed provider origin: https://api.openai.com or https://api.anthropic.com");
+        }
+        let loopback = target
+            .split_once("://")
+            .filter(|(s, _)| matches!(*s, "http" | "https"))
+            .map(|(_, r)| r.split('/').next().unwrap_or(""))
+            .is_some_and(|authority| {
+                let host = authority
+                    .strip_prefix('[')
+                    .and_then(|v| v.split_once(']'))
+                    .map_or_else(|| authority.split(':').next().unwrap_or(""), |(h, _)| h);
+                host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            })
+            && !target.contains(['@', '?', '#']);
+        if !loopback {
+            c.err(
+                format!("{key}.{origin}"),
+                "the target must be a loopback URL (127.0.0.0/8, ::1, localhost)",
+            );
+        }
+    }
+}
+
+fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection, insecure_loopback: bool) {
+    check_dev_upstream_overrides(c, l, insecure_loopback);
     let mut ids = BTreeSet::new();
     for (i, e) in l.endpoints.iter().enumerate() {
         let k = |f: &str| format!("llm.endpoints[{i}].{f}");
@@ -2331,8 +2396,15 @@ fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
         if e.provider.is_empty() {
             c.err(k("provider"), "required");
         }
-        check_url(c, &k("base_url"), e.base_url.as_deref());
+        // `openai_compatible` may use plain http, which `check_url` would refuse; its own rule is below.
+        if e.provider != "openai_compatible" {
+            check_url(c, &k("base_url"), e.base_url.as_deref());
+        }
         check_allowed_paths(c, &k("allowed_paths"), &e.provider, &e.allowed_paths);
+        // (P4-LLM-1, C-800) The per-provider rules, one function shared with the settings writes.
+        for fe in crate::endpoint_field_errors(e, crate::EntrySource::Helm) {
+            c.err(k(fe.field), format!("{} ({})", fe.code, fe.field));
+        }
         match &e.key_origin {
             Some(o) => {
                 if !matches!(
