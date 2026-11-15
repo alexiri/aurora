@@ -389,7 +389,7 @@ impl PolicyHandler {
         value: &[u8],
     ) -> Result<Option<Arc<aurora_core::Secret<String>>>, aurora_llm::mint::MintError> {
         use aurora_llm::{AuthMode, InjectionHeader};
-        let Injection::Llm(l) = &c.injection else {
+        let crate::resolve::Injection::Llm(l) = &c.injection else {
             return Ok(None);
         };
         let mode = match l.header {
@@ -1453,9 +1453,8 @@ impl PolicyHandler {
             let minted = match self.llm_token(c, value.expose()).await {
                 Ok(t) => t,
                 Err(e) => {
-                    let err = credential_unavailable("llm_mint").with_details(
-                        json!({ "kind": "llm_mint", "reason": e.reason() }),
-                    );
+                    let err = credential_unavailable("llm_mint")
+                        .with_details(json!({ "kind": "llm_mint", "reason": e.reason() }));
                     let code = if e.class == aurora_llm::mint::MintClass::Rejected {
                         "llm_auth"
                     } else {

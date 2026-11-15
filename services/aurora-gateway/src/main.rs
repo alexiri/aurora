@@ -199,7 +199,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let policy_resolver = Arc::new(
         Resolver::with_ttl(
             Arc::new(DbSource(pool.clone())),
-            llm,
+            llm.clone(),
             Duration::from_secs(cfg.gateway.resolve_cache_ttl_secs),
         )
         .with_governance(governance.clone())

@@ -88,7 +88,13 @@ impl LlmMint {
 
     /// Tests: smaller bound, skew, hold and timeout.
     #[must_use]
-    pub fn with_limits(mut self, cap: usize, skew: Duration, hold: Duration, timeout: Duration) -> Self {
+    pub fn with_limits(
+        mut self,
+        cap: usize,
+        skew: Duration,
+        hold: Duration,
+        timeout: Duration,
+    ) -> Self {
         (self.cap, self.skew, self.hold, self.timeout) = (cap, skew, hold, timeout);
         self
     }
@@ -129,7 +135,12 @@ impl LlmMint {
     /// for `LLM_TOKEN_MINT_FAILURE_HOLD` without calling the endpoint again.
     pub async fn token(&self, r: &MintRequest<'_>) -> Result<Arc<Secret<String>>, MintError> {
         let spec = mint::spec(r.mode).ok_or_else(MintError::unavailable)?;
-        let key: Key = (r.secret_id, r.version, r.mode.as_str(), spec.region(r.endpoint));
+        let key: Key = (
+            r.secret_id,
+            r.version,
+            r.mode.as_str(),
+            spec.region(r.endpoint),
+        );
         match self.lookup(&key) {
             Some(Ok(t)) => {
                 Self::count(r.mode, "cached");
@@ -179,7 +190,9 @@ impl LlmMint {
         r: &MintRequest<'_>,
         result: &Result<(Arc<Secret<String>>, Duration), MintError>,
     ) {
-        let Ok(mut st) = self.state.lock() else { return };
+        let Ok(mut st) = self.state.lock() else {
+            return;
+        };
         st.inflight.remove(&key);
         let now = Instant::now();
         let slot = match result {
@@ -294,7 +307,9 @@ fn prepared(req: http::Request<Vec<u8>>) -> Option<PreparedRequest> {
 
 impl Invalidatable for LlmMint {
     fn invalidate(&self, ev: &Invalidate) {
-        let Ok(mut st) = self.state.lock() else { return };
+        let Ok(mut st) = self.state.lock() else {
+            return;
+        };
         match ev.scope {
             Scope::Org(id) => st.entries.retain(|_, e| e.org != id),
             Scope::Workspace(id) => st.entries.retain(|_, e| e.workspace != Some(id)),
