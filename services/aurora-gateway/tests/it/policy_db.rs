@@ -100,6 +100,7 @@ async fn loads_view_and_invalidates_on_notify() {
         org_id: org,
         conversation_id: None,
         turn_id: None,
+        trace_context: None,
         context_label: None,
         speaker_user_id: None,
         speaker_group_ids: Vec::new(),

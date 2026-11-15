@@ -565,13 +565,21 @@ pub async fn poll_once(state: &AppState) -> Result<usize, ApiError> {
     .await?;
     drop(c);
     let n = claimed.len();
-    for source in claimed {
-        let actor = AuditActor::system("addon-source-poll");
-        if let Err(e) = check_source(state, &source, "scheduled", &actor).await {
-            tracing::warn!(source = %source.id, error = %e.message(), "addon source check failed");
-            release(state, &source).await;
-        }
+    if n == 0 {
+        // (FIX-146, D-232 (6)) An iteration that finds nothing opens no span.
+        return Ok(0);
     }
+    let work = async {
+        for source in claimed {
+            let actor = AuditActor::system("addon-source-poll");
+            if let Err(e) = check_source(state, &source, "scheduled", &actor).await {
+                tracing::warn!(source = %source.id, error = %e.message(), "addon source check failed");
+                release(state, &source).await;
+            }
+        }
+    };
+    tracing::Instrument::instrument(work, aurora_core::telemetry::job_span("addon source poll"))
+        .await;
     Ok(n)
 }
 

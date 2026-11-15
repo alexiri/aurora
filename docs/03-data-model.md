@@ -792,6 +792,7 @@ All tokens the gateway accepts.
 | expires_at | timestamptz null | agent: null unless an effective maximum age is configured, then `created + max age` (phase 3, RFE-013, `08 §7`); boot: null until stop; context: turn end + grace (BYO: capped by the agent token's) |
 | last_used_at | timestamptz null | (phase 3, RFE-013) churn column: set by the gateway on successful authentication and by the API on agent-token routes, ≤1 write/min/credential; drives the stale-token views. Gateway role has `UPDATE (last_used_at)` |
 | revoked_at | timestamptz null | |
+| trace_context | text null CHECK (trace_context ~ `'^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'`) | (phase 5, FIX-146, D-232, C-732) kind=`context` hosted: the turn's `turns.trace_context`, **copied at mint** so the gateway (which has no grant on `turns`) parents its spans on the turn's trace; never taken from the sandbox; NULL otherwise. Migration `20261201000150_turn_trace_context.sql` |
 | index | (agent_id, kind); partial (created_at desc, id desc) WHERE kind = 'agent' AND revoked_at IS NULL (phase 3) | |
 
 Invariant: at most one non-revoked `agent` credential per agent.
@@ -850,9 +851,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | boot_id | uuid null | boot that ran it |
 | last_event_n | int not null default 0 | highest applied supervisor event number (`16 §W5` idempotency) |
 | partial unique | (conversation_id) WHERE role=`turn` AND status IN (`queued`,`dispatched`,`running`) | one active turn per conversation |
-
-(phase 5, FIX-146, D-232) `turns.trace_context` is specified under §Planned changes; it moves into
-this table with its migration `20261201000150_turn_trace_context.sql`.
+| trace_context | text null CHECK (trace_context ~ `'^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'`) | (phase 5, FIX-146, D-232, C-732) the W3C `traceparent` of the span that inserted the turn (`repo/turns.rs`; NULL when there is no valid one). Written only by the API at insert and never updated; never taken from a sandbox or supervisor (SEC-88). Read by the runner plane (work items carry it, `16 §W5`), the API's supervisor-report and channel-event handling, and copied onto the turn's context credential at mint (`gateway_credentials.trace_context`) for the gateway, so their spans are children of the turn's context. A follow-up promoted to a turn keeps the follow-up's value. Migration `20261201000150_turn_trace_context.sql` |
 
 ### `turn_answer_buffers`
 | Column | Type | Notes |
@@ -1613,15 +1612,7 @@ Index `(org_id, email_normalized)` serves the sign-in lookup. The gateway role g
 The placement document (C-520, wherever placement is stored today) gains
 `personal_workspace.display_name_template` (C-923); no column.
 
-#### `turns` (request tracing; phase 5, FIX-146, D-232)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| trace_context | text null CHECK (trace_context ~ `'^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'`) | the W3C `traceparent` of the span that inserted the turn (`repo/turns.rs` insert, from the current span's context; NULL when there is no valid one). Written only by the API at insert and never updated; never taken from a sandbox or supervisor (SEC-88). Read by the runner plane (work items carry it, `16 §W5`, C-732 (3)), the API's supervisor-report and channel-event handling for the turn, and the gateway with the identity of the turn's context credential, so their spans are children of the turn's context. Child turns (`parent_turn_id`, peer tasks) are inserted under the parent turn's context. Migration `20261201000150_turn_trace_context.sql` | 5 (FIX-146, D-232) |
-
-The gateway reads the turn through `gateway_credentials.turn_id` and its database role has no grant
-on `turns` today (§Gateway database role grants), and gets none: the value is **copied onto the
-context credential at mint** (`gateway_credentials.trace_context`, same CHECK, same migration block
-`000150..159`), which the gateway already reads (coordinator 2026-11-14, FIX-146 step 0 review).
+(Landed, FIX-146 Part B: `turns.trace_context` and `gateway_credentials.trace_context` are in §6 and §3 with migration `20261201000150_turn_trace_context.sql`. The gateway role gets no grant on `turns`: the value is copied onto the context credential at mint.)
 
 #### `approvals` (park and resume; phase 5, D-138)
 | Planned column | Type | Notes | Phase |

@@ -1,6 +1,6 @@
 "use client";
 
-import { ApiError } from "./client";
+import { ApiError, tracedFetch } from "./client";
 import type { components } from "./schema";
 
 export type Attachment = components["schemas"]["Attachment"];
@@ -43,7 +43,7 @@ export async function fetchAttachmentFacts(id: string): Promise<{ filename: stri
 export async function uploadAttachment(conversationId: string, file: File): Promise<Attachment> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`/v1/conversations/${encodeURIComponent(conversationId)}/attachments`, {
+  const res = await tracedFetch("/v1/conversations/{id}/attachments", `/v1/conversations/${encodeURIComponent(conversationId)}/attachments`, {
     method: "POST",
     credentials: "same-origin",
     body: form,

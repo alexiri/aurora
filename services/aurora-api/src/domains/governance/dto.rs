@@ -24,6 +24,36 @@ pub struct Sourced<T> {
     pub value: T,
     /// `instance` | `org`.
     pub source: String,
+    /// (SET-2, C-783) The instance setting the value comes from, when `source` is `instance`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_setting: Option<InstanceSetting>,
+}
+
+/// Names an instance setting (`section` + registry `key`), so the dashboard can link it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct InstanceSetting {
+    pub section: String,
+    pub key: String,
+}
+
+impl InstanceSetting {
+    #[must_use]
+    pub fn governance(key: &str) -> Self {
+        Self {
+            section: "governance".to_owned(),
+            key: key.to_owned(),
+        }
+    }
+}
+
+impl<T> Sourced<T> {
+    /// Name the instance setting when the value is the instance's (C-783).
+    #[must_use]
+    pub fn setting(mut self, key: &str) -> Self {
+        self.instance_setting =
+            (self.source == "instance").then(|| InstanceSetting::governance(key));
+        self
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

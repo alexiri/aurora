@@ -53,6 +53,7 @@ impl CredentialResolver for Creds {
             org_id: w.org,
             conversation_id: None,
             turn_id: None,
+            trace_context: None,
             context_label: None,
             speaker_user_id: None,
             speaker_group_ids: Vec::new(),

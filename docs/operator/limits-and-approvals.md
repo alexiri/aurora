@@ -3,6 +3,11 @@
 (Phase 2, RFE-017 and RFE-011a; streaming fan-out is phase 1, RFE-016.) The normative text is [docs/05 §Conventions](../05-control-plane-api.md#conventions) (rate limiting) and
 [docs/07 §Approval deadlines](../07-policy-approvals.md) (approvals). In Helm, put the keys under `config.ratelimit`, `config.approvals` and `config.email`.
 
+**Agent-token maximum age.** `governance.agent_tokens.max_age_days` (the longest life of a BYO agent token, `08 §7`) is
+edited on **Admin › Settings › Governance** (phase 5, SET-2) and takes effect live; setting it in Helm locks it. Lowering
+or introducing it shortens live tokens (keeping at least seven days), raising or removing it never extends one; organizations
+can set a smaller value of their own.
+
 ## API rate limits
 
 Every authenticated `/v1/**` request passes the API limiter, after the caller is identified and before authorization. The caller is an API key, a signed-in user (all of a user's sessions share one budget) or a BYO agent token.

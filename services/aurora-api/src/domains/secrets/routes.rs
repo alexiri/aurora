@@ -360,8 +360,9 @@ async fn list_llm_providers(
     };
     let mut providers: Vec<LlmProviderInfo> = Vec::new();
     let mut endpoints = Vec::new();
-    for ep in state.llm.endpoints() {
-        let Some(p) = state.llm.provider_for(ep) else {
+    let registry = state.llm();
+    for ep in registry.endpoints() {
+        let Some(p) = registry.provider_for(ep) else {
             continue;
         };
         let dialects: Vec<String> = p

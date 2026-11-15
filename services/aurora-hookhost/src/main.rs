@@ -40,6 +40,7 @@ async fn main() -> ExitCode {
         SERVICE,
         &cfg.telemetry.log_level,
         cfg.telemetry.otlp_endpoint.as_deref(),
+        cfg.telemetry.sample_ratio,
     );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command;
@@ -77,7 +78,7 @@ async fn serve(cfg: &HookhostConfig) -> std::io::Result<()> {
     });
     let app = service::ops_router(metrics, vec![("snapshot", ready)])
         .merge(server::router(server::AppState { catalog, ring }));
-    let app = app.layer(axum::middleware::from_fn(service::trace_context));
+    let app = service::traced(app, service::INTERNAL_TRUST);
     let listener = service::bind(cfg.server.bind.as_str(), OPS_PORT).await?;
     let res = service::serve_all(vec![(listener, app)]).await;
     poller.abort();

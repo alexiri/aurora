@@ -30,6 +30,10 @@ pub struct RequestIdentity {
     pub org_id: Uuid,
     pub conversation_id: Option<Uuid>,
     pub turn_id: Option<Uuid>,
+    /// (FIX-146, D-232 (7)) The turn's W3C traceparent (`gateway_credentials.trace_context`,
+    /// copied at mint); the gateway's spans for this credential are children of it. Never taken
+    /// from the sandbox.
+    pub trace_context: Option<String>,
     pub context_label: Option<String>,
     /// (phase 2, RFE-005, D-49) The person who authored the turn this credential is bound to.
     /// Set only for hosted `context` credentials of person-authored turns, and only while that

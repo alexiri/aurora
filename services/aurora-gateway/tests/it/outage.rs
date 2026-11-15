@@ -952,6 +952,7 @@ async fn a_policy_read_that_cannot_connect_is_an_outage_and_is_refused_as_degrad
         org_id: g.w.org,
         conversation_id: None,
         turn_id: None,
+        trace_context: None,
         context_label: None,
         speaker_user_id: None,
         speaker_group_ids: Vec::new(),

@@ -190,6 +190,13 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 const EXEMPT: &[(&str, &str, &str)] = &[
     (
         "POST",
+        "/v1/telemetry/traces",
+        "FIX-146 D (C-732): any session may post browser spans, but the route is 404 for everyone \
+         unless `telemetry.otlp_endpoint` resolves (resolved before auth), which this harness does \
+         not set; 404/401/CSRF/API-key refusal and the sanitizer are in telemetry_ingest.rs",
+    ),
+    (
+        "POST",
         "/v1/agents/{agent}/space-bindings",
         "FIX-127 (C-713): can_own of the agent's workspace, but the body names an integration and \
          an unseeded one is the specified 404 `integration_not_found`, which this matrix reads as \
@@ -478,11 +485,18 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/settings", G::Inst, true),
     r("GET", "/v1/admin/settings/export", G::Inst, true),
     r("POST", "/v1/admin/settings/import", G::Inst, true),
+    r("GET", "/v1/admin/settings/governance/orgs", G::Inst, true),
     r("GET", "/v1/admin/settings/{section}", G::Inst, true),
     r("PUT", "/v1/admin/settings/{section}", G::Inst, true),
     r(
         "POST",
         "/v1/admin/settings/{section}/preview",
+        G::Inst,
+        true,
+    ),
+    r(
+        "POST",
+        "/v1/admin/settings/llm/endpoint-test",
         G::Inst,
         true,
     ),

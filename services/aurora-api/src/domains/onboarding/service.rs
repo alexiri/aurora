@@ -209,7 +209,8 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
     // 3. LLM access.
     let default_org = placed.default_org.as_ref().map(|o| o.id);
     let counts = repo::setup_counts(&state.pool, default_org, GATEWAY_ONLINE_SECS).await?;
-    let endpoints = state.llm.endpoints();
+    let registry = state.llm();
+    let endpoints = registry.endpoints();
     let probes = futures::future::join_all(
         endpoints
             .iter()

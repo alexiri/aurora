@@ -223,6 +223,13 @@ per-connector entries of `connectors[]`; `extraEnv` supports `valueFrom`
 [install-helm §Workloads](operator/install-helm.md#workloads) has the
 ports-per-service table.
 
+Request tracing (phase 5, FIX-146, D-232): the **web** workload gets the environment variable
+`AURORA_TRACING_SAMPLE_RATIO` **only when `config.telemetry.otlp_endpoint` is set**, with the value of
+`config.telemetry.sample_ratio` (default `1.0`, `0.0` is kept as `0.0`). The dashboard's root layout reads
+it at request time; absent, the dashboard loads no tracing code and posts nothing. It is not a chart value
+of its own: it follows the two `config.telemetry.*` keys (`15 §Configuration reference`). The collector's
+egress is `networkPolicy.telemetryTo` ([§NetworkPolicy](#networkpolicy)).
+
 | Value | Type / values | Default | What it does | Set it when / details |
 |---|---|---|---|---|
 | `<svc>.replicas` | int | api `2`, gateway `2`, hookhost `2`, web `2`, runner `1`, connectorHost `1` | Deployment replicas (`15 §Production` recommends ≥ 2 for the user-facing services; runner replicas share one runner registration) | — |
@@ -370,6 +377,7 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.dnsNamespaceSelector` | label selector | `kube-system` | DNS egress | custom DNS |
 | `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= the addresses of the `kubernetes` EndpointSlice in `default`, read at install/upgrade; no rule where unreadable) / `[443, 6443]` | runner and `secrets` hook → Kubernetes API egress | pinned API-server endpoints; any cluster where the installing identity cannot read endpointslices |
 | `networkPolicy.kubeApiOpen` | bool | `false` | explicitly allow any:`kubeApiPorts` for the runner and the `secrets` hook (the pre-FIX-102 default); never silent | only when the API server addresses cannot be pinned |
+| `networkPolicy.telemetryTo` | list of raw NetworkPolicy `to` entries | `[]` | (phase 5, FIX-146, D-232, C-732 (5)) where the OTLP collector named by `config.telemetry.otlp_endpoint` lives. Rendered as one egress-only policy `<release>-telemetry` for the exporting workloads: api, gateway, hookhost, runner, relay, connector host and the connector Deployments. Never the web workload (its browser spans go through the API) and never the sandboxes namespace (sandboxes and the supervisor export nothing). Empty (default): no policy, so the default-deny policies block the collector | set it whenever `config.telemetry.otlp_endpoint` is set; `NOTES.txt` warns when an endpoint is set and this is empty. The kind dev stack sets it in `deploy/kind/values-tracing.yaml` (`just kind-up --tracing`) |
 | `networkPolicy.monitoringFrom` | list of NetworkPolicy peers | `[]` | peers allowed to scrape every ops/metrics port (4101, 4103, 4104, 4106, 4192, 4193); nothing opens them by default | Prometheus in another namespace |
 | `monitoring.podMonitor.enabled` / `.interval` / `.labels` | bool / duration / map | `false` / `30s` / `{}` | one Prometheus Operator `PodMonitor` per component (ops listeners have no Service); needs the Prometheus Operator CRDs (API group monitoring.coreos.com) | Prometheus Operator |
 | `secrets.allowRegenerate` | bool | `false` | let an **upgrade** create fresh encryption keys when the generated Secret is absent (otherwise the hook refuses: stored credentials would become undecryptable) | deliberately starting over after a restore without the Secret |
@@ -447,10 +455,6 @@ feature:
   - `terminator.service.type` — `LoadBalancer` \| `NodePort`, default `LoadBalancer` (`NodePort` on kind, `deploy/kind`).
   - `terminator.max_preauth` / `terminator.max_preauth_per_ip` — ints, defaults `256` / `8`, rendered into `[terminator]`.
   - `networkPolicy.sshFrom` — list of NetworkPolicy peers, default `[]`; **required** when `ssh.enabled` (the render fails while empty, so admitting the whole Internet is an explicit `0.0.0.0/0` + `::/0`, never a silent default, FIX-102 posture).
-- request tracing (phase 5, FIX-146, D-232, C-732 (5); not in the chart yet — FIX-146 Part C moves these into [§NetworkPolicy](#networkpolicy) and §Workloads):
-  - `networkPolicy.telemetryTo` — list of raw NetworkPolicy `to` entries, default `[]`. Rendered into the egress of every exporting workload (api, gateway, hookhost, runner, relay, connector host, connector Deployments; never the sandboxes namespace) so they can reach the OTLP collector named by `config.telemetry.otlp_endpoint`; the default-deny policies block it otherwise. Set it whenever an endpoint is set; with an endpoint and an empty `telemetryTo` the chart's `NOTES.txt` warns.
-  - web workload environment: `AURORA_TRACING_SAMPLE_RATIO` is rendered **only when `config.telemetry.otlp_endpoint` is set**, with the value of `config.telemetry.sample_ratio` (default `1.0`). The dashboard's root layout reads it at request time; absent, the dashboard loads no tracing code and posts nothing. Not a chart value of its own: it follows the two config keys (`15 §Configuration reference`).
-  - kind dev only: `deploy/kind/values-tracing.yaml` (used by `deploy/dev/kind-dev.sh up --tracing`) sets the endpoint to the dev Jaeger's OTLP/HTTP port 4318 and `telemetryTo` to it.
 
 - instance settings (phase 5, SET-1, SET-5; [§Instance settings and Helm locks](#instance-settings-and-helm-locks-phase-5-set-1-d-195c-d-236d-238)): `scim.ratePerMinute` default changes to unset; `terminal.enabled` and `scim.enabled` render `config.terminal.available` / `config.scim.available` instead of the feature switch; `values.yaml`'s `config` block loses `hosted.enabled`; a chart guard (`scripts/guards/settings-chart.sh`) checks that the default render contains no movable key. No new chart value.
 

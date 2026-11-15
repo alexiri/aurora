@@ -193,6 +193,7 @@ async fn main() -> ExitCode {
         SERVICE,
         &cfg.telemetry.log_level,
         cfg.telemetry.otlp_endpoint.as_deref(),
+        cfg.telemetry.sample_ratio,
     );
     tracing::info!(instance_id = %instance, "starting");
     let result = match cli.command {
@@ -490,10 +491,14 @@ async fn serve(
     // (P5-CHAT-4) index pre-existing messages for search (resumable; ends when complete).
     aurora_api::domains::conversations::search::spawn_backfill(state.clone());
     aurora_api::domains::plugins::registry::spawn_initial(state.clone());
-    let internal =
-        aurora_api::domains::plugins::internal::router(state.clone()).fallback(service::not_found);
-    let public = aurora_api::app::router(state, ops)
-        .layer(axum::middleware::from_fn(service::trace_context));
+    let internal = service::traced(
+        aurora_api::domains::plugins::internal::router(state.clone()).fallback(service::not_found),
+        service::INTERNAL_TRUST,
+    );
+    let public = service::traced(
+        aurora_api::app::router(state, ops),
+        aurora_api::http::trace_trust::PUBLIC_TRUST,
+    );
     let bind = cfg.server.bind.as_str();
     let servers = vec![
         (service::bind(bind, PUBLIC_PORT).await?, public),

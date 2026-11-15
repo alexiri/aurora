@@ -64,6 +64,9 @@ openidconnect = { workspace = true }
 percent-encoding = { workspace = true }
 image = { workspace = true }
 metrics = { workspace = true }
+# FIX-146 Part D: browser spans are rebuilt as SDK SpanData and handed to the exporter
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
 
 [dev-dependencies]
 aurora-config = { workspace = true, features = ["test-registry"] }
@@ -78,4 +81,8 @@ http-body-util = { workspace = true }
 tower = { workspace = true }
 chrono = { workspace = true }
 tracing-subscriber = { workspace = true }
+# FIX-146 A2: db_spans.rs (database spans never carry bind values)
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing-opentelemetry = { workspace = true }
 aurora-supervisor = { path = "../aurora-supervisor" }

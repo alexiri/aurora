@@ -363,6 +363,32 @@ spec:
         {{- include "aurora.peer" (dict "root" . "c" "gateway") | nindent 8 }}
       ports: [{protocol: TCP, port: 5432}]
 {{- end }}
+{{- if $np.telemetryTo }}
+---
+# (FIX-146 Part C, D-232, C-732 (5)) tracing export: every exporting workload (api, gateway, hookhost, runner,
+# relay, connector host, connector Deployments) may reach the operator's OTLP collector, given as raw
+# NetworkPolicy `to` entries (networkPolicy.telemetryTo). Never the web workload (its spans go through the API)
+# and never the sandboxes namespace (sandboxes and the supervisor export nothing).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-telemetry, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ $inst | quote }}]}
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          {{- range (list "api" "gateway" "hookhost" "runner" "relay" "connector-host") }}
+          - {{ . }}
+          {{- end }}
+          {{- range .Values.connectors }}
+          - {{ printf "connector-%s" .id }}
+          {{- end }}
+  policyTypes: [Egress]
+  egress:
+    - to: {{- toYaml $np.telemetryTo | nindent 8 }}
+{{- end }}
 ---
 # ---- sandboxes namespace: default deny (no ingress, no DNS), egress only to gateway:4102 and runner:4105 ----
 apiVersion: networking.k8s.io/v1

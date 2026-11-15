@@ -952,6 +952,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/settings/governance/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where organizations stand against the instance governance ceiling (C-778): effective postures
+         *     and the settings where an organization is stricter than the floor or clamped by it.
+         */
+        get: operations["adminListGovernanceOrgs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/settings/import": {
         parameters: {
             query?: never;
@@ -966,6 +986,26 @@ export interface paths {
          *     transaction (C-776).
          */
         post: operations["adminImportSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/settings/llm/endpoint-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe an LLM endpoint without a credential (C-779): one GET of its models path through the
+         *     destination guard, 10 s. Nothing is saved; no re-authentication (nothing changes).
+         */
+        post: operations["adminTestLlmEndpoint"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4319,6 +4359,28 @@ export interface paths {
         patch: operations["patchSpaceBinding"];
         trace?: never;
     };
+    "/v1/telemetry/traces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser span ingestion (the dashboard's traces). OTLP/HTTP JSON, at most 256 KiB, 512 spans,
+         *     32 attributes and 8 events per span. The server rebuilds every span (resource, name, allow-listed
+         *     attributes, clamped times); a span failing the sampling rule is dropped. 204 even when every span
+         *     was dropped. 404 when the deployment exports no traces.
+         */
+        post: operations["ingestBrowserTraces"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/turns/{id}/abort": {
         parameters: {
             query?: never;
@@ -6752,6 +6814,27 @@ export interface components {
          * @enum {string}
          */
         EgressPosture: "open" | "credentialed_only";
+        /** @description Request body (C-779). */
+        EndpointTestRequest: {
+            /** @description One endpoint entry, as in `llm.endpoints` (TOML shape as JSON). */
+            endpoint: Record<string, never>;
+        };
+        /** @description What the probe found. */
+        EndpointTestResult: {
+            /**
+             * @description `destination_refused`, `dns`, `timeout`, `connect`, `tls`, `unexpected_status` or
+             *     `unreachable`.
+             */
+            error_code?: string | null;
+            /** @description Model ids, only when the endpoint answers a 2xx OpenAI-style list without a key. */
+            models?: string[] | null;
+            reachable: boolean;
+            /**
+             * Format: int32
+             * @description The HTTP status of the answer.
+             */
+            status?: number | null;
+        };
         ErrorBody: {
             /** @description snake_case machine code. */
             code: string;
@@ -7276,6 +7359,11 @@ export interface components {
             /** Format: uuid */
             id: string;
             label: string;
+        };
+        /** @description Names an instance setting (`section` + registry `key`), so the dashboard can link it. */
+        InstanceSetting: {
+            key: string;
+            section: string;
         };
         /** @enum {string} */
         IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
@@ -7980,6 +8068,20 @@ export interface components {
              */
             previews_enabled?: boolean | null;
         };
+        /** @description One row of `GET /v1/admin/settings/governance/orgs` (C-778). */
+        OrgStandingRow: {
+            byo_posture: string;
+            clamped: string[];
+            egress_posture: string;
+            frozen: boolean;
+            llm_posture: string;
+            name: string;
+            open_lane: string;
+            /** Format: uuid */
+            org_id: string;
+            slug: string;
+            stricter: string[];
+        };
         /** @description `GET /orgs/{org}/storage` (API_CONTRACTS C-171). */
         OrgStorage: {
             /**
@@ -8034,6 +8136,42 @@ export interface components {
             allowed_team_ids: string[];
             allowed_workspace_ids: string[];
             method: string;
+        };
+        /** @description An attribute value: only `stringValue` and `intValue` are read. */
+        OtlpAnyValue: {
+            /** @description A decimal string (OTLP JSON) or a number. */
+            intValue?: string | null;
+            stringValue?: string | null;
+        };
+        /** @description OTLP/HTTP JSON `ExportTraceServiceRequest` (the dashboard's spans). */
+        OtlpExportRequest: {
+            resourceSpans?: components["schemas"]["OtlpResourceSpans"][];
+        };
+        OtlpKeyValue: {
+            key: string;
+            value?: components["schemas"]["OtlpAnyValue"];
+        };
+        OtlpResourceSpans: {
+            scopeSpans?: components["schemas"]["OtlpScopeSpans"][];
+        };
+        OtlpScopeSpans: {
+            spans?: components["schemas"]["OtlpSpan"][];
+        };
+        /** @description One span as the browser sends it. The server rebuilds it (name, attributes, times) before export. */
+        OtlpSpan: {
+            attributes?: components["schemas"]["OtlpKeyValue"][];
+            endTimeUnixNano: string;
+            /** @description Only counted (at most `TELEMETRY_SPAN_EVENTS_MAX`); events are never exported. */
+            events?: Record<string, never>[];
+            name?: string;
+            /** @description 16 hex characters; absent or empty for a root span. */
+            parentSpanId?: string | null;
+            /** @description 16 hex characters. */
+            spanId: string;
+            /** @description Unix nanoseconds, as a decimal string (OTLP JSON) or a number. */
+            startTimeUnixNano: string;
+            /** @description 32 hex characters. */
+            traceId: string;
         };
         /** @description An agent that overrides a workspace skill with an enabled agent-tier skill of the same name. */
         OverriddenAgent: {
@@ -8640,6 +8778,22 @@ export interface components {
                 name: string;
                 settings: components["schemas"]["OrgSettings"];
                 slug: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_OrgStandingRow: {
+            items: {
+                byo_posture: string;
+                clamped: string[];
+                egress_posture: string;
+                frozen: boolean;
+                llm_posture: string;
+                name: string;
+                open_lane: string;
+                /** Format: uuid */
+                org_id: string;
+                slug: string;
+                stricter: string[];
             }[];
             next_cursor?: string | null;
         };
@@ -10876,26 +11030,31 @@ export interface components {
             update_pending: boolean;
         };
         Sourced_Option_Vec_String: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: null | string[];
         };
         Sourced_Option_u32: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: null | number;
         };
         Sourced_String: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: string;
         };
         Sourced_Vec_String: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: string[];
         };
         Sourced_bool: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: boolean;
@@ -15508,6 +15667,64 @@ export interface operations {
             };
         };
     };
+    adminListGovernanceOrgs: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_OrgStandingRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminImportSettings: {
         parameters: {
             query?: never;
@@ -15596,6 +15813,71 @@ export interface operations {
                 };
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminTestLlmEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointTestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointTestResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -30794,6 +31076,68 @@ export interface operations {
                 };
             };
             /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    ingestBrowserTraces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OtlpExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;

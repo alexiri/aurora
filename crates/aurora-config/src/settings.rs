@@ -202,6 +202,8 @@ impl SettingDef {
             Loosening::Bool { loosens_when } => after.as_bool() == Some(*loosens_when),
             Loosening::Number { up_loosens } => match (before.as_f64(), after.as_f64()) {
                 (Some(b), Some(a)) => (a > b) == *up_loosens,
+                // An optional maximum that is removed is unbounded: the loosest value.
+                (Some(_), None) if after.is_null() => *up_loosens,
                 _ => false,
             },
             Loosening::Order(order) => {
@@ -271,6 +273,8 @@ impl Registry {
         #[allow(unused_mut)]
         let mut defs: Vec<SettingDef> = Vec::new();
         defs.extend(secrets_defs());
+        defs.extend(governance_defs());
+        defs.extend(llm_defs());
         #[cfg(any(test, feature = "test-registry"))]
         defs.extend(test_defs());
         Self { defs }
@@ -426,6 +430,159 @@ fn secrets_defs() -> Vec<SettingDef> {
         )
         .keyed("id")
         .helm("vault.*"),
+    ]
+}
+
+/// The `llm` section (SET-3, D-236, D-237): providers, their preference order and the endpoints.
+/// The provider list and the order are whole values (locked together when Helm sets them);
+/// endpoints are a keyed list by `id` (a Helm endpoint is one locked entry, dashboard endpoints
+/// with other ids sit beside it). `llm.dev_upstream_overrides` is never a setting (SEC-89).
+/// Defaults are those of [`crate::raw::LlmSection`].
+fn llm_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "llm";
+    let providers = || SettingType::List {
+        item: Box::new(SettingType::Str { max_len: 64 }),
+        max_items: 16,
+    };
+    vec![
+        SettingDef::new(
+            S,
+            "llm.enabled_providers",
+            providers(),
+            json!(["litellm", "anthropic"]),
+        )
+        .whole_list(),
+        SettingDef::new(
+            S,
+            "llm.provider_preference",
+            providers(),
+            json!(["litellm", "anthropic"]),
+        )
+        .whole_list(),
+        SettingDef::new(
+            S,
+            "llm.endpoints",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: LLM_ENDPOINTS_MAX,
+            },
+            json!([]),
+        )
+        .keyed("id"),
+    ]
+}
+
+/// Most `llm.endpoints` entries (Helm and dashboard together are checked against this on a write).
+pub const LLM_ENDPOINTS_MAX: usize = 64;
+
+/// The `governance` section (SET-2, D-237): the instance ceiling of `08 §11.1`. Defaults are those
+/// of `raw.rs`; the replacement `governance.llm.known_llm_hosts` list stays configuration-only.
+fn governance_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "governance";
+    let strs = |max_items| SettingType::List {
+        item: Box::new(SettingType::Str { max_len: 256 }),
+        max_items,
+    };
+    vec![
+        SettingDef::new(
+            S,
+            "governance.llm.allowed_key_scopes",
+            strs(8),
+            json!(["organization", "workspace"]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: true,
+        }),
+        SettingDef::new(
+            S,
+            "governance.llm.minimum_posture",
+            SettingType::Enum(vec!["open", "sanctioned_only"]),
+            json!("open"),
+        )
+        .loosening(Loosening::Order(vec!["sanctioned_only", "open"])),
+        SettingDef::new(
+            S,
+            "governance.llm.require_key_origin",
+            SettingType::Bool,
+            json!(false),
+        )
+        .loosening(Loosening::Bool {
+            loosens_when: false,
+        }),
+        SettingDef::new(
+            S,
+            "governance.llm.known_llm_hosts_extra",
+            strs(200),
+            json!([]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: true,
+        }),
+        SettingDef::new(
+            S,
+            "governance.egress.minimum_posture",
+            SettingType::Enum(vec!["open", "credentialed_only"]),
+            json!("open"),
+        )
+        .loosening(Loosening::Order(vec!["credentialed_only", "open"])),
+        SettingDef::new(
+            S,
+            "governance.egress.baseline_allowlist",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: 200,
+            },
+            json!([]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: true,
+        }),
+        SettingDef::new(
+            S,
+            "governance.egress.open_lane_minimum",
+            SettingType::Enum(vec!["enabled", "allowlist_only", "disabled"]),
+            json!("enabled"),
+        )
+        .loosening(Loosening::Order(vec![
+            "disabled",
+            "allowlist_only",
+            "enabled",
+        ])),
+        SettingDef::new(
+            S,
+            "governance.agent_tokens.max_age_days",
+            SettingType::Int { min: 1, max: 3650 },
+            Value::Null,
+        )
+        .loosening(Loosening::Number { up_loosens: true }),
+        SettingDef::new(S, "byo.enabled", SettingType::Bool, json!(true))
+            .loosening(Loosening::Bool { loosens_when: true }),
+        SettingDef::new(
+            S,
+            "byo.minimum_posture",
+            SettingType::Enum(vec!["enabled", "owners_only", "disabled"]),
+            json!("owners_only"),
+        )
+        .loosening(Loosening::Order(vec!["disabled", "owners_only", "enabled"])),
+        SettingDef::new(S, "byo.default_source_cidrs", strs(200), json!([]))
+            .whole_list()
+            .loosening(Loosening::List {
+                superset_loosens: true,
+            }),
+        SettingDef::new(
+            S,
+            "byo.require_context_credentials",
+            SettingType::Bool,
+            json!(false),
+        )
+        .loosening(Loosening::Bool {
+            loosens_when: false,
+        }),
     ]
 }
 
@@ -942,6 +1099,58 @@ mod tests {
     }
 
     #[test]
+    fn the_llm_section_locks_endpoints_per_entry_and_the_lists_as_a_whole() {
+        let r = registry();
+        let keys: Vec<&str> = r.section("llm").map(|d| d.key).collect();
+        assert_eq!(
+            keys,
+            [
+                "llm.enabled_providers",
+                "llm.provider_preference",
+                "llm.endpoints"
+            ]
+        );
+        assert!(matches!(
+            r.get("llm.endpoints").unwrap().list,
+            Some(ListKind::Keyed { id_field: "id" })
+        ));
+        for k in ["llm.enabled_providers", "llm.provider_preference"] {
+            assert!(matches!(r.get(k).unwrap().list, Some(ListKind::Whole)));
+        }
+        // `llm.dev_upstream_overrides` is never a setting (SEC-89).
+        assert!(r.get("llm.dev_upstream_overrides").is_none());
+        // Defaults are `LlmSection`'s, so an unset key shows what the application does.
+        let d = crate::LlmSection::default();
+        assert_eq!(
+            r.get("llm.enabled_providers").unwrap().default,
+            json!(d.enabled_providers)
+        );
+        assert_eq!(
+            r.get("llm.provider_preference").unwrap().default,
+            json!(d.provider_preference)
+        );
+        // A Helm endpoint is one locked entry; a dashboard endpoint sits beside it.
+        let s = src(
+            "[[llm.endpoints]]\nid = \"central\"\nprovider = \"litellm\"\nbase_url = \"https://l.example\"\n",
+        );
+        let mut st = Stored::default();
+        st.sections.entry("llm".to_string()).or_default().insert(
+            "llm.endpoints".to_string(),
+            json!([{"id": "team", "provider": "litellm", "base_url": "https://t.example"}]),
+        );
+        let e = s.effective(&st).unwrap();
+        let entries = e.keys["llm.endpoints"].entries.as_ref().unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|x| (x.id.as_str(), x.source))
+                .collect::<Vec<_>>(),
+            [("central", Source::Helm), ("team", Source::Dashboard)]
+        );
+        assert_eq!(e.raw.llm.endpoints.len(), 2);
+    }
+
+    #[test]
     fn secret_values_never_enter_the_merge() {
         let s = src("");
         let e = s
@@ -1010,5 +1219,23 @@ mod tests {
         for s in SECTION_IDS {
             assert!(registry().has_section(s));
         }
+    }
+
+    #[test]
+    fn governance_loosening_orders_and_the_removed_token_age() {
+        let r = registry();
+        let d = |k: &str| r.get(k).unwrap();
+        let (open, sanc) = (json!("open"), json!("sanctioned_only"));
+        assert!(d("governance.llm.minimum_posture").is_loosening(&sanc, &open));
+        assert!(!d("governance.llm.minimum_posture").is_loosening(&open, &sanc));
+        assert!(d("byo.enabled").is_loosening(&json!(false), &json!(true)));
+        assert!(d("byo.minimum_posture").is_loosening(&json!("owners_only"), &json!("enabled")));
+        let age = d("governance.agent_tokens.max_age_days");
+        assert!(age.is_loosening(&json!(30), &json!(90)));
+        assert!(
+            age.is_loosening(&json!(30), &Value::Null),
+            "removing the maximum loosens"
+        );
+        assert!(!age.is_loosening(&Value::Null, &json!(30)));
     }
 }

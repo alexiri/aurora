@@ -46,14 +46,17 @@ const TITLES: Record<string, { title: string; lead: string }> = {
 const FIX: Record<string, string> = {
   no_provider: "Add an OIDC provider so people can sign in. See docs/operator/sign-in.md.",
   no_role_mappings: "Map a role from your sign-in token to instance admin. See docs/operator/sign-in.md.",
-  no_endpoints: "Add an LLM endpoint. See docs/operator/llm-endpoints.md.",
-  endpoint_unreachable: "Check the endpoint's address and that the API can reach it.",
+  no_endpoints: "Add an LLM endpoint under Admin › Settings › LLM endpoints. See docs/operator/llm-endpoints.md.",
+  endpoint_unreachable: "Check the endpoint's address and that the API can reach it. Test connection is on the endpoint's page.",
   no_default_model: "Set a default model so agents need not choose one by one.",
   no_runner: "Install a runner and register it. See docs/operator/runners.md.",
   runner_offline: "Check that the runner is running and can reach the API. See docs/operator/runners.md.",
   no_gateway: "Start the gateway. Without it agents cannot reach the internet or the LLM.",
   plugins_pending: "Review them under Plugins.",
 };
+
+/** The checks whose fix is made on Admin › Settings › LLM endpoints (SET-3): the step links there. */
+const LLM_SETTINGS_FIXES: Record<string, true> = { no_endpoints: true, endpoint_unreachable: true, no_default_model: true };
 
 function CheckRow({ c }: { c: SetupCheck }) {
   const s = STATE[c.status];
@@ -67,7 +70,19 @@ function CheckRow({ c }: { c: SetupCheck }) {
       {c.value ? (
         <p className="break-all pl-0 font-mono text-xs text-ink-2">{c.value}</p>
       ) : null}
-      {fix ? <p className="text-ink-2">{fix}</p> : null}
+      {fix ? (
+        <p className="text-ink-2">
+          {fix}
+          {c.reason in LLM_SETTINGS_FIXES ? (
+            <>
+              {" "}
+              <Link href="/admin/settings/llm" className="font-medium text-ink underline underline-offset-2">
+                Open LLM endpoints
+              </Link>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {c.helm ? (
         <p className="text-xs text-muted">
           Helm value: <code className="font-mono text-ink-2">{c.helm}</code> (read-only here)
@@ -220,7 +235,11 @@ function LlmBody({ step, onChanged }: { step: SetupStep; onChanged: () => void }
       {noDefaultModel ? (
         <Notice tone="pending" role="status">
           An endpoint has no default model. Agents on it need a model chosen one by one; until then their turns fail with
-          &ldquo;no default model&rdquo;. Set <code className="font-mono">default_model</code> in the Helm values.
+          &ldquo;no default model&rdquo;. Set <code className="font-mono">default_model</code> on the endpoint in{" "}
+          <Link href="/admin/settings/llm" className="font-medium underline underline-offset-2">
+            Admin › Settings › LLM endpoints
+          </Link>{" "}
+          (or in the Helm values for an endpoint managed there).
         </Notice>
       ) : null}
       {!org || !placement.data?.saved ? (

@@ -384,7 +384,7 @@ pub struct DbCredentialResolver {
     pool: PgPool,
     cache: Arc<IdentityCache>,
     /// (RFE-025) the instance level of BYO governance.
-    byo: ByoInstance,
+    byo: arc_swap::ArcSwap<ByoInstance>,
     /// (RFE-014) Outage state: lookups are refused at once while the database is unreachable and
     /// connection-class failures are reported.
     health: Option<Arc<Health>>,
@@ -412,7 +412,7 @@ impl DbCredentialResolver {
         Self {
             pool,
             cache: Arc::new(IdentityCache::new(ttl, negative_ttl)),
-            byo: ByoInstance::default(),
+            byo: arc_swap::ArcSwap::from_pointee(ByoInstance::default()),
             health: None,
             flights: crate::coalesce::Coalescer::default(),
         }
@@ -427,9 +427,20 @@ impl DbCredentialResolver {
 
     /// Sets the instance BYO configuration (`[byo]`, RFE-025).
     #[must_use]
-    pub fn with_byo(mut self, byo: ByoInstance) -> Self {
-        self.byo = byo;
+    pub fn with_byo(self, byo: ByoInstance) -> Self {
+        self.byo.store(Arc::new(byo));
         self
+    }
+
+    /// The instance BYO configuration in force.
+    pub fn byo(&self) -> Arc<ByoInstance> {
+        self.byo.load_full()
+    }
+
+    /// Replace the instance BYO configuration after a settings swap (SET-2: `byo.enabled` and
+    /// the floors are live). The caller flushes the identity cache afterwards.
+    pub fn set_byo(&self, byo: ByoInstance) {
+        self.byo.store(Arc::new(byo));
     }
 
     /// The cache, to register with the invalidation hub.
@@ -587,7 +598,7 @@ impl DbCredentialResolver {
         let byo = (row.agent_kind == "byo" && kind != CredentialKind::Boot).then(|| {
             // Unparsable stored values fail closed inside the governance library.
             let eff = effective_byo(
-                &self.byo,
+                &self.byo.load(),
                 &ByoInputs {
                     org: OrgByo::from_stored(row.org_byo.as_ref()),
                     workspace_posture: row.ws_byo_posture.as_deref(),
@@ -610,6 +621,7 @@ impl DbCredentialResolver {
                 org_id: row.org_id,
                 conversation_id: row.conversation_id,
                 turn_id: row.turn_id,
+                trace_context: row.trace_context,
                 context_label: row.context_label,
                 speaker_user_id,
                 speaker_group_ids,

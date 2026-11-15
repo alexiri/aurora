@@ -58,10 +58,12 @@ pub struct AppState {
     pub mailer: Arc<dyn Mailer>,
     /// Secret value store registry (built from `[secrets]`).
     pub vault: Arc<aurora_secrets::SecretVault>,
-    /// Core LLM provider registry (built from `[llm]`).
-    pub llm: Arc<aurora_llm::ProviderRegistry>,
-    /// Instance governance ceiling (`[governance]` over the registry).
-    pub gov_instance: Arc<aurora_llm::governance::Instance>,
+    /// Core LLM provider registry (built from `[llm]`), replaced live when the `llm` settings
+    /// change (SET-3); read it with [`AppState::llm`].
+    pub llm_live: Arc<arc_swap::ArcSwap<aurora_llm::ProviderRegistry>>,
+    /// Instance governance ceiling (`governance` settings over the registry), replaced live when
+    /// the `governance` section changes (SET-2); read it with [`AppState::gov_instance`].
+    pub gov_live: Arc<arc_swap::ArcSwap<aurora_llm::governance::Instance>>,
     /// HTTP client for provider key validation / origin checks.
     pub llm_http: reqwest::Client,
     /// Shared `aurora_approval` fan-out (SSE, long-poll).
@@ -85,6 +87,9 @@ pub struct AppState {
     /// (phase 5, SET-1, D-236) Instance settings: the deployment configuration's presence and the
     /// snapshot every replica serves from. Nothing reads it yet except the Admin › Settings routes.
     pub settings: Arc<domains::settings::handle::SettingsHandle>,
+    /// (phase 5, FIX-146 Part D, C-732 (6)) Browser span ingestion: `None` without
+    /// `telemetry.otlp_endpoint`, then `POST /v1/telemetry/traces` answers 404.
+    pub browser_spans: Option<Arc<domains::telemetry::BrowserSpans>>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
     /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
@@ -129,9 +134,8 @@ impl AppState {
             aurora_llm::ProviderRegistry::from_config(&config.llm)
                 .map_err(|e| format!("llm: {e}"))?,
         );
-        let gov_instance = Arc::new(domains::secrets::gov::instance_from_config(
-            &config.governance,
-            &llm,
+        let gov_live = Arc::new(arc_swap::ArcSwap::from_pointee(
+            domains::secrets::gov::instance_from_config(&config.governance, &llm),
         ));
         let llm_http = aurora_secrets::tls::with_extra_roots(
             reqwest::Client::builder().timeout(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT),
@@ -172,8 +176,12 @@ impl AppState {
                 config.tls.extra_ca_bundle.as_deref(),
             )?,
         )));
+        let browser_spans = domains::telemetry::BrowserSpans::from_config(&config.telemetry)
+            .map_err(|e| format!("telemetry.otlp_endpoint: {e}"))?
+            .map(Arc::new);
         let state = Self {
             pool,
+            browser_spans,
             config: Arc::new(config),
             rate_limiter: Arc::new(RateLimiter::new()),
             api_limiter,
@@ -182,8 +190,8 @@ impl AppState {
             net,
             mailer,
             vault,
-            llm,
-            gov_instance,
+            llm_live: Arc::new(arc_swap::ArcSwap::new(llm)),
+            gov_live,
             llm_http,
             approval_bus: Arc::default(),
             approval_watch: Arc::default(),
@@ -199,7 +207,77 @@ impl AppState {
             stream_recheck: crate::http::auth::STREAM_RECHECK,
         };
         state.install_live_secrets();
+        state.install_live_governance();
         Ok(state)
+    }
+
+    /// The instance governance ceiling now in force (SET-2): one load per request path, so a
+    /// swap mid-request never mixes two ceilings.
+    #[must_use]
+    pub fn gov_instance(&self) -> Arc<aurora_llm::governance::Instance> {
+        self.gov_live.load_full()
+    }
+
+    /// The LLM provider registry now in force (SET-3): one load per request path, so a swap
+    /// mid-request never mixes two tables.
+    #[must_use]
+    pub fn llm(&self) -> Arc<aurora_llm::ProviderRegistry> {
+        self.llm_live.load_full()
+    }
+
+    /// Rebuild the provider registry when an `llm.*` setting changes (SET-3) and the instance
+    /// ceiling when a `governance.*`, `byo.*` or `llm.*` setting changes (SET-2, `08 §11.1`: the
+    /// ceiling carries the endpoints), in that order, then run the `08 §11.2` re-evaluation of every
+    /// organization (it also covers secrets on a removed endpoint and model overrides that
+    /// the narrowed allow-lists no longer permit).
+    fn install_live_governance(&self) {
+        let cell = self.gov_live.clone();
+        let llm_cell = self.llm_live.clone();
+        let pool = self.pool.clone();
+        self.settings.on_swap(Arc::new(move |old, new| {
+            let changed = |prefixes: &[&str]| {
+                new.effective
+                    .keys
+                    .keys()
+                    .chain(old.effective.keys.keys())
+                    .filter(|k| prefixes.iter().any(|p| k.starts_with(p)))
+                    .any(|k| {
+                        old.effective.keys.get(k).map(|e| &e.value)
+                            != new.effective.keys.get(k).map(|e| &e.value)
+                    })
+            };
+            let llm_changed = changed(&["llm."]);
+            if !llm_changed && !changed(&["governance.", "byo."]) {
+                return;
+            }
+            if llm_changed {
+                match aurora_llm::ProviderRegistry::from_config(&new.effective.raw.llm) {
+                    Ok(r) => llm_cell.store(Arc::new(r)),
+                    Err(e) => tracing::error!(error = %e, "llm settings did not resolve; keeping the previous provider registry"),
+                }
+            }
+            match new.effective.raw.governance_config() {
+                Ok(g) => {
+                    let inst = Arc::new(domains::secrets::gov::instance_from_config(
+                        &g,
+                        &llm_cell.load(),
+                    ));
+                    cell.store(inst.clone());
+                    // The `08 §11.2` re-evaluation of every organization (idempotent job).
+                    if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                        let pool = pool.clone();
+                        rt.spawn(async move {
+                            match domains::governance::reeval::run(&pool, &inst).await {
+                                Ok(Some(o)) => tracing::info!(?o, "governance re-evaluation done"),
+                                Ok(None) => {}
+                                Err(e) => tracing::warn!(error = %e.message(), "governance re-evaluation failed; it runs again on the next change or start"),
+                            }
+                        });
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, "governance settings did not resolve; keeping the previous instance ceiling"),
+            }
+        }));
     }
 
     /// Like [`Self::try_new`]; panics on invalid configuration (tests, fixed configs).
@@ -216,6 +294,7 @@ impl AppState {
         self.vault
             .set_allowed_private(self.config.gateway_allowed_private.clone());
         self.install_live_secrets();
+        self.install_live_governance();
         // The merged view (the configuration's stores, nothing stored yet) is the first registry.
         let snap = self.settings.snapshot();
         let configured = snap
@@ -272,11 +351,19 @@ impl AppState {
     /// Replace the provider registry and rebuild the governance instance (tests).
     #[must_use]
     pub fn with_llm(mut self, llm: Arc<aurora_llm::ProviderRegistry>) -> Self {
-        self.gov_instance = Arc::new(domains::secrets::gov::instance_from_config(
-            &self.config.governance,
-            &llm,
+        // The settings in force (not only the configuration) keep applying.
+        let g = self
+            .settings
+            .snapshot()
+            .effective
+            .raw
+            .governance_config()
+            .unwrap_or_else(|_| self.config.governance.clone());
+        self.gov_live = Arc::new(arc_swap::ArcSwap::from_pointee(
+            domains::secrets::gov::instance_from_config(&g, &llm),
         ));
-        self.llm = llm;
+        self.llm_live = Arc::new(arc_swap::ArcSwap::new(llm));
+        self.install_live_governance();
         self
     }
 
@@ -356,6 +443,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::settings::router())
         .merge(domains::previews::router())
         .merge(domains::terminal::router())
+        .merge(domains::telemetry::router())
         .merge(domains::relay::router())
         .merge(domains::groups::router())
         // (P4-GRP-2, FIX-081) The SCIM management routes are ordinary owner `/v1` routes and

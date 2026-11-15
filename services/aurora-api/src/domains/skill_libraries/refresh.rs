@@ -89,10 +89,17 @@ pub async fn run_once(state: &AppState) -> Result<usize, aurora_core::ApiError> 
     }
     drop(c);
     let n = claimed.len();
-    futures::future::join_all(
-        claimed
-            .into_iter()
-            .map(|l| refresh_library(state, l, owner)),
+    if n == 0 {
+        // (FIX-146, D-232 (6)) An iteration that finds nothing opens no span.
+        return Ok(0);
+    }
+    tracing::Instrument::instrument(
+        futures::future::join_all(
+            claimed
+                .into_iter()
+                .map(|l| refresh_library(state, l, owner)),
+        ),
+        aurora_core::telemetry::job_span("skill library refresh"),
     )
     .await;
     Ok(n)

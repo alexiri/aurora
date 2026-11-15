@@ -25,6 +25,8 @@ service = [
   "dep:opentelemetry_sdk",
   "dep:opentelemetry-otlp",
   "dep:tracing-opentelemetry",
+  "dep:reqwest",
+  "dep:futures",
 ]
 
 [dependencies]
@@ -49,8 +51,19 @@ opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tower = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+axum = { workspace = true }
+tracing = { workspace = true }
+http-body-util = { workspace = true }
 # HTML rendering for the markdown_safe fidelity corpus.
 pulldown-cmark = { workspace = true, features = ["html"] }

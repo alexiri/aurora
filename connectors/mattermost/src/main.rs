@@ -112,6 +112,7 @@ async fn main() -> ExitCode {
         SERVICE,
         &cfg.telemetry.log_level,
         cfg.telemetry.otlp_endpoint.as_deref(),
+        cfg.telemetry.sample_ratio,
     );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command;
@@ -195,6 +196,9 @@ async fn serve(cli: Cli, cfg: &ConnectorConfig) -> std::io::Result<()> {
         rt.manifest_signature = sig;
     }
     let runtime = tokio::spawn(aurora_connector_sdk::run(connector.clone(), rt, stop_rx));
+    // (FIX-146, SEC-88) Chat-platform callbacks are third-party traffic: never adopt their headers.
+    let callbacks = service::traced(callbacks, service::UNTRUSTED_TRUST);
+    let ops = service::traced(ops, service::INTERNAL_TRUST);
     let served = service::serve_all(vec![(public, callbacks), (ops_listener, ops)]).await;
     let _ = stop_tx.send(true);
     match runtime.await {

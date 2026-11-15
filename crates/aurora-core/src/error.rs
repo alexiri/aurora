@@ -240,9 +240,17 @@ impl axum::response::IntoResponse for ApiError {
             res.headers_mut()
                 .insert(header::RETRY_AFTER, HeaderValue::from(secs));
         }
+        // FIX-146: the request span and access log record the envelope `code` from here
+        // without reading the body.
+        res.extensions_mut().insert(ErrorCode(self.code));
         res
     }
 }
+
+/// Response extension carrying the error envelope `code` (read by the request tracing layer).
+#[cfg(feature = "axum")]
+#[derive(Debug, Clone)]
+pub struct ErrorCode(pub String);
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

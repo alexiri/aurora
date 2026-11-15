@@ -3,6 +3,7 @@
 //! Assignment bodies hold decrypted secrets: they are only ever deserialized into
 //! [`AssignmentsResponse`] (whose `Debug` redacts them) and never logged.
 
+use aurora_core::telemetry::InternalRequest;
 use std::time::Duration;
 
 use aurora_protocol::host::{
@@ -59,7 +60,7 @@ impl HostApi {
 
     async fn send<T: DeserializeOwned>(rb: reqwest::RequestBuilder) -> Result<T, ApiError> {
         let resp = rb
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         if !resp.status().is_success() {
@@ -115,7 +116,7 @@ impl HostApi {
             .bearer_auth(&self.token)
             .timeout(SHORT)
             .json(req)
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         if resp.status() == StatusCode::NO_CONTENT || resp.status().is_success() {

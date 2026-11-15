@@ -23,7 +23,15 @@
 ---
 {{ include "aurora.workload" (dict "root" . "name" "hookhost" "probePort" 4104 "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET") "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "http" "port" 4104))) }}
 ---
-{{ include "aurora.workload" (dict "root" . "name" "web" "spec" .Values.web "image" (include "aurora.image" (dict "root" . "name" "aurora-web")) "env" (include "aurora.env" (dict "root" .)) "ports" (list (dict "name" "http" "port" 4100))) }}
+{{- /* (FIX-146 Part C, D-232) the dashboard loads its tracing code only when this is set: rendered only with an OTLP endpoint */}}
+{{- $webEnv := include "aurora.env" (dict "root" .) }}
+{{- $tel := .Values.config.telemetry | default dict }}
+{{- if $tel.otlp_endpoint }}
+{{- /* hasKey, not `default`: a ratio of 0 (export nothing) must stay 0 */}}
+{{- $ratio := ternary $tel.sample_ratio 1.0 (hasKey $tel "sample_ratio") }}
+{{- $webEnv = printf "%s\n- {name: AURORA_TRACING_SAMPLE_RATIO, value: %s}" $webEnv ($ratio | toString | quote) }}
+{{- end }}
+{{ include "aurora.workload" (dict "root" . "name" "web" "spec" .Values.web "image" (include "aurora.image" (dict "root" . "name" "aurora-web")) "env" $webEnv "ports" (list (dict "name" "http" "port" 4100))) }}
 ---
 {{/* gateway: Service for 4103 (internal) is separate from the proxy Service (4102, TLS-only: RFE-002) */}}
 {{ include "aurora.workload" (dict "root" . "name" "gateway" "probePort" 4103 "spec" .Values.gateway "ca" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "proxyTlsSecret" .Values.gateway.proxy.tls.existingSecret "env" (printf "%s%s\n- name: POD_NAMESPACE\n  valueFrom: {fieldRef: {fieldPath: metadata.namespace}}" (include "aurora.env" (dict "root" . "db" true "gatewayDb" true "configFile" $gwConfig "keys" $common "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) (printf "%s%s" (include "aurora.vaultEnv" (dict "root" . "svc" "gateway")) (include "aurora.countersEnv" .))) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}

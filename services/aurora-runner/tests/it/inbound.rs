@@ -46,6 +46,7 @@ fn deliver_item(sandbox: Uuid, boot: Uuid, turn: Uuid, attachments: Value) -> Wo
         item_id: Uuid::new_v4(),
         sandbox_id: sandbox,
         boot_id: boot,
+        trace_context: None,
         body: serde_json::from_value::<WorkItemBody>(body).unwrap(),
     }
 }
