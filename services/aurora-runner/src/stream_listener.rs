@@ -1093,6 +1093,8 @@ async fn open_supervisor_pty(
         rows: 24,
         // (FIX-138) The grant's choice (the API's redemption answer), never the browser's.
         shell: binding.shell.unwrap_or_default(),
+        // (C-750 (4)) The models the API chose for the instance's terminal harnesses, unchanged.
+        models: binding.models.clone().map(Box::new),
     };
     if state
         .send_to_supervisor(r, RunnerToSupervisor::PtyOpen(open))

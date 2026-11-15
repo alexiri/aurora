@@ -26,6 +26,7 @@ use aurora_db::repo::runners as runners_repo;
 use aurora_db::repo::terminal_grants as grants_repo;
 use aurora_protocol::runner::PreviewStreamOpenRequest;
 use aurora_protocol::runner::PreviewStreamOpenResponse;
+use aurora_protocol::runner::{TerminalModel, TerminalModelUnavailable, TerminalModels};
 
 /// Close codes of leg 1 (`16 §W18`/`§W19`, C-617). `4403 not allowed` originates here only from
 /// the periodic access re-check of an open leg (admission refuses before the upgrade); `4409`
@@ -357,6 +358,7 @@ pub(crate) async fn open(
     // Any live replica of the installation may answer the redemption; the runner's own
     // `not_here` check fences the leg to the replica holding the sandbox's channel.
     let _ = runner;
+    let models = terminal_models(s, &mut conn, &a).await;
     Ok(PreviewStreamOpenResponse {
         sandbox_id: row.sandbox_id,
         boot_id: row.boot_id,
@@ -366,7 +368,52 @@ pub(crate) async fn open(
         idle_secs: TERMINAL_IDLE_TIMEOUT.as_secs() as u32,
         max_lifetime_secs: TERMINAL_MAX_LIFETIME.as_secs() as u32,
         shell: Some(aurora_protocol::runner::PtyShell::parse(&row.shell).unwrap_or_default()),
+        models,
     })
+}
+
+/// (FIX-138 item 1b, D-247 (e), C-750 (4)) The model each enabled terminal harness would run
+/// for this agent, chosen by the same `model::select` a turn of that harness uses (`fake` is
+/// no terminal harness). `Chosen` -> `choice`; `NoKey` -> `no_key`; `NoDefaultModel` ->
+/// `no_model`. A selection error leaves that harness out (the wrapper then uses the CLI's own
+/// default, as before) and never fails the open. `None` when no terminal harness is enabled.
+async fn terminal_models(
+    s: &AppState,
+    conn: &mut sqlx::PgConnection,
+    a: &AgentRow,
+) -> Option<TerminalModels> {
+    use crate::domains::hosted::model::{self, Selection};
+    let allowed = model::allowed_harnesses(s);
+    let mut out = TerminalModels::default();
+    for harness in ["claude-code", "codex"] {
+        if !allowed.iter().any(|h| h == harness) {
+            continue;
+        }
+        let entry = match model::select(s, conn, a.id, a.org_id, a.workspace_id, harness).await {
+            Ok(Selection::Chosen { choice, .. }) => TerminalModel {
+                choice: Some(choice),
+                unavailable: None,
+            },
+            Ok(Selection::NoKey { .. }) => TerminalModel {
+                choice: None,
+                unavailable: Some(TerminalModelUnavailable::NoKey),
+            },
+            Ok(Selection::NoDefaultModel) => TerminalModel {
+                choice: None,
+                unavailable: Some(TerminalModelUnavailable::NoModel),
+            },
+            Err(e) => {
+                tracing::warn!(agent = %a.id, harness, error = ?e, "terminal model selection failed; harness left out");
+                continue;
+            }
+        };
+        if harness == "codex" {
+            out.codex = Some(entry);
+        } else {
+            out.claude_code = Some(entry);
+        }
+    }
+    (out.claude_code.is_some() || out.codex.is_some()).then_some(out)
 }
 
 fn proxy_error(code: u16) -> ApiError {

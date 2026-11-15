@@ -122,6 +122,7 @@ async fn output_beyond_the_credit_is_held_not_dropped() {
         cols: 80,
         rows: 24,
         shell: Default::default(),
+        models: None,
     }))
     .await;
     assert_eq!(r.next_frame().await["kind"], "pty.opened");
@@ -390,6 +391,7 @@ async fn shutdown_with_a_wedged_engine_finishes_within_the_grace() {
                 cols: 80,
                 rows: 24,
                 shell: Default::default(),
+                models: None,
             }),
         ))
         .unwrap();

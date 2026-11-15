@@ -243,6 +243,8 @@ pub struct PtyEngine {
     /// This supervisor's own executable: the PTY shell is reached through a re-exec of it
     /// (`crate::pty_exec`; `std::env::current_exe()` in production).
     bootstrap: std::path::PathBuf,
+    /// The terminal wrappers' `harness.env` (`None`: tests, no file).
+    harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
     live: HashMap<u32, Live>,
     /// Recent unsequenced-frame violations (`16 §W19` on `16 §W18`): four within 60 s close the
     /// channel with 4400; reset with the connection.
@@ -279,6 +281,20 @@ impl PtyEngine {
         bootstrap: std::path::PathBuf,
         shells: ShellPaths,
     ) -> Arc<PtyHandle> {
+        Self::spawn_with_harness_env(ends, enabled, uid, cwd, bootstrap, shells, None)
+    }
+
+    /// [`Self::spawn_with_shells`] with the terminal's `harness.env` state: a `pty.open` that
+    /// carries models rewrites the file before its shell starts (C-750 (4)).
+    pub fn spawn_with_harness_env(
+        ends: channel::PtyEnds,
+        enabled: bool,
+        uid: Option<u32>,
+        cwd: std::path::PathBuf,
+        bootstrap: std::path::PathBuf,
+        shells: ShellPaths,
+        harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
+    ) -> Arc<PtyHandle> {
         let channel::PtyEnds {
             sender,
             inbound,
@@ -298,6 +314,7 @@ impl PtyEngine {
             uid,
             cwd,
             bootstrap,
+            harness_env,
             live: HashMap::new(),
             violations: Violations::default(),
             closed: ClosedIds::default(),
@@ -423,6 +440,13 @@ impl PtyEngine {
         if self.live.len() >= TERMINALS_PER_SANDBOX as usize {
             self.refuse(o.pty_id, PtyRefuseReason::Limit).await;
             return;
+        }
+        // The wrappers read `harness.env` when the person types `claude`: it must hold this
+        // agent's models before the shell exists. A failure is a warning, never a refused open.
+        if let (Some(h), Some(models)) = (&self.harness_env, &o.models)
+            && let Err(e) = h.apply_terminal(models.as_ref())
+        {
+            tracing::warn!(error = %e, "could not update harness.env for the terminal wrappers");
         }
         let resolved = self.shells.resolve(o.shell);
         let pty = match PtySession::spawn(

@@ -5,15 +5,20 @@
 //! The file is shell-sourced by the wrappers in `/opt/aurora/bin` and holds **no secret**: the
 //! machine proxy's address (`127.0.0.1:3128`, which adds the boot token itself; the terminal
 //! never has it), the CA bundle path, the placeholder credential the gateway replaces, the
-//! harnesses the instance enables and, once a turn has chosen one, the agent's model and
-//! endpoint (the same values the adapters put into a turn's environment). The wrappers add
-//! their own state directories; nothing here points at the agent harness's.
+//! harnesses the instance enables and one section per harness with the agent's model and
+//! endpoint (the same values the adapters put into a turn's environment) or, when the agent
+//! has none for it, a fixed sentence the wrapper prints (C-750 (4)). The sections come from the
+//! terminal open (`pty.open`) and from each turn's session start for the agent's own harness.
+//! The wrappers add their own state directories; nothing here points at the agent harness's.
 
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use aurora_protocol::runner::ModelChoice;
+use aurora_protocol::runner::{
+    ModelChoice, TerminalModel, TerminalModelUnavailable, TerminalModels,
+};
 
 use crate::adapters::claude_code::config::PLACEHOLDER;
 
@@ -32,16 +37,91 @@ pub struct HarnessEnvConfig {
     pub ca_path: String,
 }
 
+/// The file's fixed inputs plus the current per-harness state, shared by the PTY engine (which
+/// replaces it from `pty.open`) and the supervisor (a turn's session start).
+#[derive(Debug)]
+pub struct HarnessEnv {
+    cfg: HarnessEnvConfig,
+    models: Mutex<TerminalModels>,
+}
+
+impl HarnessEnv {
+    pub fn new(cfg: HarnessEnvConfig) -> Self {
+        Self {
+            cfg,
+            models: Mutex::new(TerminalModels::default()),
+        }
+    }
+
+    pub fn config(&self) -> &HarnessEnvConfig {
+        &self.cfg
+    }
+
+    /// Writes the file for the current state (boot: no model, the CLIs' defaults).
+    pub fn write_current(&self) -> std::io::Result<()> {
+        let m = self.models.lock().unwrap_or_else(|e| e.into_inner());
+        write(&self.cfg.path, &render(&self.cfg, &m))
+    }
+
+    /// `pty.open`: replaces the sections of the harnesses present in `models` and rewrites the
+    /// file (the caller does this before the shell is spawned).
+    pub fn apply_terminal(&self, models: &TerminalModels) -> std::io::Result<()> {
+        let mut m = self.models.lock().unwrap_or_else(|e| e.into_inner());
+        if models.claude_code.is_some() {
+            m.claude_code = models.claude_code.clone();
+        }
+        if models.codex.is_some() {
+            m.codex = models.codex.clone();
+        }
+        write(&self.cfg.path, &render(&self.cfg, &m))
+    }
+
+    /// A turn's session start: replaces only the section of the agent's own harness.
+    pub fn apply_turn(&self, harness: &str, choice: &ModelChoice) -> std::io::Result<()> {
+        let entry = Some(TerminalModel {
+            choice: Some(choice.clone()),
+            unavailable: None,
+        });
+        let mut m = self.models.lock().unwrap_or_else(|e| e.into_inner());
+        match harness {
+            "claude-code" => m.claude_code = entry,
+            "codex" => m.codex = entry,
+            _ => return Ok(()),
+        }
+        write(&self.cfg.path, &render(&self.cfg, &m))
+    }
+}
+
 /// A single-quoted shell word; control characters are dropped.
 fn q(v: &str) -> String {
     let clean: String = v.chars().filter(|c| !c.is_control()).collect();
     format!("'{}'", clean.replace('\'', "'\\''"))
 }
 
-/// The file's text. `model` is the agent's last turn's model choice (`None` before the first
-/// turn: the CLIs then use their own defaults and the gateway's governance decides what is
-/// allowed).
-pub fn render(cfg: &HarnessEnvConfig, model: Option<&ModelChoice>) -> String {
+/// Whether `k` can be a shell variable name (a `client_env` key is data, not trusted).
+fn is_name(k: &str) -> bool {
+    let mut c = k.chars();
+    c.next()
+        .is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
+        && c.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The fixed sentence a wrapper prints for a harness with no model (C-750 (4)).
+pub fn unavailable_sentence(harness_name: &str, why: TerminalModelUnavailable) -> String {
+    match why {
+        TerminalModelUnavailable::NoKey => {
+            format!("this agent has no usable LLM key for {harness_name}")
+        }
+        TerminalModelUnavailable::NoModel => {
+            "no model is chosen for this agent; choose one on its Instructions page".to_owned()
+        }
+    }
+}
+
+/// The file's text: the fixed part plus one section per harness. A harness with no entry gets
+/// no model variables (the CLI's own default and the gateway's governance, today's behaviour
+/// before any turn).
+pub fn render(cfg: &HarnessEnvConfig, models: &TerminalModels) -> String {
     let mut out = String::from(
         "# Written by aurora-supervisor. No secret: the gateway adds the agent's real LLM key.\n\
          # Sourced by /opt/aurora/bin/claude and /opt/aurora/bin/codex (docs/12 §Terminal).\n",
@@ -64,28 +144,50 @@ pub fn render(cfg: &HarnessEnvConfig, model: Option<&ModelChoice>) -> String {
     set("DISABLE_ERROR_REPORTING", "1");
     set("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
     set("OPENAI_API_KEY", PLACEHOLDER);
-    match model {
-        Some(m) if m.dialect == "anthropic_messages" && m.provider != "anthropic" => {
-            // As `claude_code::config::build_env`: a non-Anthropic endpoint is reached by its base URL.
-            set("ANTHROPIC_BASE_URL", &m.base_url);
-            set("ANTHROPIC_AUTH_TOKEN", PLACEHOLDER);
-            set("ANTHROPIC_MODEL", &m.model);
+
+    // claude-code: exactly what `claude_code::config::build_env` sets for a turn.
+    match models.claude_code.as_ref() {
+        Some(TerminalModel {
+            choice: Some(m), ..
+        }) => {
+            for (k, v) in crate::adapters::claude_code::config::client_env(m) {
+                if is_name(k) {
+                    set(k, v);
+                }
+            }
+            for (k, v) in crate::adapters::claude_code::config::model_env(m) {
+                set(&k, &v);
+            }
         }
-        Some(m) if m.dialect == "anthropic_messages" => {
-            set("ANTHROPIC_API_KEY", PLACEHOLDER);
-            set("ANTHROPIC_MODEL", &m.model);
-        }
-        Some(m) if m.dialect == "openai_responses" => {
-            // Codex reads the provider from its config, not the environment: the wrapper turns
-            // these into `-c` overrides (`codex::config::render_config` has the same values).
-            set("ANTHROPIC_API_KEY", PLACEHOLDER);
+        Some(TerminalModel {
+            unavailable: Some(why),
+            ..
+        }) => set(
+            "AURORA_CLAUDE_UNAVAILABLE",
+            &unavailable_sentence("Claude Code", *why),
+        ),
+        _ => set("ANTHROPIC_API_KEY", PLACEHOLDER),
+    }
+    // codex reads the provider from its config, not the environment: the wrapper turns these
+    // into `-c` overrides (`codex::config::render_config` has the same values).
+    match models.codex.as_ref() {
+        Some(TerminalModel {
+            choice: Some(m), ..
+        }) => {
             set("AURORA_CODEX_MODEL", &m.model);
             set(
                 "AURORA_CODEX_BASE_URL",
                 &crate::adapters::codex::config::openai_base_url(m),
             );
         }
-        _ => set("ANTHROPIC_API_KEY", PLACEHOLDER),
+        Some(TerminalModel {
+            unavailable: Some(why),
+            ..
+        }) => set(
+            "AURORA_CODEX_UNAVAILABLE",
+            &unavailable_sentence("Codex", *why),
+        ),
+        _ => {}
     }
     out
 }
@@ -141,9 +243,36 @@ mod tests {
         }
     }
 
+    fn claude(c: ModelChoice) -> TerminalModels {
+        TerminalModels {
+            claude_code: Some(TerminalModel {
+                choice: Some(c),
+                unavailable: None,
+            }),
+            codex: None,
+        }
+    }
+
+    fn codex(c: ModelChoice) -> TerminalModels {
+        TerminalModels {
+            claude_code: None,
+            codex: Some(TerminalModel {
+                choice: Some(c),
+                unavailable: None,
+            }),
+        }
+    }
+
+    fn unavailable(why: TerminalModelUnavailable) -> Option<TerminalModel> {
+        Some(TerminalModel {
+            choice: None,
+            unavailable: Some(why),
+        })
+    }
+
     #[test]
     fn before_any_turn_it_has_the_proxy_the_ca_the_placeholder_and_no_model() {
-        let t = render(&cfg(), None);
+        let t = render(&cfg(), &TerminalModels::default());
         assert!(t.contains("HTTPS_PROXY='http://127.0.0.1:3128'\n"), "{t}");
         assert!(t.contains("SSL_CERT_FILE='/run/aurora/ca.pem'\n"), "{t}");
         assert!(t.contains("HARNESSES_ENABLED='claude-code codex'\n"), "{t}");
@@ -157,12 +286,12 @@ mod tests {
     #[test]
     fn never_a_real_credential_only_the_placeholder() {
         for m in [
-            None,
-            Some(choice("anthropic", "anthropic_messages")),
-            Some(choice("litellm", "anthropic_messages")),
-            Some(choice("litellm", "openai_responses")),
+            TerminalModels::default(),
+            claude(choice("anthropic", "anthropic_messages")),
+            claude(choice("litellm", "anthropic_messages")),
+            codex(choice("litellm", "openai_responses")),
         ] {
-            let t = render(&cfg(), m.as_ref());
+            let t = render(&cfg(), &m);
             for line in t.lines().filter(|l| {
                 l.starts_with("ANTHROPIC_API_KEY")
                     || l.starts_with("ANTHROPIC_AUTH_TOKEN")
@@ -176,7 +305,7 @@ mod tests {
 
     #[test]
     fn a_non_anthropic_claude_endpoint_uses_its_base_url_and_a_quoted_model() {
-        let t = render(&cfg(), Some(&choice("litellm", "anthropic_messages")));
+        let t = render(&cfg(), &claude(choice("litellm", "anthropic_messages")));
         assert!(
             t.contains("ANTHROPIC_BASE_URL='http://llm.example/v1'\n"),
             "{t}"
@@ -191,12 +320,125 @@ mod tests {
 
     #[test]
     fn a_responses_endpoint_hands_codex_its_model_and_base_url() {
-        let t = render(&cfg(), Some(&choice("litellm", "openai_responses")));
+        let t = render(&cfg(), &codex(choice("litellm", "openai_responses")));
         assert!(
             t.contains("AURORA_CODEX_BASE_URL='http://llm.example/v1'\n"),
             "{t}"
         );
         assert!(t.contains("AURORA_CODEX_MODEL="), "{t}");
+    }
+
+    #[test]
+    fn both_harnesses_render_both_sections() {
+        let both = TerminalModels {
+            claude_code: claude(choice("litellm", "anthropic_messages")).claude_code,
+            codex: codex(choice("litellm", "openai_responses")).codex,
+        };
+        let t = render(&cfg(), &both);
+        assert!(t.contains("\nANTHROPIC_MODEL="), "{t}");
+        assert!(t.contains("\nANTHROPIC_BASE_URL="), "{t}");
+        assert!(t.contains("\nAURORA_CODEX_MODEL="), "{t}");
+        assert!(!t.contains("UNAVAILABLE"), "{t}");
+    }
+
+    #[test]
+    fn unavailable_renders_the_sentence_and_no_model_variables() {
+        let t = render(
+            &cfg(),
+            &TerminalModels {
+                claude_code: unavailable(TerminalModelUnavailable::NoKey),
+                codex: unavailable(TerminalModelUnavailable::NoModel),
+            },
+        );
+        assert!(
+            t.contains(
+                "AURORA_CLAUDE_UNAVAILABLE='this agent has no usable LLM key for Claude Code'\n"
+            ),
+            "{t}"
+        );
+        assert!(
+            t.contains("AURORA_CODEX_UNAVAILABLE='no model is chosen for this agent; choose one on its Instructions page'\n"),
+            "{t}"
+        );
+        assert!(
+            !t.contains("ANTHROPIC_MODEL") && !t.contains("AURORA_CODEX_MODEL"),
+            "{t}"
+        );
+        assert!(!t.contains("ANTHROPIC_BASE_URL"), "{t}");
+    }
+
+    #[test]
+    fn a_turn_replaces_only_its_own_section() {
+        let dir = std::env::temp_dir().join(format!("aurora-harness-turn-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut c = cfg();
+        c.path = dir.join("harness.env");
+        let env = HarnessEnv::new(c);
+        env.apply_terminal(&TerminalModels {
+            claude_code: unavailable(TerminalModelUnavailable::NoKey),
+            codex: codex(choice("litellm", "openai_responses")).codex,
+        })
+        .unwrap();
+        let mut turn = choice("litellm", "anthropic_messages");
+        turn.model = "turn-model".into();
+        env.apply_turn("claude-code", &turn).unwrap();
+        let t = std::fs::read_to_string(dir.join("harness.env")).unwrap();
+        assert!(t.contains("ANTHROPIC_MODEL='turn-model'\n"), "{t}");
+        assert!(!t.contains("AURORA_CLAUDE_UNAVAILABLE"), "{t}");
+        assert!(t.contains("AURORA_CODEX_MODEL="), "codex kept: {t}");
+        // A terminal open that only names codex keeps claude's section.
+        env.apply_terminal(&TerminalModels {
+            claude_code: None,
+            codex: unavailable(TerminalModelUnavailable::NoKey),
+        })
+        .unwrap();
+        let t = std::fs::read_to_string(dir.join("harness.env")).unwrap();
+        assert!(t.contains("ANTHROPIC_MODEL='turn-model'\n"), "{t}");
+        assert!(t.contains("AURORA_CODEX_UNAVAILABLE="), "{t}");
+        assert!(!t.contains("AURORA_CODEX_MODEL"), "{t}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_claude_section_matches_what_a_turn_sets() {
+        use crate::adapters::claude_code::config::build_env;
+        use crate::harness::{McpBridgeSpec, SessionOptions};
+        for provider in ["anthropic", "litellm"] {
+            let mut m = choice(provider, "anthropic_messages");
+            m.client_env = vec![
+                ("LLM_EXTRA".into(), "1".into()),
+                ("ANTHROPIC_API_KEY".into(), "sk-REAL".into()),
+                ("bad name".into(), "x".into()),
+            ];
+            let turn = build_env(&SessionOptions {
+                conversation_id: uuid::Uuid::nil(),
+                working_dir: "/workspace".into(),
+                resume_ref: None,
+                model: m.clone(),
+                proxy_url: "http://p".into(),
+                mcp_bridge: McpBridgeSpec { command: vec![] },
+                env: vec![],
+            });
+            let file = render(&cfg(), &claude(m));
+            for k in [
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_BASE_URL",
+                "ANTHROPIC_AUTH_TOKEN",
+                "LLM_EXTRA",
+            ] {
+                let in_turn = turn.iter().find(|(n, _)| n == k).map(|(_, v)| q(v));
+                let in_file = file
+                    .lines()
+                    .find_map(|l| l.strip_prefix(&format!("{k}=")))
+                    .map(str::to_owned);
+                assert_eq!(in_turn, in_file, "{provider} {k}\n{file}");
+            }
+            assert!(
+                !file.contains("sk-REAL") && !file.contains("bad name"),
+                "{file}"
+            );
+        }
     }
 
     #[test]
