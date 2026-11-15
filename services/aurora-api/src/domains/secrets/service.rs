@@ -412,7 +412,8 @@ pub async fn create(
                 serde_json::json!({ "reason": "auth_mode_unsupported", "auth_mode": mode }),
             ));
         }
-        if mode != "api_key" {
+        // Only `api_key` and the minted `gcp_service_account` have value handlers so far (P4-LLM-3/4 add the others).
+        if !matches!(mode, "api_key" | "gcp_service_account") {
             return Err(bad("/llm/auth_mode", "unsupported auth mode"));
         }
         host = lc
@@ -427,6 +428,7 @@ pub async fn create(
         let key = plain_of(&st)
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
+        check_value_shape(mode, &key)?;
         let o = llm::check_key(&state.llm_http, lc.provider, lc.ep, &lc.eff, &key, 1)
             .await
             .map_err(llm::KeyFail::into_error)?;
@@ -596,6 +598,23 @@ pub async fn delete(state: &AppState, caller: &Caller, row: &SecretRow) -> Resul
     Ok(())
 }
 
+/// (C-801) The shape of a minted mode's value, checked before any outbound call: 422 `llm_key_invalid` with the C-801
+/// `reason` (and the offending `field`), never a part of the value.
+fn check_value_shape(mode: &str, key: &Plain<String>) -> Result<(), ApiError> {
+    if mode != "gcp_service_account" {
+        return Ok(());
+    }
+    aurora_llm::mint::gcp::parse_value(key.expose().as_bytes())
+        .map(|_| ())
+        .map_err(|e| {
+            ApiError::unprocessable(
+                "llm_key_invalid",
+                "The key file is not a usable service-account key.",
+            )
+            .with_details(serde_json::json!({ "reason": e.reason, "field": e.field }))
+        })
+}
+
 pub async fn set_value(
     state: &AppState,
     caller: &Caller,
@@ -620,6 +639,7 @@ pub async fn set_value(
         let key = plain_of(&staged)
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
+        check_value_shape(row.llm_auth_mode.as_deref().unwrap_or("api_key"), &key)?;
         let o = llm::check_key(
             &state.llm_http,
             lc.provider,

@@ -125,6 +125,22 @@ pub(crate) fn echoes(needles: &[Vec<u8>], hay: &[u8]) -> bool {
 }
 
 pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), InjectError> {
+    apply_value(cand, value, false, t)
+}
+
+/// (P4-LLM-2, C-806) Inject a credential the mint service produced (`value` is the minted token, never the stored key
+/// file): `gcp_token` and `entra_token` recipes become `Authorization: Bearer`. A recipe that is not minted, or a value
+/// that is not, is refused.
+pub fn apply_minted(cand: &SecretCand, token: &[u8], t: Target<'_>) -> Result<(), InjectError> {
+    apply_value(cand, token, true, t)
+}
+
+fn apply_value(
+    cand: &SecretCand,
+    value: &[u8],
+    minted: bool,
+    t: Target<'_>,
+) -> Result<(), InjectError> {
     match &cand.injection {
         Injection::Llm(l) => {
             // Strip every agent-supplied auth header, then set the provider's.
@@ -158,7 +174,15 @@ pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), Injec
             }
             // A recipe that needs a mint or a signature is not implemented yet (P4-LLM-2..4): refuse, never send the
             // request without the credential (the caller answers 502 `credential_unavailable`).
-            if !l.header.is_plain() {
+            let bearer_from_mint = minted
+                && matches!(
+                    l.header,
+                    InjectionHeader::GcpToken | InjectionHeader::EntraToken
+                );
+            if !l.header.is_plain() && !bearer_from_mint {
+                return Err(InjectError);
+            }
+            if minted && !bearer_from_mint {
                 return Err(InjectError);
             }
             match l.header {
@@ -166,11 +190,12 @@ pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), Injec
                     t.headers
                         .insert(HeaderName::from_static(name), header_value(value)?);
                 }
-                InjectionHeader::AwsSigV4
-                | InjectionHeader::AwsAssumeRole
+                InjectionHeader::AwsSigV4 | InjectionHeader::AwsAssumeRole => {
+                    return Err(InjectError);
+                }
+                InjectionHeader::Bearer
                 | InjectionHeader::GcpToken
-                | InjectionHeader::EntraToken => return Err(InjectError),
-                InjectionHeader::Bearer => {
+                | InjectionHeader::EntraToken => {
                     let mut v = b"Bearer ".to_vec();
                     v.extend_from_slice(value);
                     t.headers.insert(header::AUTHORIZATION, header_value(&v)?);

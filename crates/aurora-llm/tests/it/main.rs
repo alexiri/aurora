@@ -2,3 +2,4 @@
 mod governance;
 mod llm;
 mod openai;
+mod vertex;

@@ -82,6 +82,8 @@ impl AuthMode {
 pub enum EndpointKind {
     Fixed(&'static str),
     Configured,
+    /// (P4-LLM-2) No `base_url` in the entry: the origin follows other keys (Vertex: `location`).
+    Derived,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -251,6 +253,11 @@ pub trait LlmProvider: Send + Sync {
         http: &reqwest::Client,
     ) -> Result<Vec<ModelInfo>> {
         self.list_models(ep, key, http).await
+    }
+    /// (P4-LLM-2) Whether the key is validated by the origin proof itself (Vertex: the mint that proves the project and
+    /// e-mail is also the validation), so the API makes one call, not a listing and a proof.
+    fn validates_by_origin(&self) -> bool {
+        false
     }
     fn default_model(&self, ep: &Endpoint) -> Option<String>;
     /// Placeholder-only environment for a sandboxed client.
