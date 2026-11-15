@@ -1687,6 +1687,38 @@ rows carry the before/after diff, `04 §Audit`); no history table. Migration
 `20261201000190_instance_settings.sql` (block `000190..199`, SET-1..SET-5) creates the table and the
 grant; no data is written by the migration (the first API start mirrors the configuration's locked
 keys, D-238(a)).
+#### Narration cards and user tokens (phase 5, P4-NARR, P4-UTOK, D-279..D-284, SEC-111..SEC-113)
+
+Migrations `20261201000231` (P4-NARR) and `…000232`, `…000233` (P4-UTOK); `…000234` and `…000235` are unused and
+returned to the block. No gateway database role grant: the gateway reads none of these.
+
+#### `agents` column: `narration_cards` (phase 5, P4-NARR, D-279, migration `20261201000231_agent_narration_cards.sql`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| narration_cards | boolean not null default false | the agent's progress card on chat platforms that can edit messages (`10 §Live narration cards`); existing rows become `false` | 5 (P4-NARR, D-279) |
+
+#### `user_tokens` (new table; a person's platform tokens; phase 5, P4-UTOK, D-281..D-284, migration `20261201000232_user_tokens.sql`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | id format of `00`; not a bearer token, so no `au?_` prefix | 5 (P4-UTOK) |
+| user_id | uuid FK→users (cascade) | the owner; the token is usable only for this person's link | 5 (P4-UTOK) |
+| integration_id | uuid FK→channel_integrations (cascade) | one platform integration per token | 5 (P4-UTOK) |
+| platform_user_ref | text not null | the platform user the verify op returned; must equal the owner's `user_links.platform_user_ref` on this integration; a partial unique index on (integration_id, platform_user_ref) where `status <> 'revoked'`: one live token per platform user | 5 (P4-UTOK) |
+| label | text null | owner's name for the token, ≤ 80 characters | 5 (P4-UTOK) |
+| token_ref | text not null | a SecretRef, purpose `user_token`, owner = this row's id (`08 §1`); never returned | 5 (P4-UTOK, D-282) |
+| status | text CHECK in (`active`,`invalid`,`revoked`) | `invalid` set by a platform `401`; `revoked` on any end of standing (D-284(a)) and then `token_ref` is discarded and null | 5 (P4-UTOK) |
+| created_at / last_used_at / revoked_at | timestamptz | `last_used_at` set when a send is claimed | 5 (P4-UTOK) |
+
+#### `user_token_agents` (new table; the owner's grants; phase 5, P4-UTOK, D-283, migration `20261201000233_user_token_agents.sql`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| user_token_id | uuid FK→user_tokens (cascade) | primary key with agent_id | 5 (P4-UTOK) |
+| agent_id | uuid FK→agents (cascade) | a grant ends with the agent | 5 (P4-UTOK) |
+| granted_at | timestamptz not null | | 5 (P4-UTOK) |
+
+Per-op copies of a token are not columns: they live in `channel_ops.payload.user_credential_ref` (`08 §1`),
+discarded at the op's terminal state (`13 §4.2`, `§5.11`).
+
 #### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
 
 Five new tables and three `sandboxes` columns. P4-SSH-1 lands `ssh_keys` and `ssh_mint_counters`

@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 69 | 37 | 3 (P5-CERN-ADDONS (external repo), P5-CHAT-4 B, SET-1) | 23 | 3 (no spec yet: P4-EVAL, P4-NARR, P4-UTOK) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 69 | 37 | 3 (P5-CERN-ADDONS (external repo), P5-CHAT-4 B, SET-1) | 25 | 1 (no spec yet: P4-EVAL) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 3 | 0 | 0 | 0 | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **390** | **348** | **4** | **23** | **6** | **9** | |
+| **All** | **390** | **348** | **4** | **25** | **4** | **9** | |
 
 ## Environment
 
@@ -71,8 +71,8 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | FIX-050 | OIDC-claim-created org born ownerless; gateway refusals made visible | D-165, C-630 | S–M | Rust + web | — | `FIX-050.md` | done (merged 98c0627b) |
 | FIX-052 | Gateway sent `Host` next to `:authority` on HTTP/2 upstreams | D-166, C-633 | S | Rust | — | `FIX-052.md` | done (merged fffb4301) |
 | P4-S3 | S3-compatible `BlobStore` beside Postgres, `aurora-api blobs migrate` | D-120, SEC-63 | M–L | Rust | — | `P4-S3.md` | ready (brief written 2026-11-15; not yet placed: the next free lane) |
-| P4-NARR | Live narration cards | `21`, D-225 | M | Rust | a spec task | needed | not started (spec needed) |
-| P4-UTOK | User-token features (`user_tokens` capability) | `21`, D-225 | M | Rust | a spec task | needed | not started (spec needed) |
+| P4-NARR | Live narration cards (one editable step card per turn on chat platforms; per-agent opt-in) | D-279, D-280, C-846..C-850, SEC-111, migration 000231 | M | both | — | `P4-NARR.md` | ready (spec merged 2026-11-15; owner questions Q-NARR-1..6 open, spec follows the recommendations; not yet placed) |
+| P4-UTOK | User tokens: `send_as_me` with a person's Mattermost token, each send approved by its owner | D-281..D-284, C-851..C-859, SEC-112, SEC-113, migrations 000232/000233 | L | both | — | `P4-UTOK.md` | ready (spec merged 2026-11-15; owner questions Q-UTOK-1..8 open; Opus review before merge; not yet placed) |
 | P4-EVAL | Evals | `21 §Phase 4 — Evals` | L | both | a spec task | needed | not started (spec needed) |
 | P4-LLM-1 | LLM provider framework; `openai`, `openai_compatible`; `anthropic` inference path set | D-260, D-268(d), C-800.. | L | Rust | — | `P4-LLM-1.md` | ready (queued in lane p5-agent after P5-CHAT-4 B; order 1 → 2 → 3 → 4 → 5; 6 in p5-apps after SET-3) |
 | P4-LLM-2 | Gateway LLM mint service + Google Vertex AI | D-261, SEC-97 | L | Rust | P4-LLM-1 | `P4-LLM-2.md` | ready (queued in lane p5-agent) |
@@ -125,8 +125,8 @@ At most three implementation lanes at a time, disjoint ownership; a lane starts 
 
 - **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
 - **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-146 ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
-- **Not yet placed**: P4-011B-1..5 (the next free lane); P4-S3 (brief written 2026-11-15); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files).
-- **No spec yet**: P4-EVAL, P4-NARR, P4-UTOK (P5-SLACK moved to phase 6, D-285) — after the P4-LLM/P4-SSH/P4-011B batches (D-235(c)); their order is an open owner question. OPS-022 deferred.
+- **Not yet placed**: P4-011B-1..5 (the next free lane); P4-S3 (brief written 2026-11-15); P4-NARR, P4-UTOK (after the owner's answers); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files).
+- **No spec yet**: P4-EVAL (P4-NARR and P4-UTOK specified 2026-11-15; P5-SLACK moved to phase 6, D-285) — after the P4-LLM/P4-SSH/P4-011B batches (D-235(c)); their order is an open owner question. OPS-022 deferred.
 
 ### Exit criteria (phase 5)
 
@@ -162,14 +162,14 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | SET-1..SET-5 (spec merged) | D-236..D-238 (used) | C-770..C-784 (used) | `20261201000190..199` | SEC-89, SEC-90 (used) |
 | P4-SSH-1/2 (spec merged) | D-239 (used) | C-790..C-799 (used) | `20261201000200..209` | SEC-92..SEC-96 (used) |
 | P4-011B-1..5 (spec merged) | D-264..D-267 (used) | C-820..C-839 (used) | `20261201000220..223` | SEC-102 (used) |
-| SPEC-NARR-UTOK (P4-NARR + P4-UTOK spec batch, coordinator) | D-279..D-284 | C-846..C-859 | `20261201000231..235` | SEC-111..SEC-113 |
+| P4-NARR / P4-UTOK (spec merged) | D-279..D-284 (used) | C-846..C-859 (used) | `20261201000231..233` (`234`, `235` released) | SEC-111..SEC-113 (used) |
 | P5-CALINV | D-274 (used) | C-844 (used) | `20261201000230` | SEC-108 (used) |
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
 | branch `alexiri/p5-guide` (unmerged) | D-170..D-172 | C-640..C-659 | | SEC-91 (its SEC-90 collides with SPEC-SETTINGS: renumber at merge) |
 
 ## Open questions for the owner
 
-- **Phase 5:** the order of the specs for P4-EVAL, P4-NARR and P4-UTOK (D-235(c) puts them after the three spec batches without ordering them). **Coordinator default while the owner has not answered** (owner 2026-11-15: keep going through every pending phase-5 task): P4-NARR + P4-UTOK as one spec batch (both connector-side, `13`/`20`), then P4-EVAL; each batch's owner questions are asked before its briefs are placed. Also: review of the coordinator defaults recorded in D-268.
+- **Phase 5:** **P4-NARR Q-NARR-1..6 and P4-UTOK Q-UTOK-1..8** (last section of `docs/tasks/P4-NARR.md` / `P4-UTOK.md`; each with a recommendation the spec already follows). The order of the specs for P4-EVAL, P4-NARR and P4-UTOK (D-235(c) puts them after the three spec batches without ordering them). **Coordinator default while the owner has not answered** (owner 2026-11-15: keep going through every pending phase-5 task): P4-NARR + P4-UTOK as one spec batch (both connector-side, `13`/`20`), then P4-EVAL; each batch's owner questions are asked before its briefs are placed. Also: review of the coordinator defaults recorded in D-268.
 - **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
 
 ## Open security findings

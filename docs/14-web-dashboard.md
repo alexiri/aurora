@@ -408,6 +408,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     (C-506) and `?c=<id>` open what they open today; the section is derived from
     the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
     Delete zone under Instructions is removed (Delete is in Agent actions).
+  - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
+    page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
+    per reply that lists the steps the agent takes, updated as they run and removed when the answer
+    arrives. Chat platforms that can edit messages only. In shared channels the card shows step names,
+    not details." The dashboard's own chat is unchanged. Shared primitives only.
   - **Chat panel**, from 768 px: conversation list (232 px) · thread · status
     rail, in one card; the page still does not scroll at 1280×800 (the list,
     transcript and rail scroll inside). The conversation list keeps its filter,
@@ -926,6 +931,19 @@ and the Web Push device list (*Key flows*) — (P4-011B spec batch, C-836) one s
 page, where the in-tab and e-mail switches already live; no new route. (phase 4, P4-IDP-1) **Roles from your
 sign-in**: each IdP role value and what it granted. (phase 4, P4-ONB-2) "Show the tour
 again" and "Show the getting-started guide again".
+
+(phase 5, P4-UTOK, D-281..D-284, C-853..C-855) **Send as me** (under the chat platform links): one
+`ResourceTable` row per token: integration, platform user label, a status pill (`active`, `invalid`,
+`revoked`), the agents granted (chips), last used, and actions. **Add token**: a `Dialog` with one
+masked input (never echoed, never shown again) and the help text "In Mattermost, open Profile › Security ›
+Personal Access Tokens and create one. Aurora stores it sealed and uses it only to post as you, after
+you approve each post." Refusals render inline in plain language: "This token belongs to another
+account" (`user_token_mismatch`), "Mattermost rejected this token" (`user_token_invalid`), "You can keep
+at most 5 tokens" (`user_token_limit`). **Grant agents** is a `Dialog` with one switch per agent you can
+use. **Revoke** is a `ConfirmDialog`: "Agents stop posting as you and pending posts are cancelled." A
+`send_as_me` approval appears on your Approvals page with the full text and the decision controls; no
+other person sees its decide control. Empty state: "Agents post as themselves unless you add a token."
+At 390 px the rows stack. Shared primitives only.
 
 (phase 5, P4-SSH-1/2, D-239, C-795) **SSH keys** (`/account/ssh`), shown only when `/v1/instance`
 reports `features.ssh`. A `ResourceTable` of the person's keys — name, `SHA256:` fingerprint (mono,
