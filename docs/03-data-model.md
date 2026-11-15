@@ -813,6 +813,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | speaker_label | text not null | sanitized, denormalized |
 | text | text not null | ≤ `TURN_TEXT_MAX` |
 | source_event_id | text null | partial unique (conversation_id, source_event_id); (phase 3, RFE-018) value convention, no schema change: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`); promoted turns keep null (`10 §Turns`) |
+| reply_to_seq | bigint null | (phase 5, P5-CHAT-1, D-228, C-725) the `transcript_events.seq` of the earlier `text`, `turn.queued` or `attachment` event of the same conversation this message quotes; no FK (events are not keyed rows a turn may point at), validated at insert under the conversation lock; copied onto the turn a follow-up is promoted into. Partial index `turns_reply_to_idx (conversation_id, reply_to_seq) WHERE reply_to_seq IS NOT NULL` finds the quoting turns for the redaction cascade. Migration `20261201000171_turn_reply_to.sql` |
 | abort_requested_at | timestamptz null | |
 | send_now_requested_at | timestamptz null | |
 | error_code | text null | open vocabulary |
@@ -848,6 +849,33 @@ this table with its migration `20261201000150_turn_trace_context.sql`.
 | payload | jsonb not null | bounded (≤64 KiB serialized) |
 | redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged); phase 2, RFE-010 |
 | redacted_by_user_id | uuid null FK→users (set null) | phase 2, RFE-010 |
+
+### `transcript_search`
+(phase 5, P5-CHAT-4, D-229) One row per searchable durable event, written in the transaction that appends it (`transcript::append_durable_event` is the only insert path). Migration `20261201000172_transcript_search.sql`.
+| Column | Type | Notes |
+|---|---|---|
+| conversation_id, seq | uuid, bigint | pk; FK→`transcript_events (conversation_id, seq)` on delete cascade (conversation delete and retention purge cascade) |
+| workspace_id, agent_id | uuid FK (cascade) | copied at insert |
+| type | text CHECK in (`turn.queued`,`text`,`attachment`) | |
+| author_kind | text CHECK in (`agent`,`person`,`other`) | `person`/`other` from the turn's `speaker_kind` |
+| author_label | text not null default '' | the turn's `speaker_label` (agent rows use the agent's name at read) |
+| speaker_user_id | uuid null | the turn's speaker (`author=me`) |
+| has_file | bool | an `attachment`, or a `turn.queued` with attachments |
+| at | timestamptz | the event's `created_at` |
+| body | text, ≤ 32 KiB | `turn.queued` text + attachment file names; agent `text` as plain text (D-227 Markdown reduced: code kept, link text and URLs kept); `attachment` file name + caption. Control characters replaced; the rest of a longer message is not searchable |
+| doc | tsvector | `setweight(to_tsvector(<workspace memory_language>, body), 'A') ‖ setweight(to_tsvector('simple', body), 'B')`; a later change of the workspace language does not re-index (exact words keep working) |
+
+Indexes: GIN `doc`; btree `(workspace_id, at desc)` and `(agent_id, at desc)`. Redaction deletes the row in its transaction. The filename row of a purged attachment stays (the name was said in the conversation). Not indexed: tool events, approvals, notices, errors, thinking, deltas.
+
+### `transcript_search_backfill`
+One row: the resumable backfill's progress (`10 §Search`). `complete` is the route's `index_complete`.
+| Column | Type | Notes |
+|---|---|---|
+| singleton | bool pk default true CHECK (singleton) | one row only |
+| cursor_conversation | uuid null | last `(conversation_id, seq)` indexed, in key order |
+| cursor_seq | bigint null | |
+| complete | bool not null default false | set by the job when a batch comes back short |
+| indexed | bigint not null default 0 | rows the backfill wrote (log counter) |
 
 ### `session_purges`
 Pending deletions of harness session files after a conversation delete or a `reset_session` redaction (phase 2, RFE-010; `12 §Session purge`).

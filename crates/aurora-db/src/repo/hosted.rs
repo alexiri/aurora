@@ -520,6 +520,10 @@ pub struct SteerCand {
     pub conversation_id: Uuid,
     pub text: String,
     pub speaker_label: String,
+    /// (C-725) The event the follow-up quotes.
+    pub reply_to_seq: Option<i64>,
+    /// (C-726) Files bound to the follow-up.
+    pub n_files: i64,
     pub sandbox_id: Uuid,
     pub boot_id: Uuid,
 }
@@ -533,6 +537,9 @@ pub async fn steer_candidates(
 ) -> Result<Vec<SteerCand>, DbError> {
     Ok(sqlx::query_as(&format!(
         "SELECT f.id AS followup_id, t.id AS turn_id, t.conversation_id, f.text, f.speaker_label,
+                f.reply_to_seq,
+                (SELECT count(*) FROM attachments a WHERE a.turn_id = f.id
+                    AND a.direction = 'in' AND a.purged_at IS NULL) AS n_files,
                 s.id AS sandbox_id, s.boot_id
          FROM turns f JOIN turns t ON t.id = f.parent_turn_id
            JOIN sandboxes s ON s.agent_id = t.agent_id

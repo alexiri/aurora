@@ -306,7 +306,7 @@ async fn arm6_dispatch(
         let (resume_ref, epoch) = hosted::session_of(tx, turn.conversation_id).await?;
         let mems = hosted::memories(tx, agent.id).await?;
         let snippets = crate::domains::memory::recall_snippets(tx, agent.id, &turn.text).await?;
-        let attachments = hosted::turn_attachments(tx, turn.id)
+        let attachments: Vec<AttachmentRef> = hosted::turn_attachments(tx, turn.id)
             .await?
             .into_iter()
             .map(|a| AttachmentRef {
@@ -315,6 +315,16 @@ async fn arm6_dispatch(
                 size: u64::try_from(a.size_bytes).unwrap_or(0),
             })
             .collect();
+        // C-725/C-726: the quote block and the files-only line are built here, never stored.
+        let delivered_text = crate::domains::conversations::reply::delivered_text_of(
+            tx,
+            turn.conversation_id,
+            turn.agent_id,
+            &turn.text,
+            turn.reply_to_seq,
+            attachments.len(),
+        )
+        .await?;
         items.push(item(
             cand.sandbox_id,
             cand.boot_id,
@@ -330,7 +340,7 @@ async fn arm6_dispatch(
                     tok.expose().as_str(),
                 ),
                 input: TurnInput {
-                    text: turn.text.clone(),
+                    text: delivered_text,
                     speaker_label: turn.speaker_label.clone(),
                     door: door_name(&turn.door),
                     recall: Recall {
@@ -358,13 +368,26 @@ async fn arm7_steer(
         if !turns::mark_steer_delivered(tx, c.followup_id).await? {
             continue;
         }
+        let agent_id = turns::get(&mut *tx, c.turn_id)
+            .await?
+            .map(|t| t.agent_id)
+            .ok_or_else(|| ApiError::internal("Turn vanished."))?;
+        let text = crate::domains::conversations::reply::delivered_text_of(
+            tx,
+            c.conversation_id,
+            agent_id,
+            &c.text,
+            c.reply_to_seq,
+            usize::try_from(c.n_files).unwrap_or(0),
+        )
+        .await?;
         items.push(item(
             c.sandbox_id,
             c.boot_id,
             WorkItemBody::TurnMessage(TurnMessage {
                 turn_id: c.turn_id,
                 followup_id: c.followup_id,
-                text: c.text,
+                text,
                 speaker_label: c.speaker_label,
             }),
         ));

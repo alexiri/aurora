@@ -52,8 +52,7 @@ export function ChatPanel({
       className={cn(
         "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-7.5rem)]",
         className,
-      )}
-    >
+      )}>
       <div {...inert} className={cn("min-h-0 w-full shrink-0 flex-col border-line md:flex md:w-58 md:border-r", threadOpen ? "hidden" : "flex")}>
         {list}
       </div>

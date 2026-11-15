@@ -325,8 +325,10 @@ pub async fn write_redaction(
     .bind(seq)
     .bind(payload)
     .bind(by)
-    .execute(conn)
+    .execute(&mut *conn)
     .await?;
+    // (P5-CHAT-4) The redacted text must not stay searchable: its row goes in this transaction.
+    super::search::remove_event(conn, conversation, seq).await?;
     Ok(())
 }
 

@@ -158,8 +158,7 @@ export function RetryStart({
         onClick={() => {
           setErr(null);
           retry.mutate(undefined, { onSuccess: () => onRetried?.(), onError: fail });
-        }}
-      >
+        }}>
         {retry.isPending ? "Start in flight…" : "Retry now"}
       </Button>
       {err ? (
@@ -205,8 +204,7 @@ export function ContinueNotice({ text, convId }: { text: string; convId: string 
             // The durable `app_turn_cap_reset` notice arrives on the transcript stream and hides this button.
             .catch(setErr)
             .finally(() => setBusy(false));
-        }}
-      >
+        }}>
         Continue
       </Button>
       {err ? (

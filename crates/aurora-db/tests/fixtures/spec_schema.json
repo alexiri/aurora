@@ -1066,6 +1066,27 @@
       "turn_id",
       "type"
     ],
+    "transcript_search": [
+      "agent_id",
+      "at",
+      "author_kind",
+      "author_label",
+      "body",
+      "conversation_id",
+      "doc",
+      "has_file",
+      "seq",
+      "speaker_user_id",
+      "type",
+      "workspace_id"
+    ],
+    "transcript_search_backfill": [
+      "complete",
+      "cursor_conversation",
+      "cursor_seq",
+      "indexed",
+      "singleton"
+    ],
     "trusted_keys": [
       "added_by",
       "id",
@@ -1095,6 +1116,7 @@
       "last_progress_at",
       "parent_turn_id",
       "promoted_at",
+      "reply_to_seq",
       "revived_at",
       "role",
       "send_now_requested_at",
@@ -2275,6 +2297,27 @@
       "turn_id": "uuid null",
       "type": "text not null"
     },
+    "transcript_search": {
+      "agent_id": "uuid",
+      "at": "timestamptz",
+      "author_kind": "text",
+      "author_label": "text not null",
+      "body": "text",
+      "conversation_id": "uuid",
+      "doc": "tsvector",
+      "has_file": "bool",
+      "seq": "bigint",
+      "speaker_user_id": "uuid null",
+      "type": "text",
+      "workspace_id": "uuid"
+    },
+    "transcript_search_backfill": {
+      "complete": "bool not null",
+      "cursor_conversation": "uuid null",
+      "cursor_seq": "bigint null",
+      "indexed": "bigint not null",
+      "singleton": "bool not null"
+    },
     "trusted_keys": {
       "added_by": "uuid null",
       "id": "uuid not null",
@@ -2304,6 +2347,7 @@
       "last_progress_at": "timestamptz null",
       "parent_turn_id": "uuid null",
       "promoted_at": "timestamptz null",
+      "reply_to_seq": "bigint null",
       "revived_at": "timestamptz null",
       "role": "text",
       "send_now_requested_at": "timestamptz null",

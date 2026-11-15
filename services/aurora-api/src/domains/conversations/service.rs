@@ -312,6 +312,8 @@ pub struct NewMessage<'a> {
     pub text: &'a str,
     pub source_event_id: Option<&'a str>,
     pub attachment_ids: &'a [Uuid],
+    /// (C-725) `seq` of the event this message quotes; validated under the conversation lock.
+    pub reply_to_seq: Option<i64>,
 }
 
 fn clip(s: &str, max_bytes: usize) -> &str {
@@ -325,8 +327,9 @@ fn clip(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
-pub fn check_text(text: &str) -> Result<(), ApiError> {
-    if text.trim().is_empty() {
+/// `text` bound; empty text is allowed only when files are attached (C-726).
+pub fn check_text(text: &str, has_files: bool) -> Result<(), ApiError> {
+    if text.trim().is_empty() && !has_files {
         return Err(bad("/text", "must not be empty"));
     }
     if text.chars().count() > TURN_TEXT_MAX {
@@ -395,6 +398,12 @@ pub async fn create_turn_capped(
         }
         _ => {}
     }
+    // (C-725) Validated and composed under the conversation lock, so a concurrent redaction of
+    // the target either happens first (422 `redacted`) or cascades onto this message after.
+    let quote = match m.reply_to_seq {
+        Some(seq) => Some(super::reply::resolve(&mut *conn, conv.id, conv.agent_id, seq).await?),
+        None => None,
+    };
     let n = NewTurn {
         conversation_id: conv.id,
         agent_id: conv.agent_id,
@@ -404,6 +413,7 @@ pub async fn create_turn_capped(
         speaker_label: m.speaker_label,
         text: m.text,
         source_event_id: m.source_event_id,
+        reply_to_seq: m.reply_to_seq,
     };
     let created = turns::create(&mut *conn, &n).await?;
     let row = match &created {
@@ -427,6 +437,9 @@ pub async fn create_turn_capped(
     });
     if let Some(parent) = row.parent_turn_id.filter(|_| row.role == "followup") {
         payload["followup_of"] = json!(parent);
+    }
+    if let Some(q) = &quote {
+        payload["reply_to"] = q.payload();
     }
     transcript::append_durable_event(&mut *conn, conv.id, Some(row.id), "turn.queued", &payload)
         .await?;
@@ -556,19 +569,27 @@ pub async fn promote_one(
         .await?
         .map(|r| r.attachment_ids)
         .unwrap_or_default();
+    let mut payload = json!({
+        "turn_id": t.id,
+        "door": super::dto::door_name(&t.door),
+        "speaker_label": t.speaker_label,
+        "text": clip(&t.text, EVENT_TEXT_MAX_BYTES),
+        "attachments": attachments,
+        "promoted_from": f.id,
+    });
+    if let Some(seq) = t.reply_to_seq {
+        // The quote as it stands now (a target redacted meanwhile is a redacted quote).
+        payload["reply_to"] =
+            super::reply::for_delivery(&mut *conn, t.conversation_id, t.agent_id, seq)
+                .await?
+                .payload();
+    }
     transcript::append_durable_event(
         &mut *conn,
         t.conversation_id,
         Some(t.id),
         "turn.queued",
-        &json!({
-            "turn_id": t.id,
-            "door": super::dto::door_name(&t.door),
-            "speaker_label": t.speaker_label,
-            "text": clip(&t.text, EVENT_TEXT_MAX_BYTES),
-            "attachments": attachments,
-            "promoted_from": f.id,
-        }),
+        &payload,
     )
     .await?;
     Ok(Some(t))
@@ -649,6 +670,7 @@ async fn replay(
     row: TurnRow,
     text: &str,
     attachment_ids: &[Uuid],
+    reply_to_seq: Option<i64>,
 ) -> Result<MessageAccepted, ApiError> {
     let mut stored = row.attachment_ids.clone();
     stored.sort();
@@ -656,7 +678,7 @@ async fn replay(
     let mut wanted = attachment_ids.to_vec();
     wanted.sort();
     wanted.dedup();
-    if row.text != text || stored != wanted {
+    if row.text != text || stored != wanted || row.reply_to_seq != reply_to_seq {
         let is_followup = row.role == "followup";
         return Err(ApiError::unprocessable(
             "idempotency_key_reused",
@@ -676,21 +698,22 @@ pub async fn post_message(
     state: &AppState,
     c: &Caller,
     conversation_id: Uuid,
-    text: &str,
-    attachment_ids: &[Uuid],
+    body: &super::dto::SendMessage,
     key_headers: &[Vec<u8>],
 ) -> Result<(MessageAccepted, bool), ApiError> {
+    let (text, attachment_ids) = (body.text.as_str(), body.attachment_ids.as_slice());
+    let reply_to_seq = body.reply_to.map(|r| r.seq);
     // C-322: authorization and visibility first, then the header, then the lookup.
     let conv = load_conversation_for_write(state, c, conversation_id).await?;
     let key = stored_key(c.user_id, key_headers)?;
     if let Some(k) = &key {
         let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
         if let Some(row) = turns::by_source_event(&mut conn, conv.id, k).await? {
-            let body = replay(&mut conn, row, text, attachment_ids).await?;
+            let body = replay(&mut conn, row, text, attachment_ids, reply_to_seq).await?;
             return Ok((body, true));
         }
     }
-    check_text(text)?;
+    check_text(text, !attachment_ids.is_empty())?;
     let agent = agents::get(&state.pool, conv.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
@@ -723,6 +746,7 @@ pub async fn post_message(
             text,
             source_event_id: key.as_deref(),
             attachment_ids: &ids,
+            reply_to_seq,
         },
     )
     .await;
@@ -736,7 +760,7 @@ pub async fn post_message(
             let row = turns::by_source_event(&mut conn, conv.id, k)
                 .await?
                 .ok_or(e)?;
-            let body = replay(&mut conn, row, text, attachment_ids).await?;
+            let body = replay(&mut conn, row, text, attachment_ids, reply_to_seq).await?;
             return Ok((body, true));
         }
         Err(e) => return Err(e),

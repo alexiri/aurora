@@ -124,6 +124,8 @@ fn spec_type_to_udt(t: &str) -> Option<&'static str> {
         "bool" | "boolean" => "bool",
         "jsonb" => "jsonb",
         "bytea" => "bytea",
+        // (P5-CHAT-4) `transcript_search.doc`
+        "tsvector" => "tsvector",
         "inet" => "inet",
         "text[]" => "_text",
         "uuid[]" => "_uuid",

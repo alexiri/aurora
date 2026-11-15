@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ConversationActions } from "@/components/agents/conversation-actions";
 import { Avatar } from "@/components/agent-avatar";
@@ -10,9 +10,11 @@ import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, type Conversation } from "@/lib/api/conversations";
 import { conversationTitle, kindLabel } from "@/lib/chat/layout";
+import { buildPermalink, permalinkSeq, withoutMessageParam } from "@/lib/chat/permalink";
 import { activeTurnId } from "@/lib/chat/transcript";
 import { useTranscript } from "@/lib/chat/use-transcript";
 
+import { ChatActionsContext, type ChatActions, type ReplyTarget } from "./chat-actions";
 import { Composer } from "./composer";
 import { ThreadHeader } from "./thread-header";
 import { TranscriptView } from "./transcript-view";
@@ -62,6 +64,33 @@ export function ChatThread({
   const { state, loading, error, live } = useTranscript(convId);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [stopErr, setStopErr] = useState<string | null>(null);
+  // (P5-CHAT-2) Reply target, jump requests and the "not available" notice for a permalink or quote that points nowhere.
+  const [reply, setReply] = useState<ReplyTarget | null>(null);
+  // A permalink (`?c=&m=`) is read at mount; the transcript performs the jump once its history is shown.
+  const [jump, setJump] = useState<{ seq: number; n: number } | null>(() => {
+    const seq = typeof window === "undefined" ? null : permalinkSeq(window.location.search, convId);
+    return seq === null ? null : { seq, n: 1 };
+  });
+  const [missing, setMissing] = useState(false);
+  const actions = useMemo<ChatActions>(
+    () => ({
+      reply: setReply,
+      jump: (seq) => {
+        setMissing(false);
+        setJump((j) => ({ seq, n: (j?.n ?? 0) + 1 }));
+      },
+      link: (seq) => buildPermalink(window.location.href, convId, seq),
+    }),
+    [convId],
+  );
+  // The jump is one-shot: drop `m` from the address once the history has loaded, so a reload does not repeat it.
+  const ready = !loading && !error;
+  useEffect(() => {
+    if (ready && permalinkSeq(window.location.search, convId) !== null) {
+      window.history.replaceState(window.history.state, "", withoutMessageParam(window.location.href));
+    }
+  }, [ready, convId]);
+  const onMissing = useCallback(() => setMissing(true), []);
   const active = activeTurnId(state, conversation ?? direct);
   const line = active ? (state.activity[active] ?? null) : null;
   useEffect(() => {
@@ -87,79 +116,95 @@ export function ChatThread({
   ];
 
   return (
-    <section aria-label="Chat" className="flex min-h-0 flex-1 flex-col">
-      <ThreadHeader
-        title={title}
-        visibility={visibility}
-        segments={segments}
-        live={loading || error ? null : live}
-        onBack={onBack}
-        actions={
-          onGone ? <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} onError={setActionErr} /> : null
-        }
-      />
-      {actionErr ? (
-        <Notice tone="danger" role="alert" className="m-3 shrink-0">
-          {actionErr}
-        </Notice>
-      ) : null}
-      {loading ? (
-        <div className="flex-1 p-4">
-          <Loading />
-        </div>
-      ) : error ? (
-        <div className="flex-1 p-4">
-          <ErrorState error={error} />
-        </div>
-      ) : (
-        <TranscriptView
-          state={state}
-          wsId={wsId}
-          base={base}
-          convId={convId}
-          agent={agent}
-          active={!!active}
-          empty={
-            empty ? (
-              <div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-center">
-                <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={72} />
-                <h3 className="font-display text-lg font-semibold text-ink">Start a conversation with {agent?.name ?? "the agent"}</h3>
-                {agent?.brief ? <p className="text-sm text-ink-2">{agent.brief}</p> : null}
-              </div>
-            ) : undefined
-          }
+    <ChatActionsContext.Provider value={actions}>
+      <section aria-label="Chat" className="flex min-h-0 flex-1 flex-col">
+        <ThreadHeader
+          title={title}
+          visibility={visibility}
+          segments={segments}
+          live={loading || error ? null : live}
+          onBack={onBack}
+          actions={onGone ? <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} onError={setActionErr} /> : null}
         />
-      )}
-      {readOnly ? (
-        <div className="shrink-0 space-y-2 border-t border-line p-3 md:px-5">
-          {stopErr ? (
-            <p role="alert" className="text-sm text-danger-ink">
-              {stopErr}
-            </p>
-          ) : null}
-          <Notice role="note" className="flex flex-wrap items-center gap-2">
-            <p className="min-w-0 flex-1">
-              Read-only view. This is {ownerView || "another member"}&apos;s direct conversation. You can read it because you own this workspace; your access is
-              recorded in the audit log. You can stop its turns but cannot write in it.
-            </p>
-            {active ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setStopErr(null);
-                  chatApi.abort(active).catch((e: unknown) => setStopErr(e instanceof ApiError ? e.message : "Could not stop the turn."));
-                }}
-              >
-                Stop
-              </Button>
-            ) : null}
+        {actionErr ? (
+          <Notice tone="danger" role="alert" className="m-3 shrink-0">
+            {actionErr}
           </Notice>
-        </div>
-      ) : (
-        <Composer agentId={agentId} convId={convId} base={base} agentName={agentName} activeTurn={active} state={state} autoFocus={empty} />
-      )}
-    </section>
+        ) : null}
+        {loading ? (
+          <div className="flex-1 p-4">
+            <Loading />
+          </div>
+        ) : error ? (
+          <div className="flex-1 p-4">
+            <ErrorState error={error} />
+          </div>
+        ) : (
+          <TranscriptView
+            jump={jump}
+            onJumpMissing={onMissing}
+            state={state}
+            wsId={wsId}
+            base={base}
+            convId={convId}
+            agent={agent}
+            active={!!active}
+            empty={
+              empty ? (
+                <div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-center">
+                  <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={72} />
+                  <h3 className="font-display text-lg font-semibold text-ink">Start a conversation with {agent?.name ?? "the agent"}</h3>
+                  {agent?.brief ? <p className="text-sm text-ink-2">{agent.brief}</p> : null}
+                </div>
+              ) : undefined
+            }
+          />
+        )}
+        {missing ? (
+          <Notice role="status" className="mx-3 mb-2 shrink-0 md:mx-5">
+            Message not available.
+          </Notice>
+        ) : null}
+        {readOnly ? (
+          <div className="shrink-0 space-y-2 border-t border-line p-3 md:px-5">
+            {stopErr ? (
+              <p role="alert" className="text-sm text-danger-ink">
+                {stopErr}
+              </p>
+            ) : null}
+            <Notice role="note" className="flex flex-wrap items-center gap-2">
+              <p className="min-w-0 flex-1">
+                Read-only view. This is {ownerView || "another member"}&apos;s direct conversation. You can read it because you own this workspace; your access
+                is recorded in the audit log. You can stop its turns but cannot write in it.
+              </p>
+              {active ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setStopErr(null);
+                    chatApi.abort(active).catch((e: unknown) => setStopErr(e instanceof ApiError ? e.message : "Could not stop the turn."));
+                  }}>
+                  Stop
+                </Button>
+              ) : null}
+            </Notice>
+          </div>
+        ) : (
+          <Composer
+            agentId={agentId}
+            convId={convId}
+            base={base}
+            agentName={agentName}
+            activeTurn={active}
+            state={state}
+            autoFocus={empty}
+            reply={reply}
+            onClearReply={() => setReply(null)}
+          />
+        )}
+      </section>
+    </ChatActionsContext.Provider>
   );
 }

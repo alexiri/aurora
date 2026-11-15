@@ -12,6 +12,8 @@ import { newIdempotencyKey } from "@/lib/chat/idempotency";
 import { classifySend, pendingFollowups, type TranscriptState } from "@/lib/chat/transcript";
 
 import { ComposerChip, UploadChip } from "./attachments";
+import type { ReplyTarget } from "./chat-actions";
+import { ReplyBar } from "./reply-bar";
 import { ErrorBlock, QueuedRow } from "./status-rows";
 
 /**
@@ -27,7 +29,12 @@ export function Composer({
   activeTurn,
   state,
   autoFocus = false,
+  reply = null,
+  onClearReply,
 }: {
+  /** (P5-CHAT-2, C-725) The message this one replies to; sent as `reply_to.seq`. */
+  reply?: ReplyTarget | null;
+  onClearReply?: () => void;
   agentId: string;
   convId: string;
   base: string;
@@ -58,6 +65,11 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) area.current?.focus();
   }, [autoFocus]);
+  // Choosing Reply moves focus to the text field.
+  const replySeq = reply?.seq;
+  useEffect(() => {
+    if (replySeq) area.current?.focus();
+  }, [replySeq]);
 
   // The draft is a one-shot suggestion (WEBA-20): once it has filled the box, drop `?draft=` from the URL so a
   // remount (switching conversations and back, a re-render of the page) does not put it back.
@@ -77,14 +89,15 @@ export function Composer({
     // One key per message (RFE-018): a retry of the same text and attachments reuses it, so a lost response never
     // makes a second turn; an edited message gets a fresh one (the server refuses a key reused with other content).
     const ids = pending.map((a) => a.id);
-    const sig = JSON.stringify([convId, t, [...ids].sort()]);
+    const sig = JSON.stringify([convId, t, [...ids].sort(), reply?.seq ?? null]);
     if (keyRef.current?.sig !== sig) keyRef.current = { sig, key: newIdempotencyKey() };
     try {
-      const out = classifySend(await chatApi.send(convId, t, ids, keyRef.current.key));
+      const out = classifySend(await chatApi.send(convId, t, ids, keyRef.current.key, reply?.seq));
       keyRef.current = null;
       if (out.kind === "followup") setFollowups((f) => [...f, out.followup]);
       setText("");
       setPending([]);
+      onClearReply?.();
       void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
     } catch (err) {
       // The server took the key for other content: never reuse it.
@@ -124,6 +137,11 @@ export function Composer({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Escape" && reply) {
+      e.preventDefault();
+      onClearReply?.();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void submit();
@@ -131,6 +149,8 @@ export function Composer({
   }
 
   const tooMany = sendErr instanceof ApiError && sendErr.code === "too_many_attachments";
+  // (C-725) The original was redacted (or is gone) since Reply was chosen: say so in the bar, keep the text.
+  const replyGone = sendErr instanceof ApiError && sendErr.code === "reply_target_invalid";
   return (
     <div className="shrink-0 space-y-2 border-t border-line bg-surface p-3 dark:bg-canvas md:px-5">
       {waiting.map((f) => (
@@ -140,17 +160,13 @@ export function Composer({
         <p role="alert" className="text-sm text-danger-ink">
           {uploadErrorMessage(sendErr)}
         </p>
-      ) : sendErr ? (
-        <ErrorBlock
-          code={sendErr instanceof ApiError ? sendErr.code : null}
-          message={sendErr instanceof ApiError ? sendErr.message : undefined}
-          base={base}
-        />
+      ) : sendErr && !replyGone ? (
+        <ErrorBlock code={sendErr instanceof ApiError ? sendErr.code : null} message={sendErr instanceof ApiError ? sendErr.message : undefined} base={base} />
       ) : null}
       <form
         onSubmit={(e) => void submit(e)}
-        className="rounded-card border border-line-strong bg-surface p-2 focus-within:border-accent dark:bg-canvas md:p-2.5"
-      >
+        className="rounded-card border border-line-strong bg-surface p-2 focus-within:border-accent dark:bg-canvas md:p-2.5">
+        {reply ? <ReplyBar target={reply} onCancel={() => onClearReply?.()} error={replyGone ? "You can't reply to that message any more" : null} /> : null}
         {pending.length > 0 ? (
           <ul aria-label="Pending attachments" className="mb-2 flex flex-wrap gap-2">
             {pending.map((a) => (
@@ -202,8 +218,7 @@ export function Composer({
               size="sm"
               aria-label="Stop"
               className="order-4 size-11 min-h-11 shrink-0 px-0 md:w-auto md:min-h-9 md:px-3"
-              onClick={() => void act(() => chatApi.abort(activeTurn))}
-            >
+              onClick={() => void act(() => chatApi.abort(activeTurn))}>
               <StopIcon width={16} height={16} />
               <span className="hidden md:inline">Stop</span>
             </Button>
@@ -213,8 +228,7 @@ export function Composer({
             size="lg"
             className="order-5 size-11 min-h-11 shrink-0 px-0"
             aria-label={activeTurn ? "Follow up" : "Send"}
-            disabled={busy || uploading.length > 0 || !text.trim()}
-          >
+            disabled={busy || uploading.length > 0 || !text.trim()}>
             <SendIcon width={18} height={18} />
           </Button>
         </div>

@@ -87,11 +87,16 @@ export const chatApi = {
   events: (id: string, afterSeq: number) =>
     unwrap(api.GET("/v1/conversations/{id}/events", { params: { path: { id }, query: { after_seq: afterSeq, limit: 500 } } })),
   /** `idempotencyKey` (RFE-018): the same key on a retry returns the first result instead of a second message. */
-  send: (id: string, text: string, attachmentIds: string[] = [], idempotencyKey?: string) =>
+  /** `replyToSeq`: quote an earlier message of this conversation (C-725); `text` may be empty with attachments (C-726). */
+  send: (id: string, text: string, attachmentIds: string[] = [], idempotencyKey?: string, replyToSeq?: number) =>
     unwrap(
       api.POST("/v1/conversations/{id}/messages", {
         params: { path: { id }, ...(idempotencyKey ? { header: { "Idempotency-Key": idempotencyKey } } : {}) },
-        body: attachmentIds.length > 0 ? { text, attachment_ids: attachmentIds } : { text },
+        body: {
+          text,
+          ...(attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
+          ...(replyToSeq ? { reply_to: { seq: replyToSeq } } : {}),
+        },
       }),
     ),
   continue: (id: string) => unwrap(api.POST("/v1/conversations/{id}/continue", { params: { path: { id } } })),
@@ -136,8 +141,7 @@ export function useConversationById(id: string | null, enabled: boolean) {
 }
 
 /** Download URL of a conversation export (`aurora.conversation.v1` JSON, or a zip with the files). */
-export const exportUrl = (id: string, kind: "json" | "zip") =>
-  `/v1/conversations/${id}/export${kind === "zip" ? "?attachments=zip" : ""}`;
+export const exportUrl = (id: string, kind: "json" | "zip") => `/v1/conversations/${id}/export${kind === "zip" ? "?attachments=zip" : ""}`;
 export function useSandbox(agentId: string) {
   return useQuery({
     queryKey: ["agents", agentId, "sandbox"] as const,

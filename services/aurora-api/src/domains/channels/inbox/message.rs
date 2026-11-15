@@ -330,6 +330,7 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
                 text: &text,
                 source_event_id: Some(&row.event_id),
                 attachment_ids: &attachment_ids,
+                reply_to_seq: None,
             },
         )
         .await

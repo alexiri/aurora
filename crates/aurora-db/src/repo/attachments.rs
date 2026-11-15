@@ -289,6 +289,19 @@ pub async fn purged_among(
     .await?)
 }
 
+/// File names of `ids`, oldest first (door copies and quotes of a files-only message, C-726).
+pub async fn filenames(exec: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<Vec<String>, DbError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT filename FROM attachments WHERE id = ANY($1) ORDER BY created_at, id",
+    )
+    .bind(ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Mark one attachment purged (`reason`: `retention` | `deleted`) and clear its `blob_key`, so a
 /// blob that survives a failed delete is unreferenced and left to the orphan sweep. `None` when
 /// it holds no bytes (already purged, or `failed`).
