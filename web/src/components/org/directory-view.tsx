@@ -6,6 +6,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 
+import { ReauthErrorNotice } from "@/components/auth/reauth-error-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -393,6 +394,7 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
         description="Provision members from your identity provider over SCIM 2.0."
         className="mb-6"
       />
+      <ReauthErrorNotice />
       {!isOwner ? (
         <Notice role="status">Only organization owners can manage directory sync.</Notice>
       ) : (

@@ -511,7 +511,7 @@ OpenAPI document and the phase tags (FIX-119).
 | POST `/v1/auth/password/forgot`, `/v1/auth/password/reset` | none | **phase 0 only; removed in phase 1** |
 | POST `/v1/auth/password/change` | SO | **phase 0 only; removed in phase 1** |
 | POST `/v1/auth/sessions/revoke-others` | SO | |
-| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
+| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1`; (FIX-152, C-890) a failed re-authentication redirects to its `return_to` with `reauth_error=<code>` instead of `/auth/login?error=<code>` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | GET `/v1/auth/cli/pending?code=` | SO | (FIX-108) `{ hostname, requested_at, expires_at, address?, key_expires_in_days? }` for the approval screen; 404 unknown/expired, 400 malformed code |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
@@ -608,8 +608,8 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 ### Apps, connections, OAuth clients
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/apps?workspace_id=` | S/K | catalogue with availability and connection counts |
-| GET `/v1/apps/{app}` | S/K | about, connect methods (form schemas), scopes, tools, agent docs |
+| GET `/v1/apps?workspace_id=` | S/K | catalogue with availability and connection counts; (phase 5, FIX-154, C-895) `credential_free` |
+| GET `/v1/apps/{app}` | S/K | about, connect methods (form schemas), scopes, tools, agent docs; (phase 5, FIX-154, C-895) `credential_free` |
 | GET `/v1/apps/{app}/icon?variant=light|dark`, `/v1/apps/{app}/guide` | S/K | sanitized PNG; setup guide markdown |
 | POST `/v1/apps/{app}/connect` | S | `{ scope, workspace_id?, method_id, fields?, oauth_client_id?, access_level?, reconnect_connection_id? }` → `{ "kind": "redirect", "url" }` \| `{ "kind": "connected", "connection" }` |
 | GET `/v1/oauth/callback` | P | state-bound; renders a tiny HTML page that posts to the opener and closes |
@@ -655,8 +655,9 @@ by `id`, never by `host` alone.
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
 | POST `/v1/connections/{id}/grants` | S/K | (phase 4, FIX-020, D-137) bulk grant from the credential side: `{ agent_ids (1–`GRANT_BULK_MAX`), mode, allow_tools?, ask_tools?, ask_timeout_secs? }`; each agent passes exactly the checks of `PUT /v1/agents/{agent}/grants/connections/{conn}` (same service function, incl. 422 `full_grant_forbidden`); all-or-nothing, one audit row per new grant; an existing grant is left unchanged and reported `existing` (C-504) |
+| PUT `/v1/agents/{agent}/grants/apps/{app}` | S/K | (phase 5, FIX-154, D-306, C-896) give an agent access to a **credential-free** app (C-895) in one step: body as `PUT …/grants/connections/{conn}`; in one transaction serialized per (workspace, app) it reuses the workspace's oldest active connection of the app or creates one (audited `connection.created`, `via: "agent_grant"`), then upserts the grant; → `{ connection, grant, created }`; 404 `app_not_found`, 403 `app_unavailable`, 422 `app_not_credential_free`, 422 `full_grant_forbidden`. Removing access uses `DELETE …/grants/connections/{conn}` |
 | GET/POST `/v1/secrets/{id}/grants` | S/K | (phase 4, FIX-020, D-137) agents granted (only agents the caller can see) / bulk grant `{ agent_ids }` with exactly the checks of `PUT /v1/agents/{agent}/grants/secrets/{secret}`; all-or-nothing, idempotent (C-503) |
-| GET `/v1/agents/{agent}/model-readiness` | S/K | (phase 4, FIX-019, D-136) `can_own`: per granted LLM key `usable` or the failing reason, and the default model selection (`08 §Model readiness`, C-500) |
+| GET `/v1/agents/{agent}/model-readiness` | S/K | (phase 4, FIX-019, D-136) `can_own`: per granted LLM key `usable` or the failing reason, and the default model selection (`08 §Model readiness`, C-500). (phase 5, P5-MODELS-1, C-878) `default` also carries the role resolution and warnings |
 | GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
 
 ### Policy
@@ -706,8 +707,8 @@ gains `features.push: bool` (C-830).
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET/POST `/v1/workspaces/{ws}/agents` | S/K | create returns `aug_` once for BYO; (phase 2, RFE-025) creating `kind = byo` is subject to the effective BYO posture: 403 `byo_not_permitted` (`owners_only`, caller lacks `can_own`) or 403 `byo_disabled`; the list/get shape carries `byo: { posture, posture_level, source_cidrs, require_context, effective_source_cidrs, effective_require_context }` for BYO agents |
-| GET/PATCH/DELETE `/v1/agents/{agent}` | S/K | name, brief, harness, model, effort, resource overrides (IA); (phase 4, P4-HAR) `harness` must be in `hosted.enabled_harnesses` (422 `harness_not_enabled`), cannot change while a turn is active (409 `turn_active`), and a change bumps every conversation's `harness_session_epoch`, queues session purges and drops incompatible model overrides with a notice (`12 §Harness selection and adapter contract`); audited |
-| GET `/v1/harnesses` | S/K | (phase 4, P4-HAR) enabled harnesses: `{ id, display_name, dialects, available }` where `available` means at least one live runner replica lists it; drives the dashboard picker |
+| GET/PATCH/DELETE `/v1/agents/{agent}` | S/K | name, brief, harness, model, effort, resource overrides (IA); (phase 4, P4-HAR) `harness` must be in `hosted.enabled_harnesses` (422 `harness_not_enabled`), cannot change while a turn is active (409 `turn_active`), and a change bumps every conversation's `harness_session_epoch`, queues session purges and drops incompatible model overrides with a notice (`12 §Harness selection and adapter contract`); audited. (phase 5, P5-MODELS-1, D-303, C-876) `model` is the **default** model. The route also reads and writes `model_roles` (`{ endpoint_id, large?, medium?, small? } \| null`) and `subagent_model`, under the same permission as `model`. 422 `model_id_invalid` (pattern), `llm_model_not_allowed`, `model_role_endpoint_mismatch` (the roles' `endpoint_id` is not the agent's current default endpoint) |
+| GET `/v1/harnesses` | S/K | (phase 4, P4-HAR) enabled harnesses: `{ id, display_name, dialects, available }` where `available` means at least one live runner replica lists it; drives the dashboard picker. (phase 5, P5-MODELS-1, C-882) Each item also has `model_roles: string[]` (the roles the harness maps; `[]` for `codex`) |
 | POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once with `expires_at` (phase 3, RFE-013: null unless an agent-token maximum age applies, `08 §7`); (phase 2, RFE-025) same posture check as creation (`byo_not_permitted` / `byo_disabled`); audited `agent.token_regenerate` |
 | PUT `/v1/agents/{agent}/byo` | S/K | (phase 2, RFE-025) BYO only (hosted → 422 `not_byo`): `{ source_cidrs: [cidr..] \| null, require_context: bool }`; `can_own`; 422 `byo_cidr_invalid` (bad CIDR, `/0`, empty array, >32 entries) / `byo_cidr_outside_default`; live credentials are re-evaluated by invalidation scope `agent`; audited `agent.byo_settings.update` |
 | GET `/v1/agents/{agent}/container-config` | S/K | BYO bootstrap (`08 §BYO bootstrap`) |

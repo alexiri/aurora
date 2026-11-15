@@ -6,9 +6,11 @@ import { OrgDetailView } from "@/components/admin/org-detail-view";
 import { AdminOrgsView } from "@/components/admin/orgs-view";
 
 const push = vi.fn();
+let search = "";
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/admin/orgs",
+  useSearchParams: () => new URLSearchParams(search),
 }));
 
 const json = (status: number, body: unknown) =>
@@ -32,6 +34,39 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   push.mockReset();
+  search = "";
+});
+
+describe("reauth_error notice (FIX-152)", () => {
+  const routes = () => ({
+    "GET /v1/admin/orgs": () => json(200, { items: [org()], next_cursor: null }),
+    [`GET /v1/admin/orgs/${ORG}`]: () => json(200, org()),
+    [`GET /v1/admin/orgs/${ORG}/workspaces`]: () => json(200, { items: [], next_cursor: null }),
+  });
+  const views = [
+    ["list", () => <AdminOrgsView />],
+    ["detail", () => <OrgDetailView orgId={ORG} />],
+  ] as const;
+  for (const [name, view] of views) {
+    it(`${name}: reauth_stale shows the stale text`, async () => {
+      mockFetch(routes());
+      search = "reauth_error=reauth_stale";
+      wrap(view());
+      expect((await screen.findByRole("alert")).textContent).toMatch(/did not confirm a fresh sign-in.*reauth_stale/);
+    });
+    it(`${name}: an unknown code shows the fallback`, async () => {
+      mockFetch(routes());
+      search = "reauth_error=<b>x</b>";
+      wrap(view());
+      expect((await screen.findByRole("alert")).textContent).toBe("Re-authentication failed. Please try again.");
+    });
+    it(`${name}: no alert without the param`, async () => {
+      mockFetch(routes());
+      wrap(view());
+      await screen.findByRole("heading", { level: 1 });
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+  }
 });
 
 const ORG = "11111111-1111-4111-8111-111111111111";

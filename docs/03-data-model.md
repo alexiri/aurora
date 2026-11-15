@@ -738,7 +738,7 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | harness | text null | hosted: adapter id (`claude-code`; phase 4, P4-HAR: also `codex`, an open vocabulary validated against `hosted.enabled_harnesses` on write) |
 | model_provider | text null | stamped with the provider of `model_id` (`08 §Model selection`) |
 | model_endpoint_id | text null | LLM endpoint id from configuration |
-| model_id | text null | provider's model id; null ⇒ endpoint/provider default |
+| model_id | text null | provider's model id; null ⇒ endpoint/provider default. (phase 5, P5-MODELS, D-302(a)) The harness's **default** model, not a limit |
 | proactive_messaging | text CHECK in (`ask`,`allow`,`off`) default `ask` | `13 §Messaging tools` |
 | effort | text null CHECK in (`low`,`medium`,`high`,`max`) | |
 | brief | text not null default `''` | ≤20 000 chars |
@@ -819,7 +819,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | send_now_requested_at | timestamptz null | |
 | error_code | text null | open vocabulary |
 | error_message | text null | |
-| usage | jsonb null | `{ input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, provider }` |
+| usage | jsonb null | `{ input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, provider }`. (phase 5, P4-LLM) It also holds `endpoint_id`. (phase 5, P5-MODELS-2, D-304, C-879) It also holds `by_model: [{ model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens }]` and an optional `unverified_models: true`. The totals are the sum of `by_model`, and `model` is the default (`10 §Usage and metering`) |
 | dispatched_at, started_at, finished_at | timestamptz null | |
 | last_progress_at | timestamptz null | churn column |
 | dispatch_lease_until | timestamptz null | claim clock (dispatch) |
@@ -1666,6 +1666,15 @@ Migration `20261201000140_app_instance_base_path.sql` (block `000140..149`) adds
 index still serves the conflict check and the gateway's instance lookup. The gateway role already
 has table-level `SELECT` on `app_instances` (`§Gateway database role grants`), so it reads
 `base_path` without a new grant (instance selection, `06 §MITM lane: connect-time resolution`).
+
+#### `agents` and `request_log` columns (phase 5, P5-MODELS, D-302..D-304)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| agents.model_roles | jsonb null | (phase 5, P5-MODELS-1, D-303) `{ endpoint_id, large?, medium?, small? }`: role models stamped with the endpoint they were chosen for. Dropped per role under the override rule (`08 §Model roles`) | 5 (P5-MODELS-1) |
+| agents.subagent_model | text not null default `'inherit'` | (phase 5, P5-MODELS-1) CHECK in (`inherit`,`large`,`medium`,`small`) | 5 (P5-MODELS-1) |
+| request_log.llm_model | text null | (phase 5, P5-MODELS-2, D-304, C-880) `model_from_request` of a request with an injected key on a governed LLM endpoint (`08 §11.5`); null otherwise or when `Unknown`. Audit only: no decision reads it | 5 (P5-MODELS-2) |
+
+The migrations land with P5-MODELS-1 and -2 (next free numbers when placed); the rows then move into `§agents` and `§request_log` above.
 
 #### `instance_settings` (new table; instance-wide; phase 5, SET-1, D-236)
 | Planned column | Type | Notes | Phase |

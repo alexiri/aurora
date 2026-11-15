@@ -22,7 +22,7 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 |---|---|---|---|
 | `p5-apps` → settings | SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6 (after SET-3 and P4-LLM-1 are merged) | one settings framework and its consumers, in brief order | `aurora-config` settings registry, `domains/settings/**`, Admin › Settings pages, `aurora-secrets` store admin |
 | `p5-agent` | P5-CHAT-4 B ‖ P4-LLM-1 → P4-LLM-2 ‖ P4-LLM-3 → P4-LLM-4 → P4-LLM-5 ‖ | finishes the chat chain, then the LLM provider chain (runner harness config + gateway mint) | `components/chat/**` search, `aurora-runner` provider/harness config, gateway `llm/**` |
-| `p5-platform` | P5-CERN-ADDONS external repo ‖ FIX-146 A → B/C/D → E ‖ P4-SSH-1 → P4-SSH-2 ‖ | the addon repo's release, then cross-cutting tracing, then SSH (both need `web/package.json`) | `web/package.json` + `pnpm-lock.yaml` (this wave), `/home/alex/agent-platform/aurora-addons-cern`, tracing middleware, `aurora-terminator` |
+| `p5-platform` | P5-CERN-ADDONS external repo ‖ FIX-153 → FIX-154 (owner 2026-11-15: the CERN Phonebook connect dead ends) ‖ FIX-146 A → B/C/D → E ‖ P4-SSH-1 → P4-SSH-2 ‖ | the addon repo's release, then cross-cutting tracing, then SSH (both need `web/package.json`) | `web/package.json` + `pnpm-lock.yaml` (this wave), `/home/alex/agent-platform/aurora-addons-cern`, tracing middleware, `aurora-terminator` |
 
 ### Wave 3 queue (placed 2026-11-15; each lane continues after its wave-2 chain, merging master first)
 
