@@ -1849,3 +1849,172 @@ async fn s23_azure_entra_token_is_minted_by_the_gateway_and_never_leaks() {
     );
     st.finish().await;
 }
+
+/// (P4-LLM-4, C-801, C-805, C-807, SEC-97, acceptance 5) `bedrock` with an assume-role credential through the real
+/// binaries: the API validates by `AssumeRole` (the org's external id), the gateway assumes the role itself and signs
+/// inference with the **session** key; the agent's own SigV4 material never arrives, the source key never signs the
+/// runtime call, and no key, secret, token or signature appears in any log, the request log, an API read or the
+/// metrics.
+#[tokio::test]
+async fn s24_bedrock_assume_role_is_signed_by_the_gateway_and_never_leaks() {
+    use aurora_testkit::llm::bedrock::MockBedrock;
+    use aurora_testkit::llm::sts::MockSts;
+    const SOURCE_KEY: &str = "AKIAE2ESOURCEKEY001";
+    const SOURCE_SECRET: &str = "e2e-source-secret-access-key";
+    let bedrock = MockBedrock::start().await;
+    let sts = MockSts::start(SOURCE_KEY, SOURCE_SECRET, "123456789012").await;
+    {
+        let b = bedrock.clone();
+        sts.on_session(move |ak, sk, tok| b.accept_key(ak, sk, Some(tok)));
+    }
+    let st = Stack::start(Opts {
+        llm_bedrock: Some((sts.base().to_owned(), bedrock.base().to_owned())),
+        ..Opts::default()
+    })
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("bedrock-agent").await;
+    let value = json!({"access_key_id": SOURCE_KEY, "secret_access_key": SOURCE_SECRET,
+                       "role_arn": "arn:aws:iam::123456789012:role/aurora-e2e"})
+    .to_string();
+    let (s, v) = api
+        .post(
+            &format!("/v1/orgs/{}/secrets", api.org),
+            json!({"name": "bd-role", "kind": "llm",
+                   "llm": {"endpoint_id": "bd", "auth_mode": "aws_assume_role"}, "value": value}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}\n{}", st.log_tails());
+    api.grant(&agent, v["id"].as_str().unwrap()).await;
+    api.set_policy("block", json!([])).await;
+    let validated = sts.assume_calls().len();
+    assert!(validated >= 1, "the API validated by AssumeRole");
+    let route = format!(
+        "{}/model/anthropic.claude-3-haiku-20240307-v1%3A0/invoke",
+        bedrock.base()
+    );
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(&route)
+        .header(
+            "authorization",
+            "AWS4-HMAC-SHA256 Credential=AKIAAGENT/x, Signature=agentsig",
+        )
+        .header("x-amz-security-token", "agent-session-token")
+        .header("x-api-key", "agent-own-key")
+        .body(r#"{"anthropic_version":"bedrock-2023-05-31","messages":[]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    let calls = sts.assume_calls();
+    assert_eq!(
+        calls.len(),
+        validated + 1,
+        "the gateway assumed the role itself"
+    );
+    let org_ext: String =
+        sqlx::query_scalar("SELECT external_id FROM organizations WHERE id = $1::uuid")
+            .bind(&api.org)
+            .fetch_one(st.pool())
+            .await
+            .unwrap();
+    for c in &calls {
+        assert_eq!(c.external_id, org_ext);
+        assert_eq!(c.signed_by, SOURCE_KEY);
+    }
+    let seen = bedrock.requests();
+    let one = seen
+        .iter()
+        .find(|s| s.req.path.ends_with("/invoke"))
+        .unwrap();
+    let verified = one.verified.as_ref().expect("a valid signature");
+    assert!(
+        verified.access_key.starts_with("ASIAMOCKSESSION"),
+        "{verified:?}"
+    );
+    assert_eq!(
+        (verified.service.as_str(), verified.region.as_str()),
+        ("bedrock", "us-east-1")
+    );
+    let dump = format!("{:?}", one.req.headers);
+    assert!(
+        !dump.contains("AKIAAGENT")
+            && !dump.contains("agentsig")
+            && !dump.contains("agent-session-token")
+            && !dump.contains("agent-own-key")
+            && !dump.contains(SOURCE_KEY),
+        "{dump}"
+    );
+    // Needles: every credential and the signature the gateway produced.
+    let signature = one
+        .req
+        .headers
+        .iter()
+        .find(|(k, _)| k == "authorization")
+        .and_then(|(_, v)| v.split("Signature=").nth(1))
+        .unwrap()
+        .to_owned();
+    let sessions = sts.sessions();
+    let mut needles: Vec<&str> = vec![
+        SOURCE_KEY,
+        SOURCE_SECRET,
+        "agent-own-key",
+        "agentsig",
+        &signature,
+    ];
+    for (ak, sk, tok) in &sessions {
+        needles.extend([ak.as_str(), sk.as_str(), tok.as_str()]);
+    }
+    for log in &st.logs {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        for n in &needles {
+            assert!(!text.contains(n), "{} leaks a secret", log.display());
+        }
+    }
+    let rows: Vec<String> = sqlx::query_scalar("SELECT to_jsonb(r)::text FROM request_log r")
+        .fetch_all(st.pool())
+        .await
+        .unwrap();
+    let rows = rows.join("\n");
+    for n in &needles {
+        assert!(!rows.contains(n), "request_log leaks a secret");
+    }
+    for p in [
+        format!("/v1/orgs/{}/secrets", api.org),
+        format!("/v1/agents/{agent}/container-config"),
+        format!("/v1/agents/{agent}/effective"),
+    ] {
+        let (_, v) = api.get(&p).await;
+        for n in &needles {
+            assert!(!v.to_string().contains(n), "{p} leaks a secret");
+        }
+    }
+    // The runtime's control-plane and guardrail routes stay closed.
+    for p in ["guardrail/g-1/version/1/apply", "async-invoke"] {
+        let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+            .post(format!("{}/{p}", bedrock.base()))
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 403, "{p}");
+        assert!(r.text().await.unwrap().contains("llm_path_not_permitted"));
+    }
+    let m = reqwest::get(format!("http://{GW_A_IP}:4103/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        m.lines()
+            .any(|l| l.starts_with("aurora_gateway_llm_mint_total{")
+                && l.contains("mode=\"aws_assume_role\"")
+                && l.contains("outcome=\"minted\"")),
+        "{m}"
+    );
+    for n in &needles {
+        assert!(!m.contains(n), "metrics leak a secret");
+    }
+    st.finish().await;
+}

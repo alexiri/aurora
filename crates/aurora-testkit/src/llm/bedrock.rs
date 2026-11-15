@@ -33,6 +33,8 @@ struct Shared {
     seen: Mutex<Vec<BedrockSeen>>,
     /// Status the control-plane list routes answer (200 or e.g. 403).
     list_status: Mutex<u16>,
+    /// When set, a streamed answer sends its first frame at once and the rest only after this is notified.
+    gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 
 #[derive(Clone)]
@@ -43,19 +45,25 @@ pub struct MockBedrock {
 
 /// The event-stream frames of one streamed answer (a `chunk` event twice, then the stream ends).
 pub fn stream_body() -> Vec<u8> {
-    let mut out = Vec::new();
-    for t in ["hel", "lo"] {
-        let payload = format!("{{\"bytes\":\"{}\"}}", base64_of(t));
-        out.extend(aws::event_frame(
-            &[
-                (":event-type", "chunk"),
-                (":content-type", "application/json"),
-                (":message-type", "event"),
-            ],
-            payload.as_bytes(),
-        ));
-    }
-    out
+    stream_frames().concat()
+}
+
+/// The frames of [`stream_body`], one by one.
+pub fn stream_frames() -> Vec<Vec<u8>> {
+    ["hel", "lo"]
+        .iter()
+        .map(|t| {
+            let payload = format!("{{\"bytes\":\"{}\"}}", base64_of(t));
+            aws::event_frame(
+                &[
+                    (":event-type", "chunk"),
+                    (":content-type", "application/json"),
+                    (":message-type", "event"),
+                ],
+                payload.as_bytes(),
+            )
+        })
+        .collect()
 }
 
 fn base64_of(s: &str) -> String {
@@ -142,10 +150,30 @@ async fn handle(State(st): State<Arc<Shared>>, req: Request) -> Response {
             }
         }
         p if p.ends_with("/invoke-with-response-stream") || p.ends_with("/converse-stream") => {
+            let gate = st.gate.lock().unwrap().clone();
+            let frames = stream_frames();
+            let total: usize = frames.iter().map(Vec::len).sum();
+            let body = match gate {
+                None => Body::from(frames.concat()),
+                Some(gate) => Body::from_stream(futures::stream::unfold(
+                    (frames.into_iter(), gate, true),
+                    |(mut it, gate, first)| async move {
+                        let frame = it.next()?;
+                        if !first {
+                            gate.notified().await;
+                        }
+                        Some((
+                            Ok::<_, std::convert::Infallible>(bytes::Bytes::from(frame)),
+                            (it, gate, false),
+                        ))
+                    },
+                )),
+            };
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/vnd.amazon.eventstream")
-                .body(Body::from(stream_body()))
+                .header(header::CONTENT_LENGTH, total)
+                .body(body)
                 .unwrap()
         }
         _ => json(r#"{"type":"message","content":[{"type":"text","text":"ok"}]}"#.into()),
@@ -184,6 +212,14 @@ impl MockBedrock {
     /// The status of the control-plane list routes (`403` makes the API fall back to the static models).
     pub fn set_list_status(&self, status: u16) {
         *self.st.list_status.lock().unwrap() = status;
+    }
+
+    /// Make streamed answers send their first frame at once and the rest only after the returned handle is notified
+    /// (proves the first frame is not held back until the stream ends).
+    pub fn gate_stream(&self) -> Arc<tokio::sync::Notify> {
+        let n = Arc::new(tokio::sync::Notify::new());
+        *self.st.gate.lock().unwrap() = Some(n.clone());
+        n
     }
 
     /// `http://127.0.0.1:PORT`: the runtime base and, via `llm.dev_upstream_overrides`, the control plane.

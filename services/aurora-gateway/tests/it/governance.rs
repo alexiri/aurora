@@ -242,6 +242,19 @@ struct Opts {
     /// the secret is an Entra application (token from the authority mock, `llm.dev_upstream_overrides`), `Some(false)`:
     /// the resource key.
     azure: Option<bool>,
+    /// (P4-LLM-4) The endpoint is a `bedrock` one (`bedrock`, `us-east-1`, the mock as its VPC `base_url`; STS replaced
+    /// through `llm.dev_upstream_overrides`) used with this credential mode; the organization row (with its external id)
+    /// is seeded in a scratch database.
+    bedrock: Option<BedrockMode>,
+    /// (P4-LLM-4) The seeded organization's `external_id` (empty: none, the role must not be assumed).
+    org_external_id: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BedrockMode {
+    AssumeRole,
+    Sigv4,
+    ApiKey,
 }
 
 /// Byte-exact SSE body the mock streams (acceptance 3: passthrough).
@@ -270,6 +283,8 @@ impl Default for Opts {
             openai: false,
             vertex: false,
             azure: None,
+            bedrock: None,
+            org_external_id: "ext-org-1",
         }
     }
 }
@@ -290,6 +305,23 @@ struct Env {
     vertex: Option<VertexRig>,
     /// (P4-LLM-3) The Azure mocks of an `Opts::azure` run.
     azure: Option<AzureRig>,
+    /// (P4-LLM-4) The AWS mocks of an `Opts::bedrock` run.
+    bedrock: Option<BedrockRig>,
+    org: Uuid,
+}
+
+const BEDROCK_SOURCE_KEY: &str = "AKIASOURCEKEY00001";
+const BEDROCK_SOURCE_SECRET: &str = "source-secret-never-seen-by-bedrock";
+const BEDROCK_STATIC_KEY: &str = "AKIASTATICKEY00001";
+const BEDROCK_STATIC_SECRET: &str = "static-secret-for-inference";
+const BEDROCK_API_KEY: &str = "bedrock-api-key-value";
+const BEDROCK_ROLE: &str = "arn:aws:iam::123456789012:role/aurora-bedrock";
+
+struct BedrockRig {
+    mock: aurora_testkit::llm::bedrock::MockBedrock,
+    sts: aurora_testkit::llm::sts::MockSts,
+    /// Keeps the scratch database (the organization row) alive.
+    _db: aurora_testkit::TestDb,
 }
 
 const AZURE_KEY: &str = "azure-resource-key";
@@ -373,6 +405,36 @@ async fn start(o: Opts) -> Env {
     } else {
         None
     };
+    let bedrock = if let Some(mode) = o.bedrock {
+        let db = aurora_testkit::TestDb::new().await;
+        sqlx::query(
+            "INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,'bedrock-org','O',$2)",
+        )
+        .bind(w.org)
+        .bind(o.org_external_id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        let mock = aurora_testkit::llm::bedrock::MockBedrock::start().await;
+        let sts = aurora_testkit::llm::sts::MockSts::start(
+            BEDROCK_SOURCE_KEY,
+            BEDROCK_SOURCE_SECRET,
+            "123456789012",
+        )
+        .await;
+        match mode {
+            BedrockMode::AssumeRole => {
+                let m = mock.clone();
+                sts.on_session(move |ak, sk, tok| m.accept_key(ak, sk, Some(tok)));
+            }
+            BedrockMode::Sigv4 => mock.accept_key(BEDROCK_STATIC_KEY, BEDROCK_STATIC_SECRET, None),
+            BedrockMode::ApiKey => mock.accept_api_key(BEDROCK_API_KEY),
+        }
+        llm_addr = mock.base().trim_start_matches("http://").parse().unwrap();
+        Some(BedrockRig { mock, sts, _db: db })
+    } else {
+        None
+    };
     let plain = serve_mock(Arc::new(Counters::default())).await;
     let mem = Arc::new(MemoryStore::new("mem"));
     mem.allow_reference(w.org, "*");
@@ -394,6 +456,23 @@ async fn start(o: Opts) -> Env {
     for (i, (key, ws_scoped, origin)) in o.secrets.iter().enumerate() {
         let path = format!("k{i}");
         match (&vertex, &azure) {
+            _ if o.bedrock.is_some() => {
+                let value = match o.bedrock {
+                    Some(BedrockMode::AssumeRole) => json!({
+                        "access_key_id": BEDROCK_SOURCE_KEY,
+                        "secret_access_key": BEDROCK_SOURCE_SECRET,
+                        "role_arn": BEDROCK_ROLE,
+                    })
+                    .to_string(),
+                    Some(BedrockMode::Sigv4) => json!({
+                        "access_key_id": BEDROCK_STATIC_KEY,
+                        "secret_access_key": BEDROCK_STATIC_SECRET,
+                    })
+                    .to_string(),
+                    _ => BEDROCK_API_KEY.to_owned(),
+                };
+                mem.preload(&path, None, value.as_bytes());
+            }
             (Some(v), _) => mem.preload(&path, None, v.key.json().as_bytes()),
             (_, Some(a)) if o.azure == Some(true) => {
                 mem.preload(&path, None, a.app.json().as_bytes())
@@ -411,6 +490,8 @@ async fn start(o: Opts) -> Env {
             llm_provider: Some(
                 if o.vertex {
                     "vertex"
+                } else if o.bedrock.is_some() {
+                    "bedrock"
                 } else if o.azure.is_some() {
                     "azure_openai"
                 } else if o.openai {
@@ -425,6 +506,10 @@ async fn start(o: Opts) -> Env {
             llm_auth_mode: Some(
                 if o.vertex {
                     "gcp_service_account"
+                } else if o.bedrock == Some(BedrockMode::AssumeRole) {
+                    "aws_assume_role"
+                } else if o.bedrock == Some(BedrockMode::Sigv4) {
+                    "aws_sigv4"
                 } else if o.azure == Some(true) {
                     "azure_entra"
                 } else {
@@ -435,6 +520,8 @@ async fn start(o: Opts) -> Env {
             llm_endpoint_id: Some(
                 if o.vertex {
                     "vertex"
+                } else if o.bedrock.is_some() {
+                    "bedrock"
                 } else if o.azure.is_some() {
                     "azure"
                 } else if o.openai {
@@ -468,6 +555,26 @@ async fn start(o: Opts) -> Env {
     }
     let src = Arc::new(Src(Mutex::new(rows), Mutex::new(policy)));
     let cfg = match &o.litellm {
+        _ if o.bedrock.is_some() => {
+            let b = bedrock.as_ref().unwrap();
+            LlmSection {
+                enabled_providers: vec!["bedrock".into()],
+                provider_preference: vec![],
+                dev_upstream_overrides: [(
+                    "https://sts.us-east-1.amazonaws.com".to_owned(),
+                    b.sts.base().to_owned(),
+                )]
+                .into(),
+                endpoints: vec![LlmEndpoint {
+                    id: "bedrock".into(),
+                    provider: "bedrock".into(),
+                    region: Some("us-east-1".into()),
+                    base_url: Some(b.mock.base().to_owned()),
+                    allowed_models: o.instance_models.clone(),
+                    ..Default::default()
+                }],
+            }
+        }
         _ if o.azure.is_some() => {
             let a = azure.as_ref().unwrap();
             LlmSection {
@@ -564,7 +671,7 @@ async fn start(o: Opts) -> Env {
         },
     };
     let llm = Arc::new(
-        if o.litellm.is_some() || o.openai || o.vertex || o.azure.is_some() {
+        if o.litellm.is_some() || o.openai || o.vertex || o.azure.is_some() || o.bedrock.is_some() {
             aurora_llm::ProviderRegistry::from_config(&cfg).unwrap()
         } else {
             aurora_llm::ProviderRegistry::from_config_with_anthropic_base(
@@ -630,7 +737,7 @@ async fn start(o: Opts) -> Env {
             log: log.clone(),
             external_url: "https://aurora.test/".into(),
             holds: None,
-            touch_pool: None,
+            touch_pool: bedrock.as_ref().map(|b| b._db.pool().clone()),
         })
         .with_governance(gov.clone())
         .with_insecure_loopback_injection(true)
@@ -644,7 +751,7 @@ async fn start(o: Opts) -> Env {
     let p = Proxy::new(ProxyParts {
         ca: gw_ca,
         tls: gw_tls,
-        resolver: Arc::new(Static(w)),
+        resolver: Arc::new(Static(w.clone())),
         handler,
         guard,
         header_timeout: Duration::from_secs(5),
@@ -667,6 +774,8 @@ async fn start(o: Opts) -> Env {
         secret_ids,
         vertex,
         azure,
+        bedrock,
+        org: w.org,
     }
 }
 
@@ -1733,3 +1842,7 @@ async fn azure_entra_mint_failures_answer_502_and_forward_nothing() {
         assert!(!dump.contains(&rig.app.client_secret), "{dump}");
     }
 }
+
+// (P4-LLM-4) Bedrock signing tests share this file's harness.
+#[path = "llm_bedrock.rs"]
+mod llm_bedrock;
