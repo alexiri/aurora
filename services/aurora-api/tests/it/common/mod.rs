@@ -134,15 +134,6 @@ impl Harness {
         self
     }
 
-    /// Stamp `sessions.reauth_at = now()` (the mock sign-in does no re-authentication).
-    pub async fn reauth(&self, session: Uuid) {
-        sqlx::query("UPDATE sessions SET reauth_at = now() WHERE id = $1")
-            .bind(session)
-            .execute(self.pool())
-            .await
-            .unwrap();
-    }
-
     pub async fn with_config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> Self {
         let db = TestDb::new().await;
         let idp = MockIdp::start().await;

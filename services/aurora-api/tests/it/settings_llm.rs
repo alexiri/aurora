@@ -63,8 +63,7 @@ async fn world(helm_central: bool, extra: &str) -> W {
     let h = h.with_helm(&text);
     let org = h.org().await;
     let a = h.user("root@x.io", true).await;
-    let (session, atok) = h.good_session(a).await;
-    h.reauth(session).await;
+    let (_, atok) = h.good_session(a).await;
     let o = h.user("o@x.io", false).await;
     h.member(org, o, "owner", "active").await;
     let (_, owner) = h.good_session(o).await;

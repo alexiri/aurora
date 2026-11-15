@@ -37,7 +37,9 @@ afterEach(() => {
   search = "";
 });
 
-describe("reauth_error notice (FIX-152)", () => {
+// FIX-157 (D-317): nothing starts a re-authentication any more, so the views show no
+// `reauth_error` notice, whatever the query says.
+describe("no reauth_error notice (FIX-157)", () => {
   const routes = () => ({
     "GET /v1/admin/orgs": () => json(200, { items: [org()], next_cursor: null }),
     [`GET /v1/admin/orgs/${ORG}`]: () => json(200, org()),
@@ -48,20 +50,9 @@ describe("reauth_error notice (FIX-152)", () => {
     ["detail", () => <OrgDetailView orgId={ORG} />],
   ] as const;
   for (const [name, view] of views) {
-    it(`${name}: reauth_stale shows the stale text`, async () => {
+    it(`${name}: no alert, even with reauth_error in the URL`, async () => {
       mockFetch(routes());
       search = "reauth_error=reauth_stale";
-      wrap(view());
-      expect((await screen.findByRole("alert")).textContent).toMatch(/did not confirm a fresh sign-in.*reauth_stale/);
-    });
-    it(`${name}: an unknown code shows the fallback`, async () => {
-      mockFetch(routes());
-      search = "reauth_error=<b>x</b>";
-      wrap(view());
-      expect((await screen.findByRole("alert")).textContent).toBe("Re-authentication failed. Please try again.");
-    });
-    it(`${name}: no alert without the param`, async () => {
-      mockFetch(routes());
       wrap(view());
       await screen.findByRole("heading", { level: 1 });
       expect(screen.queryByRole("alert")).toBeNull();
@@ -85,8 +76,6 @@ const org = (over: Record<string, unknown> = {}) => ({
   agent_count: 12,
   ...over,
 });
-const instance = { oidc_providers: [{ id: "corp", display_name: "Corp SSO" }] };
-const reauth = () => json(412, { error: { code: "reauth_required", message: "Re-authenticate" } });
 
 /** Radix opens a dropdown on keydown Enter (jsdom has no pointer capture). */
 const openMenu = async (name: string) => {
@@ -151,30 +140,25 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     expect(submit).toBeDisabled();
   });
 
-  it("412 reauth_required shows the re-authentication step, then one retry deletes and says so", async () => {
+  it("deletes on the first confirm, with no re-authentication step, and says so (FIX-157)", async () => {
     let calls = 0;
     const bodies: unknown[] = [];
     mockFetch({
-      "GET /v1/instance": () => json(200, instance),
       "GET /v1/admin/orgs": () => json(200, { items: [org()], next_cursor: null }),
       [`DELETE /v1/admin/orgs/${ORG}`]: async (req) => {
         bodies.push(await req.json());
         calls += 1;
-        return calls === 1 ? reauth() : new Response(null, { status: 204 });
+        return new Response(null, { status: 204 });
       },
     });
     wrap(<AdminOrgsView />);
     const dialog = await openDelete();
     type("Type acme to confirm", "acme");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete organization" }));
-    const link = await within(dialog).findByRole("link", { name: "Sign in again with Corp SSO" });
-    expect(link.getAttribute("href")).toBe("/v1/auth/oidc/corp/start?return_to=%2Fadmin%2Forgs&reauth=1");
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("signing in again");
-    // The person signs in again (outside this test) and confirms once more.
+    expect(within(dialog).queryByRole("link", { name: /Sign in again/ })).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete organization" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(calls).toBe(2);
-    expect(bodies).toEqual([{ confirm: "acme" }, { confirm: "acme" }]);
+    expect(calls).toBe(1);
+    expect(bodies).toEqual([{ confirm: "acme" }]);
     expect(await screen.findByTestId("admin-orgs-done")).toHaveTextContent("Deleted the organization Acme (acme).");
   });
 
@@ -239,15 +223,14 @@ describe("Admin › one organization (P5-ADMDEL)", () => {
     expect(screen.getByRole("button", { name: "Delete workspace Main" })).toBeInTheDocument();
   });
 
-  it("deletes a workspace with the typed slug, 412 → re-auth → retry, then says what was deleted", async () => {
+  it("deletes a workspace with the typed slug on the first confirm, then says what was deleted", async () => {
     let calls = 0;
     mockFetch({
-      "GET /v1/instance": () => json(200, instance),
       [`GET /v1/admin/orgs/${ORG}`]: () => json(200, org()),
       [`GET /v1/admin/orgs/${ORG}/workspaces`]: () => json(200, { items: [ws()], next_cursor: null }),
       [`DELETE /v1/admin/workspaces/${WS}`]: () => {
         calls += 1;
-        return calls === 1 ? reauth() : new Response(null, { status: 204 });
+        return new Response(null, { status: 204 });
       },
     });
     wrap(<OrgDetailView orgId={ORG} />);
@@ -258,11 +241,8 @@ describe("Admin › one organization (P5-ADMDEL)", () => {
     expect(submit).toBeDisabled();
     type("Type main to confirm", "main");
     fireEvent.click(submit);
-    const link = await within(dialog).findByRole("link", { name: "Sign in again with Corp SSO" });
-    expect(link.getAttribute("href")).toContain(`return_to=%2Fadmin%2Forgs%2F${ORG}`);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete workspace" }));
     expect(await screen.findByTestId("admin-orgs-done")).toHaveTextContent("Deleted the workspace Main (main).");
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 
   it("deleting the organization returns to the list", async () => {

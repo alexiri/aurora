@@ -122,20 +122,13 @@ describe("Directory sync page", () => {
     expect(screen.getByText("expiring")).toBeInTheDocument();
   });
 
-  it("shows the reauth_error notice only when the param is present (FIX-152)", async () => {
+  it("shows no reauth_error notice, even with the param present (FIX-157)", async () => {
     stub({ [`GET /v1/orgs/${ORG}/scim`]: () => json(200, settings()) });
     search = "reauth_error=reauth_stale";
     wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner={false} />);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/did not confirm a fresh sign-in.*reauth_stale/);
-    cleanup();
-    search = "reauth_error=nope";
-    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner={false} />);
-    expect((await screen.findByRole("alert")).textContent).toBe("Re-authentication failed. Please try again.");
-    cleanup();
-    search = "";
-    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner={false} />);
     await screen.findByText(/Only organization owners/);
     expect(screen.queryByRole("alert")).toBeNull();
+    search = "";
   });
 
   it("a non-owner sees the note and no settings", async () => {
@@ -145,30 +138,18 @@ describe("Directory sync page", () => {
     expect(screen.queryByLabelText(/Allowed e-mail domains/)).not.toBeInTheDocument();
   });
 
-  it("saves settings and shows the re-auth hint on 412", async () => {
-    let n = 0;
+  it("saves settings without any sign-in-again step (FIX-157)", async () => {
     const calls = stub({
-      [`GET /v1/orgs/${ORG}/scim`]: () =>
-        json(200, n++ === 0 ? settings() : settings({ exclusive: true })),
-      [`PUT /v1/orgs/${ORG}/scim`]: (body) =>
-        (body as { exclusive?: boolean }).exclusive
-          ? json(412, { error: { code: "reauth_required", message: "reauth" } })
-          : json(200, settings()),
-      "GET /v1/instance": () => json(200, { oidc_providers: [{ id: "corp" }] }),
+      [`GET /v1/orgs/${ORG}/scim`]: () => json(200, settings()),
+      [`PUT /v1/orgs/${ORG}/scim`]: () => json(200, settings({ exclusive: true })),
     });
     wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
     const exclusive = await screen.findByRole("checkbox", { name: /Directory-managed membership/ });
     fireEvent.click(exclusive);
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(/Confirm it is you/),
-    );
-    // FIX-100: the notice carries a usable link to the provider's re-authentication.
-    const link = await screen.findByRole("link", { name: /sign in again with your provider/ });
-    const href = new URL(link.getAttribute("href")!, "http://localhost");
-    expect(href.pathname).toBe("/v1/auth/oidc/corp/start");
-    expect(href.searchParams.get("reauth")).toBe("1");
-    expect(href.searchParams.get("return_to")).toBe("/o/acme/settings/directory");
+    expect(await screen.findByText("Directory sync settings saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /sign in again/i })).toBeNull();
+    expect(screen.queryByText(/Confirm it is you/)).toBeNull();
     const put = calls.find((c) => c.startsWith(`PUT /v1/orgs/${ORG}/scim`))!;
     // only the changed field is sent (the unchanged domain list is not)
     expect(put).toContain('{"exclusive":true}');

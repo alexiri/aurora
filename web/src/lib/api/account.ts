@@ -41,7 +41,7 @@ export function useUpdateMe() {
 
 export const revokeOtherSessions = () => unwrap(api.POST("/v1/auth/sessions/revoke-others"));
 
-/** 412 `reauth_required` unless the session re-authenticated through OIDC within 10 minutes. */
+/** `DELETE /v1/me`: session only; no re-authentication (FIX-157, D-317). 409 `last_owner` when blocked. */
 export const deleteAccount = () => unwrap(api.DELETE("/v1/me"));
 
 export function useMyApiKeys() {

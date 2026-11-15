@@ -84,17 +84,16 @@ async fn get_section(
     Ok(Json(service::section_view(&s, &section).await?))
 }
 
-/// Replace a section's dashboard values (C-773): compare-and-set on `generation`, re-authentication
-/// within 600 s, audited with a before/after diff.
+/// Replace a section's dashboard values (C-773): compare-and-set on `generation`, session only
+/// (no re-authentication, FIX-157, D-317), audited with a before/after diff.
 #[utoipa::path(put, path = "/admin/settings/{section}", operation_id = "adminPutSettingsSection",
     tag = "admin",
     params(("section" = String, Path, description = "Section id")),
     request_body = PutSection,
     responses((status = 200, body = SettingsSection), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 412, body = ErrorEnvelope),
-        (status = 413, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
-        (status = 503, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 413, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn put_section(
     c: InstanceAdmin,
@@ -196,8 +195,8 @@ async fn export(
     request_body = ImportRequest,
     responses((status = 200, body = ImportResult), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
-        (status = 412, body = ErrorEnvelope), (status = 413, body = ErrorEnvelope),
-        (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+        (status = 413, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn import(
     c: InstanceAdmin,

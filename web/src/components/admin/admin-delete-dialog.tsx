@@ -2,21 +2,16 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 
-import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
-import { oidcStartUrl } from "@/lib/api/auth";
-import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
-import { useInstance } from "@/lib/api/queries";
 
 /**
  * The danger dialog of Admin › Organizations (P5-ADMDEL, docs/14 §Instance administration): names what
- * goes, asks for the slug typed exactly (submit stays disabled until it matches), and on 412
- * `reauth_required` offers the same provider re-authentication step as account deletion — the links return
- * to `returnTo`, where the person opens the dialog and confirms once more. The API stays authoritative:
- * the typed slug is checked there too (400 `confirmation_mismatch`).
+ * goes and asks for the slug typed exactly (submit stays disabled until it matches); the first confirm
+ * deletes, with no re-authentication step (phase 5, FIX-157, D-317). The API stays authoritative: the
+ * typed slug is checked there too (400 `confirmation_mismatch`).
  */
 export function AdminDeleteDialog({
   open,
@@ -25,7 +20,6 @@ export function AdminDeleteDialog({
   consequences,
   noun,
   slug,
-  returnTo,
   run,
   onDone,
 }: {
@@ -36,18 +30,13 @@ export function AdminDeleteDialog({
   /** "organization" or "workspace": the dialog's words. */
   noun: string;
   slug: string;
-  /** Where the provider sign-in comes back to. */
-  returnTo: string;
   /** Sends the delete with the typed slug; rejects with the API's error. */
   run: (confirm: string) => Promise<unknown>;
   onDone: () => void;
 }) {
-  const instance = useInstance();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const needsReauth = error instanceof ApiError && error.code === "reauth_required";
-  const providers = instance.data?.oidc_providers ?? [];
   const inputId = `admin-delete-${noun}-confirm`;
 
   function reset() {
@@ -91,17 +80,6 @@ export function AdminDeleteDialog({
         <Notice tone="danger" role="alert">
           {errorMessage(error)}
         </Notice>
-      ) : null}
-      {needsReauth ? (
-        <div className="space-y-2" aria-label="Re-authenticate">
-          {providers.map((p) => (
-            <Button key={p.id} asChild variant="outline" className="w-full">
-              {/* Full navigation: the API redirects to the provider with prompt=login. */}
-              <a href={oidcStartUrl(p.id, { reauth: true, returnTo })}>Sign in again with {p.display_name}</a>
-            </Button>
-          ))}
-          <p className="text-xs text-muted">After signing in you come back here; open the dialog again and confirm.</p>
-        </div>
       ) : null}
       <Field id={inputId} label={`Type ${slug} to confirm`}>
         <input
