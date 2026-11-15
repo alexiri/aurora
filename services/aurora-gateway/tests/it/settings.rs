@@ -51,6 +51,10 @@ async fn notify_swaps_the_snapshot_and_reload_covers_a_missed_notify() {
     repo::notify(db.pool(), "settings_test", g).await.unwrap();
     let s = settings.clone();
     wait_for(move || limit(&s) == json!(20)).await;
+    // Stop the background task first: its own poll tick / resync also reloads, and would
+    // otherwise race the explicit reload below for "who observed generation 2".
+    tx.send(true).unwrap();
+    task.await.unwrap();
     // A write whose NOTIFY is lost is not seen by the listener; the poll's reload finds it.
     write(&db, "settings_test", json!({ "settings_test.limit": 30 })).await;
     let changed = settings.reload(db.pool()).await.unwrap();
@@ -60,8 +64,6 @@ async fn notify_swaps_the_snapshot_and_reload_covers_a_missed_notify() {
     write(&db, "scim", json!({})).await;
     assert!(settings.reload(db.pool()).await.unwrap().is_empty());
     assert!(!settings.snapshot().generations.contains_key("scim"));
-    tx.send(true).unwrap();
-    let _ = task.await;
 }
 
 #[tokio::test]

@@ -241,11 +241,16 @@ test.describe("layout, 1280 px", () => {
     await openChat(page, "light", DEFAULT);
     const toolbar = page.getByRole("toolbar", { name: "Message actions" }).first();
     await expect(toolbar).toHaveCSS("opacity", "0");
-    await toolbar.getByRole("button", { name: "More message actions" }).focus();
+    const more = toolbar.getByRole("button", { name: "More message actions" });
+    await more.focus();
     await expect(toolbar).toHaveCSS("opacity", "1");
     await page.keyboard.press("Enter");
     await expect(page.getByRole("menuitem", { name: "Redact…" })).toBeVisible();
     await page.keyboard.press("Escape");
+    // Radix hands focus back to the trigger on a later task after the menu closes; focusing the next control
+    // before that lands lets the hand-back steal focus again (and Enter would reopen this menu instead).
+    await expect(page.getByRole("menuitem", { name: "Redact…" })).toBeHidden();
+    await expect(more).toBeFocused();
 
     const actions = page.getByRole("button", { name: "Conversation actions" });
     await actions.focus();
@@ -301,6 +306,9 @@ test.describe("layout, 1280 px", () => {
     await expect(page).toHaveURL(new RegExp(`c=${NIGHTLY.id}`));
     await page.goBack();
     await expect(page.getByRole("heading", { name: "Sentry alerts", level: 2 })).toBeVisible();
+    // The re-opened (empty) thread focuses its composer once it has loaded; filling the search box before that
+    // lets the focus move mid-fill and the text lands in the composer. Wait for the hand-over, then type.
+    await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
     await page.getByRole("combobox", { name: "Search conversations and messages" }).fill("handbook");
     await expect(page.getByRole("button", { name: /Sentry alerts/ })).toHaveCount(0);
   });
