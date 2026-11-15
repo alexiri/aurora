@@ -27,6 +27,11 @@ sealed in Aurora's own inline store and never shown again. Kubernetes authentica
 pods' service-account token: bind your Vault role to the `<release>-api` and `<release>-gateway`
 service accounts.
 
+**Migration and sealed settings (D-244).** Moving values (dashboard or `aurora-api secrets migrate
+--to <store>`) never moves the instance settings' sealed fields, an AppRole secret id among them:
+they stay in Aurora's inline store, otherwise Aurora could not read the credential it needs to
+reach Vault after a restart.
+
 **Helm instead.** `vault.enabled: true` renders the same store from the chart (section 2 below);
 a store or key set in Helm is **locked**: the page shows "Configured in Helm (`vault.*`)" and
 offers no edit control, and the API refuses to change it. Move values still works for a locked
