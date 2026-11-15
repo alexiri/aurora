@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-15, master `fac817ae`. **Phase 5 is running**: wave 1 is merged except P5-CHAT-4 B (`p5-agent`) and P5-CERN-ADDONS's external repo (`p5-platform`; unblocked by the owner, D-277). `p5-apps` finished its chain (FIX-134, FIX-135 merged ada98f25); wave 2 is next (§Execution order). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276) and starts on the owner's word.
+Last updated: 2026-11-15, master after `1a4088ed`. **Phase 5 is running**: wave 1 is merged; wave 2 started 2026-11-15 in the same three lanes (`p5-apps`: SET-1 → FIX-124 → SET-2..5 → P4-LLM-6; `p5-agent`: P5-CHAT-4 B → P4-LLM-1..5; `p5-platform`: P5-CERN-ADDONS external repo (owner's GitHub side done, D-278) → FIX-146 → P4-SSH-1/2; §Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276) and starts on the owner's word.
 
 ## How this file is kept
 
@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 69 | 37 | 2 (P5-CERN-ADDONS (external repo; unblocked by D-277), P5-CHAT-4 B) | 23 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 69 | 37 | 3 (P5-CERN-ADDONS (external repo), P5-CHAT-4 B, SET-1) | 22 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 2 | 0 | 0 | 0 | 2 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **389** | **348** | **3** | **23** | **7** | **8** | |
+| **All** | **389** | **348** | **4** | **22** | **7** | **8** | |
 
 ## Environment
 
@@ -34,7 +34,7 @@ One row per task id, counted from the task tables (closed phases: from their his
 - Node 20.20, pnpm 10 (`~/.local/bin`), podman 5 (compose), psql client.
 - Dev Postgres 16: container `aurora-dev-pg`, `postgres://aurora:aurora@127.0.0.1:55432/aurora` (`.env`, I-05).
 - sqlx-cli 0.8.6 at `~/.cargo/bin/sqlx` (not on PATH; use full path).
-- Disk: **60 GB free on `/home` (2026-11-15 01:30, 8 worktrees)**, below the 80 GB clean-up mark: remove merged worktrees (`scripts/dev/clean-lane.sh`) before starting another build.
+- Disk: **74 GB free on `/home` (2026-11-15 08:30, 3 lane worktrees + 2 owner worktrees)** after pruning incremental dirs, below the 80 GB clean-up mark: prune `target/*/incremental` between batches and remove merged worktrees (`scripts/dev/clean-lane.sh`) before starting another build.
 - CI: GitHub Actions runs again since 2026-11-09 (it was stopped by billing 2026-11-08). Local verification stays the merge gate; CI is checked after each push.
 
 ## Current phase: 5
@@ -53,7 +53,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | OPS-021 | Dependabot, grouped, with ignore rules and a review policy | owner | S | ops | OPS-019, OPS-020 | `OPS-021.md` | done (merged 3c983224) |
 | P5-SLACK | Slack connector | `21`, D-78 | L | Rust | connector contract (`13`) | needed | not started (no spec; after P4-LLM/P4-SSH/P4-011B, D-235(c)) |
 | P5-ASRC | Addon sources: third-party package repositories (signed repo manifest, TOFU key, polling, update badges) | D-250, C-590..C-609, SEC-86, migration 000180 | L | both | — | `P5-ASRC.md` | done (merged 3c983224) |
-| P5-CERN-ADDONS | `aurora-addons-cern` repo (release script, CI, signed releases) with `cern-phonebook` (LDAP through the gateway LDAP lane) and `cern-maps` | D-235(d), D-251 | M–L | package + Rust | P5-ASRC | `P5-CERN-ADDONS.md` | in-progress (in-repo part merged 555f6058: gateway LDAP lane + staging cern-phonebook; owner answers D-277 (2026-11-15): push approved, deviations and icons accepted, signing key pair in the local checkout's root; **open**: external `aurora-addons-cern` repo content, cern-maps, live xldap check (`xldap.cern.ch:636` reachable from the dev machine), kind e2e; the owner sets up the `release` environment secret, so no `v*` tag before the owner confirms it) |
+| P5-CERN-ADDONS | `aurora-addons-cern` repo (release script, CI, signed releases) with `cern-phonebook` (LDAP through the gateway LDAP lane) and `cern-maps` | D-235(d), D-251 | M–L | package + Rust | P5-ASRC | `P5-CERN-ADDONS.md` | in-progress (lane p5-platform; started: external repo content, cern-maps, live xldap check, kind e2e, first `v*` release; in-repo part merged 555f6058; D-277, D-278) |
 | OPS-024 | `helm upgrade` covered by CI (kind upgrade legs) + hook NetworkPolicy guard | owner 2026-11-11 | M | ops | — | `OPS-024.md` | done (merged d0819942) |
 | FIX-045 | Personal-workspace names default to the OIDC `{sub}` | D-162, C-520..C-523 | M | both | — | `FIX-045.md` | done (merged 9ae49a47) |
 | FIX-046 | Shell alignment: workspace selector not indented, phone drawer from the right | D-163 | S | Next.js | — | `FIX-046.md` | done (merged 34a65d3f) |
@@ -74,26 +74,26 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-NARR | Live narration cards | `21`, D-225 | M | Rust | a spec task | needed | not started (spec needed) |
 | P4-UTOK | User-token features (`user_tokens` capability) | `21`, D-225 | M | Rust | a spec task | needed | not started (spec needed) |
 | P4-EVAL | Evals | `21 §Phase 4 — Evals` | L | both | a spec task | needed | not started (spec needed) |
-| P4-LLM-1 | LLM provider framework; `openai`, `openai_compatible`; `anthropic` inference path set | D-260, D-268(d), C-800.. | L | Rust | — | `P4-LLM-1.md` | ready (wave 2; order 1 → 2 → {3 ∥ 4} → 5; 6 after SET-3) |
-| P4-LLM-2 | Gateway LLM mint service + Google Vertex AI | D-261, SEC-97 | L | Rust | P4-LLM-1 | `P4-LLM-2.md` | ready |
-| P4-LLM-3 | `azure_openai` (keys and Entra) | D-261, D-268(c) | M | Rust | P4-LLM-2 | `P4-LLM-3.md` | ready |
-| P4-LLM-4 | `bedrock` (assume-role, IAM keys, API keys; SigV4 in the gateway) | D-261, D-268(c) | L | Rust | P4-LLM-2 | `P4-LLM-4.md` | ready |
-| P4-LLM-5 | Harnesses on the new providers + hosted e2e (no key reaches the sandbox) | D-260, SEC-64, SEC-66 | M | Rust | P4-LLM-1 (e2e after 2–4) | `P4-LLM-5.md` | ready |
-| P4-LLM-6 | Endpoint destinations + dashboard fields for providers and auth modes | D-262, SEC-98 | M–L | both | SET-3, P4-LLM-1 | `P4-LLM-6.md` | ready |
-| P4-011B-1 | Gateway parking and single-use approval grants | D-264, D-269, SEC-74 | L | Rust | — | `P4-011B-1.md` | ready (wave 2; order 1 → {2 ∥ 3} → 4 → 5) |
+| P4-LLM-1 | LLM provider framework; `openai`, `openai_compatible`; `anthropic` inference path set | D-260, D-268(d), C-800.. | L | Rust | — | `P4-LLM-1.md` | ready (queued in lane p5-agent after P5-CHAT-4 B; order 1 → 2 → 3 → 4 → 5; 6 in p5-apps after SET-3) |
+| P4-LLM-2 | Gateway LLM mint service + Google Vertex AI | D-261, SEC-97 | L | Rust | P4-LLM-1 | `P4-LLM-2.md` | ready (queued in lane p5-agent) |
+| P4-LLM-3 | `azure_openai` (keys and Entra) | D-261, D-268(c) | M | Rust | P4-LLM-2 | `P4-LLM-3.md` | ready (queued in lane p5-agent) |
+| P4-LLM-4 | `bedrock` (assume-role, IAM keys, API keys; SigV4 in the gateway) | D-261, D-268(c) | L | Rust | P4-LLM-2 | `P4-LLM-4.md` | ready (queued in lane p5-agent) |
+| P4-LLM-5 | Harnesses on the new providers + hosted e2e (no key reaches the sandbox) | D-260, SEC-64, SEC-66 | M | Rust | P4-LLM-1 (e2e after 2–4) | `P4-LLM-5.md` | ready (queued in lane p5-agent) |
+| P4-LLM-6 | Endpoint destinations + dashboard fields for providers and auth modes | D-262, SEC-98 | M–L | both | SET-3, P4-LLM-1 | `P4-LLM-6.md` | ready (queued in lane p5-apps) |
+| P4-011B-1 | Gateway parking and single-use approval grants | D-264, D-269, SEC-74 | L | Rust | — | `P4-011B-1.md` | ready (not yet placed: the next free lane; order 1 → {2 ∥ 3} → 4 → 5) |
 | P4-011B-2 | Deciding parked approvals; resume follow-up; `approvals.park.*` settings | D-264, D-265, C-822.. | L | Rust | P4-011B-1 | `P4-011B-2.md` | ready |
 | P4-011B-3 | Web Push backend (VAPID, subscriptions, encrypted pushes) | D-266, D-269(c), SEC-75/76 | L | Rust/ops | P4-011B-1 | `P4-011B-3.md` | ready |
 | P4-011B-4 | Dashboard: service worker, push opt-in, parked-approval states | D-266, D-267, SEC-102 | M–L | Next.js | P4-011B-2, -3 | `P4-011B-4.md` | ready |
 | P4-011B-5 | Park-and-resume and Web Push end to end, operator pages | D-133, D-134, D-269(d) | M | tests/ops | P4-011B-1..4 | `P4-011B-5.md` | ready |
-| P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (wave 2) |
-| P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1 | `P4-SSH-2.md` | ready |
+| P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after FIX-146) |
+| P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
 | SPEC-SETTINGS | Instance settings move from Helm into the app (Helm-set values locked) — spec batch | D-195, D-236..D-238, SEC-89/90 | L | docs | — | `SPEC-SETTINGS.md` | done (merged 76bb566a) |
-| SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | ready (wave 2: SET-1 → FIX-124 → SET-2..SET-5) |
-| SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | ready |
-| SET-3 | LLM endpoints as live settings | D-237 | M | both | SET-2 | `SET-3.md` | ready |
-| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | ready |
-| SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | ready |
-| FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | ready |
+| SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | in-progress (lane p5-apps; started; then FIX-124 → SET-2..SET-5) |
+| SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | ready (queued in lane p5-apps) |
+| SET-3 | LLM endpoints as live settings | D-237 | M | both | SET-2 | `SET-3.md` | ready (queued in lane p5-apps) |
+| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | ready (queued in lane p5-apps) |
+| SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | ready (queued in lane p5-apps) |
+| FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | ready (queued in lane p5-apps) |
 | FIX-133 | Read-only connections; GitHub App tokens narrowed; fine-grained GitHub auth | D-240, C-740 | M–L | both | FIX-123, FIX-107 | `FIX-133.md` | done (merged 787d5c02) |
 | FIX-134 | One Sentry app with preset region instances | D-93, D-195(a) | M | both | FIX-123, FIX-132 | `FIX-134.md` | done (merged ada98f25) |
 | FIX-135 | App families: one catalogue tile per product (GitHub/GHES, Atlassian Cloud/DC) | D-91..D-93 | M | both | FIX-134 (same lane) | `FIX-135.md` | done (merged ada98f25) |
@@ -107,11 +107,11 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-CHAT-1 | Quote-reply and files-only messages, API | D-228, C-725, C-726, migration 000171 | M | Rust | — | `P5-CHAT-1.md` | done (merged ed41c9ed) |
 | P5-CHAT-2 | Web: reply action, reply bar, quote strip, permalinks, jump to latest | D-228, C-725 | M | Next.js | P5-CHAT-1, P5-AGENT-2, FIX-137 | `P5-CHAT-2.md` | done (merged ed41c9ed) |
 | P5-CHAT-3 | Web composer: formatting, preview, smart paste, files, drafts, emoji | D-228, C-726 | M–L | Next.js | P5-CHAT-2 | `P5-CHAT-3.md` | done (merged 154d635a) |
-| P5-CHAT-4 | Message search: API (A), chat-panel search (B), agent conversation tools (C) | D-229, D-230, C-727, C-728, migration 000172 | M–L | Rust then Next.js | A after P5-CHAT-1; B after P5-CHAT-2 | `P5-CHAT-4.md` | in-progress (lane p5-agent; A + C done (merged ed41c9ed); B next after P5-CHAT-3) |
+| P5-CHAT-4 | Message search: API (A), chat-panel search (B), agent conversation tools (C) | D-229, D-230, C-727, C-728, migration 000172 | M–L | Rust then Next.js | A after P5-CHAT-1; B after P5-CHAT-2 | `P5-CHAT-4.md` | in-progress (lane p5-agent; started B; A + C merged ed41c9ed) |
 | FIX-142 | Agent messages keep their Markdown on chat platforms; every Mattermost ping accounted for | D-226, D-227, D-270, D-271 | M | Rust | — | `FIX-142.md` | done (merged 3c983224) |
 | FIX-144 | Self-hosted host check says why it failed; agents told each server's address | C-730 | S–M | both | — | `FIX-144.md` | done (merged d1933319) |
 | FIX-145 | Self-hosted apps served under a path (`base_path`) | D-231, C-731, migration 000140 | M–L | both | FIX-144 | `FIX-145.md` | done (merged d1933319) |
-| FIX-146 | Request tracing end to end, browser to database | D-232, C-732, SEC-88, migration 000150 | L | both | spec done (c8aa4cb5) | `FIX-146.md` | ready (wave 2) |
+| FIX-146 | Request tracing end to end, browser to database | D-232, C-732, SEC-88, migration 000150 | L | both | spec done (c8aa4cb5) | `FIX-146.md` | ready (queued in lane p5-platform after P5-CERN-ADDONS) |
 | FIX-147 | One permissions editor (`GrantForm`, `PermissionGroups`) | D-233 | M | Next.js | — | `FIX-147.md` | done (merged 787d5c02) |
 | FIX-149 | Connect/Reconnect as real dialogs; OAuth result over `BroadcastChannel` | D-272, C-842 | M | both | — | `FIX-149.md` | done (merged b9c3046f) |
 | P5-ADMDEL | Instance admins delete any organization or workspace | D-234, C-733 | M | both | — | `P5-ADMDEL.md` | done (merged 3c983224) |
@@ -123,9 +123,9 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 
 At most three implementation lanes at a time, disjoint ownership; a lane starts when a slot frees **and** its dependencies have merged. Coordinator docs work takes no lane. Full plan: `docs/tasks/PHASE5-PLAN.md`.
 
-- **Wave 1** (since 2026-11-14). Merged: `p5-apps` batches 1–4 (FIX-147, FIX-133, FIX-136; FIX-141; FIX-144, FIX-145; FIX-149), `p5-agent` batch 1 (P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138), `p5-platform` batch 1 (P5-ADMDEL, OPS-021, FIX-142, P5-ASRC). Running: `p5-apps` FIX-134 → FIX-135; `p5-agent` batch 2 (P5-CHAT-1, P5-CHAT-2, P5-CHAT-4 A+C) awaiting merge, then P5-CHAT-3 → P5-CHAT-4 B; `p5-platform` P5-CERN-ADDONS (gateway LDAP lane first).
-- **Wave 2**, as lanes free up: FIX-146; SET-1 → FIX-124 → SET-2..SET-5; P4-SSH-1 → P4-SSH-2; P4-LLM-1 → 2 → {3 ∥ 4} → 5, 6 after SET-3; P4-011B-1 → {2 ∥ 3} → 4 → 5.
-- **Not yet placed**: P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files).
+- **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
+- **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-146 ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
+- **Not yet placed**: P4-011B-1..5 (the next free lane); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files).
 - **No spec yet**: P5-SLACK, P4-S3 (specified in SPEC-P4a, brief to write), P4-EVAL, P4-NARR, P4-UTOK — after the P4-LLM/P4-SSH/P4-011B batches (D-235(c)); their order is an open owner question. OPS-022 deferred.
 
 ### Exit criteria (phase 5)
@@ -147,7 +147,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-150, D-278, C-846, SEC-111, migration `20261201000231`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-150, D-279, C-846, SEC-111, migration `20261201000231`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
