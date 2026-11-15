@@ -101,7 +101,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | done (merged 602b90db; security review fixed: D-307) |
 | SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | done (merged 2c55c538) |
 | SET-3 | LLM endpoints as live settings | D-237 | M | both | SET-2 | `SET-3.md` | done (merged 2c55c538; D-308, C-749) |
-| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | in-progress (lane p5-apps; started; no re-authentication per D-317) |
+| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | in-progress (lane p5-apps; backend committed a31d244b on alexiri/p5-apps, not merged (D-309; no re-authentication per D-317); dashboard editors next) |
 | SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | ready (queued in lane p5-apps) |
 | FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | done (merged 602b90db; D-244, D-307) |
 | FIX-133 | Read-only connections; GitHub App tokens narrowed; fine-grained GitHub auth | D-240, C-740 | M–L | both | FIX-123, FIX-107 | `FIX-133.md` | done (merged 787d5c02) |
