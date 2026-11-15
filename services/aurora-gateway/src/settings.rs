@@ -59,6 +59,23 @@ pub struct Settings {
     snap: ArcSwap<Snapshot>,
     failed: std::sync::atomic::AtomicU64,
     secrets_target: std::sync::OnceLock<SecretsTarget>,
+    /// Live readers run after a swap with the old and the new merged view, before the caches
+    /// are flushed (`reload_and_flush`), so a flush never recomputes from the old ceiling.
+    hooks: std::sync::Mutex<Vec<SwapHook>>,
+}
+
+/// A live reader of the merged view (SET-2: the instance governance; SET-3: the LLM registry).
+pub type SwapHook = Arc<dyn Fn(&Effective, &Effective) + Send + Sync>;
+
+/// Did any key of `section` (its dotted prefixes) change between two merged views?
+pub fn section_changed(old: &Effective, new: &Effective, prefixes: &[&str]) -> bool {
+    let keys = || {
+        old.keys
+            .keys()
+            .chain(new.keys.keys())
+            .filter(|k| prefixes.iter().any(|p| k.starts_with(p)))
+    };
+    keys().any(|k| old.keys.get(k).map(|e| &e.value) != new.keys.get(k).map(|e| &e.value))
 }
 
 const KEYS_OF_SECRETS: [&str; 2] = ["secrets.stores", "secrets.default_store"];
@@ -87,7 +104,40 @@ impl Settings {
             }),
             failed: std::sync::atomic::AtomicU64::new(0),
             secrets_target: std::sync::OnceLock::new(),
+            hooks: std::sync::Mutex::new(Vec::new()),
         })
+    }
+
+    /// Register a live reader; it runs after every swap.
+    pub fn on_swap(&self, hook: SwapHook) {
+        self.hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(hook);
+    }
+
+    /// Rebuild the instance governance (`08 §11.1`) and the BYO ceiling whenever a `governance.*`
+    /// or `byo.*` key changes; `llm` is rebuilt by SET-3's hook, which reads the same registry.
+    pub fn rebuild_governance_on_change(
+        &self,
+        governance: Arc<crate::governance::Governance>,
+        resolver: Arc<crate::resolver::DbCredentialResolver>,
+        llm: Arc<aurora_llm::ProviderRegistry>,
+    ) {
+        self.on_swap(Arc::new(move |old, new| {
+            if !section_changed(old, new, &["governance.", "byo."]) {
+                return;
+            }
+            match new.raw.governance_config() {
+                Ok(g) => {
+                    resolver.set_byo(aurora_llm::governance::ByoInstance::from_config(&g.byo));
+                    governance.set_instance(crate::governance::instance_from_config(&g, &llm));
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "governance settings did not resolve; keeping the previous instance ceiling");
+                }
+            }
+        }));
     }
 
     pub fn snapshot(&self) -> Arc<Snapshot> {
@@ -172,6 +222,14 @@ impl Settings {
         if secrets_changed && let Some(t) = self.secrets_target.get() {
             t.vault
                 .rebuild_from_effective(&effective, t.keyring.clone(), t.extra_ca.as_deref());
+        }
+        let hooks: Vec<SwapHook> = self
+            .hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for h in &hooks {
+            h(&before.effective, &effective);
         }
         self.snap.store(Arc::new(Snapshot {
             generations,

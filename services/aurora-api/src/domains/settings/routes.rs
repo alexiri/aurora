@@ -17,6 +17,28 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(import))
         .routes(routes!(get_section, put_section))
         .routes(routes!(preview))
+        .routes(routes!(governance_orgs))
+}
+
+/// Where organizations stand against the instance governance ceiling (C-778): effective postures
+/// and the settings where an organization is stricter than the floor or clamped by it.
+#[utoipa::path(get, path = "/admin/settings/governance/orgs", operation_id = "adminListGovernanceOrgs",
+    tag = "admin", params(crate::http::pagination::PageParams),
+    responses((status = 200, body = crate::http::pagination::Page<crate::domains::governance::standing::OrgStandingRow>),
+        (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn governance_orgs(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Query(p): Query<crate::http::pagination::PageParams>,
+) -> Result<
+    Json<crate::http::pagination::Page<crate::domains::governance::standing::OrgStandingRow>>,
+    ApiError,
+> {
+    let page = p.resolve()?;
+    Ok(Json(
+        crate::domains::governance::standing::list(&s.pool, &s.gov_instance(), page).await?,
+    ))
 }
 
 /// The settings sections and the keys the deployment configuration locks (C-771).

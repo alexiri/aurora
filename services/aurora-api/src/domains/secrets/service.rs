@@ -195,7 +195,7 @@ fn validate_generic_target(
     if let Some(p) = path {
         PathPattern::parse(p).map_err(|e| bad("/path_pattern", &format!("{e}")))?;
     }
-    if gov::governed_hosts(&state.gov_instance)
+    if gov::governed_hosts(&state.gov_instance())
         .iter()
         .any(|g| gov::patterns_overlap(host, g))
     {

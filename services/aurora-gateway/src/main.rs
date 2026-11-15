@@ -291,6 +291,8 @@ async fn serve(
     // order) logs and keeps running on its configuration.
     let settings = aurora_gateway::settings::Settings::new(Some(source));
     settings.rebuild_vault_on_change(settings_vault.0, settings_vault.1, settings_vault.2);
+    // (SET-2) The instance governance and the BYO ceiling follow the `governance` settings live.
+    settings.rebuild_governance_on_change(governance.clone(), resolver.clone(), llm.clone());
     // Loaded before serving so a dashboard-defined store is there for the first request; a
     // database without the grant yet keeps the configuration's stores (logged by `run`).
     if let Err(e) = settings.reload(&pool).await {

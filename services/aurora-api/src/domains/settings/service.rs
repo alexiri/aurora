@@ -1205,7 +1205,7 @@ pub async fn preview(
     };
     let (diff, loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
     let (mut affected_orgs, affected_orgs_total, mut warnings) =
-        super::sections::affected(state, section, &diff).await?;
+        super::sections::affected(state, section, &diff, &before, &after).await?;
     // At most SETTINGS_PREVIEW_ORGS_MAX are listed; `affected_orgs_total` counts the rest.
     affected_orgs.truncate(limits::SETTINGS_PREVIEW_ORGS_MAX);
     warnings.extend(plan.warnings);

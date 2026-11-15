@@ -952,6 +952,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/settings/governance/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where organizations stand against the instance governance ceiling (C-778): effective postures
+         *     and the settings where an organization is stricter than the floor or clamped by it.
+         */
+        get: operations["adminListGovernanceOrgs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/settings/import": {
         parameters: {
             query?: never;
@@ -7277,6 +7297,11 @@ export interface components {
             id: string;
             label: string;
         };
+        /** @description Names an instance setting (`section` + registry `key`), so the dashboard can link it. */
+        InstanceSetting: {
+            key: string;
+            section: string;
+        };
         /** @enum {string} */
         IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
         /** @description An invitation. The token is never part of any response. */
@@ -7971,6 +7996,20 @@ export interface components {
              */
             previews_enabled?: boolean | null;
         };
+        /** @description One row of `GET /v1/admin/settings/governance/orgs` (C-778). */
+        OrgStandingRow: {
+            byo_posture: string;
+            clamped: string[];
+            egress_posture: string;
+            frozen: boolean;
+            llm_posture: string;
+            name: string;
+            open_lane: string;
+            /** Format: uuid */
+            org_id: string;
+            slug: string;
+            stricter: string[];
+        };
         /** @description `GET /orgs/{org}/storage` (API_CONTRACTS C-171). */
         OrgStorage: {
             /**
@@ -8631,6 +8670,22 @@ export interface components {
                 name: string;
                 settings: components["schemas"]["OrgSettings"];
                 slug: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_OrgStandingRow: {
+            items: {
+                byo_posture: string;
+                clamped: string[];
+                egress_posture: string;
+                frozen: boolean;
+                llm_posture: string;
+                name: string;
+                open_lane: string;
+                /** Format: uuid */
+                org_id: string;
+                slug: string;
+                stricter: string[];
             }[];
             next_cursor?: string | null;
         };
@@ -10867,26 +10922,31 @@ export interface components {
             update_pending: boolean;
         };
         Sourced_Option_Vec_String: {
+            instance_setting?: null | components["schemas"]["InstanceSetting"];
             /** @description `instance` | `org`. */
             source: string;
             value: null | string[];
         };
         Sourced_Option_u32: {
+            instance_setting?: null | components["schemas"]["InstanceSetting"];
             /** @description `instance` | `org`. */
             source: string;
             value: null | number;
         };
         Sourced_String: {
+            instance_setting?: null | components["schemas"]["InstanceSetting"];
             /** @description `instance` | `org`. */
             source: string;
             value: string;
         };
         Sourced_Vec_String: {
+            instance_setting?: null | components["schemas"]["InstanceSetting"];
             /** @description `instance` | `org`. */
             source: string;
             value: string[];
         };
         Sourced_bool: {
+            instance_setting?: null | components["schemas"]["InstanceSetting"];
             /** @description `instance` | `org`. */
             source: string;
             value: boolean;
@@ -15481,6 +15541,64 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListGovernanceOrgs: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_OrgStandingRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

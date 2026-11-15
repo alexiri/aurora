@@ -96,6 +96,7 @@ mod secret_stores;
 mod secrets;
 mod secrets_migrate;
 mod settings;
+mod settings_governance;
 mod skill_library;
 mod skills;
 mod sse_revocation;

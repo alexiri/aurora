@@ -12,6 +12,29 @@ pub fn instance_from_config(
     g: &aurora_config::Governance,
     registry: &ProviderRegistry,
 ) -> Instance {
+    let endpoints = registry
+        .endpoints()
+        .iter()
+        .map(|ep| {
+            let p = registry.provider_for(ep);
+            InstanceEndpoint {
+                id: ep.id.clone(),
+                allowed_models: ep.allowed_models.clone(),
+                key_origin: ep.key_origin.clone(),
+                hosts: p.map(|p| p.hosts(ep)).unwrap_or_default(),
+                origin_methods: p.map(|p| p.origin_methods().to_vec()).unwrap_or_default(),
+            }
+        })
+        .collect();
+    instance_from_governance(g, endpoints)
+}
+
+/// The instance ceiling from the resolved governance settings and the endpoints in force
+/// (SET-2: rebuilt on a swap of the `governance` section, endpoints kept).
+pub fn instance_from_governance(
+    g: &aurora_config::Governance,
+    endpoints: Vec<InstanceEndpoint>,
+) -> Instance {
     Instance {
         allowed_key_scopes: g.allowed_key_scopes.clone(),
         llm_minimum_posture: match g.llm_minimum_posture {
@@ -25,20 +48,7 @@ pub fn instance_from_config(
         open_lane_minimum: g.open_lane_minimum.into(),
         byo: aurora_llm::governance::ByoInstance::from_config(&g.byo),
         require_key_origin: g.require_key_origin,
-        endpoints: registry
-            .endpoints()
-            .iter()
-            .map(|ep| {
-                let p = registry.provider_for(ep);
-                InstanceEndpoint {
-                    id: ep.id.clone(),
-                    allowed_models: ep.allowed_models.clone(),
-                    key_origin: ep.key_origin.clone(),
-                    hosts: p.map(|p| p.hosts(ep)).unwrap_or_default(),
-                    origin_methods: p.map(|p| p.origin_methods().to_vec()).unwrap_or_default(),
-                }
-            })
-            .collect(),
+        endpoints,
         known_llm_hosts: g.known_llm_hosts.clone(),
         baseline_allowlist: g
             .baseline_allowlist
@@ -57,12 +67,12 @@ pub async fn effective_for(state: &AppState, org: Uuid) -> Result<EffectiveGover
     let raw = aurora_db::repo::gateway::org_governance(&state.pool, org)
         .await?
         .ok_or_else(|| ApiError::not_found("Organization not found."))?;
-    let doc: OrgGovernance = aurora_llm::governance::from_stored(&raw, &state.gov_instance)
-        .map_err(|e| {
-            tracing::error!(%org, error = %e, "malformed organization governance document");
-            ApiError::internal("Internal error.")
-        })?;
-    Ok(effective(&state.gov_instance, &doc))
+    let inst = state.gov_instance();
+    let doc: OrgGovernance = aurora_llm::governance::from_stored(&raw, &inst).map_err(|e| {
+        tracing::error!(%org, error = %e, "malformed organization governance document");
+        ApiError::internal("Internal error.")
+    })?;
+    Ok(effective(&inst, &doc))
 }
 
 enum Shape<'a> {

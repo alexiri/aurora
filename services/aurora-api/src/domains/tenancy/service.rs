@@ -669,14 +669,17 @@ pub async fn set_byo_posture(
         let inherited = org
             .posture
             .unwrap_or(ByoPosture::Enabled)
-            .max(s.gov_instance.byo.minimum_posture);
+            .max(s.gov_instance().byo.minimum_posture);
         if v < inherited {
             return Err(ApiError::unprocessable(
                 "governance_below_instance_minimum",
                 "The workspace BYO posture cannot be looser than the instance or organization posture.",
             )
             .with_details(serde_json::json!({
-                "fields": [{ "path": "/byo_posture", "message": format!("minimum is {}", inherited.as_str()) }]
+                "fields": [{ "path": "/byo_posture", "message": format!("minimum is {}", inherited.as_str()) }],
+                // (SET-2, C-783) The instance floor is a setting; named when it decides.
+                "instance_setting": (inherited == s.gov_instance().byo.minimum_posture)
+                    .then(|| serde_json::json!({ "section": "governance", "key": "byo.minimum_posture" })),
             })));
         }
     }

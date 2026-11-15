@@ -5626,6 +5626,94 @@
         ]
       }
     },
+    "/v1/admin/settings/governance/orgs": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Where organizations stand against the instance governance ceiling (C-778): effective postures\nand the settings where an organization is stricter than the floor or clamped by it.",
+        "operationId": "adminListGovernanceOrgs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_OrgStandingRow"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/settings/import": {
       "post": {
         "tags": [
@@ -39985,6 +40073,22 @@
           }
         }
       },
+      "InstanceSetting": {
+        "type": "object",
+        "description": "Names an instance setting (`section` + registry `key`), so the dashboard can link it.",
+        "required": [
+          "section",
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "section": {
+            "type": "string"
+          }
+        }
+      },
       "IntegrationStatus": {
         "type": "string",
         "enum": [
@@ -42225,6 +42329,61 @@
           }
         }
       },
+      "OrgStandingRow": {
+        "type": "object",
+        "description": "One row of `GET /v1/admin/settings/governance/orgs` (C-778).",
+        "required": [
+          "org_id",
+          "slug",
+          "name",
+          "frozen",
+          "llm_posture",
+          "egress_posture",
+          "open_lane",
+          "byo_posture",
+          "stricter",
+          "clamped"
+        ],
+        "properties": {
+          "byo_posture": {
+            "type": "string"
+          },
+          "clamped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "egress_posture": {
+            "type": "string"
+          },
+          "frozen": {
+            "type": "boolean"
+          },
+          "llm_posture": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_lane": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "stricter": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "OrgStorage": {
         "type": "object",
         "description": "`GET /orgs/{org}/storage` (API_CONTRACTS C-171).",
@@ -44456,6 +44615,78 @@
                 },
                 "slug": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_OrgStandingRow": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One row of `GET /v1/admin/settings/governance/orgs` (C-778).",
+              "required": [
+                "org_id",
+                "slug",
+                "name",
+                "frozen",
+                "llm_posture",
+                "egress_posture",
+                "open_lane",
+                "byo_posture",
+                "stricter",
+                "clamped"
+              ],
+              "properties": {
+                "byo_posture": {
+                  "type": "string"
+                },
+                "clamped": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "egress_posture": {
+                  "type": "string"
+                },
+                "frozen": {
+                  "type": "boolean"
+                },
+                "llm_posture": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "open_lane": {
+                  "type": "string"
+                },
+                "org_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "slug": {
+                  "type": "string"
+                },
+                "stricter": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -51854,6 +52085,17 @@
           "source"
         ],
         "properties": {
+          "instance_setting": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InstanceSetting",
+                "description": "(SET-2, C-783) The instance setting the value comes from, when `source` is `instance`."
+              }
+            ]
+          },
           "source": {
             "type": "string",
             "description": "`instance` | `org`."
@@ -51880,6 +52122,17 @@
           "source"
         ],
         "properties": {
+          "instance_setting": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InstanceSetting",
+                "description": "(SET-2, C-783) The instance setting the value comes from, when `source` is `instance`."
+              }
+            ]
+          },
           "source": {
             "type": "string",
             "description": "`instance` | `org`."
@@ -51905,6 +52158,17 @@
           "source"
         ],
         "properties": {
+          "instance_setting": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InstanceSetting",
+                "description": "(SET-2, C-783) The instance setting the value comes from, when `source` is `instance`."
+              }
+            ]
+          },
           "source": {
             "type": "string",
             "description": "`instance` | `org`."
@@ -51921,6 +52185,17 @@
           "source"
         ],
         "properties": {
+          "instance_setting": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InstanceSetting",
+                "description": "(SET-2, C-783) The instance setting the value comes from, when `source` is `instance`."
+              }
+            ]
+          },
           "source": {
             "type": "string",
             "description": "`instance` | `org`."
@@ -51940,6 +52215,17 @@
           "source"
         ],
         "properties": {
+          "instance_setting": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InstanceSetting",
+                "description": "(SET-2, C-783) The instance setting the value comes from, when `source` is `instance`."
+              }
+            ]
+          },
           "source": {
             "type": "string",
             "description": "`instance` | `org`."

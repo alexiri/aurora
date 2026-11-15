@@ -81,7 +81,8 @@ struct Inner {
 type VerKey = (Uuid, [u8; 32]);
 
 pub struct Governance {
-    instance: Instance,
+    /// The instance ceiling; replaced when the `governance` (or `llm`) settings change (SET-2).
+    instance: arc_swap::ArcSwap<Instance>,
     registry: Arc<ProviderRegistry>,
     source: Arc<dyn GovSource>,
     http: reqwest::Client,
@@ -114,7 +115,7 @@ impl Governance {
         source: Arc<dyn GovSource>,
     ) -> Self {
         Self {
-            instance,
+            instance: arc_swap::ArcSwap::from_pointee(instance),
             registry,
             source,
             http: reqwest::Client::new(),
@@ -125,6 +126,19 @@ impl Governance {
             verified: Mutex::new(HashMap::new()),
             header_missing: AtomicU64::new(0),
         }
+    }
+
+    /// Replace the instance ceiling after a settings swap (SET-2, `08 §11.1`). The caller flushes
+    /// every cache (`all`) afterwards; the cache is also dropped here so an `effective` computed
+    /// from the old ceiling cannot be stored after the swap (generation bump).
+    pub fn set_instance(&self, instance: Instance) {
+        self.instance.store(Arc::new(instance));
+        self.flush_all();
+    }
+
+    /// The instance ceiling now in force.
+    pub fn instance(&self) -> Arc<Instance> {
+        self.instance.load_full()
     }
 
     /// Override the origin re-check TTL (tests).
@@ -156,9 +170,10 @@ impl Governance {
             .org_governance(org)
             .await?
             .ok_or("organization not found")?;
-        let doc: OrgGovernance = aurora_llm::governance::from_stored(&raw, &self.instance)
+        let instance = self.instance.load_full();
+        let doc: OrgGovernance = aurora_llm::governance::from_stored(&raw, &instance)
             .map_err(|e| format!("governance document: {e}"))?;
-        let value = Arc::new(effective(&self.instance, &doc));
+        let value = Arc::new(effective(&instance, &doc));
         if let Ok(mut g) = self.cache.lock()
             && g.generation == gen_seen
         {
