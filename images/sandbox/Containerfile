@@ -54,6 +54,8 @@ RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common po
     && chown 1000:1000 /workspace \
     && test -x /usr/bin/zsh && test -x /bin/bash \
     && test -x /usr/libexec/openssh/sftp-server \
+    && rm -f /etc/systemd/system/multi-user.target.wants/sshd.service \
+             /etc/systemd/system/sockets.target.wants/sshd.socket \
     && ! test -e /etc/systemd/system/multi-user.target.wants/sshd.service \
     && ! test -e /etc/systemd/system/sockets.target.wants/sshd.socket \
     && ! (command -v systemctl >/dev/null && systemctl is-enabled sshd.service sshd.socket 2>/dev/null | grep -qx enabled) \

@@ -443,6 +443,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::settings::router())
         .merge(domains::previews::router())
         .merge(domains::terminal::router())
+        .merge(domains::files::router())
         .merge(domains::telemetry::router())
         .merge(domains::relay::router())
         .merge(domains::groups::router())

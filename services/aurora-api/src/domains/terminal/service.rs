@@ -437,7 +437,20 @@ fn proxy_error(code: u16) -> ApiError {
 /// The wake demand (C-621): set `terminal_wake_at` (due work for `TERMINAL_WAKE_WINDOW`),
 /// rate-limited to `TERMINAL_WAKES_PER_AGENT_HOUR` per agent (429 beyond it).
 async fn demand_wake(s: &AppState, a: &AgentRow, sandbox: Uuid) -> Result<(), ApiError> {
-    s.rate_limiter
+    wake_demand(s, a, sandbox)
+        .await?
+        .then_some(())
+        .ok_or_else(too_many_sessions)
+}
+
+/// The shared wake helper (C-621; P5-FILES-1 C-900 and the SSH path share the one budget):
+/// `Ok(false)` when the per-agent hourly budget is spent, `Ok(true)` once the demand is set.
+pub(crate) async fn wake_demand(
+    s: &AppState,
+    a: &AgentRow,
+    sandbox: Uuid,
+) -> Result<bool, ApiError> {
+    if s.rate_limiter
         .check_quota(
             "terminal_wake",
             &a.id.to_string(),
@@ -446,18 +459,21 @@ async fn demand_wake(s: &AppState, a: &AgentRow, sandbox: Uuid) -> Result<(), Ap
                 per: Duration::from_secs(3600),
             },
         )
-        .map_err(|_| too_many_sessions())?;
+        .is_err()
+    {
+        return Ok(false);
+    }
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     aurora_db::repo::sandboxes::set_terminal_wake(&mut *conn, sandbox).await?;
     // Notify the due-work engine on this replica; other replicas poll anyway.
     crate::domains::runner_plane::service::notify_work(s, "terminal_wake").await;
-    Ok(())
+    Ok(true)
 }
 
 /// The dial endpoint of the sandbox's runner replica (`ws[s]://…:4108/v1/preview-stream`),
 /// from the registered advertised host + `stream_tls` capability (C-617: the runner never
 /// learns a port; the endpoint is the same listener the relay dials).
-async fn dial_endpoint(s: &AppState, sandbox: Uuid) -> Result<Endpoint, ApiError> {
+pub(crate) async fn dial_endpoint(s: &AppState, sandbox: Uuid) -> Result<Endpoint, ApiError> {
     let row: Option<(Option<Uuid>, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
         "SELECT boot_id, channel_replica_id, runner_id FROM sandboxes \
          WHERE id = $1 AND state = 'running'",
@@ -486,9 +502,9 @@ async fn dial_endpoint(s: &AppState, sandbox: Uuid) -> Result<Endpoint, ApiError
     })
 }
 
-struct Endpoint {
-    url: String,
-    redacted: String,
+pub(crate) struct Endpoint {
+    pub(crate) url: String,
+    pub(crate) redacted: String,
 }
 
 /// Dials the runner's stream listener with the `auy_` grant as the bearer (C-617 leg 1).

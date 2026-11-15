@@ -146,6 +146,7 @@ async fn compute(
         STOP_LEASE_SECS,
         s.config.previews.awake_cap_secs as f64,
         s.config.terminal.awake_cap_secs as f64,
+        limits::FILES_AWAKE_CAP.as_secs_f64(),
         ARM_LIMIT,
     )
     .await?;

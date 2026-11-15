@@ -51,6 +51,8 @@ pub enum Class {
     Export,
     /// (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces`: browser telemetry never spends `write`.
     Telemetry,
+    /// (phase 5, P5-FILES-1, D-316) every `/v1/agents/{agent}/files*` route, reads included.
+    Files,
 }
 
 impl Class {
@@ -63,6 +65,7 @@ impl Class {
             Self::Search => "search",
             Self::Export => "export",
             Self::Telemetry => "telemetry",
+            Self::Files => "files",
         }
     }
 }
@@ -83,6 +86,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
     let last = rest.last().copied().unwrap_or("");
     match rest {
         ["telemetry", "traces"] if post => return Some(Class::Telemetry),
+        // (P5-FILES-1) Files routes, reads included, in their own bucket (not `write`/`upload`).
+        ["agents", _, "files", ..] => return Some(Class::Files),
         ["conversations", _, "messages"] if post => return Some(Class::Message),
         ["turns", _, "send-now"] if post => return Some(Class::Message),
         ["conversations", _, "attachments"] if post => return Some(Class::Upload),
@@ -207,6 +212,7 @@ pub struct Limits {
     pub search: Spec,
     pub export: Spec,
     pub telemetry: Spec,
+    pub files: Spec,
     pub preview: Spec,
     pub org: Spec,
     pub unauth_get: Spec,
@@ -245,6 +251,7 @@ impl Limits {
             search: class("search", Spec::per_min(30, 10)),
             export: class("export", Spec::per_hour(6, 2)),
             telemetry: class("telemetry", Spec::per_min(60, 20)),
+            files: class("files", Spec::per_min(300, 60)),
             preview: Spec::per_sec(c.preview_per_second, c.preview_burst).scaled(m),
             org: Spec::per_min(c.org_per_minute, org_burst).scaled(m),
             unauth_get: Spec::per_min(UNAUTH_GET_PER_MIN, UNAUTH_GET_PER_MIN).scaled(m),
@@ -263,6 +270,7 @@ impl Limits {
             Class::Search => self.search,
             Class::Export => self.export,
             Class::Telemetry => self.telemetry,
+            Class::Files => self.files,
         }
     }
 }
@@ -812,6 +820,15 @@ mod tests {
     #[test]
     fn classes() {
         let c = |m: Method, p: &str| classify(&m, p);
+        // (P5-FILES-1) every Files route, reads included, is class `files` (not write/upload).
+        for (m, p) in [
+            (Method::GET, "/v1/agents/1/files"),
+            (Method::GET, "/v1/agents/1/files/content"),
+            (Method::PUT, "/v1/agents/1/files/content"),
+            (Method::POST, "/v1/agents/1/files/ops"),
+        ] {
+            assert_eq!(c(m, p), Some(Class::Files), "{p}");
+        }
         assert_eq!(
             c(Method::POST, "/v1/conversations/1/messages"),
             Some(Class::Message)

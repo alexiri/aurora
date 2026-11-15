@@ -34,9 +34,9 @@ fn may_pass(key: &str, value: &str) -> bool {
 
 /// (FIX-114, SEC-34) Every platform token prefix (`aurora_core::token::TokenPrefix`): a value
 /// that starts with one is a platform credential whatever the variable is called.
-const PLATFORM_PREFIXES: [&str; 18] = [
+const PLATFORM_PREFIXES: [&str; 19] = [
     "aug_", "aub_", "auc_", "auk_", "auo_", "aur_", "aun_", "aut_", "auw_", "aus_", "aui_", "aup_",
-    "auh_", "aud_", "aul_", "auv_", "aux_", "auy_",
+    "auh_", "aud_", "aul_", "auv_", "aux_", "auy_", "auf_",
 ];
 
 /// Secret-shaped name endings (upper-cased): token/secret/password/key/credential(s)/DSN/pass/
