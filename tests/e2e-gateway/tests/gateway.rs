@@ -1627,3 +1627,108 @@ async fn s21_dev_upstream_override_without_insecure_loopback_refuses_to_start() 
     );
     st.finish().await;
 }
+
+/// (P4-LLM-2, C-806, C-807, SEC-97, acceptance 5) `vertex` through the real binaries: the API validates the key file by
+/// one mint at the (overridden) token endpoint, the gateway mints its own token and injects it on the Vertex route of the
+/// endpoint's project and location; neither the private key nor a minted token is in any log, the request log or the API
+/// reads, and the mint is counted.
+#[tokio::test]
+async fn s22_vertex_key_is_minted_by_the_gateway_and_never_leaks() {
+    use aurora_testkit::llm::google_token::{MockGoogleToken, TestKey};
+    use aurora_testkit::llm::vertex::MockVertex;
+    let key = TestKey::generate("key-proj", "sa@key-proj.iam.gserviceaccount.com");
+    let google = MockGoogleToken::start(&key).await;
+    let vertex = MockVertex::start().await;
+    let st = Stack::start(Opts {
+        llm_vertex: Some((google.base().to_owned(), vertex.base().to_owned())),
+        ..Opts::default()
+    })
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("vertex-agent").await;
+    let (s, v) = api
+        .post(
+            &format!("/v1/orgs/{}/secrets", api.org),
+            json!({"name": "vx", "kind": "llm",
+                   "llm": {"endpoint_id": "vx", "auth_mode": "gcp_service_account"}, "value": key.json()}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}\n{}", st.log_tails());
+    api.grant(&agent, v["id"].as_str().unwrap()).await;
+    api.set_policy("block", json!([])).await;
+    assert_eq!(google.requests(), 1, "the API's validation is one mint");
+    let route = format!(
+        "{}/v1/projects/inference-proj/locations/us-east5/publishers/anthropic/models/claude-x:rawPredict",
+        vertex.base()
+    );
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(&route)
+        .header("authorization", "Bearer agent-own-key")
+        .header("x-goog-api-key", "agent-own-key")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    assert_eq!(google.requests(), 2, "the gateway minted its own token");
+    let seen = vertex.requests();
+    let minted = google.issued().last().unwrap().clone();
+    assert_eq!(
+        seen[0].header("authorization"),
+        Some(&*format!("Bearer {minted}"))
+    );
+    assert!(seen[0].header("x-goog-api-key").is_none());
+    // Reused on the next request.
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(&route)
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(google.requests(), 2);
+    // Neither the private key nor a token appears in any log, the request log or an API read.
+    let tokens = google.issued();
+    let mut needles: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let pem_body = key.pem().lines().nth(1).unwrap().to_owned();
+    needles.push(&pem_body);
+    needles.push("agent-own-key");
+    for log in &st.logs {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        for n in &needles {
+            assert!(!text.contains(n), "{} leaks a secret", log.display());
+        }
+    }
+    let rows: Vec<String> = sqlx::query_scalar("SELECT to_jsonb(r)::text FROM request_log r")
+        .fetch_all(st.pool())
+        .await
+        .unwrap();
+    let rows = rows.join("\n");
+    for n in &needles {
+        assert!(!rows.contains(n), "request_log leaks a secret");
+    }
+    for p in [
+        format!("/v1/orgs/{}/secrets", api.org),
+        format!("/v1/agents/{agent}/container-config"),
+        format!("/v1/agents/{agent}/effective"),
+    ] {
+        let (_, v) = api.get(&p).await;
+        for n in &needles {
+            assert!(!v.to_string().contains(n), "{p} leaks a secret");
+        }
+    }
+    let m = reqwest::get(format!("http://{GW_A_IP}:4103/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        m.lines()
+            .any(|l| l.starts_with("aurora_gateway_llm_mint_total{")
+                && l.contains("mode=\"gcp_service_account\"")
+                && l.contains("outcome=\"minted\"")),
+        "{m}"
+    );
+    st.finish().await;
+}
