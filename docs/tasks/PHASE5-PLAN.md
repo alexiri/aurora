@@ -24,7 +24,15 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 | `p5-agent` | P5-CHAT-4 B ‖ P4-LLM-1 → P4-LLM-2 ‖ P4-LLM-3 → P4-LLM-4 → P4-LLM-5 ‖ | finishes the chat chain, then the LLM provider chain (runner harness config + gateway mint) | `components/chat/**` search, `aurora-runner` provider/harness config, gateway `llm/**` |
 | `p5-platform` | P5-CERN-ADDONS external repo ‖ FIX-146 A → B/C/D → E ‖ P4-SSH-1 → P4-SSH-2 ‖ | the addon repo's release, then cross-cutting tracing, then SSH (both need `web/package.json`) | `web/package.json` + `pnpm-lock.yaml` (this wave), `/home/alex/agent-platform/aurora-addons-cern`, tracing middleware, `aurora-terminator` |
 
-Next, as a lane frees up: **P4-011B-1 → {2 ∥ 3} → 4 → 5**; **P5-ICS → P5-CALDAV** (same lane); **P5-CALINV**. **FIX-150** (S–M, `channels/messaging.rs` + `tools/messaging.rs` only, disjoint from the wave-2 hot files) may be inserted at any lane's next batch gate; not concurrent with P4-UTOK/P4-NARR.
+### Wave 3 queue (placed 2026-11-15; each lane continues after its wave-2 chain, merging master first)
+
+| Lane | Queue after its wave-2 chain | Why here |
+|---|---|---|
+| `p5-apps` | P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → 6 → 7 ‖ P5-ICS → P5-CALDAV ‖ | the registry, package format and built-in packages are this lane's ground; P5-GUIDE-1 and P5-ICS both change the registry, so they run in one lane, one after the other |
+| `p5-agent` | FIX-150 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3 ‖ | channels and messaging tools (FIX-150, `send_as_me`), then evals, whose judge builds on the LLM chain's providers |
+| `p5-platform` | P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P4-S3 ‖ P5-CALINV ‖ | gateway holds and Web Push next to the SSH and tracing work; the blob store; the mailer-only calendar invite |
+
+**Ordering constraint:** P5-GUIDE-7 must not run beside a lane editing `services/aurora-api/src/domains/tools/` (FIX-150, P4-UTOK and P4-EVAL-2 do), so `p5-apps` holds P5-GUIDE-7 until those three are merged. If one lane finishes much earlier, the coordinator moves the head of another lane's queue to it. **FIX-150** (S–M, `channels/messaging.rs` + `tools/messaging.rs` only, disjoint from the wave-2 hot files) may be inserted at any lane's next batch gate; not concurrent with P4-UTOK/P4-NARR.
 
 ## Coordinator (Opus) work, in order
 1. **Spec step 0** for FIX-142, FIX-145, FIX-146 (unblocks wave 1/2 lanes).
