@@ -11,10 +11,13 @@ use tokio_rustls::TlsAcceptor;
 
 const HOST: &str = "phonebook.ldap.aurora.internal";
 
+/// `(dn, [(attribute, raw values)])`.
+type Person = (String, Vec<(String, Vec<Vec<u8>>)>);
+
 #[derive(Clone)]
 enum Script {
     /// Entries as `(dn, [(attribute, raw values)])`, then a done with `code`.
-    Entries(Vec<(String, Vec<(String, Vec<Vec<u8>>)>)>, i64),
+    Entries(Vec<Person>, i64),
     /// The bind is refused with this code and a diagnostic of the server's own.
     BindRefused(i64),
     /// The search ends with this code and a diagnostic of the server's own.
@@ -197,7 +200,7 @@ async fn directory(script: Script) -> (u16, String, Arc<Mutex<Seen>>) {
     (port, gen_ca.cert_pem, seen)
 }
 
-fn person(uid: &str) -> (String, Vec<(String, Vec<Vec<u8>>)>) {
+fn person(uid: &str) -> Person {
     (
         format!("CN={uid},OU=Users,DC=cern,DC=ch"),
         vec![

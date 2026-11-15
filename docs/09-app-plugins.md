@@ -665,6 +665,35 @@ optional `sslmode`, `ca_pem` (and, in connection metadata, the audited opt-out `
 `hosts[]` entry (P2-DBL-2, C-233). Fixtures send a SQL body to `https://<uuid>.db.aurora.internal/`
 and expect a `class` and `tool` (`plugins/builtin/postgresql/tests`).
 
+#### `ldap` (phase 5, D-251)
+```yaml
+ldap:
+  server: xldap.cern.ch            # exact public DNS name (no IP literal, wildcard, port, *.internal)
+  port: 636                        # LDAPS; default 636
+  base_dn: "DC=cern,DC=ch"         # every search is confined to this subtree
+  attributes: [uid, mail, displayName]   # 1..64 plain names; the only attributes a request may name
+  max_entries: 50                  # 1..500, default 50
+hosts:
+  - match: { host: <app id>.ldap.aurora.internal }
+    inject: []
+```
+Marks an app reached through the gateway LDAP lane (`06 §LDAP lane`): anonymous, read-only
+searches over LDAPS. Linter rules: the server is a plain public DNS name whose last label is not
+numeric and that does not end `.internal`/`.local`/`.localhost` (`ldap_server_invalid`); port
+1..65535 (`ldap_port_invalid`); `base_dn` 1..256 characters without control characters
+(`ldap_base_dn_invalid`); `attributes` 1..64 names of letters, digits and `-` starting with a
+letter — no `*`, `+`, options or binary markers (`ldap_attributes_invalid`); `max_entries` 1..500
+(`ldap_max_entries_invalid`); no `database` section beside it (`ldap_database_exclusive`); **no
+declared credentials** (`ldap_credentials_declared`); exactly one `hosts[]` entry, for
+`<app id>.ldap.aurora.internal` (`ldap_host_missing`, `ldap_host_foreign`) with an empty `inject`
+(`ldap_host_inject`) — the one host under `*.aurora.internal` a package may claim; tools are
+ordinary tools on that host (`POST /search`). The `connect` flow is `kind: fields` with
+`fields: []` (nothing to enter). The block is copied into the snapshot's `apps[].ldap` (`§9`) and
+is part of what an admin approves: **adding or changing it widens permissions** unless it is the
+same server, port and base with a subset of the attributes and no larger `max_entries`
+(`Widening::Directory`, `§10`). Fixtures send `POST https://<app id>.ldap.aurora.internal/search`
+and expect a `tool` (`plugins/addons/cern-phonebook/tests`).
+
 ## 4. Template substitution
 
 Template strings may contain `{namespace.name}` tokens only:

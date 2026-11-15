@@ -406,6 +406,52 @@ registry (removed with the session). A `CancelRequest` (plain, or inside TLS) fo
 pair makes the gateway send the real `CancelRequest` over a fresh guarded connection; unknown pairs
 get no answer.
 
+## LDAP lane (phase 5, P5-CERN-ADDONS, D-251)
+
+Spec: `90 D-251`; manifest `09 §3 ldap`; invariant SEC-110. Code: `services/aurora-gateway/src/ldap/`
+(`ber` the codec, `filter` the RFC 4515 grammar, `client` the LDAPS client, `mod` the request
+translation) and the hook in `decide.rs` (`PreparedRequest.ldap`) and `proxy/mod.rs`
+(`ldap_answer`).
+
+**Not a new listener.** An agent reaches an LDAP app as it reaches any HTTPS app: CONNECT to
+`<app id>.ldap.aurora.internal:443` through the proxy, the gateway's MITM leaf for that name, then
+`POST /search` with a JSON body. The pipeline is unchanged up to step 12: the host entry identifies
+the app, the tool (`POST /search`) is matched, the grant, rules, approval holds and rate limits
+decide, and nothing is injected (an LDAP app declares no credentials). What differs is step 13:
+
+**The lane answers instead of forwarding.** `decide` marks the prepared request with the app's
+approved `ldap` block **only** when the request won a *granted connection* of that app (the
+transport rule of `§MITM lane` applies: TLS to the claimed port). A request on an LDAP host without
+that mark — no connection, no grant, plain HTTP, a host of no LDAP app — is answered
+`403 ldap_no_connection` and never reaches a directory. The proxy then reads the body (≤ 16 KiB,
+else 413 `ldap_request_invalid`), builds the query and runs it; the request-log hook sees the
+answer's status like an upstream answer.
+
+**Request** `POST /search`: `{ "filter": "(uid=jdoe)", "attributes": ["mail"], "scope": "sub",
+"base": "OU=Users,DC=cern,DC=ch", "limit": 10 }`. Only `filter` is required; unknown keys and any
+other path or method are refused. Rules (each failure is `400 ldap_request_invalid`, before any
+connection): the filter is RFC 4515, ≤ 1 KiB, depth ≤ 8, ≤ 64 terms, extensible match refused, every
+attribute it names on the app's list; `attributes` ⊆ the list (default: the whole list); `scope` is
+`sub` (default), `one` or `base`; `base` is the manifest's `base_dn` or below it (case-insensitive,
+an escaped comma is not a separator); `limit` is clamped to `max_entries`.
+
+**Directory conversation** (`client.rs`): guarded dial (or the egress proxy) to `server:port`, TLS
+with the certificate verified for `server` (system roots plus the gateway's extra CA bundle), an
+anonymous simple bind (LDAPv3), one `SearchRequest` (derefAliases never, sizeLimit `max_entries+1`,
+timeLimit 10 s, attributes = the request's), an unbind. Only those three PDUs can be encoded — the
+client has no code for add, modify, delete, modifyDN, compare, extended operations or controls.
+Referrals (`SearchResultReference`) are skipped. Messages over 4 MiB, malformed BER, a wrong message
+id or an unexpected operation end the exchange as `502 ldap_unavailable`; a refused bind or search
+is `502 ldap_refused` with the gateway's own text (the server's diagnostic is logged at warn level
+only, never sent to the agent); a stalled directory is `504 ldap_timeout` after 10 s (or
+`gateway.upstream_header_timeout` when longer); a destination the guard refuses is the usual
+`destination_refused` guidance.
+
+**Response** `200`: `{ "entries": [{ "dn": "...", "attributes": { "mail": ["..."] } }], "truncated":
+false }`. Only requested attributes on the app's list are returned, spelled as the manifest spells
+them; values that are not UTF-8 or longer than 4 KiB are dropped, ≤ 100 values per attribute;
+more than `max_entries` entries are cut and `truncated` is true.
+
 ## MITM lane: connect-time resolution
 
 On `CONNECT host:port` the gateway builds a **ResolvedHost** for
