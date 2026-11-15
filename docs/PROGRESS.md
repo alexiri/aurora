@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 87 | 46 | 5 (P4-LLM-3, SET-2, FIX-146, P4-LLM-4, SET-3) | 33 | 0 (every phase-5 item has a brief) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 87 | 47 | 4 (SET-2, FIX-146, P4-LLM-4, SET-3) | 33 | 0 (every phase-5 item has a brief) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 3 | 0 | 0 | 0 | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **408** | **357** | **6** | **33** | **3** | **9** | |
+| **All** | **408** | **358** | **5** | **33** | **3** | **9** | |
 
 ## Environment
 
@@ -79,7 +79,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-EVAL-4 | Dashboard: agent Behaviour › Evals page | C-860.., `14` | M | Next.js | P4-EVAL-1 | `P4-EVAL-4.md` | ready (wave 3: queued in lane p5-agent) |
 | P4-LLM-1 | LLM provider framework; `openai`, `openai_compatible`; `anthropic` inference path set | D-260, D-268(d), C-800.. | L | Rust | — | `P4-LLM-1.md` | done (merged 88faf124; D-248) |
 | P4-LLM-2 | Gateway LLM mint service + Google Vertex AI | D-261, SEC-97 | L | Rust | P4-LLM-1 | `P4-LLM-2.md` | done (merged 7909fb9c; D-249) |
-| P4-LLM-3 | `azure_openai` (keys and Entra) | D-261, D-268(c) | M | Rust | P4-LLM-2 | `P4-LLM-3.md` | in-progress (lane p5-agent; committed 7ad25d88 on alexiri/p5-agent, not merged; D-311; e2e s23 at batch gate 3) |
+| P4-LLM-3 | `azure_openai` (keys and Entra) | D-261, D-268(c) | M | Rust | P4-LLM-2 | `P4-LLM-3.md` | done (merged 35606a00; D-311) |
 | P4-LLM-4 | `bedrock` (assume-role, IAM keys, API keys; SigV4 in the gateway) | D-261, D-268(c) | L | Rust | P4-LLM-2 | `P4-LLM-4.md` | in-progress (lane p5-agent; started) |
 | P4-LLM-5 | Harnesses on the new providers + hosted e2e (no key reaches the sandbox) | D-260, SEC-64, SEC-66 | M | Rust | P4-LLM-1 (e2e after 2–4) | `P4-LLM-5.md` | ready (queued in lane p5-agent) |
 | P4-LLM-6 | Endpoint destinations + dashboard fields for providers and auth modes | D-262, SEC-98 | M–L | both | SET-3, P4-LLM-1 | `P4-LLM-6.md` | ready (queued in lane p5-apps) |
