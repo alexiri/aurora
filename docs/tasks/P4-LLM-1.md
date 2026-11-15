@@ -69,7 +69,7 @@ inference path set SEC-65 promised for phase 5.
 6. **Classification** (C-808): `aurora_llm::classify(provider, status, error_type)` with every row
    of `08` for all five providers; the gateway calls it on injected LLM responses with the status
    and (Bedrock only) `x-amzn-ErrorType`, writes the request-log `error_code`, and counts
-   `gateway_llm_upstream_total{provider,endpoint,class}`. Never alters status or body; never reads
+   `aurora_gateway_llm_upstream_total{provider,endpoint,class}`. Never alters status or body; never reads
    the response body.
 7. **`GET /v1/llm/providers`** (C-802): `auth_modes[]` with `value_shape` and `recommended`,
    per-endpoint `auth_modes`, `recommended_auth_mode`, `harnesses` (from
