@@ -1,0 +1,69 @@
+# P4-EVAL-2: eval runs as real turns, scoring, side-effect refusal and eval schedules
+
+## Goal
+An agent's eval questions run as real turns, one `eval` conversation per question, sequentially, under every existing rule; each answer is scored (numeric and text exactly, judged questions left to P4-EVAL-3), results are stored with the configuration fingerprint, a run can be cancelled, and scheduled runs fire through the schedules engine. Eval turns refuse every write, so a run has no external effect.
+
+## Linked requirements
+- D-289(c), D-290 (runs as real turns, per-question conversations, side-effect refusal, one active run), D-291 (fingerprint recorded at start), D-293 (schedules and regression notice).
+- Contracts C-860 (`eval` kind), C-862 (scoring of numeric and text), C-864 (run routes and shape), C-865 (lifecycle, concurrency, due-work arm), C-866 (recording the fingerprint), C-867 (results), C-868 (side-effect refusal), C-870 (eval schedules), C-871 (regression notice), C-872 (codes), C-873 (audit).
+- SEC-114 (real turn, no bypass, no approval created, no agent tool), SEC-116 (eval conversations never mirrored to chat; schedule fires under fire-time authority; frozen skipped; counts only in notices).
+- `docs/10 §Evals`, `docs/03 §Planned changes` (`eval_runs`, `eval_results`, `eval_schedules`, `conversations` kind), `docs/05 §Evals` and jobs, `docs/07` (approvals unchanged), `docs/09` (`read` access of connections, FIX-133).
+- Migrations: `20261201000237_eval_runs.sql` (`eval_runs`, `eval_results`), `…000238_eval_schedules.sql`, `…000240_conversations_kind_eval.sql`.
+
+## Context
+- Conversation kinds and the turn pipeline: `services/aurora-api/src/domains/conversations/{service.rs,lifecycle.rs}`; turn creation with `source_event_id` (`docs/10 §Turns`, idempotency in `docs/05`); the active-turn partial unique index; the final answer rule (`10 §Transcript events`, durable `text` after the last tool call).
+- Schedules engine to extend, not fork: `services/aurora-api/src/domains/schedules/{fire.rs,service.rs,cron.rs}`, repo `crates/aurora-db/src/repo/schedules.rs`; the fire-time authority check (`04 §Fire-time authority`); `SCHEDULE_FIRE_LEASE`, `SCHEDULE_FAILURE_DISABLE`.
+- Platform tools that write: `services/aurora-api/src/domains/tools/{messaging.rs,memory.rs,skills.rs,schedules.rs,webhooks.rs,conversations.rs}`; `send_as_me` (P4-UTOK) is a write and is refused in eval turns too.
+- Gateway: `services/aurora-gateway/src/{guard.rs,hold.rs,pipeline.rs,resolve.rs}`; the context credential `auc_` identifies the conversation, so the gateway can see that a request belongs to a kind `eval` conversation (verify in `resolve.rs`). Read-only classification: `docs/07 §Read-only connections` (FIX-133, `access: read`).
+- Mirror to chat: `services/aurora-api/src/domains/channels/mirror.rs` (eval conversations must never reach it).
+- Authority helpers: `aurora-db::authz`.
+
+## Scope
+### In scope
+- Migrations 237, 238, 240; repo `evals.rs` (runs, results, schedules); `domains/evals/{runs.rs,engine.rs,scoring.rs,schedules.rs}`.
+- Run start `POST /v1/agents/{agent}/eval-runs` (202; C-864), list (cursor), get with results, `POST …/cancel`, `DELETE` (`can_own`, C-864); the run records the fingerprint and `question_set_version` at start (C-866) and is immutable afterwards.
+- Due-work arm: claim `queued` runs with a lease; per question in order: create kind `eval` conversation `eval:<run_id>:<position>` (C-860), create the turn with `source_event_id = eval:<run_id>:<position>`, a text of the question plus, for numeric and text kinds, the `ANSWER:` instruction (C-862), wait for the terminal state up to `EVAL_TURN_TIMEOUT` (abort on timeout), take the final answer text, score it, write the result. Re-check the starter's or creator's authority before each question (`can_use`, not frozen); lost authority → cancel with reason `access_lost`.
+- Refusal of writes in eval turns (C-868): gateway refusal for non-read requests on a `kind eval` context credential (`eval_read_only`), and the same refusal in the platform tools listed above. A refusal creates no approval and is counted in `eval_results.refused_writes`.
+- Scoring for numeric and text (C-862); judged questions are recorded `error` with reason `judge_not_available` until P4-EVAL-3 lands.
+- Cancel: sets `cancel_requested_at`, aborts the running turn, remaining questions `not_scored` with reason `cancelled`.
+- Eval schedules (C-870): `GET/POST /v1/agents/{agent}/eval-schedules`, `PATCH/DELETE /v1/eval-schedules/{id}`; fire through the schedules engine with the same lease, anchor, frozen-skip (`skipped_frozen`), busy-skip (`skipped_busy`) and `SCHEDULE_FAILURE_DISABLE` rules; `EVAL_SCHEDULE_MIN_INTERVAL` replaces the 5-minute minimum; they count toward `EVAL_RUNS_PER_AGENT_DAY`.
+- Regression notice (C-871): at finish, compare with the previous `done` run of the same `question_set_version`; set `regression: { from_run_id, drop_points }` when the drop is at least `EVAL_REGRESSION_DROP`; only when `eval_regression_notify` is on.
+- Retention job: delete runs (and results and their eval conversations through the normal delete path) older than `EVAL_RUN_RETENTION`.
+- Audit (C-873): `eval.run.start`, `eval.run.cancel`, `eval.run.delete`, `eval.schedule.create|update|delete`; metadata counts and ids only.
+- Limits: `EVAL_ANSWER_CHARS`, `EVAL_TURN_TIMEOUT`, `EVAL_RUNS_ACTIVE_PER_AGENT`, `EVAL_RUNS_PER_AGENT_DAY`, `EVAL_SCHEDULE_MIN_INTERVAL`, `EVAL_SCHEDULES_PER_AGENT`, `EVAL_RUN_RETENTION`, `EVAL_REGRESSION_DROP` in `aurora-core::limits`; their `doc-only` lines removed.
+
+### Out of scope
+The judge call and `PlatformLlm` (P4-EVAL-3), the dashboard (P4-EVAL-4), any agent tool, any change to approval semantics.
+
+## Constraints / file ownership
+- Owns: `services/aurora-api/src/domains/evals/{runs,engine,scoring,schedules}.rs` (new), `domains/schedules/fire.rs` (an eval branch only, behind the eval kind), `domains/tools/*.rs` (the refusal branch only), `services/aurora-gateway/src/*` (the refusal branch only), migrations 237, 238, 240, `crates/aurora-db/src/repo/evals.rs` (runs, results, schedules), limits rows, `docs/03` and `docs/05` (own rows).
+- Must not change: approval semantics, the normal turn pipeline's behaviour for other kinds, `channels/mirror.rs` (add nothing; eval conversations are simply never mirrored, and a test proves it).
+- Eval conversations: kind `eval`, visible to `can_use`, excluded from the chat list by default and from every mirror, notice and channel post.
+- Lanes: this brief touches the gateway and the tools, which other lanes also edit (P4-UTOK adds `send_as_me`); schedule it with `PHASE5-PLAN.md`.
+
+## Acceptance criteria (failing-first)
+1. `services/aurora-api/tests/it/evals_runs.rs`: a run over three questions creates three `eval` conversations, each with one turn whose `source_event_id` is `eval:<run>:<pos>`; results are written in order; the run ends `done`; a replayed claim (lease expiry mid-run) does not duplicate a turn or a result.
+2. Concurrency: a second start while one run is active → 409 `eval_run_active`; the daily cap → 429 `eval_runs_limited`; a frozen agent → 423 `frozen` at start and `cancelled` (reason `frozen`) mid-run.
+3. Side-effect refusal (SEC-114): a canary write attempted by the agent in an eval turn → refused with `eval_read_only` at the gateway and at each platform tool (`send_message`, memory write, skill write, schedule creation, `send_as_me` once present); no approval row is created; `refused_writes` counts it; the same write in a normal conversation is unchanged.
+4. Scoring: numeric exact and within tolerance; text normalised; missing `ANSWER:` line → `fail` with `no_answer_line`; a failed turn → `error` with its `error_code`; a timeout → `error` with `timeout` and the turn aborted; cancel → `not_scored`.
+5. Confidentiality (SEC-116): expected answers and answers appear in no audit row, no request-log row, no notice, no connector request; a `channels/mirror.rs` test shows an eval conversation is never mirrored, even for an agent whose conversations are linked to a channel.
+6. Schedules: fire through the due-work arm; a frozen agent → `skipped_frozen`, no run; an active run → `skipped_busy`; five consecutive failures disable with `failures`; creator lost access → `anchor` rule of `04 §Fire-time authority`; interval below one hour → 422 `invalid`.
+7. Regression: a drop of 10 points against the previous `done` run of the same set version sets `regression`; a drop of 9 does not; `eval_regression_notify = false` suppresses it.
+8. Retention: a run older than 90 days and its eval conversations are removed through the normal delete path (session purge included).
+9. `cargo nextest run -p aurora-api -p aurora-gateway -p aurora-db` (targeted, then the batch gate); `cargo clippy … -D warnings`; `scripts/extract-schema.py --check`; `bash scripts/guards/run-all.sh` (exit 0).
+
+## Verification
+Per-task gates of `docs/tasks/LANE_RULES.md`. Opus reviews the refusal branches (gateway and tools) before merge, since they are the only thing standing between an eval and a real side effect.
+
+## Dependencies
+- Blocked by: P4-EVAL-1 merged (questions, settings, fingerprint).
+- Unblocks: P4-EVAL-3 (judge scoring plugs into `scoring.rs`), P4-EVAL-4 (run and schedule routes).
+- Schedule after P4-UTOK lands its `send_as_me` tool, or add it to the refusal list in the same change.
+
+## Suggested agent/model and reason
+`rust-developer` (Sonnet): engine, schedules and cross-module refusal in gateway and tools. Opus reviews the refusal code. Size **L**.
+
+## Completion report
+- Files changed:
+- Tests/checks (exact commands and results):
+- Remaining risks:

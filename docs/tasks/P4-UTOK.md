@@ -75,7 +75,7 @@ Per-task gates of `docs/tasks/LANE_RULES.md`. Rust: `cargo fmt --check`; `cargo 
 `rust-developer` (Sonnet) for Parts A and B (multi-module, security-sensitive: claim, approvals, revocation); `nextjs-developer` (Sonnet) for Part C. Opus reviews the claim branch, the eligibility checks, the revocation cascades and the person-token client before merge (SEC-112, SEC-113). Size **L**: a new domain, two tables, a connector client, an approval key and six revocation triggers. If the lane finds it larger, split at the approval boundary: `P4-UTOK-1` (custody, verify, routes, revocation, audit, dashboard) and `P4-UTOK-2` (`send_as_me`, approvals, connector send, live check); both must merge before any send is offered.
 
 ## Open questions for the owner
-Each has the recommended answer; the spec text follows it, marked "(pending owner answer Q-UTOK-n)".
+**Answered (owner, 2026-11-15, D-288): every recommendation below accepted.** The spec text follows them.
 
 - **Q-UTOK-1 — Which features.** Recommended: send-as-me only in phase 5; read-as-user stays hidden and gets its own brief later, because a wider read reaches private channels the bot cannot see, and the answers can then be posted elsewhere. Alternative: read-as-user in phase 5 as well (needs its own confused-deputy rules before build).
 - **Q-UTOK-2 — How a person grants a token.** Recommended: paste a Mattermost personal access token in Account, verified against the caller's own link. Alternative: a Mattermost OAuth2 app per server (the server admin creates it; more setup, and the token's scope is the app's, not the person's choice).

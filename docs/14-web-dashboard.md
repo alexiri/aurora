@@ -398,7 +398,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     rail's About part; a BYO agent (no rail) keeps them in the header. A frozen
     agent's banner stays full width under the header.
   - **Sections**, in this order: **Chat** (hosted only) · **Behaviour**
-    (Instructions, Memory, Skills) · **Triggers** (Schedules, Webhooks, Channels,
+    (Instructions, Memory, Skills, Evals) · **Triggers** (Schedules, Webhooks, Channels,
     Peers) · **Computer** (Computer, Terminal, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
     **Access**. Pages keep today's availability rules (Terminal and Previews only
     where enabled; BYO has only Instructions, Computer: Connect and Access); a
@@ -413,6 +413,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     per reply that lists the steps the agent takes, updated as they run and removed when the answer
     arrives. Chat platforms that can edit messages only. In shared channels the card shows step names,
     not details." The dashboard's own chat is unchanged. Shared primitives only.
+  - (phase 5, P4-EVAL, D-289, C-873) **Evals** is a page of the Behaviour section (`?tab=evals`), hosted agents only (no tab for BYO agents or a caller without `can_use`). It has three parts, in this order, all with shared primitives only (`DataTable`, `Dialog`, `ConfirmDialog`, `Field`, `Badge`, `Meter`, `Notice`, `Tabs`, `Card`, `Section`; add a missing primitive to `web/src/components/ui`, never a one-off style): **Questions** (a `DataTable` of position, question, expected-answer kind and a short expected summary; add and edit in a `Dialog` with the kind selector, a character counter at `EVAL_QUESTION_CHARS`, the number and tolerance for `numeric`, the text for `text`, the criteria for `judged`; the 100-question cap is explained, not hidden; on a phone the table becomes a stacked list with the same fields); **Judge** (the granted LLM keys the caller may see and a model field, saved by `can_own` only, with the other callers' control disabled and explained; every refusal of C-872 is an inline `Notice`); **Runs** (a list of status `Badge`, `Meter` for progress, pass rate, trigger and starter; "Start run" disabled with its reason while a run is active or the daily cap is reached; a run page with the results table (outcome `Badge`, question, the answer excerpt for `can_use` viewers, the reason in words, refused writes as a count), the regression `Notice` (C-871, counts only) and the fingerprint diff against the previous run as a two-column table of changed fields with truncated hashes and a copy action). Eval schedules are a `DataTable` with a dialog for the cron field and a plain-language preview, and "Run now" starts a run. Copy is plain English without emoji: the help text for the `ANSWER:` line and for refused writes says what the agent is told. Both themes; 390 px with no horizontal scroll; results and expected answers are never kept in `localStorage`, the URL or a cache outside the query cache (an unsent question draft may use `sessionStorage`).
   - **Chat panel**, from 768 px: conversation list (232 px) · thread · status
     rail, in one card; the page still does not scroll at 1280×800 (the list,
     transcript and rail scroll inside). The conversation list keeps its filter,
@@ -1438,7 +1439,12 @@ Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
 hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes; phase 4, P4-S3: the active blob backend, bytes and counts per backend, and for `s3` the bucket, prefix, health ("reachable" / "unreachable since …"), encryption and versioning state — never credentials; an unreachable store shows a banner and uploads show "Attachment storage is temporarily unavailable, try again in a moment" instead of the quota text; an expired chip is unchanged), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
-approved version; reject/disable/uninstall with orphan warnings), **Host
+approved version; (phase 5, P5-GUIDE-3, C-648, SEC-117) an **Agent guide** section per app, on the
+package page and in the review: the summary, the essentials and the guide files with their sizes,
+each marked added / changed / removed against the active version, under the sentence "Agents that
+use this app can read this text. It is written by the publisher."; a file opens in the shared
+preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
+the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
 claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
 P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
 list with key fingerprint and check status, add with a preview/trust review of the

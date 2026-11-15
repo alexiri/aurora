@@ -107,7 +107,7 @@ a dialect refuses the turn with `harness_failed` and a clear message, never gues
 or "skip auth" switches only). `TurnInput`: `{ text, speaker_label, door, recall: {
 index, snippets: [] }, notices: [] }`. `HomeSyncPart`: `{ kind: "skills" |
 "memory" | "render_inputs" | "tools" | "previews" | "manifest" | "final", entries: [...] }` ((phase 4, P4-PRV-1) a `previews` part has the single entry `{ shares: [{ share_id, port, start_command?, cwd? }] }`; an older supervisor that does not know the kind skips it, which only means no preview works)
-(`12 §Sync protocol`). (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
+(`12 §Sync protocol`). (phase 5, P5-GUIDE-2, C-643) The kind vocabulary gains `"apps"` (between `tools` and `previews`): file entries `{ path, content }` under `.aurora/apps/<app_id>/`, the entry shape of `skills`; an older supervisor skips the kind, which only means no app folders. (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
 
 ### Reports
 
@@ -206,7 +206,10 @@ ok: true, content: [{ type: "text", text } | { type: "json", value }] }` or
 never leave the supervisor.
 
 MCP surface: `tools/list` answered from the synced catalogue (+ local tools);
-`tools/call` as above; no MCP resources or prompts in phase 0.
+`tools/call` as above; no MCP resources or prompts in phase 0. (phase 5, P5-GUIDE-7, D-297,
+C-654) `ToolDescriptor` gains optional `family` and `exposure` (`core` / `on_demand`, omitted =
+`on_demand`); in mode `on_demand` `tools/list` returns the core descriptors only, `tools/call`
+is unchanged, and the socket's `list` (used by `aurora-agent` for target `aurora`) returns all (`24 §10b`).
 
 ---
 

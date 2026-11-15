@@ -70,7 +70,7 @@ Per-task gates of `docs/tasks/LANE_RULES.md`. Rust: `cargo fmt --check`, `cargo 
 `rust-developer` (Sonnet) for Parts A and B (multi-file, cross-module: channels, agents, connector, core limits), `nextjs-developer` (Sonnet) for Part C. Opus reviews `narration.rs`'s privacy filter and the cadence logic before merge (D-280). Size **M**.
 
 ## Open questions for the owner
-Each has the recommended answer; the spec text follows it, marked "(pending owner answer Q-NARR-n)".
+**Answered (owner, 2026-11-15):** Q-NARR-4 collapse (D-286); every other recommendation below accepted (D-288). The spec text follows them.
 
 - **Q-NARR-1 — Default and level of the setting.** Recommended: off by default, set per agent on the agent's Channels page. Alternative: on for every agent of a workspace or of the instance.
 - **Q-NARR-2 — What a shared space sees.** Recommended: step names only in any conversation that is not `direct`; the sanitized summary only in a `direct` conversation. Alternative: sanitized summaries everywhere (more useful, puts argument-bearing text in shared channels).
