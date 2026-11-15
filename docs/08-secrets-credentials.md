@@ -705,6 +705,18 @@ granted key, cached 10 min). Future internal calls (reaction picking, memory
 review) MUST go through a single `PlatformLlm` service that names the
 workspace secret it uses and records usage.
 
+(phase 5, P4-EVAL, D-292, C-869, SEC-115) **`PlatformLlm` gets its first purpose, `eval_judge`.**
+It lives in the API (`domains/llm`, built by P4-EVAL-3), uses the `aurora-llm` request builders
+and the API's own destination guard, and is the only path a judge call takes. Every call checks
+at call time, not only when the key is saved: the secret is `active`; it is **granted to the agent
+that owns the eval run** (a key never used without a grant, `§5`); governance admits its endpoint
+and scope (`§11`); and it is usable by readiness (`Model readiness` above). The judge key is
+named in the agent's eval settings (`agents.eval_judge_secret_id`, `03`). The request carries
+only the question, its criteria and the final answer of that question's own turn (`10 §Evals`);
+output is parsed strictly; a failure is an `error` for that question and there is no fallback
+key, provider or retry elsewhere. Usage is recorded on the eval run (`eval_runs.judge_usage`),
+never on `turns.usage`. A judge call is not a turn and writes no transcript event.
+
 ## 7. Gateway credentials
 
 | Kind | Prefix | Minted | Expires / revoked |

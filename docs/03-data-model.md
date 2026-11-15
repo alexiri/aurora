@@ -1917,3 +1917,89 @@ No foreign keys (the rows die young, like `preview_stream_grants`); rows pruned 
 grant value never reaches the browser and is never stored; terminal bytes are never stored
 anywhere — the table holds the open's metadata only. The gateway database role gets nothing on
 this table.
+
+#### `eval_questions` (phase 5, P4-EVAL, D-289, C-861; migration `20261201000236`)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_id | uuid FK→agents (cascade) | hosted agents only (`eval_not_supported` for BYO) |
+| workspace_id | uuid FK→workspaces (cascade) | the audience of §Evals |
+| position | int not null | unique `(agent_id, position)` |
+| question | text not null | ≤ `EVAL_QUESTION_CHARS` |
+| expected_kind | text not null CHECK in (`numeric`,`text`,`judged`) | |
+| expected_number | numeric null | `numeric` only |
+| tolerance | numeric null default 0 | `numeric` only; ≥ 0 |
+| expected_text | text null | `text` only; ≤ `EVAL_EXPECTED_TEXT_CHARS`; agent-audience data (`10 §Evals`, SEC-116) |
+| criteria | text null | `judged` only; ≤ `EVAL_CRITERIA_CHARS` |
+| enabled | bool not null default true | |
+| version | int not null default 1 | bumped by every edit; part of `question_set_version` |
+| created_by / created_at / updated_at | | |
+
+No foreign key to runs: a run keeps its question text and expected kind in `eval_results` (snapshot), so an edit never rewrites history.
+
+#### `eval_runs` and `eval_results` (phase 5, P4-EVAL, D-290, D-291, C-864, C-867; migration `20261201000237`)
+| Table | Column | Type | Notes |
+|---|---|---|---|
+| `eval_runs` | id | uuid pk | |
+| | agent_id | uuid FK→agents (cascade) | |
+| | workspace_id | uuid FK→workspaces (cascade) | |
+| | trigger | text not null CHECK in (`manual`,`schedule`) | |
+| | schedule_id | uuid null FK→eval_schedules (set null) | |
+| | started_by_user_id | uuid null FK→users (set null) | null for scheduled runs (fire-time authority: `10 §Evals`) |
+| | status | text not null CHECK in (`queued`,`running`,`done`,`failed`,`cancelled`) | |
+| | question_set_version | text not null | SHA-256 of the enabled questions' ids and versions |
+| | fingerprint | jsonb not null | canonical object of C-866, hashes and ids only, immutable |
+| | fingerprint_hash | text not null | SHA-256 of the canonical `fingerprint` |
+| | questions_total / passed / failed / errored / not_scored | int not null default 0 | counts |
+| | refused_writes | int not null default 0 | total `eval_read_only` refusals of the run |
+| | judge_usage | jsonb null | summed token counts of judge calls (never `turns.usage`) |
+| | regression | jsonb null | `{ from_run_id, drop_points }` (C-871) |
+| | error_code | text null | run-level end reason (`access_lost`, `frozen`, `cancelled`, …) |
+| | cancel_requested_at | timestamptz null | |
+| | lease_until | timestamptz null | claim clock (`SCHEDULE_FIRE_LEASE`-style) |
+| | created_at / started_at / finished_at | timestamptz | |
+| | index | partial unique `(agent_id)` WHERE status IN (`queued`,`running`) | one active run per agent (`EVAL_RUNS_ACTIVE_PER_AGENT`) |
+| `eval_results` | id | uuid pk | |
+| | run_id | uuid FK→eval_runs (cascade) | unique `(run_id, position)` |
+| | position | int not null | |
+| | question_id | uuid null FK→eval_questions (set null) | the question as it was at start: `question_text`, `expected_kind` and `expected_snapshot` below carry the rest |
+| | question_text | text not null | snapshot |
+| | expected_kind | text not null | snapshot |
+| | expected_snapshot | jsonb not null | snapshot of the expected answer; agent-audience data, never copied to audit or logs |
+| | conversation_id | uuid null FK→conversations (set null) | the question's `eval` conversation |
+| | turn_id | uuid null | |
+| | outcome | text not null CHECK in (`pass`,`fail`,`error`,`not_scored`) | |
+| | reason_code | text null | `no_answer_line`, `timeout`, `judge_unparseable`, `judge_not_granted`, `access_lost`, `frozen`, `cancelled`, a turn's `error_code`, … (C-872) |
+| | extracted_value | text null | `numeric`/`text`: the value read from `ANSWER:` |
+| | answer_text | text null | ≤ `EVAL_ANSWER_CHARS`, sanitised; agent-audience data |
+| | judge_verdict | text null | `pass` / `fail` for judged questions |
+| | judge_rationale | text null | ≤ `EVAL_RATIONALE_CHARS`, one line |
+| | refused_writes | int not null default 0 | |
+| | started_at / finished_at | timestamptz null | |
+
+Rows of a finished run are immutable except by the retention job (`EVAL_RUN_RETENTION`, 90 days) and by deletion of the run. The gateway database role gets nothing on these tables.
+
+#### `eval_schedules` (phase 5, P4-EVAL, D-293, C-870; migration `20261201000238`)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_id | uuid FK→agents (cascade) | |
+| name | text not null | |
+| cron | text not null | 5-field; interval ≥ `EVAL_SCHEDULE_MIN_INTERVAL` over a full week of occurrences |
+| timezone | text not null | IANA |
+| enabled | bool not null default true | |
+| disabled_reason | text null CHECK in (`user`,`authorization`,`failures`) | |
+| consecutive_failures | int not null default 0 | |
+| creator_user_id | uuid null FK→users (set null) | fire-time authority anchor (`04 §Fire-time authority`) |
+| anchor | text not null default `creator` CHECK in (`creator`,`workspace`) | |
+| next_fire_at / fire_lease_until / last_fire_at | timestamptz null | the schedules engine's claim fields |
+| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`skipped_frozen`) | |
+| last_run_id | uuid null FK→eval_runs (set null) | |
+
+#### `agents` eval columns and `conversations.kind` (phase 5, P4-EVAL, C-860, C-863; migrations `20261201000239`, `20261201000240`)
+| Table | Planned change | Notes |
+|---|---|---|
+| `agents` | `eval_judge_secret_id uuid null FK→secrets (set null)` | the judge key (LLM secret, granted to the agent, governance-admitted at every call: `10 §Evals`, D-292) |
+| `agents` | `eval_judge_model_id text null` | the judge's model (a model the key's endpoint serves) |
+| `agents` | `eval_regression_notify bool not null default true` | C-871 |
+| `conversations` | `kind` CHECK gains `eval` | external_ref `eval:<run_id>:<position>`; the unique `(agent_id, kind, external_ref)` index is unchanged |
