@@ -35,16 +35,16 @@ use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-type Client = WebSocketStream<MaybeTlsStream<TcpStream>>;
+pub(crate) type Client = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 const KEY: [u8; 32] = [23; 32];
 /// `TERMINAL_STREAM_WINDOW` (the open the supervisor answers with).
-const WINDOW: u64 = 131_072;
+pub(crate) const WINDOW: u64 = 131_072;
 
 /// The runner half: channel server + stream listener, both live, the listener open
 /// (`set_previews_enabled(true)` is what a registration with `terminal: true` drives —
 /// C-623: the listener opens when previews **or** the terminal is on).
-async fn rig(
+pub(crate) async fn rig(
     api: &MockServer,
 ) -> (
     std::net::SocketAddr,
@@ -86,7 +86,7 @@ async fn rig(
 
 /// The fake supervisor: the W6 client a boot runs. Admits its channel (the claim mock names
 /// the session) and then answers the frames the listener sends (leg 2 under test).
-async fn connect_supervisor(addr: std::net::SocketAddr) -> Client {
+pub(crate) async fn connect_supervisor(addr: std::net::SocketAddr) -> Client {
     let (mut ws, _) = connect_async(format!("ws://{addr}/v1/supervisor"))
         .await
         .unwrap();
@@ -101,7 +101,7 @@ async fn connect_supervisor(addr: std::net::SocketAddr) -> Client {
 }
 
 /// Next text frame (skips pings and acks).
-async fn next_text(ws: &mut Client) -> Value {
+pub(crate) async fn next_text(ws: &mut Client) -> Value {
     loop {
         match tokio::time::timeout(Duration::from_secs(5), ws.next())
             .await
@@ -124,7 +124,7 @@ async fn next_text(ws: &mut Client) -> Value {
 
 /// The API mocks one boot needs: claim (welcome), hold, the terminal-shape redemption
 /// (`kind: "terminal"` answer — no `port`, no `share_id`, C-617) and the keep-awake stamp.
-async fn mount_runner_api(api: &MockServer, sandbox: Uuid, boot: Uuid) {
+pub(crate) async fn mount_runner_api(api: &MockServer, sandbox: Uuid, boot: Uuid) {
     mount_runner_api_with_shell(api, sandbox, boot, None).await;
 }
 
@@ -188,7 +188,7 @@ fn dial(st_addr: std::net::SocketAddr) -> tokio::task::JoinHandle<Result<Client,
 }
 
 /// The leg's end: skips pings/pongs and buffered data, returns the close frame's code.
-async fn close_code(ws: &mut Client) -> u16 {
+pub(crate) async fn close_code(ws: &mut Client) -> u16 {
     loop {
         let m = tokio::time::timeout(Duration::from_secs(5), ws.next())
             .await

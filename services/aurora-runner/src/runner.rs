@@ -136,6 +136,9 @@ impl Runner {
         // (P4-TERM, C-623) The runner speaks the W19 `pty.*` frames and redeems
         // `kind: "terminal"` grants when the operator turned the terminal on here.
         caps.terminal = s.terminal;
+        // (P5-FILES-1, D-316) `auf_` legs ride the same listener and are accepted wherever the
+        // terminal is enabled; an older runner lacks this field and refuses the grant kind.
+        caps.files = s.terminal;
         if let Some(image) = &self.settings.executor.image {
             caps.image_capabilities = self.backend.image_capabilities(image).await;
             // (P4-HAR) The registered `harnesses` are what the image contains.

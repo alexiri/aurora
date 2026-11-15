@@ -547,6 +547,7 @@ impl Backend for PodmanBackend {
             // (P4-TERM, C-623) Terminals are an operator/api decision, resolved at
             // registration from the answered `terminal` config flag.
             terminal: false,
+            files: false,
         }
     }
 

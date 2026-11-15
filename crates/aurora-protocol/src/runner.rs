@@ -195,6 +195,12 @@ pub struct RunnerCapabilities {
     /// terminal route against a runner without it. Absent (false) from older runners.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
+    /// (phase 5, P5-FILES-1, D-316) The runner redeems `kind: "files"` grants (`auf_`) and speaks
+    /// the W20 `exec.*` frames in mode `sftp` (`16 §W21`); the API serves no Files route against a
+    /// runner without it (`files_not_supported`, reason `runner`). Absent (false) from older
+    /// runners, which refuse the unknown grant kind.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub files: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
