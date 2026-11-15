@@ -90,6 +90,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         // (FIX-126) The Storage pages are cached snapshots read in the `general` bucket; only
         // the deliberate Refresh buttons are `export`-class.
         ["admin", "storage", "refresh"] if post => return Some(Class::Export),
+        // (phase 5, SET-1, C-775) the settings export reads every section.
+        ["admin", "settings", "export"] if is_get => return Some(Class::Export),
         ["orgs", _, "storage", "refresh"] if post => return Some(Class::Export),
         _ => {}
     }

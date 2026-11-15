@@ -149,6 +149,7 @@ async fn managed_prefix_path_refused_even_with_covering_glob() {
         id: "vault".into(),
         address: v.addr.clone(),
         ca_file: None,
+        ca_pem: None,
         auth: VaultAuthSettings::Token {
             token_env: TOKEN_ENV.into(),
         },

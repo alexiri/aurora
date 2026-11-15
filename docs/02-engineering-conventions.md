@@ -425,3 +425,6 @@ overridden by the named configuration key (`15`).
 | `SETTINGS_RELOAD_POLL` | (phase 5, SET-1, D-236(f)) 30 s: API replicas and gateways compare the section generations with their snapshot as a backstop to `aurora_settings` | — | 06, 15 |
 | `SETTINGS_AUDIT_VALUE_MAX` | (phase 5, SET-1, C-777) 1 KiB per before/after value in an `instance_settings.*` audit row (longer values truncated with `…`; lists over it recorded as added/removed entries) | — | 04 |
 | `SETTINGS_PREVIEW_ORGS_MAX` | (phase 5, SET-1, C-774) 200 affected organizations listed by a settings preview (`affected_orgs_total` counts the rest) | — | 05 |
+| `SECRET_STORE_HEALTH_INTERVAL` | (phase 5, FIX-124, C-746) 30 s: a store's health and the value counts of Admin › Secret stores are probed at most once per interval, however many page loads | — | 05, 08 |
+| `SECRET_STORE_PROBE_TIMEOUT` | (phase 5, FIX-124, C-746) 8 s per store probe (health, Test connection) | — | 05, 08 |
+| `SECRET_MIGRATION_DISCARD_GRACE` | (phase 5, FIX-124, C-747) 2 s between a dashboard migration's last commit and the discard of the old values (gateway caches reload) | — | 05, 08 |

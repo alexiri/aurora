@@ -33,6 +33,7 @@ pub mod refresh;
 pub mod reqlog;
 pub mod resolve;
 pub mod resolver;
+pub mod settings;
 pub mod snapshot;
 pub mod status;
 pub mod summarize_client;

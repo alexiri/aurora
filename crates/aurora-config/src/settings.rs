@@ -1,0 +1,1014 @@
+//! Instance settings (phase 5, SET-1, D-236..D-238, C-770): the registry of movable keys and the
+//! effective view `helm > stored > default` over the deployment configuration.
+//!
+//! A *movable key* is a configuration key an instance admin may edit in the dashboard unless the
+//! deployment configuration sets it. Everything else is not a setting (SEC-89). The merge works on
+//! the configuration's TOML table, so the **existing** validation functions (`api_config`,
+//! `gateway_config`) run on the merged [`RawConfig`] and no rule exists twice.
+
+use crate::error::{ConfigError, ConfigErrors, Result};
+use crate::load::{build_raw, read_table, set_path};
+use crate::raw::RawConfig;
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::sync::OnceLock;
+
+/// The instance-settings sections (C-770). `export` and `import` are never section ids.
+pub const SECTION_IDS: [&str; 13] = [
+    "governance",
+    "llm",
+    "sign_in",
+    "email",
+    "secrets",
+    "agents",
+    "approvals",
+    "retention",
+    "skills",
+    "scim",
+    "previews",
+    "terminal",
+    "limits",
+];
+
+/// The test-only section (feature `test-registry` or this crate's unit tests): its keys have no
+/// `RawConfig` field, so they exercise the mechanism without a real setting.
+pub const TEST_SECTION: &str = "settings_test";
+/// A second test-only section.
+pub const TEST_SECTION_B: &str = "settings_test_b";
+
+/// Keys (or key prefixes ending in `.`) that are **never** settings (D-237(b), SEC-89): roots,
+/// topology, `auth.instance_admins` and every development or test switch.
+pub const NOT_SETTINGS: &[&str] = &[
+    "database.",
+    "server.",
+    "auth.instance_admins",
+    "auth.trusted_origins",
+    "auth.dev_idp.",
+    "hosted.allow_fake_harness",
+    "gateway.insecure_loopback_injection",
+    "plugins.",
+    "runner.",
+    "connector_host.test_types",
+    "ratelimit.api.enabled",
+    "ratelimit.counters.",
+    "email.log_links",
+    "llm.dev_upstream_overrides",
+    "push.dev_endpoint_overrides",
+    "events.",
+    "telemetry.",
+    "tls.",
+    "hookhost.",
+    "relay.",
+    "previews.enabled",
+    "previews.domain",
+    "terminal.available",
+    "scim.available",
+    "governance.llm.known_llm_hosts",
+];
+
+/// One section's display data.
+#[derive(Debug, Clone, Copy)]
+pub struct SectionDef {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+}
+
+/// The value type of a setting (C-770).
+#[derive(Debug, Clone)]
+pub enum SettingType {
+    Bool,
+    Int {
+        min: i64,
+        max: i64,
+    },
+    /// A number of seconds.
+    DurationSecs {
+        min: i64,
+        max: i64,
+    },
+    Str {
+        max_len: usize,
+    },
+    Enum(Vec<&'static str>),
+    List {
+        item: Box<SettingType>,
+        max_items: usize,
+    },
+    /// A list entry (keyed lists): validated by the section's own rules on the merged view.
+    Object,
+}
+
+/// How a list setting is locked and merged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListKind {
+    /// Locked as a whole: Helm's list or the dashboard's, never merged.
+    Whole,
+    /// Entries identified by `id_field`: a Helm entry is locked, dashboard entries sit beside it.
+    Keyed { id_field: &'static str },
+}
+
+/// How a change of a value is judged looser (C-770, shown by the preview).
+#[derive(Debug, Clone)]
+pub enum Loosening {
+    /// Not a ceiling or floor: a change is never flagged.
+    None,
+    /// `true`: turning the switch on loosens; `false`: turning it off loosens.
+    Bool { loosens_when: bool },
+    /// The numeric value going up (`true`) or down (`false`) loosens.
+    Number { up_loosens: bool },
+    /// An order, strictest first: moving toward the end loosens.
+    Order(Vec<&'static str>),
+    /// A list gaining entries (`true`) or losing entries (`false`) loosens.
+    List { superset_loosens: bool },
+}
+
+/// One registry entry.
+#[derive(Debug, Clone)]
+pub struct SettingDef {
+    pub section: &'static str,
+    /// The dotted configuration path.
+    pub key: &'static str,
+    pub ty: SettingType,
+    /// The application's default (what the effective view shows as `default`).
+    pub default: Value,
+    /// The Helm values key that sets it.
+    pub helm_key: String,
+    pub list: Option<ListKind>,
+    /// A write-only value (sealed in the inline store, never returned).
+    pub secret: bool,
+    pub loosening: Loosening,
+    /// A test-only key without a `RawConfig` field.
+    pub test_only: bool,
+}
+
+impl SettingDef {
+    /// A scalar or whole-list setting with the default `helm_key` (`config.<key>`).
+    pub fn new(section: &'static str, key: &'static str, ty: SettingType, default: Value) -> Self {
+        Self {
+            section,
+            key,
+            ty,
+            default,
+            helm_key: format!("config.{key}"),
+            list: None,
+            secret: false,
+            loosening: Loosening::None,
+            test_only: false,
+        }
+    }
+    #[must_use]
+    pub fn helm(mut self, key: &str) -> Self {
+        self.helm_key = key.to_string();
+        self
+    }
+    #[must_use]
+    pub fn whole_list(mut self) -> Self {
+        self.list = Some(ListKind::Whole);
+        self
+    }
+    #[must_use]
+    pub fn keyed(mut self, id_field: &'static str) -> Self {
+        self.list = Some(ListKind::Keyed { id_field });
+        self
+    }
+    #[must_use]
+    pub fn secret(mut self) -> Self {
+        self.secret = true;
+        self
+    }
+    #[must_use]
+    pub fn loosening(mut self, l: Loosening) -> Self {
+        self.loosening = l;
+        self
+    }
+
+    /// Check one value against the type (shape and bounds). `Err` is a short message.
+    pub fn check(&self, v: &Value) -> std::result::Result<(), String> {
+        if self.secret {
+            return Ok(());
+        }
+        check_type(&self.ty, v)
+    }
+
+    /// Is `after` looser than `before` (C-770 `loosening`)?
+    pub fn is_loosening(&self, before: &Value, after: &Value) -> bool {
+        if before == after {
+            return false;
+        }
+        match &self.loosening {
+            Loosening::None => false,
+            Loosening::Bool { loosens_when } => after.as_bool() == Some(*loosens_when),
+            Loosening::Number { up_loosens } => match (before.as_f64(), after.as_f64()) {
+                (Some(b), Some(a)) => (a > b) == *up_loosens,
+                _ => false,
+            },
+            Loosening::Order(order) => {
+                let pos = |v: &Value| v.as_str().and_then(|s| order.iter().position(|o| *o == s));
+                matches!((pos(before), pos(after)), (Some(b), Some(a)) if a > b)
+            }
+            Loosening::List { superset_loosens } => {
+                let items = |v: &Value| -> BTreeSet<String> {
+                    v.as_array()
+                        .map(|a| a.iter().map(Value::to_string).collect())
+                        .unwrap_or_default()
+                };
+                let (b, a) = (items(before), items(after));
+                if *superset_loosens {
+                    a.difference(&b).next().is_some()
+                } else {
+                    b.difference(&a).next().is_some()
+                }
+            }
+        }
+    }
+}
+
+fn check_type(ty: &SettingType, v: &Value) -> std::result::Result<(), String> {
+    match ty {
+        SettingType::Bool => v
+            .is_boolean()
+            .then_some(())
+            .ok_or_else(|| "must be true or false".into()),
+        SettingType::Int { min, max } | SettingType::DurationSecs { min, max } => {
+            match v.as_i64() {
+                Some(n) if (*min..=*max).contains(&n) => Ok(()),
+                Some(_) => Err(format!("must be between {min} and {max}")),
+                None => Err("must be a whole number".into()),
+            }
+        }
+        SettingType::Str { max_len } => match v.as_str() {
+            Some(s) if s.chars().count() <= *max_len => Ok(()),
+            Some(_) => Err(format!("at most {max_len} characters")),
+            None => Err("must be a string".into()),
+        },
+        SettingType::Enum(allowed) => match v.as_str() {
+            Some(s) if allowed.contains(&s) => Ok(()),
+            _ => Err(format!("must be one of: {}", allowed.join(", "))),
+        },
+        SettingType::List { item, max_items } => match v.as_array() {
+            Some(a) if a.len() <= *max_items => a.iter().try_for_each(|x| check_type(item, x)),
+            Some(_) => Err(format!("at most {max_items} entries")),
+            None => Err("must be a list".into()),
+        },
+        SettingType::Object => v
+            .is_object()
+            .then_some(())
+            .ok_or_else(|| "must be an object".into()),
+    }
+}
+
+/// The registry: every movable key, by section. Each section brief registers its own entries
+/// (SET-2..SET-5, FIX-124); SET-1 registers none besides the test section.
+#[derive(Debug)]
+pub struct Registry {
+    defs: Vec<SettingDef>,
+}
+
+impl Registry {
+    fn build() -> Self {
+        #[allow(unused_mut)]
+        let mut defs: Vec<SettingDef> = Vec::new();
+        defs.extend(secrets_defs());
+        #[cfg(any(test, feature = "test-registry"))]
+        defs.extend(test_defs());
+        Self { defs }
+    }
+
+    pub fn defs(&self) -> &[SettingDef] {
+        &self.defs
+    }
+
+    pub fn get(&self, key: &str) -> Option<&SettingDef> {
+        self.defs.iter().find(|d| d.key == key)
+    }
+
+    pub fn section(&self, section: &str) -> impl Iterator<Item = &SettingDef> {
+        let section = section.to_string();
+        self.defs.iter().filter(move |d| d.section == section)
+    }
+
+    /// The registered (non-test) keys, sorted: `deploy/helm/aurora/movable-keys.txt`.
+    pub fn movable_keys(&self) -> Vec<&'static str> {
+        let mut keys: Vec<&'static str> = self
+            .defs
+            .iter()
+            .filter(|d| !d.test_only)
+            .map(|d| d.key)
+            .collect();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// Is `id` a known section (the reserved thirteen, plus the test section when enabled)?
+    pub fn has_section(&self, id: &str) -> bool {
+        sections().iter().any(|s| s.id == id)
+    }
+}
+
+/// The process-wide registry.
+pub fn registry() -> &'static Registry {
+    static R: OnceLock<Registry> = OnceLock::new();
+    R.get_or_init(Registry::build)
+}
+
+/// The sections in display order.
+pub fn sections() -> &'static [SectionDef] {
+    static S: OnceLock<Vec<SectionDef>> = OnceLock::new();
+    S.get_or_init(|| {
+        #[allow(unused_mut)]
+        let mut v = vec![
+            SectionDef {
+                id: "governance",
+                title: "Governance",
+                description: "Instance floors for LLM keys, egress and bring-your-own agents.",
+            },
+            SectionDef {
+                id: "llm",
+                title: "LLM endpoints",
+                description: "Providers and endpoints agents may reach.",
+            },
+            SectionDef {
+                id: "sign_in",
+                title: "Sign-in",
+                description: "Sign-up, sessions and identity providers.",
+            },
+            SectionDef {
+                id: "email",
+                title: "Email",
+                description: "Outgoing mail.",
+            },
+            SectionDef {
+                id: "secrets",
+                title: "Secret stores",
+                description: "Where secret values are kept.",
+            },
+            SectionDef {
+                id: "agents",
+                title: "Agents & sandboxes",
+                description: "Agent defaults and hosted-agent timeouts.",
+            },
+            SectionDef {
+                id: "approvals",
+                title: "Approvals",
+                description: "Approval deadlines and notifications.",
+            },
+            SectionDef {
+                id: "retention",
+                title: "Retention & storage",
+                description: "How long data is kept and storage quotas.",
+            },
+            SectionDef {
+                id: "skills",
+                title: "Skills",
+                description: "The git skill library.",
+            },
+            SectionDef {
+                id: "scim",
+                title: "Directory sync",
+                description: "SCIM provisioning.",
+            },
+            SectionDef {
+                id: "previews",
+                title: "Previews",
+                description: "Port preview quotas and caps.",
+            },
+            SectionDef {
+                id: "terminal",
+                title: "Terminal",
+                description: "The web terminal.",
+            },
+            SectionDef {
+                id: "limits",
+                title: "Limits",
+                description: "Rate limits and gateway limits.",
+            },
+        ];
+        #[cfg(any(test, feature = "test-registry"))]
+        {
+            v.push(SectionDef {
+                id: TEST_SECTION,
+                title: "Test section",
+                description: "Exercises the settings mechanism.",
+            });
+            v.push(SectionDef {
+                id: TEST_SECTION_B,
+                title: "Second test section",
+                description: "A second section for multi-section imports.",
+            });
+        }
+        v
+    })
+}
+
+/// The `secrets` section (FIX-124, D-237): where secret values are kept. The store definitions are
+/// a keyed list by `id` (a store the chart renders from `vault.*` is one locked entry, dashboard
+/// stores sit beside it); the default store is a scalar.
+fn secrets_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    vec![
+        SettingDef::new(
+            "secrets",
+            "secrets.default_store",
+            SettingType::Str { max_len: 64 },
+            json!("inline"),
+        )
+        .helm("vault.makeDefault"),
+        SettingDef::new(
+            "secrets",
+            "secrets.stores",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: 16,
+            },
+            json!([]),
+        )
+        .keyed("id")
+        .helm("vault.*"),
+    ]
+}
+
+/// May a dashboard-defined store have this `kind`? Only Vault; the test store only where the
+/// test registry is compiled in (SEC-89: no test switch is reachable from a browser session).
+pub fn dashboard_store_kind_allowed(kind: &str) -> bool {
+    kind == crate::VAULT_KIND || (cfg!(any(test, feature = "test-registry")) && kind == "memory")
+}
+
+#[cfg(any(test, feature = "test-registry"))]
+fn test_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    let mut v = vec![
+        SettingDef::new(
+            TEST_SECTION,
+            "settings_test.flag",
+            SettingType::Bool,
+            json!(false),
+        )
+        .loosening(Loosening::Bool { loosens_when: true }),
+        SettingDef::new(
+            TEST_SECTION,
+            "settings_test.limit",
+            SettingType::Int { min: 1, max: 100 },
+            json!(10),
+        )
+        .loosening(Loosening::Number { up_loosens: true }),
+        SettingDef::new(
+            TEST_SECTION,
+            "settings_test.mode",
+            SettingType::Enum(vec!["strict", "standard", "open"]),
+            json!("standard"),
+        )
+        .loosening(Loosening::Order(vec!["strict", "standard", "open"])),
+        SettingDef::new(
+            TEST_SECTION,
+            "settings_test.names",
+            SettingType::List {
+                item: Box::new(SettingType::Str { max_len: 64 }),
+                max_items: 20,
+            },
+            json!([]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: true,
+        }),
+        SettingDef::new(
+            TEST_SECTION,
+            "settings_test.token",
+            SettingType::Str { max_len: 256 },
+            Value::Null,
+        )
+        .secret(),
+        SettingDef::new(
+            TEST_SECTION,
+            "settings_test.items",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: 20,
+            },
+            json!([]),
+        )
+        .keyed("id"),
+        // A second section, so an import can span two and prove it is all-or-nothing.
+        SettingDef::new(
+            TEST_SECTION_B,
+            "settings_test_b.count",
+            SettingType::Int { min: 1, max: 10 },
+            json!(1),
+        ),
+    ];
+    for d in &mut v {
+        d.test_only = true;
+    }
+    v
+}
+
+// ---------------------------------------------------------------------------------------------
+// Presence and the effective view
+// ---------------------------------------------------------------------------------------------
+
+/// Where an effective value comes from (C-772).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Source {
+    Helm,
+    Dashboard,
+    Default,
+}
+
+/// Values stored in `instance_settings`: section → dotted key → value.
+#[derive(Debug, Clone, Default)]
+pub struct Stored {
+    pub sections: BTreeMap<String, BTreeMap<String, Value>>,
+}
+
+impl Stored {
+    pub fn get(&self, section: &str, key: &str) -> Option<&Value> {
+        self.sections.get(section).and_then(|s| s.get(key))
+    }
+
+    /// Stored values from `(section, value object)` rows, reading only `only` sections when
+    /// given. A row of an unknown section and a key that is not a registered key of its section
+    /// (written by a newer release, or hand-edited: SEC-89, D-238(c)) are ignored; the second
+    /// value lists them for the caller to log.
+    pub fn from_rows<'a>(
+        rows: impl IntoIterator<Item = (&'a str, &'a Value)>,
+        only: Option<&[&str]>,
+    ) -> (Self, Vec<String>) {
+        let reg = registry();
+        let mut stored = Stored::default();
+        let mut ignored = Vec::new();
+        for (section, value) in rows {
+            if only.is_some_and(|o| !o.contains(&section)) {
+                continue;
+            }
+            if !reg.has_section(section) {
+                ignored.push(format!("section {section}"));
+                continue;
+            }
+            let mut keys = BTreeMap::new();
+            if let Value::Object(map) = value {
+                for (k, v) in map {
+                    match reg.get(k) {
+                        Some(d) if d.section == section => {
+                            keys.insert(k.clone(), v.clone());
+                        }
+                        _ => ignored.push(format!("key {k} in section {section}")),
+                    }
+                }
+            }
+            stored.sections.insert(section.to_string(), keys);
+        }
+        (stored, ignored)
+    }
+
+    /// Stored values of the wrong shape or out of their bounds: `(key, message)`.
+    pub fn type_problems(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (section, keys) in &self.sections {
+            for (key, v) in keys {
+                if let Some(d) = registry().get(key).filter(|d| d.section == section)
+                    && let Err(m) = d.check(v)
+                {
+                    out.push((key.clone(), m));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// One entry of a keyed list with its source.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntryView {
+    pub id: String,
+    pub value: Value,
+    pub source: Source,
+}
+
+/// The effective value of one registered key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectiveKey {
+    pub value: Value,
+    pub source: Source,
+    /// Keyed lists only.
+    pub entries: Option<Vec<EntryView>>,
+}
+
+/// The merged configuration and the per-key view.
+#[derive(Debug)]
+pub struct Effective {
+    pub raw: RawConfig,
+    pub keys: BTreeMap<String, EffectiveKey>,
+}
+
+/// The deployment configuration before deserialization, with the set of dotted keys it sets.
+#[derive(Debug, Clone)]
+pub struct ConfigSource {
+    table: toml::Table,
+    env: BTreeMap<String, String>,
+    /// Everything the configuration sets, test-only keys included (they have no `RawConfig` field).
+    json: Value,
+    /// The dotted keys the file and `AURORA__…` overrides set (keyed-list entries as `key.<id>`).
+    pub presence: BTreeSet<String>,
+}
+
+impl ConfigSource {
+    /// Load like [`crate::load`], keeping the table and the presence set.
+    pub fn load(path: Option<&Path>, env: impl Iterator<Item = (String, String)>) -> Result<Self> {
+        let (table, env) = read_table(path, env)?;
+        Self::from_table(table, env)
+    }
+
+    /// An empty configuration (tests: nothing is locked).
+    pub fn empty() -> Self {
+        Self {
+            table: toml::Table::new(),
+            env: BTreeMap::new(),
+            json: Value::Object(serde_json::Map::new()),
+            presence: BTreeSet::new(),
+        }
+    }
+
+    /// Build from an already merged table (and the environment for the secret variables).
+    #[allow(unused_mut)]
+    pub fn from_table(mut table: toml::Table, env: BTreeMap<String, String>) -> Result<Self> {
+        let json = serde_json::to_value(&table)
+            .map_err(|e| ConfigErrors(vec![ConfigError::new("config", e.to_string())]))?;
+        // Test-only keys have no `RawConfig` field: lift their table out before deserializing.
+        #[cfg(any(test, feature = "test-registry"))]
+        {
+            table.remove(TEST_SECTION);
+        }
+        let mut presence = BTreeSet::new();
+        collect_presence(&json, "", &mut presence);
+        add_entry_presence(&json, &mut presence);
+        Ok(Self {
+            table,
+            env,
+            json,
+            presence,
+        })
+    }
+
+    /// Parse TOML text (tests).
+    pub fn from_toml(text: &str, env: BTreeMap<String, String>) -> Result<Self> {
+        let table = text
+            .parse::<toml::Table>()
+            .map_err(|e| ConfigErrors(vec![ConfigError::new("config", e.message().to_string())]))?;
+        Self::from_table(table, env)
+    }
+
+    /// The configuration alone (no stored values): what [`crate::load`] returns.
+    pub fn raw(&self) -> Result<RawConfig> {
+        build_raw(&self.table, &self.env)
+    }
+
+    /// The value the configuration sets for `key` (any dotted path), if it does.
+    pub fn helm_value(&self, key: &str) -> Option<&Value> {
+        let mut cur = &self.json;
+        for part in key.split('.') {
+            cur = cur.as_object()?.get(part)?;
+        }
+        Some(cur)
+    }
+
+    /// Does the configuration set this registered key (a keyed list counts when it has entries)?
+    pub fn sets(&self, key: &str) -> bool {
+        self.presence.contains(key)
+    }
+
+    /// `helm > stored > default` over the registry, then the merged [`RawConfig`] (not validated:
+    /// the caller runs `api_config()` / `gateway_config()` on it, D-236(d)).
+    pub fn effective(&self, stored: &Stored) -> Result<Effective> {
+        let reg = registry();
+        let mut table = self.table.clone();
+        let mut keys = BTreeMap::new();
+        let mut errors = Vec::new();
+        for d in reg.defs() {
+            let stored_v = stored.get(d.section, d.key).filter(|_| !d.secret);
+            let helm_v = self.helm_value(d.key).filter(|_| self.sets(d.key));
+            let eff = match d.list {
+                Some(ListKind::Keyed { id_field }) => {
+                    let mut entries: Vec<EntryView> = Vec::new();
+                    for e in helm_v.and_then(Value::as_array).into_iter().flatten() {
+                        entries.push(EntryView {
+                            id: entry_id(e, id_field),
+                            value: e.clone(),
+                            source: Source::Helm,
+                        });
+                    }
+                    for e in stored_v.and_then(Value::as_array).into_iter().flatten() {
+                        let id = entry_id(e, id_field);
+                        // An entry the configuration defines replaces a stored one (D-236(b)).
+                        if entries.iter().any(|x| x.id == id) {
+                            continue;
+                        }
+                        entries.push(EntryView {
+                            id,
+                            value: e.clone(),
+                            source: Source::Dashboard,
+                        });
+                    }
+                    let source = if entries.iter().any(|e| e.source == Source::Helm) {
+                        Source::Helm
+                    } else if entries.is_empty() {
+                        Source::Default
+                    } else {
+                        Source::Dashboard
+                    };
+                    let value = Value::Array(entries.iter().map(|e| e.value.clone()).collect());
+                    if !entries.is_empty() && !d.test_only {
+                        put(&mut table, d.key, &value, &mut errors);
+                    }
+                    EffectiveKey {
+                        value: if entries.is_empty() {
+                            d.default.clone()
+                        } else {
+                            value
+                        },
+                        source,
+                        entries: Some(entries),
+                    }
+                }
+                _ => match (helm_v, stored_v) {
+                    (Some(v), _) => EffectiveKey {
+                        value: v.clone(),
+                        source: Source::Helm,
+                        entries: None,
+                    },
+                    (None, Some(v)) => {
+                        if !d.test_only {
+                            put(&mut table, d.key, v, &mut errors);
+                        }
+                        EffectiveKey {
+                            value: v.clone(),
+                            source: Source::Dashboard,
+                            entries: None,
+                        }
+                    }
+                    (None, None) => EffectiveKey {
+                        value: d.default.clone(),
+                        source: Source::Default,
+                        entries: None,
+                    },
+                },
+            };
+            keys.insert(d.key.to_string(), eff);
+        }
+        if !errors.is_empty() {
+            return Err(ConfigErrors(errors));
+        }
+        let raw = build_raw(&table, &self.env)?;
+        Ok(Effective { raw, keys })
+    }
+}
+
+fn entry_id(e: &Value, id_field: &str) -> String {
+    e.get(id_field)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn put(table: &mut toml::Table, key: &str, v: &Value, errors: &mut Vec<ConfigError>) {
+    let parts: Vec<String> = key.split('.').map(str::to_string).collect();
+    let Some((last, parents)) = parts.split_last() else {
+        return;
+    };
+    let tv = match toml::Value::try_from(v) {
+        Ok(t) => t,
+        Err(e) => {
+            errors.push(ConfigError::new(
+                key,
+                format!("stored value cannot be used: {e}"),
+            ));
+            return;
+        }
+    };
+    if let Err(p) = set_path(table, parents, last, tv) {
+        errors.push(ConfigError::new(
+            key,
+            format!("`{p}` is not a table in the configuration"),
+        ));
+    }
+}
+
+fn collect_presence(v: &Value, prefix: &str, out: &mut BTreeSet<String>) {
+    let Value::Object(map) = v else { return };
+    for (k, child) in map {
+        let path = if prefix.is_empty() {
+            k.clone()
+        } else {
+            format!("{prefix}.{k}")
+        };
+        match child {
+            Value::Object(_) => collect_presence(child, &path, out),
+            // An empty array still counts as set: the operator pinned an empty list.
+            _ => {
+                out.insert(path);
+            }
+        }
+    }
+}
+
+/// `key.<id>` for the entries of every registered keyed list the configuration defines.
+fn add_entry_presence(json: &Value, out: &mut BTreeSet<String>) {
+    for d in registry().defs() {
+        let Some(ListKind::Keyed { id_field }) = d.list else {
+            continue;
+        };
+        let mut cur = json;
+        let mut found = true;
+        for part in d.key.split('.') {
+            match cur.as_object().and_then(|o| o.get(part)) {
+                Some(n) => cur = n,
+                None => {
+                    found = false;
+                    break;
+                }
+            }
+        }
+        if !found {
+            continue;
+        }
+        for e in cur.as_array().into_iter().flatten() {
+            let id = entry_id(e, id_field);
+            if !id.is_empty() {
+                out.insert(format!("{}.{id}", d.key));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn src(toml: &str) -> ConfigSource {
+        ConfigSource::from_toml(toml, BTreeMap::new()).unwrap()
+    }
+
+    fn stored(pairs: &[(&str, Value)]) -> Stored {
+        let mut s = Stored::default();
+        for (k, v) in pairs {
+            s.sections
+                .entry(TEST_SECTION.to_string())
+                .or_default()
+                .insert((*k).to_string(), v.clone());
+        }
+        s
+    }
+
+    #[test]
+    fn presence_records_file_keys_and_keyed_entry_ids() {
+        let s = src(
+            "[settings_test]\nflag = true\nnames = [\"a\"]\n[[settings_test.items]]\nid = \"x\"\n[server]\nbind = \"0.0.0.0:1\"\n",
+        );
+        assert!(s.sets("settings_test.flag"));
+        assert!(s.sets("settings_test.names"));
+        assert!(s.sets("settings_test.items.x"));
+        assert!(s.sets("server.bind"));
+        assert!(!s.sets("settings_test.limit"));
+    }
+
+    #[test]
+    fn presence_records_env_overrides() {
+        let dir =
+            std::env::temp_dir().join(format!("aurora-settings-presence-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("c.toml");
+        std::fs::write(&file, "[settings_test]\nflag = true\n").unwrap();
+        let env = [("AURORA__SETTINGS_TEST__LIMIT".to_string(), "7".to_string())];
+        let s = ConfigSource::load(Some(&file), env.into_iter()).unwrap();
+        assert!(s.sets("settings_test.limit"), "override sets the key");
+        assert!(s.sets("settings_test.flag"), "file sets the key");
+        let e = s.effective(&Stored::default()).unwrap();
+        assert_eq!(e.keys["settings_test.limit"].value, json!(7));
+        assert_eq!(e.keys["settings_test.limit"].source, Source::Helm);
+    }
+
+    #[test]
+    fn helm_beats_stored_beats_default() {
+        let s = src("[settings_test]\nlimit = 5\n");
+        let e = s
+            .effective(&stored(&[
+                ("settings_test.limit", json!(50)),
+                ("settings_test.mode", json!("strict")),
+            ]))
+            .unwrap();
+        assert_eq!(e.keys["settings_test.limit"].source, Source::Helm);
+        assert_eq!(e.keys["settings_test.limit"].value, json!(5));
+        assert_eq!(e.keys["settings_test.mode"].source, Source::Dashboard);
+        assert_eq!(e.keys["settings_test.mode"].value, json!("strict"));
+        assert_eq!(e.keys["settings_test.flag"].source, Source::Default);
+        assert_eq!(e.keys["settings_test.flag"].value, json!(false));
+    }
+
+    #[test]
+    fn whole_list_locks_as_a_whole() {
+        let s = src("[settings_test]\nnames = [\"helm\"]\n");
+        let e = s
+            .effective(&stored(&[("settings_test.names", json!(["dash"]))]))
+            .unwrap();
+        assert_eq!(e.keys["settings_test.names"].source, Source::Helm);
+        assert_eq!(e.keys["settings_test.names"].value, json!(["helm"]));
+    }
+
+    #[test]
+    fn keyed_list_merges_by_id_with_helm_winning() {
+        let s = src("[[settings_test.items]]\nid = \"h\"\nvalue = 1\n");
+        let e = s
+            .effective(&stored(&[(
+                "settings_test.items",
+                json!([{"id": "h", "value": 9}, {"id": "d", "value": 2}]),
+            )]))
+            .unwrap();
+        let k = &e.keys["settings_test.items"];
+        let entries = k.entries.as_ref().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            (entries[0].id.as_str(), entries[0].source),
+            ("h", Source::Helm)
+        );
+        assert_eq!(entries[0].value["value"], json!(1));
+        assert_eq!(
+            (entries[1].id.as_str(), entries[1].source),
+            ("d", Source::Dashboard)
+        );
+        assert_eq!(k.source, Source::Helm);
+    }
+
+    #[test]
+    fn secret_values_never_enter_the_merge() {
+        let s = src("");
+        let e = s
+            .effective(&stored(&[(
+                "settings_test.token",
+                json!({"$secret": {"ref": "x"}}),
+            )]))
+            .unwrap();
+        assert_eq!(e.keys["settings_test.token"].source, Source::Default);
+    }
+
+    #[test]
+    fn loosening_orders() {
+        let r = registry();
+        let flag = r.get("settings_test.flag").unwrap();
+        assert!(flag.is_loosening(&json!(false), &json!(true)));
+        assert!(!flag.is_loosening(&json!(true), &json!(false)));
+        let mode = r.get("settings_test.mode").unwrap();
+        assert!(mode.is_loosening(&json!("strict"), &json!("open")));
+        assert!(!mode.is_loosening(&json!("open"), &json!("strict")));
+        let names = r.get("settings_test.names").unwrap();
+        assert!(names.is_loosening(&json!(["a"]), &json!(["a", "b"])));
+        assert!(!names.is_loosening(&json!(["a", "b"]), &json!(["a"])));
+        let limit = r.get("settings_test.limit").unwrap();
+        assert!(limit.is_loosening(&json!(1), &json!(2)));
+    }
+
+    #[test]
+    fn type_checks_bound_values() {
+        let r = registry();
+        let limit = r.get("settings_test.limit").unwrap();
+        assert!(limit.check(&json!(100)).is_ok());
+        assert!(limit.check(&json!(101)).is_err());
+        assert!(limit.check(&json!("x")).is_err());
+        let mode = r.get("settings_test.mode").unwrap();
+        assert!(mode.check(&json!("nope")).is_err());
+    }
+
+    #[test]
+    fn registry_keys_equal_the_checked_in_movable_list_and_exclude_non_settings() {
+        let listed = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../deploy/helm/aurora/movable-keys.txt"
+        ))
+        .unwrap_or_default();
+        let listed: Vec<&str> = listed
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+            .collect();
+        assert_eq!(
+            listed,
+            registry().movable_keys(),
+            "movable-keys.txt must equal the registry"
+        );
+        for d in registry().defs() {
+            for n in NOT_SETTINGS {
+                let hit = if n.ends_with('.') {
+                    d.key.starts_with(n)
+                } else {
+                    d.key == *n
+                };
+                assert!(!hit || d.test_only, "{} is a non-setting (SEC-89)", d.key);
+            }
+            assert!(!d.key.starts_with("env_secrets"), "{}", d.key);
+        }
+        for s in SECTION_IDS {
+            assert!(registry().has_section(s));
+        }
+    }
+}

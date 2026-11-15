@@ -84,6 +84,92 @@ pub fn is_metadata(ip: IpAddr) -> bool {
     }
 }
 
+/// `gateway.allowed_private` as the API's connect/probe flows and the dashboard Vault stores
+/// honour it (same entry grammar as the gateway's destination guard: CIDR, IP, hostname,
+/// `*.suffix`; the cloud metadata addresses only by an exact IP entry).
+#[derive(Debug, Clone, Default)]
+pub struct PrivateAllow {
+    cidrs: Vec<(IpAddr, u8)>,
+    ips: Vec<IpAddr>,
+    hosts: Vec<String>,
+    suffixes: Vec<String>,
+}
+
+fn canon(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        v4 => v4,
+    }
+}
+
+fn cidr_contains(net: IpAddr, bits: u8, ip: IpAddr) -> bool {
+    match (net, ip) {
+        (IpAddr::V4(n), IpAddr::V4(i)) => {
+            let bits = u32::from(bits.min(32));
+            let mask = if bits == 0 {
+                0
+            } else {
+                u32::MAX << (32 - bits)
+            };
+            u32::from(n) & mask == u32::from(i) & mask
+        }
+        (IpAddr::V6(n), IpAddr::V6(i)) => {
+            let bits = u32::from(bits.min(128));
+            let mask = if bits == 0 {
+                0
+            } else {
+                u128::MAX << (128 - bits)
+            };
+            u128::from(n) & mask == u128::from(i) & mask
+        }
+        _ => false,
+    }
+}
+
+impl PrivateAllow {
+    /// Malformed entries are skipped (the gateway refuses to start on them; the API only narrows).
+    #[must_use]
+    pub fn new(entries: &[String]) -> Self {
+        let mut a = Self::default();
+        for e in entries.iter().map(|e| e.trim()) {
+            if let Some((n, b)) = e.split_once('/') {
+                if let (Ok(ip), Ok(bits)) = (n.parse::<IpAddr>(), b.parse::<u8>()) {
+                    a.cidrs.push((canon(ip), bits));
+                }
+            } else if let Ok(ip) = e.parse::<IpAddr>() {
+                a.ips.push(canon(ip));
+            } else if let Some(s) = e.strip_prefix("*.") {
+                a.suffixes
+                    .push(s.trim_end_matches('.').to_ascii_lowercase());
+            } else if !e.is_empty() {
+                a.hosts.push(e.trim_end_matches('.').to_ascii_lowercase());
+            }
+        }
+        a
+    }
+
+    /// May a flow dial `ip` for the name `host`?
+    #[must_use]
+    pub fn permits(&self, ip: IpAddr, host: &str) -> bool {
+        let ip = canon(ip);
+        if is_metadata(ip) {
+            return self.ips.contains(&ip);
+        }
+        if !is_special(ip) {
+            return true;
+        }
+        let h = host.trim_end_matches('.').to_ascii_lowercase();
+        self.hosts.contains(&h)
+            || self.suffixes.iter().any(|s| {
+                h.len() > s.len()
+                    && h.ends_with(s.as_str())
+                    && h.as_bytes()[h.len() - s.len() - 1] == b'.'
+            })
+            || self.ips.contains(&ip)
+            || self.cidrs.iter().any(|(n, b)| cidr_contains(*n, *b, ip))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

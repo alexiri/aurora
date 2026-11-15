@@ -142,12 +142,28 @@ the dashboard form hidden unless some configured store has `references =
 true`), and the migration command below. The fake store `memory` (tests only,
 `references = true`) exercises reference mode in phase 0 tests.
 
+### Stores are instance settings (phase 5, FIX-124)
+
+The store registry is the settings section `secrets` (`secrets.default_store`, the keyed list
+`secrets.stores` by `id`; D-236, D-237): a store the chart renders from `vault.*` is a **locked**
+entry ("Configured in Helm (`vault.*`)", read-only in the dashboard), and everything Helm leaves
+unset — more Vault stores, the default store, per-organization reference scopes — is edited on
+**Admin › Secret stores** (`/admin/secret-stores`, also listed under Settings), with Test
+connection before saving. The API and the gateway rebuild their registry live (C-748); a store that
+fails to start stays listed with its error and is never the default. A dashboard store's AppRole
+secret id is sealed in the **inline** store (purpose `instance_setting`) — never in a store it
+unlocks — and CA certificates are PEM text in the definition. Only `hashicorp-vault` stores can be
+defined in the dashboard.
+
 ### Moving values between stores
 
 `aurora-api secrets migrate --to <store_id> [--purpose …] [--dry-run]` re-seals
 every managed value into the target store row by row (read → put → CAS swap →
 discard old), idempotent and resumable. `aurora-api secrets rekey` is the same
-operation targeting `inline` with the active key (used for key rotation).
+operation targeting `inline` with the active key (used for key rotation). The
+dashboard's **Move values** runs the same re-seal as a background job with a dry run first,
+progress and a final report (C-747); one run at a time across replicas, the CLI included (an
+advisory lock). The instance settings' sealed fields stay in `inline` whatever the target.
 
 ### Gateway use
 

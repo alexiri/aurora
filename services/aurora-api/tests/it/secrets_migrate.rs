@@ -6,7 +6,7 @@
 
 use crate::common::*;
 use async_trait::async_trait;
-use aurora_api::secrets_migrate::{Options, Summary, run};
+use aurora_api::secrets_migrate::{Options, Summary, run, run_unlocked};
 use aurora_config::{SecretStoreConfig, SecretsSection};
 use aurora_core::Secret;
 use aurora_secrets::{
@@ -19,7 +19,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Where each purpose's ref lives: `(purpose, "SELECT <ref> FROM … WHERE id = $1")`.
-const REF_SQL: [(Purpose, &str); 8] = [
+const REF_SQL: [(Purpose, &str); 9] = [
     (
         Purpose::SecretValue,
         "SELECT value_ref FROM secrets WHERE id = $1",
@@ -51,6 +51,11 @@ const REF_SQL: [(Purpose, &str); 8] = [
     (
         Purpose::ConnectorSettings,
         "SELECT secret_refs->>'key' FROM connectors WHERE secret_owner = $1",
+    ),
+    (
+        Purpose::InstanceSetting,
+        "SELECT value->'settings_test.token'->'$secret'->>'ref' FROM instance_settings \
+         WHERE $1::uuid IS NOT NULL AND section = 'settings_test'",
     ),
 ];
 
@@ -113,7 +118,7 @@ async fn world(vault: SecretVault) -> World {
             Purpose::SecretValue | Purpose::ConnectionCredentials => (Some(ws), org),
             Purpose::OauthClientSecret => (None, org),
             Purpose::WebhookVerification => (Some(ws), org),
-            Purpose::ConnectorSettings => (None, Uuid::nil()),
+            Purpose::ConnectorSettings | Purpose::InstanceSetting => (None, Uuid::nil()),
             _ => (None, org),
         };
         let ctx = SealContext {
@@ -164,6 +169,11 @@ async fn world(vault: SecretVault) -> World {
                 sqlx::query("INSERT INTO connectors (id, display_name, status, managed, type_id, settings, secret_owner, secret_refs) VALUES ('managed-one','m','active',true,'managed-one','{}',$1,$2)")
                     .bind(id)
                     .bind(json!({"key": r}))
+                    .execute(pool).await.unwrap();
+            }
+            Purpose::InstanceSetting => {
+                sqlx::query("INSERT INTO instance_settings (section, value, generation) VALUES ('settings_test', $1, 1)")
+                    .bind(json!({"settings_test.token": {"$secret": {"ref": r, "owner": id, "updated_at": "2026-11-15T00:00:00Z"}}}))
                     .execute(pool).await.unwrap();
             }
             Purpose::WebhookVerification => {
@@ -480,7 +490,7 @@ async fn context_mismatch_fails_that_row_only() {
         .unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 7);
+    assert_eq!(s.moved(), 8);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -777,7 +787,7 @@ async fn rekey_context_failure_fails_only_that_row_and_leaves_other_stores_alone
     let s = run(w.h.pool(), &rotated, &o).await.unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 7);
+    assert_eq!(s.moved(), 8);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -800,8 +810,8 @@ async fn race(w: &World, store: &str) {
         );
         let (o1, o2) = (World::quick(store), World::quick(store));
         (
-            tokio::spawn(async move { run(&p1, &v1, &o1).await.unwrap() }),
-            tokio::spawn(async move { run(&p2, &v2, &o2).await.unwrap() }),
+            tokio::spawn(async move { run_unlocked(&p1, &v1, &o1).await.unwrap() }),
+            tokio::spawn(async move { run_unlocked(&p2, &v2, &o2).await.unwrap() }),
         )
     };
     let (a, b) = (a.await.unwrap(), b.await.unwrap());
@@ -826,7 +836,7 @@ async fn racing_migrators_leave_one_valid_ref_per_row_memory() {
     sr.register(mem.clone());
     let w = world(SecretVault::new(sr)).await;
     race(&w, "memory").await;
-    assert_eq!(mem.managed_count(), 8, "a losing migrator leaked a value");
+    assert_eq!(mem.managed_count(), 9, "a losing migrator leaked a value");
 }
 
 #[tokio::test]

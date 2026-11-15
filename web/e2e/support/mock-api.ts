@@ -271,6 +271,50 @@ export async function mockApi(
         warnings: ["per_user_orgs_active"], updated_at: now, updated_by: id(99),
       });
     }
+    // (phase 5, SET-1) Admin › Settings: the index with a Helm-locked key, and one generic section.
+    if (p === "/v1/admin/settings") {
+      const titles: [string, string, string][] = [
+        ["governance", "Governance", "Instance floors for LLM keys, egress and bring-your-own agents."],
+        ["llm", "LLM endpoints", "Providers and endpoints agents may reach."],
+        ["sign_in", "Sign-in", "Sign-up, sessions and identity providers."],
+      ];
+      return json({
+        sections: titles.map(([section, title, description], i) => ({
+          section, title, description, generation: i, updated_at: i === 0 ? null : now, updated_by_label: i === 0 ? null : "root@example.test",
+          keys_total: 4, keys_locked: i === 0 ? 1 : 0, keys_dashboard: i === 0 ? 0 : 2,
+        })),
+        locked: [{ section: "governance", key: "governance.egress.minimum_posture", entry_id: null, helm_key: "config.governance.egress.minimum_posture" }],
+      });
+    }
+    // (phase 5, FIX-124) Admin › Secret stores: the built-in store, a Helm store and a dashboard store.
+    if (p === "/v1/admin/secret-stores") {
+      const health = { ok: true, checked_at: now, error_code: null };
+      const base = { references: false, default: false, health, error: null, managed_values: 0, reference_values: 0, reference_scopes: [] as unknown[], helm_key: null as string | null };
+      return json({
+        default_store: { value: "inline", source: "default" }, effective_default: "inline", generation: 3,
+        migration: { state: "none", target: null, started_at: null, finished_at: null, started_by: null, per_purpose: [], error: null, running_elsewhere: false },
+        stores: [
+          { ...base, id: "inline", kind: "inline", source: "builtin", settings: {}, default: true, managed_values: 12 },
+          { ...base, id: "vault", kind: "hashicorp-vault", source: "helm", helm_key: "vault.*", references: true, settings: { address: "https://vault.example.test:8200", kv_mount: "secret", managed_prefix: "aurora", auth: { method: "kubernetes", role: "aurora-api" } } },
+          { ...base, id: "team-vault", kind: "hashicorp-vault", source: "dashboard", references: true, health: { ok: false, checked_at: now, error_code: "unavailable" }, settings: { address: "https://team-vault.example.test:8200", auth: { method: "approle", role_id: "r1", secret_id: { $secret: { set: true } } } }, reference_scopes: [{ org_id: id(1), org_slug: "acme", paths: ["teams/acme/*"] }] },
+        ],
+      });
+    }
+    if (p === "/v1/admin/settings/governance") {
+      const sch = (kind: string, extra: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...extra });
+      return json({
+        section: "governance", title: "Governance", description: "Instance floors for LLM keys, egress and bring-your-own agents.", generation: 1,
+        updated_at: now, updated_by_label: "root@example.test", extra: null,
+        settings: [
+          { key: "governance.egress.minimum_posture", value: "restricted", source: "helm", locked: true, helm_key: "config.governance.egress.minimum_posture", default: "open", schema: sch("enum", { options: ["open", "restricted", "strict"] }), list: null, id_field: null, entries: null, secret: null },
+          { key: "governance.llm.require_key_origin", value: true, source: "dashboard", locked: false, helm_key: "config.governance.llm.require_key_origin", default: false, schema: sch("bool"), list: null, id_field: null, entries: null, secret: null },
+          { key: "governance.agent_tokens.max_age_days", value: 90, source: "default", locked: false, helm_key: "config.governance.agent_tokens.max_age_days", default: 90, schema: sch("int", { min: 1, max: 3650 }), list: null, id_field: null, entries: null, secret: null },
+          { key: "byo.default_source_cidrs", value: ["10.0.0.0/8"], source: "dashboard", locked: false, helm_key: "config.byo.default_source_cidrs", default: [], schema: sch("list", { item_kind: "string", max: 50 }), list: "whole", id_field: null, entries: null, secret: null },
+          { key: "governance.example.token", value: null, source: "dashboard", locked: false, helm_key: "config.governance.example.token", default: null, schema: sch("string"), list: null, id_field: null, entries: null, secret: { set: true, updated_at: now, from_env: null } },
+          { key: "governance.example.items", value: [{ id: "managed" }], source: "default", locked: false, helm_key: "config.governance.example.items", default: [], schema: sch("list", { item_kind: "object" }), list: "keyed", id_field: "id", entries: [{ id: "managed", value: { id: "managed" }, source: "helm", locked: true, warnings: null }], secret: null },
+        ],
+      });
+    }
     if (p === "/v1/admin/placement/preview") return json({ name: "bobj", slug: "bobj", used: 0, unresolved: [] });
     if (p === "/v1/admin/placement/choices") {
       return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
@@ -394,6 +438,9 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-orgs", path: "/admin/orgs" },
   { name: "admin-org-detail", path: `/admin/orgs/${id(1)}` },
   { name: "admin-placement", path: "/admin/placement" },
+  { name: "admin-settings", path: "/admin/settings" },
+  { name: "admin-settings-section", path: "/admin/settings/governance" },
+  { name: "admin-secret-stores", path: "/admin/secret-stores" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },
   { name: "admin-addon-sources", path: "/admin/addon-sources" },

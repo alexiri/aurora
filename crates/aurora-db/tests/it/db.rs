@@ -206,7 +206,7 @@ async fn oversize_payload_rejected(pool: PgPool) {
     let big = json!({ "d": "x".repeat(7000) });
     let err = bus::notify(&pool, Channel::Delta, &big).await.unwrap_err();
     assert!(matches!(err, BusError::PayloadTooLarge { .. }));
-    assert_eq!(Channel::ALL.len(), 11);
+    assert_eq!(Channel::ALL.len(), 12);
     assert_eq!(Channel::parse("aurora_work"), Some(Channel::Work));
 }
 

@@ -471,6 +471,14 @@
       "starter_grants",
       "updated_by"
     ],
+    "instance_settings": [
+      "generation",
+      "schema_version",
+      "section",
+      "updated_by",
+      "updated_by_label",
+      "value"
+    ],
     "instance_setup": [
       "placement_pending",
       "singleton"
@@ -1702,6 +1710,14 @@
       "singleton": "boolean not null",
       "starter_grants": "jsonb not null",
       "updated_by": "uuid null"
+    },
+    "instance_settings": {
+      "generation": "bigint not null",
+      "schema_version": "int not null",
+      "section": "text not null",
+      "updated_by": "uuid null",
+      "updated_by_label": "text null",
+      "value": "jsonb not null"
     },
     "instance_setup": {
       "placement_pending": "boolean not null",

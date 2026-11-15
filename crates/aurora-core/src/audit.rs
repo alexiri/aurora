@@ -144,6 +144,14 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "channel_integration.update",
     "user_link.create",
     "user_link.delete",
+    // Instance settings (phase 5, SET-1, D-236, C-777, SEC-90): a dashboard/API write, an import,
+    // and a CLI reset; `instance_settings.helm_sync` is a best-effort system row, not listed.
+    "instance_settings.update",
+    "instance_settings.import",
+    "instance_settings.reset",
+    // (FIX-124, C-747) a dashboard job that moves every managed value to another secret store
+    "secret_stores.migrate_start",
+    "secret_stores.migrate_finish",
     // Data erasure and reassignment
     "automation.reassign",
     "conversation.delete",

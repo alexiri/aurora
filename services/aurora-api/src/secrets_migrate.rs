@@ -34,7 +34,27 @@ pub struct Options {
     /// key id move (re-sealed under the active key); everything else counts as already done.
     /// `to` must be `inline`.
     pub rekey_active: Option<String>,
+    /// Called after every page of rows with the purpose and its running counts (the dashboard
+    /// job's progress, FIX-124).
+    pub progress: Option<Progress>,
+    /// Leave the instance settings' sealed fields in the inline store when `to` is another store
+    /// (D-236(g)). The CLI and the dashboard set it.
+    pub keep_instance_settings_inline: bool,
 }
+
+/// A progress callback (`Debug` so `Options` stays printable).
+#[derive(Clone)]
+pub struct Progress(pub std::sync::Arc<dyn Fn(&'static str, Counts) + Send + Sync>);
+
+impl std::fmt::Debug for Progress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Progress")
+    }
+}
+
+/// The session-scoped advisory lock key every real migration or rekey run holds (the CLI and
+/// the dashboard job exclude each other, FIX-124): the ASCII of `aursecmg`.
+pub const MIGRATION_LOCK_KEY: i64 = 0x6175_7273_6563_6d67;
 
 impl Options {
     #[must_use]
@@ -46,6 +66,8 @@ impl Options {
             discard_grace: Duration::from_secs(2),
             batch: 200,
             rekey_active: None,
+            progress: None,
+            keep_instance_settings_inline: false,
         }
     }
 
@@ -123,7 +145,22 @@ struct Source {
     update: &'static str,
 }
 
-const SOURCES: [Source; 8] = [
+const SOURCES: [Source; 9] = [
+    // (phase 5, SET-1, D-236(g)) Every `{ "$secret": { ref, owner } }` field anywhere in a settings
+    // section (top-level keys and fields inside keyed-list entries); the field's own uuid is the
+    // owner. Refs are unique strings, so the update replaces the old ref text. The generation is
+    // bumped so replicas reload; rekeying keeps the value, so nothing else changes.
+    Source {
+        purpose: Purpose::InstanceSetting,
+        select: "SELECT (s.v->>'owner')::uuid, NULL::uuid, NULL::uuid, s.v->>'ref' \
+                 FROM (SELECT jsonb_path_query(value, 'strict $.**.\"$secret\"') AS v \
+                       FROM instance_settings) s \
+                 WHERE (s.v->>'owner')::uuid > $1 ORDER BY 1 LIMIT $2",
+        update: "UPDATE instance_settings SET \
+                 value = replace(value::text, to_json($3::text)::text, to_json($2::text)::text)::jsonb, \
+                 generation = generation + 1, updated_at = now() \
+                 WHERE $1::uuid IS NOT NULL AND value::text LIKE '%' || to_json($3::text)::text || '%'",
+    },
     Source {
         purpose: Purpose::SecretValue,
         select: "SELECT id, org_id, workspace_id, value_ref FROM secrets \
@@ -215,6 +252,33 @@ enum Moved {
 /// Run the migration. Errors only for problems that stop the whole run (bad target store, the
 /// database); per-row problems are counted in the summary.
 pub async fn run(pool: &PgPool, vault: &SecretVault, opts: &Options) -> Result<Summary, String> {
+    // One real run at a time, whoever starts it (the CLI or the dashboard job, on any replica):
+    // a transaction-scoped advisory lock held for the whole run, released when it ends or the
+    // process dies. A dry run writes nothing and takes no lock.
+    let _lock = if opts.dry_run {
+        None
+    } else {
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        let got: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+            .bind(MIGRATION_LOCK_KEY)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        if !got {
+            return Err("another secrets migration is running".into());
+        }
+        Some(tx)
+    };
+    run_unlocked(pool, vault, opts).await
+}
+
+/// [`run`] without the migration lock: for a caller that holds it, and for the tests of the
+/// per-row compare-and-swap, which race two runs on purpose.
+pub async fn run_unlocked(
+    pool: &PgPool,
+    vault: &SecretVault,
+    opts: &Options,
+) -> Result<Summary, String> {
     let target = vault
         .registry()
         .get(&opts.to)
@@ -228,6 +292,15 @@ pub async fn run(pool: &PgPool, vault: &SecretVault, opts: &Options) -> Result<S
     let mut summary = Summary::default();
     for src in &SOURCES {
         if opts.purpose.is_some_and(|p| p != src.purpose) {
+            continue;
+        }
+        // Instance-level secrets (the settings' sealed fields, among them a Vault store's
+        // AppRole secret id) stay in the inline store (D-236(g)): the dashboard job and the CLI
+        // never move them to another store, or the store could not be reached after a restart.
+        if src.purpose == Purpose::InstanceSetting
+            && opts.keep_instance_settings_inline
+            && opts.to != "inline"
+        {
             continue;
         }
         let counts = migrate_purpose(pool, vault, opts, src).await?;
@@ -293,6 +366,9 @@ async fn migrate_purpose(
                     counts.failed += 1;
                 }
             }
+        }
+        if let Some(p) = &opts.progress {
+            (p.0)(src.purpose.as_str(), counts);
         }
     }
     // The new refs are committed. Give caches a moment, then drop the old values.
@@ -390,4 +466,43 @@ async fn row_points_to(pool: &PgPool, src: &Source, id: Uuid, r: &SecretRef) -> 
     let mut mine = rows.iter().filter(|row| row.0 == id).peekable();
     mine.peek()?;
     Some(mine.any(|row| row.3 == r.to_column()))
+}
+
+/// Managed and reference value counts per store (`inline` for inline refs), read from the
+/// `SecretRef` columns (Admin › Secret stores, FIX-124). Reads refs only; nothing is opened.
+pub async fn tally(pool: &PgPool) -> Result<BTreeMap<String, (i64, i64)>, String> {
+    let mut out: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    for src in &SOURCES {
+        let mut after = Uuid::nil();
+        loop {
+            let rows: Vec<Row> = sqlx::query_as(src.select)
+                .bind(after)
+                .bind(500_i64)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| format!("{}: reading rows: {e}", src.purpose.as_str()))?;
+            let Some(last) = rows.last() else { break };
+            after = last.0;
+            for (_, _, _, col) in &rows {
+                if let Ok(r) = col.parse::<SecretRef>() {
+                    out.entry(r.store_id().unwrap_or("inline").to_owned())
+                        .or_default()
+                        .0 += 1;
+                }
+            }
+        }
+    }
+    let refs: Vec<String> =
+        sqlx::query_scalar("SELECT value_ref FROM secrets WHERE value_source = 'reference'")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("secrets: reading references: {e}"))?;
+    for col in refs {
+        if let Ok(r) = col.parse::<SecretRef>() {
+            out.entry(r.store_id().unwrap_or("inline").to_owned())
+                .or_default()
+                .1 += 1;
+        }
+    }
+    Ok(out)
 }

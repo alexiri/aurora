@@ -48,7 +48,6 @@ config:
   # runner writes into each Pod; the name is on the proxy certificate), while BYO agents keep the
   # advertised URL derived from externalUrl.
   hosted:
-    enabled: true
     allow_fake_harness: true
     idle_stop_secs: 30
   runner:

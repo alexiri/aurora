@@ -474,6 +474,36 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/admin/placement", G::Inst, false),
     r("GET", "/v1/admin/placement/preview", G::Inst, false),
     r("GET", "/v1/admin/placement/choices", G::Inst, false),
+    // (phase 5, SET-1) instance settings and (FIX-124) secret stores: instance administrators only; session-only (an API key gets 403 `session_required`)
+    r("GET", "/v1/admin/settings", G::Inst, true),
+    r("GET", "/v1/admin/settings/export", G::Inst, true),
+    r("POST", "/v1/admin/settings/import", G::Inst, true),
+    r("GET", "/v1/admin/settings/{section}", G::Inst, true),
+    r("PUT", "/v1/admin/settings/{section}", G::Inst, true),
+    r(
+        "POST",
+        "/v1/admin/settings/{section}/preview",
+        G::Inst,
+        true,
+    ),
+    r("GET", "/v1/admin/secret-stores", G::Inst, true),
+    r("PUT", "/v1/admin/secret-stores/{id}", G::Inst, true),
+    r("DELETE", "/v1/admin/secret-stores/{id}", G::Inst, true),
+    r(
+        "PUT",
+        "/v1/admin/secret-stores/{id}/reference-scopes",
+        G::Inst,
+        true,
+    ),
+    r("PUT", "/v1/admin/secret-store-default", G::Inst, true),
+    r("POST", "/v1/admin/secret-store-test", G::Inst, true),
+    r("POST", "/v1/admin/secret-stores/migrations", G::Inst, true),
+    r(
+        "GET",
+        "/v1/admin/secret-stores/migrations/current",
+        G::Inst,
+        true,
+    ),
     // (P4-ONB-2, C-533) setup wizard status
     r("GET", "/v1/admin/setup", G::Inst, false),
     r("POST", "/v1/orgs", G::Inst, false),
@@ -1312,6 +1342,19 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/orgs/{org}/groups") => json!({"name": "matrix group"}),
         ("PUT", "/v1/workspaces/{ws}/access/groups/{group}") => json!({"role": "member"}),
         ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),
+        ("PUT", "/v1/admin/settings/{section}" | "/v1/admin/secret-stores/{id}") => {
+            json!({"generation": 0, "values": {}, "store": {}})
+        }
+        ("POST", "/v1/admin/settings/{section}/preview") => json!({"generation": 0, "values": {}}),
+        ("POST", "/v1/admin/settings/import") => json!({"document": "{}", "format": "json"}),
+        ("PUT", "/v1/admin/secret-store-default") => json!({"generation": 0, "store_id": "x"}),
+        ("PUT", "/v1/admin/secret-stores/{id}/reference-scopes") => {
+            json!({"generation": 0, "scopes": []})
+        }
+        ("POST", "/v1/admin/secret-store-test") => json!({"id": "x", "store": {}}),
+        ("POST", "/v1/admin/secret-stores/migrations") => {
+            json!({"target": "inline", "dry_run": true})
+        }
         ("POST", "/v1/admin/trusted-keys") => {
             json!({"publisher": "x", "name": "x", "public_key": "x"})
         }

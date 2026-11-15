@@ -1,0 +1,261 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/settings",
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  useParams: () => ({}),
+}));
+
+import { SettingsIndexView } from "@/components/admin/settings/settings-index-view";
+import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
+
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+type Handler = (req: Request) => Response | Promise<Response>;
+function mockFetch(routes: Record<string, Handler>) {
+  const fn = vi.fn(async (input: Request | string | URL) => {
+    const req = input as Request;
+    const url = new URL(req.url, "http://localhost");
+    const h = routes[`${req.method} ${url.pathname}`];
+    return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
+  });
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+function wrap(ui: React.ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  window.localStorage.clear();
+});
+
+const schema = (kind: string, extra: Record<string, unknown> = {}) => ({
+  kind,
+  min: null,
+  max: null,
+  max_len: null,
+  options: null,
+  item_kind: null,
+  ...extra,
+});
+
+const setting = (over: Record<string, unknown>) => ({
+  key: "t.k",
+  value: null,
+  source: "default",
+  locked: false,
+  helm_key: "config.t.k",
+  default: null,
+  schema: schema("string"),
+  list: null,
+  id_field: null,
+  entries: null,
+  secret: null,
+  ...over,
+});
+
+function section(over: Record<string, unknown> = {}) {
+  return {
+    section: "settings_test",
+    title: "Test section",
+    description: "Exercises it.",
+    generation: 3,
+    updated_at: "2026-11-15T10:00:00Z",
+    updated_by_label: "root@x.io",
+    extra: null,
+    settings: [
+      setting({ key: "t.limit", value: 5, source: "helm", locked: true, helm_key: "config.t.limit", default: 10, schema: schema("int", { min: 1, max: 100 }) }),
+      setting({ key: "t.flag", value: false, default: false, schema: schema("bool") }),
+      setting({ key: "t.mode", value: "standard", default: "standard", schema: schema("enum", { options: ["strict", "standard", "open"] }) }),
+      setting({ key: "t.count", value: 20, source: "dashboard", default: 10, schema: schema("int", { min: 1, max: 100 }) }),
+      setting({ key: "t.names", value: [], default: [], list: "whole", schema: schema("list", { item_kind: "string", max: 20 }) }),
+      setting({ key: "t.token", value: null, schema: schema("string"), secret: { set: true, updated_at: "2026-11-15T10:00:00Z", from_env: null } }),
+      setting({
+        key: "t.items",
+        value: [{ id: "h" }],
+        default: [],
+        list: "keyed",
+        id_field: "id",
+        schema: schema("list", { item_kind: "object" }),
+        entries: [{ id: "h", value: { id: "h" }, source: "helm", locked: true, warnings: null }],
+      }),
+    ],
+    ...over,
+  };
+}
+
+const preview = (over: Record<string, unknown> = {}) => ({
+  generation: 3,
+  diff: [],
+  loosening: [],
+  affected_orgs: [],
+  affected_orgs_total: 0,
+  warnings: [],
+  ...over,
+});
+
+describe("Admin › Settings index (SET-1)", () => {
+  it("lists the sections with counts and shows the locked-keys notice, dismissible per viewer", async () => {
+    mockFetch({
+      "GET /v1/admin/settings": () =>
+        json(200, {
+          sections: [
+            { section: "governance", title: "Governance", description: "Floors.", generation: 0, updated_at: null, updated_by_label: null, keys_total: 4, keys_locked: 1, keys_dashboard: 2 },
+            { section: "sign_in", title: "Sign-in", description: "Providers.", generation: 2, updated_at: "2026-11-15T10:00:00Z", updated_by_label: "root@x.io", keys_total: 3, keys_locked: 0, keys_dashboard: 0 },
+          ],
+          locked: [{ section: "governance", key: "governance.llm.minimum_posture", entry_id: null, helm_key: "config.governance.llm.minimum_posture" }],
+        }),
+    });
+    wrap(<SettingsIndexView />);
+    expect(await screen.findByText("Governance")).toBeTruthy();
+    expect(screen.getByText("Sign-in")).toBeTruthy();
+    expect(screen.getByText("1 in Helm")).toBeTruthy();
+    expect(screen.getByText("2 in the dashboard")).toBeTruthy();
+    const notice = screen.getByText(/1 setting is configured in Helm and cannot be changed here/);
+    expect(notice.textContent).toContain("it keeps its current value");
+    expect(screen.getByText("config.governance.llm.minimum_posture")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Sign-in" }).getAttribute("href")).toBe("/admin/settings/sign-in");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/configured in Helm and cannot be changed here/)).toBeNull();
+    expect(screen.getByRole("link", { name: "Export YAML" }).getAttribute("href")).toBe("/v1/admin/settings/export?format=yaml");
+  });
+
+  it("imports: the dry run shows the diff and the ignored locked key, Apply sends the generations", async () => {
+    let applied: unknown = null;
+    mockFetch({
+      "GET /v1/admin/settings": () => json(200, { sections: [], locked: [] }),
+      "POST /v1/admin/settings/import": async (req) => {
+        const b = (await req.json()) as { dry_run: boolean; generations?: unknown };
+        if (b.dry_run) {
+          return json(200, {
+            applied: false,
+            sections: [
+              {
+                section: "settings_test",
+                generation: 4,
+                diff: [{ key: "t.flag", entry_id: null, before: false, after: true, before_source: "default", after_source: "dashboard" }],
+                loosening: [],
+                warnings: [{ code: "locked_ignored", key: "t.limit", message: "`t.limit` is configured in Helm; the imported value equals it and is ignored." }],
+              },
+            ],
+            errors: [],
+          });
+        }
+        applied = b.generations;
+        return json(200, { applied: true, sections: [], errors: [] });
+      },
+    });
+    wrap(<SettingsIndexView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Import…" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Settings document"), { target: { value: "aurora_settings: 1\nsections: {}\n" } });
+    expect((within(dialog).getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check" }));
+    expect(await within(dialog).findByText("t.flag")).toBeTruthy();
+    expect(within(dialog).getByText(/imported value equals it and is ignored/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(applied).toEqual({ settings_test: 4 }));
+    expect(await within(dialog).findByText(/Imported\./)).toBeTruthy();
+  });
+});
+
+describe("Generic settings section form (SET-1)", () => {
+  it("shows locked, dashboard and default settings, with the reset action and the write-only secret", async () => {
+    mockFetch({ "GET /v1/admin/settings/settings_test": () => json(200, section()) });
+    wrap(<SettingsSectionView slug="settings-test" />);
+    expect(await screen.findByText("Limit")).toBeTruthy();
+    // Locked: read-only text, the Helm note, no control.
+    expect(screen.getByTestId("t.limit-locked-value").textContent).toBe("5");
+    expect(screen.getByText(/Configured in Helm/).textContent).toContain("config.t.limit");
+    expect(document.getElementById("t.limit-c")).toBeNull();
+    // Dashboard: the control holds the value; Reset names the default.
+    expect((document.getElementById("t.count-c") as HTMLInputElement).value).toBe("20");
+    fireEvent.click(screen.getByRole("button", { name: "Reset to default (10)" }));
+    expect((document.getElementById("t.count-c") as HTMLInputElement).value).toBe("10");
+    // Default settings show their default; the secret is write-only.
+    expect((document.getElementById("t.mode-c") as HTMLSelectElement).value).toBe("standard");
+    expect(screen.getByText("Set")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Replace…" })).toBeTruthy();
+    expect(screen.queryByDisplayValue("canary")).toBeNull();
+    // The keyed list: a Helm entry is locked.
+    expect(screen.getByText("Managed by Helm")).toBeTruthy();
+  });
+
+  it("saves via the preview, sending only the dashboard values and `keep` for the stored secret", async () => {
+    let put: { generation: number; values: Record<string, unknown> } | null = null;
+    mockFetch({
+      "GET /v1/admin/settings/settings_test": () => json(200, section()),
+      "POST /v1/admin/settings/settings_test/preview": () => json(200, preview()),
+      "PUT /v1/admin/settings/settings_test": async (req) => {
+        put = (await req.json()) as typeof put;
+        return json(200, section({ generation: 4 }));
+      },
+    });
+    wrap(<SettingsSectionView slug="settings-test" />);
+    await screen.findByText("Limit");
+    fireEvent.click(document.getElementById("t.flag-c")!);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/Saved\. Applied to every replica within seconds\./)).toBeTruthy();
+    expect(put).toEqual({ generation: 3, values: { "t.flag": true, "t.count": 20, "t.token": { $secret: "keep" } } });
+  });
+
+  it("asks for confirmation when the preview reports loosening, naming the keys and organizations", async () => {
+    const puts = vi.fn();
+    mockFetch({
+      "GET /v1/admin/settings/settings_test": () => json(200, section()),
+      "POST /v1/admin/settings/settings_test/preview": () =>
+        json(200, preview({
+          loosening: [{ key: "t.flag", entry_id: null, reason: "`t.flag` becomes less strict." }],
+          affected_orgs: [{ org_id: "o1", slug: "acme", name: "Acme", changes: [] }],
+          affected_orgs_total: 1,
+        })),
+      "PUT /v1/admin/settings/settings_test": () => {
+        puts();
+        return json(200, section({ generation: 4 }));
+      },
+    });
+    wrap(<SettingsSectionView slug="settings-test" />);
+    await screen.findByText("Limit");
+    fireEvent.click(document.getElementById("t.flag-c")!);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("This allows more than before:")).toBeTruthy();
+    expect(within(dialog).getByText("Acme")).toBeTruthy();
+    expect(puts).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts).toHaveBeenCalledTimes(1));
+  });
+
+  it("handles 409 stale_revision, 412 reauth_required and 422 field errors", async () => {
+    let n = 0;
+    mockFetch({
+      "GET /v1/admin/settings/settings_test": () => json(200, section()),
+      "GET /v1/instance": () => json(200, { oidc_providers: [{ id: "corp", display_name: "Corp SSO" }] }),
+      "POST /v1/admin/settings/settings_test/preview": () => {
+        n += 1;
+        if (n === 1) return json(409, { error: { code: "stale_revision", message: "stale", details: { current_generation: 9 } } });
+        if (n === 2) return json(412, { error: { code: "reauth_required", message: "reauth" } });
+        return json(422, { error: { code: "settings_invalid", message: "bad", details: { fields: [{ path: "/t.count", code: "invalid_value", message: "must be between 1 and 100" }, { path: "/other.key", code: "x", message: "needs t.flag" }] } } });
+      },
+    });
+    wrap(<SettingsSectionView slug="settings-test" />);
+    await screen.findByText("Limit");
+    fireEvent.click(document.getElementById("t.flag-c")!);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/Someone changed these settings meanwhile/)).toBeTruthy();
+    // The typed value is kept until Reload.
+    expect((document.getElementById("t.flag-c") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/sign in again with your provider/)).toBeTruthy();
+    expect((await screen.findByRole("link", { name: /Corp SSO/ })).getAttribute("href")).toContain("reauth=1");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("must be between 1 and 100")).toBeTruthy();
+    expect(screen.getByText(/needs t\.flag/)).toBeTruthy();
+  });
+});

@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 use aurora_core::Secret;
 
-use crate::{Result, SealContext, SecretError, SecretRef, StoreRegistry};
+use crate::{Result, SealContext, SecretError, SecretRef, StoreFailure, StoreRegistry};
 
 /// Mirrors `secrets.value_source`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,29 +14,102 @@ pub enum ValueSource {
 
 /// The only place SecretRefs are interpreted.
 pub struct SecretVault {
-    registry: StoreRegistry,
+    /// Swapped when the stores change in the dashboard (FIX-124): every call reads the current
+    /// registry once, so an in-flight call finishes against the stores it started with.
+    registry: ArcSwap<StoreRegistry>,
+    failures: ArcSwap<Vec<StoreFailure>>,
+    /// `gateway.allowed_private`, which opens private addresses to dashboard Vault stores.
+    allowed_private: std::sync::OnceLock<Vec<String>>,
 }
 
 impl SecretVault {
     pub fn new(registry: StoreRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry: ArcSwap::from_pointee(registry),
+            failures: ArcSwap::from_pointee(Vec::new()),
+            allowed_private: std::sync::OnceLock::new(),
+        }
     }
 
-    pub fn registry(&self) -> &StoreRegistry {
-        &self.registry
+    /// The current registry.
+    pub fn registry(&self) -> Arc<StoreRegistry> {
+        self.registry.load_full()
     }
 
-    fn store_for(&self, r: &SecretRef) -> Result<&dyn crate::SecretStore> {
+    /// Replace the registry (live reload on a change of the `secrets` settings).
+    pub fn swap_registry(&self, registry: StoreRegistry) {
+        self.registry.store(Arc::new(registry));
+        self.failures.store(Arc::new(Vec::new()));
+    }
+
+    /// Set `gateway.allowed_private` once, before the first rebuild from settings.
+    pub fn set_allowed_private(&self, entries: Vec<String>) {
+        let _ = self.allowed_private.set(entries);
+    }
+
+    /// Rebuild the registry from the merged `secrets` settings (FIX-124): a store that fails to
+    /// initialise stays out of the registry and is reported by [`Self::failures`]; the default
+    /// falls back to `inline` when it is one of them. Stores defined in the dashboard are
+    /// dialled through the destination guard (SEC-89, SEC-90); Helm-defined ones are not.
+    pub fn rebuild_from_effective(
+        &self,
+        eff: &aurora_config::Effective,
+        keyring: Arc<aurora_crypto::Keyring>,
+        extra_ca_bundle: Option<&str>,
+    ) {
+        let guard = crate::StoreGuard::for_dashboard_stores(
+            eff,
+            self.allowed_private.get().map_or(&[][..], Vec::as_slice),
+        );
+        let (reg, failed) = StoreRegistry::from_config_tolerant(
+            &eff.raw.secrets,
+            keyring,
+            extra_ca_bundle,
+            Some(&guard),
+        );
+        if let Some(configured) = reg.fell_back_from() {
+            tracing::error!(
+                store = configured,
+                "the configured default secret store failed to start; new values go to the inline store until it is fixed"
+            );
+        }
+        self.registry.store(Arc::new(reg));
+        self.failures.store(Arc::new(failed));
+    }
+
+    /// Stores the last rebuild could not initialise, with the reason (never a credential).
+    pub fn failures(&self) -> Arc<Vec<StoreFailure>> {
+        self.failures.load_full()
+    }
+
+    fn store_for(&self, r: &SecretRef) -> Result<Arc<dyn crate::SecretStore>> {
         let id = r.store_id().unwrap_or("inline");
         self.registry
+            .load()
             .get(id)
-            .map(AsRef::as_ref)
             .ok_or(SecretError::StoreNotConfigured)
     }
 
     /// Write a new value into the default store.
     pub async fn seal(&self, ctx: &SealContext, plaintext: Secret<Vec<u8>>) -> Result<SecretRef> {
-        self.registry.default_store().put(ctx, &plaintext).await
+        let store = self.registry.load().default_store();
+        store.put(ctx, &plaintext).await
+    }
+
+    /// Write a new value into the **inline** store whatever the default store is (phase 5,
+    /// SET-1, D-236(g), D-266(b)): instance-level secrets (sign-in, mail, push) must neither
+    /// depend on an external store nor fan out to one.
+    pub async fn seal_inline(
+        &self,
+        ctx: &SealContext,
+        plaintext: Secret<Vec<u8>>,
+    ) -> Result<SecretRef> {
+        let store = self
+            .registry
+            .load()
+            .get("inline")
+            .ok_or(SecretError::StoreNotConfigured)?;
+        store.put(ctx, &plaintext).await
     }
 
     pub async fn open(&self, ctx: &SealContext, r: &SecretRef) -> Result<Secret<Vec<u8>>> {
@@ -64,6 +140,7 @@ impl SecretVault {
     ) -> Result<SecretRef> {
         let store = self
             .registry
+            .load()
             .get(store_id)
             .ok_or(SecretError::StoreNotConfigured)?;
         if !store.capabilities().references {
@@ -84,6 +161,7 @@ impl SecretVault {
     ) -> Result<SecretRef> {
         let target = self
             .registry
+            .load()
             .get(target_store)
             .ok_or(SecretError::StoreNotConfigured)?;
         if !target.capabilities().managed {
