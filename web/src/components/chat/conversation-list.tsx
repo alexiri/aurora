@@ -24,12 +24,12 @@ const KIND: Record<string, { icon: Icon; tint: string }> = {
 };
 
 /** The round tile of a conversation kind (search results use it at 28 px). */
-export function KindTile({ kind, size, className }: { kind: string; size: number; className?: string }) {
+export function KindTile({ kind, size, className }: { kind: string; size: 28 | 36; className?: string }) {
   const k = KIND[kind] ?? KIND.api;
   const Glyph = k.icon;
   return (
-    <span aria-hidden="true" style={{ width: size, height: size }} className={cn("inline-flex shrink-0 items-center justify-center rounded-full", k.tint, className)}>
-      <Glyph width={Math.round(size / 2)} height={Math.round(size / 2)} />
+    <span aria-hidden="true" className={cn("inline-flex shrink-0 items-center justify-center rounded-full", size === 28 ? "size-7" : "size-9", k.tint, className)}>
+      <Glyph width={size === 28 ? 14 : 18} height={size === 28 ? 14 : 18} />
     </span>
   );
 }

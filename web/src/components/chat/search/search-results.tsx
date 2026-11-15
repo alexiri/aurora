@@ -193,7 +193,7 @@ export function ResultRow({
           {author}
           {i.type === "attachment" ? " · File" : ""}
         </span>
-        <HighlightedText text={i.snippet} highlights={i.highlights} className="block line-clamp-3 text-[13px] leading-[19px] text-ink-2" />
+        <HighlightedText text={i.snippet} highlights={i.highlights} className="block line-clamp-3 text-sm text-ink-2" />
       </span>
     </Link>
   );
