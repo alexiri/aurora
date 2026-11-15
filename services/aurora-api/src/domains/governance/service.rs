@@ -89,7 +89,7 @@ pub async fn get(state: &AppState, org: Uuid) -> Result<GovernanceDocument, ApiE
 }
 
 /// Why a secret does not comply with the effective governance (`None` = compliant).
-fn classify(eff: &Eff, s: &repo::LlmSecretRef) -> Option<&'static str> {
+pub(crate) fn classify(eff: &Eff, s: &repo::LlmSecretRef) -> Option<&'static str> {
     let ep = s.llm_endpoint_id.as_deref()?;
     let e = eff.endpoints.get(ep).filter(|e| e.permitted);
     let Some(e) = e else {
@@ -167,8 +167,8 @@ pub async fn reevaluate_stored(
 pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernance, ApiError> {
     let eff = gov::effective_for(state, org).await?;
     let secrets = repo::llm_secrets(&state.pool, org).await?;
-    let endpoints = state
-        .llm
+    let registry = state.llm();
+    let endpoints = registry
         .endpoints()
         .iter()
         .filter_map(|ep| {
@@ -375,7 +375,7 @@ pub fn instance(state: &AppState) -> InstanceGovernance {
             require_key_origin: i.require_key_origin,
             known_llm_hosts: i.known_llm_hosts.clone(),
             endpoints: state
-                .llm
+                .llm()
                 .endpoints()
                 .iter()
                 .map(|ep| InstanceEndpoint {

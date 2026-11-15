@@ -116,22 +116,41 @@ impl Settings {
             .push(hook);
     }
 
-    /// Rebuild the instance governance (`08 §11.1`) and the BYO ceiling whenever a `governance.*`
-    /// or `byo.*` key changes; `llm` is rebuilt by SET-3's hook, which reads the same registry.
+    /// Rebuild the live LLM readers whenever a `governance.*`, `byo.*` or `llm.*` key changes
+    /// (SET-2, SET-3): the provider table (endpoints, reserved LLM hosts, the secrets' recipes) of
+    /// the policy resolver and of the governance step, the instance ceiling that carries the
+    /// endpoints and the known LLM hosts (built-in + `known_llm_hosts_extra` − endpoint hosts, from
+    /// the merged configuration) and the BYO ceiling. All of it is replaced before the caches are
+    /// flushed as `all` (`reload_and_flush`), and nothing is replaced when any part does not
+    /// resolve (the previous state stays in force and the failure is logged).
     pub fn rebuild_governance_on_change(
         &self,
         governance: Arc<crate::governance::Governance>,
         resolver: Arc<crate::resolver::DbCredentialResolver>,
-        llm: Arc<aurora_llm::ProviderRegistry>,
+        policy: Arc<crate::resolve::Resolver>,
     ) {
         self.on_swap(Arc::new(move |old, new| {
-            if !section_changed(old, new, &["governance.", "byo."]) {
+            let llm_changed = section_changed(old, new, &["llm."]);
+            if !llm_changed && !section_changed(old, new, &["governance.", "byo."]) {
                 return;
             }
+            let registry = if llm_changed {
+                match aurora_llm::ProviderRegistry::from_config(&new.raw.llm) {
+                    Ok(r) => Arc::new(r),
+                    Err(e) => {
+                        tracing::error!(error = %e, "llm settings did not resolve; keeping the previous endpoint table");
+                        return;
+                    }
+                }
+            } else {
+                governance.registry()
+            };
             match new.raw.governance_config() {
                 Ok(g) => {
                     resolver.set_byo(aurora_llm::governance::ByoInstance::from_config(&g.byo));
-                    governance.set_instance(crate::governance::instance_from_config(&g, &llm));
+                    policy.set_llm(registry.clone());
+                    let instance = crate::governance::instance_from_config(&g, &registry);
+                    governance.set_registry_and_instance(registry, instance);
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "governance settings did not resolve; keeping the previous instance ceiling");

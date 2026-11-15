@@ -5840,6 +5840,92 @@
         ]
       }
     },
+    "/v1/admin/settings/llm/endpoint-test": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Probe an LLM endpoint without a credential (C-779): one GET of its models path through the\ndestination guard, 10 s. Nothing is saved; no re-authentication (nothing changes).",
+        "operationId": "adminTestLlmEndpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndpointTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/settings/{section}": {
       "get": {
         "tags": [
@@ -38283,6 +38369,57 @@
           "open",
           "credentialed_only"
         ]
+      },
+      "EndpointTestRequest": {
+        "type": "object",
+        "description": "Request body (C-779).",
+        "required": [
+          "endpoint"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": "object",
+            "description": "One endpoint entry, as in `llm.endpoints` (TOML shape as JSON)."
+          }
+        }
+      },
+      "EndpointTestResult": {
+        "type": "object",
+        "description": "What the probe found.",
+        "required": [
+          "reachable"
+        ],
+        "properties": {
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`destination_refused`, `dns`, `timeout`, `connect`, `tls`, `unexpected_status` or\n`unreachable`."
+          },
+          "models": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Model ids, only when the endpoint answers a 2xx OpenAI-style list without a key."
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The HTTP status of the answer.",
+            "minimum": 0
+          }
+        }
       },
       "ErrorBody": {
         "type": "object",

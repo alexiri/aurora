@@ -58,8 +58,9 @@ pub struct AppState {
     pub mailer: Arc<dyn Mailer>,
     /// Secret value store registry (built from `[secrets]`).
     pub vault: Arc<aurora_secrets::SecretVault>,
-    /// Core LLM provider registry (built from `[llm]`).
-    pub llm: Arc<aurora_llm::ProviderRegistry>,
+    /// Core LLM provider registry (built from `[llm]`), replaced live when the `llm` settings
+    /// change (SET-3); read it with [`AppState::llm`].
+    pub llm_live: Arc<arc_swap::ArcSwap<aurora_llm::ProviderRegistry>>,
     /// Instance governance ceiling (`governance` settings over the registry), replaced live when
     /// the `governance` section changes (SET-2); read it with [`AppState::gov_instance`].
     pub gov_live: Arc<arc_swap::ArcSwap<aurora_llm::governance::Instance>>,
@@ -182,7 +183,7 @@ impl AppState {
             net,
             mailer,
             vault,
-            llm,
+            llm_live: Arc::new(arc_swap::ArcSwap::new(llm)),
             gov_live,
             llm_http,
             approval_bus: Arc::default(),
@@ -210,30 +211,49 @@ impl AppState {
         self.gov_live.load_full()
     }
 
-    /// Rebuild the instance ceiling whenever a `governance.*` or `byo.*` setting changes
-    /// (SET-2, `08 §11.1`): the endpoints stay (SET-3's reader owns them).
+    /// The LLM provider registry now in force (SET-3): one load per request path, so a swap
+    /// mid-request never mixes two tables.
+    #[must_use]
+    pub fn llm(&self) -> Arc<aurora_llm::ProviderRegistry> {
+        self.llm_live.load_full()
+    }
+
+    /// Rebuild the provider registry when an `llm.*` setting changes (SET-3) and the instance
+    /// ceiling when a `governance.*`, `byo.*` or `llm.*` setting changes (SET-2, `08 §11.1`: the
+    /// ceiling carries the endpoints), in that order, then run the `08 §11.2` re-evaluation of every
+    /// organization (it also covers secrets on a removed endpoint and model overrides that
+    /// the narrowed allow-lists no longer permit).
     fn install_live_governance(&self) {
         let cell = self.gov_live.clone();
+        let llm_cell = self.llm_live.clone();
         let pool = self.pool.clone();
         self.settings.on_swap(Arc::new(move |old, new| {
-            let differs = new
-                .effective
-                .keys
-                .keys()
-                .chain(old.effective.keys.keys())
-                .filter(|k| k.starts_with("governance.") || k.starts_with("byo."))
-                .any(|k| {
-                    old.effective.keys.get(k).map(|e| &e.value)
-                        != new.effective.keys.get(k).map(|e| &e.value)
-                });
-            if !differs {
+            let changed = |prefixes: &[&str]| {
+                new.effective
+                    .keys
+                    .keys()
+                    .chain(old.effective.keys.keys())
+                    .filter(|k| prefixes.iter().any(|p| k.starts_with(p)))
+                    .any(|k| {
+                        old.effective.keys.get(k).map(|e| &e.value)
+                            != new.effective.keys.get(k).map(|e| &e.value)
+                    })
+            };
+            let llm_changed = changed(&["llm."]);
+            if !llm_changed && !changed(&["governance.", "byo."]) {
                 return;
+            }
+            if llm_changed {
+                match aurora_llm::ProviderRegistry::from_config(&new.effective.raw.llm) {
+                    Ok(r) => llm_cell.store(Arc::new(r)),
+                    Err(e) => tracing::error!(error = %e, "llm settings did not resolve; keeping the previous provider registry"),
+                }
             }
             match new.effective.raw.governance_config() {
                 Ok(g) => {
-                    let endpoints = cell.load().endpoints.clone();
-                    let inst = Arc::new(domains::secrets::gov::instance_from_governance(
-                        &g, endpoints,
+                    let inst = Arc::new(domains::secrets::gov::instance_from_config(
+                        &g,
+                        &llm_cell.load(),
                     ));
                     cell.store(inst.clone());
                     // The `08 §11.2` re-evaluation of every organization (idempotent job).
@@ -335,7 +355,7 @@ impl AppState {
         self.gov_live = Arc::new(arc_swap::ArcSwap::from_pointee(
             domains::secrets::gov::instance_from_config(&g, &llm),
         ));
-        self.llm = llm;
+        self.llm_live = Arc::new(arc_swap::ArcSwap::new(llm));
         self.install_live_governance();
         self
     }

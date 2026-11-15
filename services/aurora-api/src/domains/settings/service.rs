@@ -97,11 +97,11 @@ fn section_def(section: &str) -> Result<&'static SectionDef, ApiError> {
         .ok_or_else(|| unknown_section(section))
 }
 
-fn field(path: String, code: &str, message: impl Into<String>) -> Value {
+pub(super) fn field(path: String, code: &str, message: impl Into<String>) -> Value {
     json!({ "path": path, "code": code, "message": message.into() })
 }
 
-fn invalid(fields: Vec<Value>) -> ApiError {
+pub(super) fn invalid(fields: Vec<Value>) -> ApiError {
     ApiError::unprocessable(
         "settings_invalid",
         "Some settings are not valid. Fix the listed fields and save again.",
@@ -543,6 +543,9 @@ fn normalize(
                         ));
                     }
                     seen.push(id);
+                    for p in super::rules::entry_problems(key, e) {
+                        fields.push(field(format!("/{key}/{id}/{}", p.field), p.code, p.message));
+                    }
                 }
                 if let Err(m) = d.check(val) {
                     fields.push(field(format!("/{key}"), "invalid_value", m));

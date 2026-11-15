@@ -97,6 +97,7 @@ mod secrets;
 mod secrets_migrate;
 mod settings;
 mod settings_governance;
+mod settings_llm;
 mod skill_library;
 mod skills;
 mod sse_revocation;

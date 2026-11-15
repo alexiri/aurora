@@ -14,5 +14,8 @@ governance.llm.allowed_key_scopes
 governance.llm.known_llm_hosts_extra
 governance.llm.minimum_posture
 governance.llm.require_key_origin
+llm.enabled_providers
+llm.endpoints
+llm.provider_preference
 secrets.default_store
 secrets.stores

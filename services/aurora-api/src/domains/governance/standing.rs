@@ -255,3 +255,63 @@ pub async fn affected(
     }
     Ok((out, total))
 }
+
+/// What a change of the LLM endpoints does to the organizations' keys (SET-3, `08 §11.2`): the
+/// organizations whose LLM keys stop being usable (`not_permitted`: the endpoint is gone, no
+/// longer permitted or its key scope is; `mismatch`: its verified origin no longer complies),
+/// the first `keep` of them with their counts, the number of organizations and of keys. Metadata
+/// only. One pass over every organization, like [`affected`].
+pub async fn keys_affected(
+    pool: &aurora_db::PgPool,
+    before: &Instance,
+    after: &Instance,
+    keep: usize,
+) -> Result<(Vec<AffectedOrg>, i64, i64), ApiError> {
+    use crate::domains::governance::service::classify;
+    let usable = |eff: &g::EffectiveGovernance, s: &repo::LlmSecretRef| classify(eff, s).is_none();
+    let (mut out, mut orgs, mut keys) = (Vec::new(), 0i64, 0i64);
+    let mut cursor = None;
+    loop {
+        let rows = repo::orgs_page(pool, cursor, 200).await?;
+        let Some(last) = rows.last() else {
+            break;
+        };
+        cursor = Some((last.created_at, last.id));
+        for r in &rows {
+            let (Ok(db), Ok(da)) = (
+                g::from_stored(&r.governance, before),
+                g::from_stored(&r.governance, after),
+            ) else {
+                continue;
+            };
+            let (eb, ea) = (g::effective(before, &db), g::effective(after, &da));
+            let secrets = repo::llm_secrets(pool, r.id).await?;
+            let (mut now, mut then) = (0i64, 0i64);
+            let mut lost = 0i64;
+            for s in &secrets {
+                let (b, a) = (usable(&eb, s), usable(&ea, s));
+                now += i64::from(b);
+                then += i64::from(a);
+                lost += i64::from(b && !a);
+            }
+            if lost == 0 {
+                continue;
+            }
+            orgs += 1;
+            keys += lost;
+            if out.len() < keep {
+                out.push(AffectedOrg {
+                    org_id: r.id,
+                    slug: r.slug.clone(),
+                    name: r.name.clone(),
+                    changes: vec![AffectedChange {
+                        key: "llm.endpoints".to_owned(),
+                        before: json!({ "usable_keys": now }),
+                        after: json!({ "usable_keys": then }),
+                    }],
+                });
+            }
+        }
+    }
+    Ok((out, orgs, keys))
+}

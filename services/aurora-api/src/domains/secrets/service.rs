@@ -312,28 +312,30 @@ fn scope_invalidation(org: Uuid, ws: Option<Uuid>) -> (&'static str, Uuid) {
 }
 
 /// LLM prerequisites: endpoint, provider, admission and the effective endpoint.
-struct LlmCtx<'a> {
-    ep: &'a aurora_llm::Endpoint,
-    provider: &'a dyn aurora_llm::LlmProvider,
+struct LlmCtx {
+    /// Copies of the registry's entries at the time of the request (the registry is replaced
+    /// live, SET-3).
+    ep: aurora_llm::Endpoint,
+    provider: std::sync::Arc<dyn aurora_llm::LlmProvider>,
     eff: aurora_llm::governance::EffectiveEndpoint,
 }
 
-async fn llm_ctx<'a>(
-    state: &'a AppState,
+async fn llm_ctx(
+    state: &AppState,
     org: Uuid,
     ws: Option<Uuid>,
     endpoint_id: &str,
     admit: bool,
-) -> Result<LlmCtx<'a>, ApiError> {
-    let ep = state
-        .llm
+) -> Result<LlmCtx, ApiError> {
+    let llm = state.llm();
+    let ep = llm
         .endpoint(endpoint_id)
-        .ok_or_else(|| bad("/llm/endpoint_id", "unknown endpoint"))?;
-    let provider = state
-        .llm
-        .provider_for(ep)
+        .ok_or_else(|| bad("/llm/endpoint_id", "unknown endpoint"))?
+        .clone();
+    let provider = llm
+        .provider_for(&ep)
         .ok_or_else(|| bad("/llm/endpoint_id", "provider not enabled"))?
-        .as_ref();
+        .clone();
     let eff = gov::effective_for(state, org).await?;
     if admit
         && !eff.key_permitted(
@@ -401,8 +403,9 @@ pub async fn create(
         // (C-801, C-802) A mode the endpoint does not admit is refused before the value is read. Only `api_key`
         // has a value handler in this lane; the minted and signed modes arrive with their providers (P4-LLM-2..4)
         // and are listed by `endpoint_auth_modes` only then.
-        let admitted = aurora_llm::AuthMode::parse(mode)
-            .is_some_and(|m| aurora_llm::endpoint_auth_modes(lc.provider, lc.ep).contains(&m));
+        let admitted = aurora_llm::AuthMode::parse(mode).is_some_and(|m| {
+            aurora_llm::endpoint_auth_modes(lc.provider.as_ref(), &lc.ep).contains(&m)
+        });
         if !admitted {
             return Err(ApiError::unprocessable(
                 "llm_key_invalid",
@@ -418,20 +421,27 @@ pub async fn create(
         }
         host = lc
             .provider
-            .hosts(lc.ep)
+            .hosts(&lc.ep)
             .into_iter()
             .next()
             .ok_or_else(|| ApiError::internal("Internal error."))?;
         path = None;
-        injection = llm_injection(lc.provider);
+        injection = llm_injection(lc.provider.as_ref());
         let st = stage(state, &ctx, inp, true).await?;
         let key = plain_of(&st)
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
         check_value_shape(mode, &key)?;
-        let o = llm::check_key(&state.llm_http, lc.provider, lc.ep, &lc.eff, &key, 1)
-            .await
-            .map_err(llm::KeyFail::into_error)?;
+        let o = llm::check_key(
+            &state.llm_http,
+            lc.provider.as_ref(),
+            &lc.ep,
+            &lc.eff,
+            &key,
+            1,
+        )
+        .await
+        .map_err(llm::KeyFail::into_error)?;
         llm::require_compliant(&o)?;
         origin_json =
             Some(serde_json::to_value(&o).map_err(|_| ApiError::internal("Internal error."))?);
@@ -642,8 +652,8 @@ pub async fn set_value(
         check_value_shape(row.llm_auth_mode.as_deref().unwrap_or("api_key"), &key)?;
         let o = llm::check_key(
             &state.llm_http,
-            lc.provider,
-            lc.ep,
+            lc.provider.as_ref(),
+            &lc.ep,
             &lc.eff,
             &key,
             new_version,
@@ -728,8 +738,8 @@ pub async fn verify(state: &AppState, row: &SecretRow) -> Result<StoredOrigin, A
     .await?;
     let o = llm::check_key(
         &state.llm_http,
-        lc.provider,
-        lc.ep,
+        lc.provider.as_ref(),
+        &lc.ep,
         &lc.eff,
         &key,
         i64::from(row.value_version),
@@ -844,7 +854,7 @@ pub async fn models(state: &AppState, row: &SecretRow) -> Result<Models, ApiErro
         None => {
             let l = lc
                 .provider
-                .list_models(lc.ep, &key, &state.llm_http)
+                .list_models(&lc.ep, &key, &state.llm_http)
                 .await
                 .map_err(|e| match e {
                     aurora_llm::LlmError::InvalidKey => ApiError::unprocessable(

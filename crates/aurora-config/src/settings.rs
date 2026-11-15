@@ -274,6 +274,7 @@ impl Registry {
         let mut defs: Vec<SettingDef> = Vec::new();
         defs.extend(secrets_defs());
         defs.extend(governance_defs());
+        defs.extend(llm_defs());
         #[cfg(any(test, feature = "test-registry"))]
         defs.extend(test_defs());
         Self { defs }
@@ -431,6 +432,49 @@ fn secrets_defs() -> Vec<SettingDef> {
         .helm("vault.*"),
     ]
 }
+
+/// The `llm` section (SET-3, D-236, D-237): providers, their preference order and the endpoints.
+/// The provider list and the order are whole values (locked together when Helm sets them);
+/// endpoints are a keyed list by `id` (a Helm endpoint is one locked entry, dashboard endpoints
+/// with other ids sit beside it). `llm.dev_upstream_overrides` is never a setting (SEC-89).
+/// Defaults are those of [`crate::raw::LlmSection`].
+fn llm_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "llm";
+    let providers = || SettingType::List {
+        item: Box::new(SettingType::Str { max_len: 64 }),
+        max_items: 16,
+    };
+    vec![
+        SettingDef::new(
+            S,
+            "llm.enabled_providers",
+            providers(),
+            json!(["litellm", "anthropic"]),
+        )
+        .whole_list(),
+        SettingDef::new(
+            S,
+            "llm.provider_preference",
+            providers(),
+            json!(["litellm", "anthropic"]),
+        )
+        .whole_list(),
+        SettingDef::new(
+            S,
+            "llm.endpoints",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: LLM_ENDPOINTS_MAX,
+            },
+            json!([]),
+        )
+        .keyed("id"),
+    ]
+}
+
+/// Most `llm.endpoints` entries (Helm and dashboard together are checked against this on a write).
+pub const LLM_ENDPOINTS_MAX: usize = 64;
 
 /// The `governance` section (SET-2, D-237): the instance ceiling of `08 §11.1`. Defaults are those
 /// of `raw.rs`; the replacement `governance.llm.known_llm_hosts` list stays configuration-only.
@@ -1052,6 +1096,58 @@ mod tests {
             ("d", Source::Dashboard)
         );
         assert_eq!(k.source, Source::Helm);
+    }
+
+    #[test]
+    fn the_llm_section_locks_endpoints_per_entry_and_the_lists_as_a_whole() {
+        let r = registry();
+        let keys: Vec<&str> = r.section("llm").map(|d| d.key).collect();
+        assert_eq!(
+            keys,
+            [
+                "llm.enabled_providers",
+                "llm.provider_preference",
+                "llm.endpoints"
+            ]
+        );
+        assert!(matches!(
+            r.get("llm.endpoints").unwrap().list,
+            Some(ListKind::Keyed { id_field: "id" })
+        ));
+        for k in ["llm.enabled_providers", "llm.provider_preference"] {
+            assert!(matches!(r.get(k).unwrap().list, Some(ListKind::Whole)));
+        }
+        // `llm.dev_upstream_overrides` is never a setting (SEC-89).
+        assert!(r.get("llm.dev_upstream_overrides").is_none());
+        // Defaults are `LlmSection`'s, so an unset key shows what the application does.
+        let d = crate::LlmSection::default();
+        assert_eq!(
+            r.get("llm.enabled_providers").unwrap().default,
+            json!(d.enabled_providers)
+        );
+        assert_eq!(
+            r.get("llm.provider_preference").unwrap().default,
+            json!(d.provider_preference)
+        );
+        // A Helm endpoint is one locked entry; a dashboard endpoint sits beside it.
+        let s = src(
+            "[[llm.endpoints]]\nid = \"central\"\nprovider = \"litellm\"\nbase_url = \"https://l.example\"\n",
+        );
+        let mut st = Stored::default();
+        st.sections.entry("llm".to_string()).or_default().insert(
+            "llm.endpoints".to_string(),
+            json!([{"id": "team", "provider": "litellm", "base_url": "https://t.example"}]),
+        );
+        let e = s.effective(&st).unwrap();
+        let entries = e.keys["llm.endpoints"].entries.as_ref().unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|x| (x.id.as_str(), x.source))
+                .collect::<Vec<_>>(),
+            [("central", Source::Helm), ("team", Source::Dashboard)]
+        );
+        assert_eq!(e.raw.llm.endpoints.len(), 2);
     }
 
     #[test]

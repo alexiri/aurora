@@ -992,6 +992,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/settings/llm/endpoint-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe an LLM endpoint without a credential (C-779): one GET of its models path through the
+         *     destination guard, 10 s. Nothing is saved; no re-authentication (nothing changes).
+         */
+        post: operations["adminTestLlmEndpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/settings/{section}": {
         parameters: {
             query?: never;
@@ -6772,6 +6792,27 @@ export interface components {
          * @enum {string}
          */
         EgressPosture: "open" | "credentialed_only";
+        /** @description Request body (C-779). */
+        EndpointTestRequest: {
+            /** @description One endpoint entry, as in `llm.endpoints` (TOML shape as JSON). */
+            endpoint: Record<string, never>;
+        };
+        /** @description What the probe found. */
+        EndpointTestResult: {
+            /**
+             * @description `destination_refused`, `dns`, `timeout`, `connect`, `tls`, `unexpected_status` or
+             *     `unreachable`.
+             */
+            error_code?: string | null;
+            /** @description Model ids, only when the endpoint answers a 2xx OpenAI-style list without a key. */
+            models?: string[] | null;
+            reachable: boolean;
+            /**
+             * Format: int32
+             * @description The HTTP status of the answer.
+             */
+            status?: number | null;
+        };
         ErrorBody: {
             /** @description snake_case machine code. */
             code: string;
@@ -15705,6 +15746,71 @@ export interface operations {
                 };
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminTestLlmEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointTestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointTestResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

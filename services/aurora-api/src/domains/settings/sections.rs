@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 /// Section-specific read-only data shown beside the settings (`extra`).
 pub async fn extra(_state: &AppState, section: &str) -> Result<Option<Value>, ApiError> {
     Ok(match section {
+        // (C-779) The providers this release can enable: the page offers exactly these.
+        "llm" => Some(json!({ "providers": aurora_llm::supported_providers() })),
         // (C-778) Where organizations stand against the instance ceiling.
         "governance" => Some(json!({ "orgs_url": "/v1/admin/settings/governance/orgs" })),
         _ => None,
@@ -27,6 +29,9 @@ pub async fn affected(
     before: &Effective,
     after: &Effective,
 ) -> Result<(Vec<AffectedOrg>, i64, Vec<SettingWarning>), ApiError> {
+    if section == "llm" {
+        return affected_llm(state, before, after).await;
+    }
     if section != "governance" {
         return Ok((Vec::new(), 0, Vec::new()));
     }
@@ -42,4 +47,56 @@ pub async fn affected(
     let (orgs, total) =
         standing::affected(&state.pool, &b, &a, limits::SETTINGS_PREVIEW_ORGS_MAX).await?;
     Ok((orgs, total, Vec::new()))
+}
+
+/// The instance ceiling a merged view would put in force, endpoints included.
+fn instance_of(e: &Effective) -> Result<aurora_llm::governance::Instance, ApiError> {
+    let g = e
+        .raw
+        .governance_config()
+        .map_err(|_| ApiError::internal("Internal error."))?;
+    let registry = aurora_llm::ProviderRegistry::from_config(&e.raw.llm)
+        .map_err(|_| ApiError::internal("Internal error."))?;
+    Ok(crate::domains::secrets::gov::instance_from_config(
+        &g, &registry,
+    ))
+}
+
+/// `llm` (SET-3): the organizations whose keys stop being usable (`secrets_become_non_permitted`,
+/// counts per organization in `affected_orgs`) and the warnings startup validation also logs.
+async fn affected_llm(
+    state: &AppState,
+    before: &Effective,
+    after: &Effective,
+) -> Result<(Vec<AffectedOrg>, i64, Vec<SettingWarning>), ApiError> {
+    let (b, a) = (instance_of(before)?, instance_of(after)?);
+    let (orgs, total, keys) =
+        standing::keys_affected(&state.pool, &b, &a, limits::SETTINGS_PREVIEW_ORGS_MAX).await?;
+    let mut warnings = Vec::new();
+    if total > 0 {
+        warnings.push(SettingWarning {
+            code: "secrets_become_non_permitted".into(),
+            key: Some("llm.endpoints".into()),
+            message: format!(
+                "{keys} LLM key{} in {total} organization{} would stop being usable: their \
+                 endpoint is removed or no longer permits them. Owners see them as not permitted \
+                 and the gateway stops injecting them.",
+                if keys == 1 { "" } else { "s" },
+                if total == 1 { "" } else { "s" },
+            ),
+        });
+    }
+    // FIX-019: an endpoint without a default model (startup logs the same).
+    let known = aurora_config::llm_endpoint_warnings(&before.raw.llm);
+    for w in aurora_config::llm_endpoint_warnings(&after.raw.llm)
+        .into_iter()
+        .filter(|w| !known.contains(w))
+    {
+        warnings.push(SettingWarning {
+            code: "no_default_model".into(),
+            key: Some("llm.endpoints".into()),
+            message: w,
+        });
+    }
+    Ok((orgs, total, warnings))
 }

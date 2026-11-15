@@ -92,15 +92,15 @@ fn static_conflict(
             "claim_host": e.host,
         })));
     }
-    if state.llm.is_endpoint_host(host) {
+    let llm = state.llm();
+    if llm.is_endpoint_host(host) {
         let lower = host.to_ascii_lowercase();
         let bare = lower.split_once(':').map_or(lower.as_str(), |(h, _)| h);
-        let endpoint = state
-            .llm
+        let endpoint = llm
             .endpoints()
             .iter()
             .find(|ep| {
-                state.llm.provider_for(ep).is_some_and(|p| {
+                llm.provider_for(ep).is_some_and(|p| {
                     p.hosts(ep)
                         .iter()
                         .any(|h| *h == lower || (!h.contains(':') && h == bare))
