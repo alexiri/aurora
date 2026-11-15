@@ -21,6 +21,17 @@ This task changes those defaults.
   wizard) and `14 §First run and connecting` §4, `05` placement rows, `09 §10` (builtin source; doc fix).
 - Unchanged: D-162 (slug from `{sub}`), C-521, C-525 (starter grant rules), SEC-77.
 
+## Placement in the new structure (D-342)
+
+- **The setup wizard** is the checklist of **Administration › Overview** (`/admin`, P5-IA-4). Its steps
+  link to the topic pages that hold each setting:
+  - placement: People & sign-in › New users;
+  - LLM keys: AI models;
+  - OAuth clients and packages: Apps & services;
+  - chat platforms: Chat platforms.
+- **The display-name template** sits on People & sign-in › New users, next to the slug template.
+- **The workspace selector's "(personal)" label** follows the vocabulary.
+
 ## Context
 
 - **Wizard.** `web/src/components/admin/setup-view.tsx`: `StarterSwitch` ~196–224 (only the org LLM
@@ -64,10 +75,11 @@ This task changes those defaults.
      OAuth-client query and leave a note.
    - Replace step 5 with **Apps**:
      - each active app whose person methods all need a missing client says "People can't sign in to
-       <App> yet", with **Register an OAuth client** linking to Admin › OAuth clients with `package` and
-       `client_key` prefilled (the form reads them from the query);
+       <App> yet", with **Register an OAuth client** linking to Administration › Apps & services › OAuth
+       clients (`/admin/apps?tab=oauth-clients`, `routes.ts`) with `package` and `client_key` prefilled
+       (the form reads them from the query);
      - token-only apps get an informational line;
-     - Connectors and Plugins keep their links.
+     - Chat platforms and Packages keep their links.
 5. **Docs and dev image (D-326 d).**
    - Fix the two "Phase 0 ships none" sentences.
    - `deploy/dev/kind-dev.sh` builds the builtin archives (`aurora plugin build`, unsigned) into the API

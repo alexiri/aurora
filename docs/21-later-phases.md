@@ -335,6 +335,21 @@ the org owner above her.
 
 Briefs FIX-159 and P5-UX-8..15. Owning sections: `14 §App setup`, `07 §Authoring`, `09 §3.4` and
 `§6`, `05`, `03 §Planned changes`, `17` (SEC-129), `API_CONTRACTS` C-930..C-949.
+
+**One structure for every level** (the owner's administration walkthrough, 2026-11-15; "I like your
+direction … we want a coherent user experience"; D-338..D-342). The dashboard is reorganized by topic,
+with the same topics and names at Administration, organization and workspace level:
+Overview, People, AI models, Apps & services, Internet access, Agents, Chat platforms, Data, Platform
+(Administration only) and Settings.
+- "Governance", "Policy" and "Credentials" are retired as page names.
+- Every old route redirects.
+- A scope ladder shows each inherited setting with the levels above and below.
+- Settings sections render inside their topics, with All settings as the index.
+- Every field reads in words from one registry.
+- The P5-UX briefs are built inside this structure (D-342).
+
+Briefs P5-IA-1..5. Owning sections: `14 §Information architecture` › "One structure for every level",
+`15 §Instance settings` (the note on movable keys), `05`, `API_CONTRACTS` C-960..C-975.
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 Also in phase 6, already specified: the **S3-compatible blob store** (P4-S3, D-120; moved from phase 5

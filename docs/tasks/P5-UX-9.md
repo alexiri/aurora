@@ -17,6 +17,16 @@ In the walkthrough:
   P5-UX-13).
 - Normative: `14 §App setup` §7, `14 §Visual design`.
 
+## Placement in the new structure (D-342)
+
+The setup pages live inside each level's **Apps & services** topic (`14 §Information architecture`):
+- the workspace view at `…/apps/<app>`, below the workspace's Apps & services tabs;
+- the org view at `/o/<org>/apps/<app>`, below the org's.
+
+The page header carries the level badge (C-962), and the "what is set up" sections link to the Apps &
+services tabs (OAuth clients, Self-hosted apps, Connections) through `routes.ts`. Below, "Apps tab" means
+Apps & services › Apps, and "Org › Apps" means the org's Apps & services › Apps.
+
 ## Context
 
 - **Apps tab.** `web/src/components/apps/apps-tab.tsx` has **Details**, which opens a dialog with tools,
@@ -56,11 +66,13 @@ In the walkthrough:
      P5-UX-13 merges, render the raw guide as today.
 2. **Routes and links (C-932, C-933).**
    - Add the pages.
-   - The Apps tab's **Details** goes to the workspace page.
-   - Every app name in the workspace, org and Admin OAuth client lists, Admin › Self-hosted apps, Admin ›
-     Plugins (app rows) and Connections links to the setup page at the viewer's level.
-   - Org › Apps gets the posture control at its top (reuse `apps-posture-panel` content, same `PUT`);
-     Governance › Apps keeps it and links to Org › Apps.
+   - Apps & services › Apps' **Details** goes to the workspace page.
+   - Every app name in the OAuth clients, Self-hosted apps, Packages (app rows) and Connections tabs of
+     Apps & services, at every level, links to the setup page at the viewer's level.
+   - The org's Apps & services › Apps tab gets the posture control at its top (reuse
+     `apps-posture-panel` content, same `PUT`), above the availability list, with one Save. Governance ›
+     Apps is retired (P5-IA-1 redirects it). Remove the panel from `governance-view.tsx` if P5-IA-1/-3
+     haven't already.
 3. **Tests.**
    - Vitest: the copy table over the P5-UX-8 test fixtures (GitHub no clients; Linear with a workspace
      client; AWS with the external id; GitLab without an instance); the `can` → action mapping; links
@@ -93,7 +105,7 @@ In the walkthrough:
 
 ## Dependencies
 
-P5-UX-8 merged. P5-UX-3 for the workspace Connect action; until it merges, link to the existing connect
+P5-UX-8 and P5-IA-1 merged (the pages sit in the Apps & services topic). P5-UX-3 for the workspace Connect action; until it merges, link to the existing connect
 dialog. P5-UX-13 for the guide with values; until it merges, render the raw guide.
 
 ## Suggested agent/model and reason

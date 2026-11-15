@@ -909,6 +909,135 @@ here, add it here and document it.
 
 ## Information architecture
 
+### One structure for every level (phase 5, P5-IA-1..5, D-338..D-342) — read this first
+
+**Why.** The owner's administration walkthrough (2026-11-15) found pages organized by when each feature
+was built:
+- 18 Admin sidebar items plus 13 Settings sections, nine of them empty;
+- 14 org items;
+- "what agents may reach on the internet" spread over four pages under three names: Settings ›
+  Governance, Governance › Egress, Policy at org and workspace;
+- org "Governance" holding five unrelated topics;
+- Administration reachable only through "All organizations".
+
+This section fixes **one set of topics with the same names at every level**. It supersedes the page lists
+of §Organization, §Workspace and §Instance administration below **where they differ**. Those lists stay
+the reference for each page's content. The first-run and app-setup sections (P5-UX) are written in these
+terms (D-342).
+
+**Vocabulary** (binding for every label, title, empty state, error and help text; code and API names do
+not change):
+
+| Say | Not | Meaning |
+|---|---|---|
+| **Administration** | Admin, All organizations | the instance level, for instance admins |
+| **Apps & services** | Credentials | what agents can use: apps, their connections, services, OAuth clients |
+| **Service** | Secret, custom secret | a website or API an agent reaches with a token you store (generic secret) |
+| **AI models** | Model access, LLM keys page, Governance › Model access | endpoints, model rules, LLM keys |
+| **Internet access** | Policy, Egress, Governance › Egress | what agents may reach: rules, posture, allow-list, browser connections |
+| **Rule** | policy rule | one Internet access rule (allow / ask / block) |
+| **Agents** | — | agents, plus BYO agents and tokens, defaults, approvals timing, terminal, previews, skills |
+| **People** (workspace), **People & sign-in** (instance) | Access, Members, Identity | who can use a level and how they sign in |
+| **Chat platforms** | Connectors, Channels | Mattermost and similar |
+| **Data** | Storage, Retention, Audit spread out | retention, storage use, audit log |
+| **Platform** | — | instance machinery: runners, secret stores, e-mail, limits |
+| **Packages** / **Package sources** / **Publishers** / **Host conflicts** | Plugins / Addon sources / Trusted keys / Host claims | the app catalogue's parts |
+| **Self-hosted apps**, **OAuth clients** | Instances; client keys as labels | unchanged terms (FIX-132) |
+
+"Governance", "Policy" and "Credentials" are no longer page names. The words stay in operator docs and
+APIs.
+
+**Topics per level.** Each topic is one page (`PageHeader` + tabs for its parts). Every page uses the
+§Scope ladder where a value is inherited. Routes use `?tab=` like today's Credentials page; `/apps/<app>`
+is the per-app setup page (P5-UX-9).
+
+| Topic | Administration (`/admin/…`) | Organization (`/o/<org>/…`) | Workspace (`/o/<org>/w/<ws>/…`) |
+|---|---|---|---|
+| Overview | `/admin`: setup checklist until done, then health (runners, gateway, endpoints, apps nobody can sign in to, storage) | `/o/<org>`: Workspaces | `…/w/<ws>`: Overview |
+| People | `/admin/people?tab=users\|organizations\|sign-in\|new-users\|directory-sync` | `/o/<org>/people?tab=members\|groups\|directory-sync` | `…/people` (bindings, groups, Add people, P5-UX-5) |
+| AI models | `/admin/ai-models?tab=endpoints\|rules` | `/o/<org>/ai-models?tab=access\|keys\|keys-to-fix` | `…/ai-models` (LLM keys) |
+| Apps & services | `/admin/apps?tab=packages\|sources\|publishers\|host-conflicts\|self-hosted\|oauth-clients` | `/o/<org>/apps?tab=apps\|connections\|services\|oauth-clients\|self-hosted`, `/o/<org>/apps/<app>` | `…/apps?tab=overview\|apps\|connections\|services\|oauth-clients\|proposals`, `…/apps/<app>` |
+| Internet access | `/admin/internet-access` (floors) | `/o/<org>/internet-access` (posture, allow-list, browser connections, rules, Test a request) | `…/internet-access` (summary, rules, defaults, Test a request) |
+| Agents | `/admin/agents?tab=defaults\|byo\|approvals\|terminal\|previews\|skills` | `/o/<org>/agents?tab=byo\|skills\|previews` | `…/agents` (list; BYO setting in its header) and `…/skills` |
+| Chat platforms | `/admin/chat-platforms` | `/o/<org>/chat-platforms` | (agent › Triggers › Channels) |
+| Data | `/admin/data?tab=retention\|storage\|audit` | `/o/<org>/data?tab=retention\|storage\|audit` | (Settings › Audit) |
+| Platform | `/admin/platform?tab=runners\|secret-stores\|email\|limits` | — | — |
+| Settings | `/admin/settings`: **All settings** (index, search, Export, Import) | `/o/<org>/settings?tab=general\|api-keys\|danger` | `…/settings?tab=general\|api-keys\|audit\|danger` |
+
+The workspace also keeps **Approvals** and **Activity** (operational pages, not settings). Every old
+route redirects to its new place with its tab (C-960). Deep links in mail, gateway errors and guides keep
+working.
+
+**Who sees what** (C-961, extends P5-UX-1's role-aware navigation):
+- **Org members** see Workspaces, plus **AI models**, **Internet access** and **Agents** read-only. These
+  were readable as Governance before, so people can see why a key or host is refused.
+- **Org owners and admins** see every org topic.
+- **Workspace members** see Overview, Agents, Apps & services, AI models, Internet access, Skills,
+  Activity, and Approvals if they are approvers, read-only where they cannot act.
+- **Workspace owners** also see People and Settings.
+- **Administration** is shown only to instance admins.
+
+**Administration entry and level** (C-962):
+- **Administration** is a labelled link at the foot of the sidebar and in the account menu.
+- The org switcher lists organizations only; "All organizations" is gone.
+- Every page header carries a level badge: **Administration**, **<org>** or **<org> › <workspace>**.
+- An instance admin acting in an org sees the org's pages exactly as its owner would. The badge is the
+  reminder of which hat they are wearing.
+
+#### Scope ladder (D-339, C-963)
+
+Every setting that is inherited or tightened across levels is shown as a ladder on its topic page:
+1. **Above**: the values set by the levels above, locked, each with its source ("Set by Administration",
+   "Set by Users") and a link for people who may change it.
+2. **Here**: this level's controls. Options looser than the floor are not offered, and the page says why
+   in one sentence.
+3. **Below**: what the levels below have changed, as a table: organizations for Administration (today's
+   "Where organizations stand"), workspaces for an organization (C-964). Each row shows the stricter
+   values and links.
+
+The ladder applies to: Internet access (posture, allow-list, browser connections, the default rule);
+AI models (posture, key scopes, allowed models); Agents › BYO (posture, token age, source networks);
+Data › Retention (conversation and attachment days, quotas); Apps & services › Apps (posture and
+availability).
+
+#### Settings live in their topics (D-340, C-971, C-973)
+
+- **Settings sections are storage, not navigation.** A section renders inside its topic page, alone or
+  split by key group:
+
+  | Section | Topic page |
+  |---|---|
+  | `governance` | LLM keys → AI models › Rules for organizations; egress and open lane → Internet access; BYO agents and agent tokens → Agents › BYO |
+  | `llm` | AI models › Endpoints |
+  | `sign_in` | People & sign-in › Sign-in (absorbs the Identity page) |
+  | `email` | Platform › Email |
+  | `secrets` | Platform › Secret stores |
+  | `agents` | Agents › Defaults |
+  | `approvals` | Agents › Approvals |
+  | `retention` | Data › Retention |
+  | `skills` | Agents › Skills |
+  | `scim` | People & sign-in › Directory sync |
+  | `previews` | Agents › Previews |
+  | `terminal` | Agents › Terminal |
+  | `limits` | Platform › Limits |
+
+- `/admin/settings` is **All settings**: the section index with search across fields, Export and Import.
+  Each entry links to its topic page. `/admin/settings/<section>` redirects there.
+- No section page is an empty form. A section whose keys are not editable yet shows the **current
+  values read-only**, with their source (Helm or default) and the operator doc to change them (C-973).
+- Saving, drafts, Helm locks and the critical audit stay exactly as SET-1..5 specify; only where the
+  fields render changes.
+
+#### Settings in words (D-341, C-972, C-974)
+
+- Every settings field has a written **label** and a one-sentence **help** text from the registry
+  (C-972). There are no labels derived from keys ("Known llm hosts extra").
+- Enumerations are `ChoiceCards` with a sentence per choice (never `sanctioned_only`). Lists are list
+  editors (never JSON).
+- The **Default** badge reads "Default: <value in words>".
+- UI text never cites spec sections ("08 §11.1") or repository paths. Operator docs are linked by title.
+  A test fails on `§` or `docs/` in dashboard strings (C-974).
+
 ### Public / auth (outside the shell)
 `/auth/login` (phase 0: email+password and OIDC buttons from `/v1/instance`;
 **from phase 1 (RFE-004): OIDC provider buttons only**, plus the "signup closed" /
@@ -1729,12 +1858,13 @@ known, **"Give <Agent> <App>"**. It always ends with a connection **and** a gran
   ("No connections in scope") becomes this button.
 - Welcome › **Connect an app**, and Overview's guide: the journey for the workspace's default agent
   (`…/agents/<handle>?tab=access&connect=` with no app opens the app step).
-- Credentials › Apps › **Connect** (`…/credentials?tab=apps&connect=<app>`, C-842 deep link kept): the
-  same journey with an **agent step** added after the app (§3 preselection rules). Choosing no agent is
-  allowed and gives today's "connection only" result.
+- Apps & services › Apps › **Connect** (`…/apps?tab=apps&connect=<app>`; the C-842 deep link
+  `…/credentials?tab=apps&connect=<app>` redirects there, C-960): the same journey with an **agent step**
+  added after the app (§3 preselection rules). Choosing no agent is allowed and gives today's
+  "connection only" result. The per-app setup page's **Connect** (§7) opens it too.
 - Every gateway refusal and the `request_app_connection` notice for an app the agent lacks link to
   `…/agents/<agent id>?tab=access&connect=<app>` (C-959).
-- Reconnect (Connections tab) keeps the existing C-842 dialog unchanged.
+- Reconnect (Apps & services › Connections) keeps the existing C-842 dialog unchanged.
 
 **Steps.** Each step is one screen. Back works throughout. Steps that have nothing to ask are skipped.
 1. **App** (only when no app was given): the apps of the workspace (`GET /v1/apps`) as tiles grouped
@@ -1792,9 +1922,10 @@ secret fields.
 
 ### 2. Role-aware pages, navigation and errors (P5-UX-1, D-323, C-915, C-916)
 
-- **Navigation shows only what opens.** The org nav lists **Credentials** and **Apps** only for org owners
-  and admins, like `ORG_LINKS`; members keep Workspaces and Governance (read-only). No nav item or
-  Welcome link leads to a page that answers `forbidden` for the viewer's role.
+- **Navigation shows only what opens.** Visibility per topic is §Information architecture's "Who sees
+  what" (C-961): an org member sees Workspaces and read-only AI models, Internet access and Agents, and
+  never Apps & services, People, Data or Settings. No nav item or Welcome link leads to a page that
+  answers `forbidden` for the viewer's role.
 - **Refusals are words, never "Could not reach the server".** A page gate (`OrgGate`, the workspace
   credential and policy gates, channels) produces a real error value with `code` and, for `forbidden`,
   `details.required_role` (`org_admin`, `org_owner`, `workspace_owner`, `workspace_approver`).
@@ -1807,8 +1938,8 @@ secret fields.
   caller passes `ask` without a role condition.
 - **First-run fixes** (same task):
   - Welcome's optional steps link to pages that exist and that the viewer can use. "Connect an app"
-    opens the journey; "Invite a teammate" goes to Settings › Access and shows when the viewer may add
-    people (§5).
+    opens the journey; "Invite a teammate" goes to the workspace's **People** and shows when the viewer
+    may add people (§5).
   - The chat empty state shows "Say hello to <Agent>" and the agent's handle, never the brief.
   - The editor toolbar wraps instead of clipping.
   - Tab bars show no stray scrollbar.
@@ -1842,6 +1973,9 @@ secret fields.
 
 ### 4. Admin defaults that carry the user (P5-UX-6, D-326, C-922..C-924)
 
+The setup wizard is the checklist of **Administration › Overview** (§Information architecture); its steps
+link to the topic pages that hold each setting.
+
 - **Setup wizard, LLM access.** After **Add LLM key** for the default organization, "Give it to every new
   user's agent" is **on**, in the same save, whenever placement allows starter grants (C-922). The text
   says so: "Every new person's agent can use this key from the first minute. Turn off to make people add
@@ -1849,9 +1983,10 @@ secret fields.
   personal workspaces' agents** (C-922 backfill).
 - **Setup wizard, Apps** (replaces step 5 *Optional*). It lists the active apps. Each app that people can
   only connect through a sign-in method with no OAuth client says "People can't sign in to <App> yet",
-  and **Register an OAuth client** opens Admin › OAuth clients with the package and client key filled in
-  (C-924, setup reason `app_needs_oauth_client`). Each app that has a person-audience `fields` method says
-  "People can connect <App> with a token", with no action. Connectors and plugins keep their links.
+  and **Register an OAuth client** opens Administration › Apps & services › OAuth clients with the
+  package and client key filled in (C-924, setup reason `app_needs_oauth_client`). Each app that has a
+  person-audience `fields` method says "People can connect <App> with a token", with no action. Chat
+  platforms and Packages keep their links.
 - **Workspace names.** Placement gains a **display name** template (C-923, default
   `{given_name}|{name}|{email_local}`), next to the existing name template, which still sets the slug
   (D-162). A personal workspace's Welcome title reads **"Welcome, Bob"**, and the workspace selector shows
@@ -1859,7 +1994,7 @@ secret fields.
 
 ### 5. Adding people to a workspace (P5-UX-5, D-325, D-328, C-919, C-920)
 
-- Settings › **Access** gains **Add people** for `can_own` (C-919): an e-mail field and a role (Member or
+- The workspace's **People** page (was Settings › Access) gains **Add people** for `can_own` (C-919): an e-mail field and a role (Member or
   Approver; Owner only for an existing org member). One address at a time, rate-limited and audited, so
   the dialog cannot list or search the organization's members (SEC-128).
   - An address of an active org member gets an access row at once.
@@ -1872,23 +2007,24 @@ secret fields.
     Aurora address if sign-up is open."
 - Welcome's **Invite a teammate** opens this dialog.
 
-### 6. A simple layer over Credentials and Policy (P5-UX-7, D-327, C-925, C-926)
+### 6. A simple layer over Apps & services and Internet access (P5-UX-7, D-327, C-925, C-926)
 
-- **Credentials › Overview** (new first tab, `?tab=overview`, the default; Secrets stays the fallback for
-  unknown values). It is one list of everything agents in the workspace can use:
-  - apps (connections), services (secrets) and LLM keys;
-  - each row shows the name, a kind chip, **who can use it** (agent avatars, or "No agent", §3), access
-    (Read only, Asks before changes, Full) and one menu.
+- **Apps & services › Overview** (`…/apps?tab=overview`, the default tab of the workspace's Apps &
+  services page; it replaces the Credentials page, whose `?tab=` values redirect, C-960). It is one list
+  of what agents in the workspace can use outside AI models:
+  - connections (apps) and services;
+  - each row shows the name, a kind chip (App, Service), **who can use it** (agent avatars, or "No
+    agent", §3), access (Read only, Asks before changes, Full) and one menu;
+  - one line under the list links to **AI models** for LLM keys ("2 LLM keys, used by 3 agents").
 
-  **Add** offers **An app** (the journey), **A service** and **An LLM key**. **A service** is a short
-  form: Name, Website (host), Token (Bearer). It has **Advanced** for the path pattern and the other
-  injection methods (`08 §5`).
-  - The **Proposals** tab is shown only when proposals wait, with a count badge. A banner on Overview
-    links it.
-  - **OAuth clients** moves out of the tab bar into "App sign-in setup", a link at the foot of Overview
-    for `can_own` (`?tab=oauth` keeps working).
-- **Policy summary** (top of the workspace Policy page). Plain sentences computed from the effective
-  posture and rules, for example:
+  **Add** offers **An app** (the journey) and **A service**; an LLM key is added on AI models. **A
+  service** is a short form: Name, Website (host), Token (Bearer). It has **Advanced** for the path
+  pattern and the other injection methods (`08 §5`).
+  - Tabs: Overview · Apps · Connections · Services · OAuth clients (shown to `can_own`) · Proposals (shown
+    only when proposals wait, with a count badge; a banner on Overview links it).
+- **Internet access summary** (top of the workspace's and the organization's Internet access page).
+  Plain sentences computed from the scope ladder (posture, defaults and rules of this level and the
+  ones above), for example:
   - "Agents may reach any website."
   - "Requests that use a credential follow 2 rules."
   - "Nothing asks you first."
@@ -1899,7 +2035,9 @@ secret fields.
   - **Block a website**;
   - **Only allow websites I list** (uncredentialed `block`).
 
-  The existing editor follows under **Rules and defaults** with renamed labels (C-926):
+  The rules and defaults follow under **Rules and defaults**, in the scope-ladder layout (above / here /
+  below), with renamed labels (C-926). At org level this page also holds what was Governance › Egress
+  (posture, allow-list, browser connections):
   - "No default (defer)" becomes **Let the organization decide**;
   - "Uncredentialed requests" becomes **Requests without a credential**;
   - "Browser tunnels (open lane)" becomes **Browser connections (not inspected)**;
@@ -1931,9 +2069,11 @@ pieces those pages rely on.
 ### 7. One setup page per app (P5-UX-8/9, D-330, C-931..C-933)
 
 - **Routes.**
-  - `/o/<org>/w/<ws>/apps/<app>`: workspace view, for `can_own`. The Apps tab's **Details** and every
-    app name in a connection or grant link here.
+  - `/o/<org>/w/<ws>/apps/<app>`: workspace view, for `can_own`. Apps & services › Apps' **Details**
+    and every app name in a connection or grant link here.
   - `/o/<org>/apps/<app>`: org view, for org owners and admins.
+
+  Both live inside the **Apps & services** topic of their level (§Information architecture).
 
   Both pages render the setup status of C-931.
 - **Status at the top**, one sentence per method in plain words, each with a state chip (Ready / Needs
@@ -1944,25 +2084,25 @@ pieces those pages rely on.
   - "GitHub App installation needs an App ID and private key from whoever runs your GitHub
     organization."
 - **What is set up, and where.**
-  - **Sign-in clients** by level: this workspace, the organization, the instance. The instance level is
+  - **OAuth clients** by level: this workspace, the organization, the instance. The instance level is
     shown as "set up" or "not set up", with no ids.
-  - **Self-hosted servers.**
+  - **Self-hosted apps** registered for it.
   - **Availability** in this organization.
   - **Connections:** this workspace's, and the organization's ones that agents here can be given.
   - **Values to copy:** the callback URL and, for apps that use it, the organization's external id.
 - **Inline actions at the viewer's level.**
   - A workspace owner can register a workspace OAuth client right there (the existing form, the app
     preselected, the callback URL shown with Copy), and connect (the P5-UX-3 journey).
-  - An org admin can register an org client, register a self-hosted server, change availability and
+  - An org admin can register an org client, register a self-hosted app, change availability and
     connect for the whole organization (§9).
   - Anything above the viewer's level names who can do it (C-955 `Unlock`).
 - **Setup guide.** The package guide, rendered with real values (§11), is the last section of the page,
   not hidden in the connect dialog.
 - **Indexes link here.**
-  - The three OAuth client lists (workspace, org, Admin) and Admin › Self-hosted apps link each app name
-    to its setup page.
-  - Org › Apps gains the posture switch at its top (Open / Restricted), the same control as Governance ›
-    Apps, which keeps it and links here. The posture and the list are on one page.
+  - The three OAuth client tabs (workspace, org and Administration › Apps & services) and the
+    Self-hosted apps tabs link each app name to its setup page.
+  - The org's Apps & services › Apps tab carries the posture switch at its top (Open / Restricted) above
+    the availability list: one page, one Save. Governance › Apps is retired (C-960 redirects it).
 
 ### 8. What can <Agent> do in <App> (P5-UX-10, D-331, C-934, C-935)
 
@@ -1977,15 +2117,16 @@ pieces those pages rely on.
   The table comes from C-934, computed by the same evaluator as the gateway and Simulate (FIX-159). A
   grant that cannot take effect is called out next to the save, for example "3 tools set to Ask can never
   run: this connection is Read only".
-- The workspace and org **Policy** pages list the rules grants created in a read-only group **From
-  agents' access** ("Daneel · AWS: 5 allowed, 3 ask"). Each links to the agent's Access tab and is not
-  editable here.
-- **Simulate** (Test a request, C-926) shows the identified app and tool and the winning connection,
+- The workspace and org **Internet access** pages list the rules grants created in a read-only group
+  **From agents' access** ("Daneel · AWS: 5 allowed, 3 ask"). Each links to the agent's Access tab and is
+  not editable there.
+- **Test a request** (was Simulate, C-926) shows the identified app and tool and the winning connection,
   and agrees with the gateway (C-930).
 
 ### 9. Connect for the whole organization (P5-UX-11, D-332, C-936, C-937)
 
-- Org › Apps › **Connect…** and the org setup page offer **For the whole organization** first: an
+- The org's Apps & services › Apps **Connect…** and the org setup page offer **For the whole
+  organization** first: an
   org-scope connection, org owners and admins only. The journey (P5-UX-3) runs without the agent step.
   Its Done step offers:
   - **Give it to every new person's agent** (a starter grant, C-521, default org only);
@@ -1993,10 +2134,10 @@ pieces those pages rely on.
   - **Done**: workspace owners give it to their agents themselves.
 - Workspace owners see org connections in the journey's App and Account steps ("Shared by <org>") and
   on the Access tab. They can grant them (07, existing rule) but never edit, reconnect or delete them.
-- The org Credentials › **Connections** tab lists org connections with **Reconnect**, **Make read-only**
+- The org's Apps & services › **Connections** tab lists org connections with **Reconnect**, **Make read-only**
   / **Allow writes**, **Disable** and **Delete** for org admins. Its empty state offers **Connect an app
   for the organization**.
-- The workspace chooser of Org › Apps › Connect… lists:
+- The workspace chooser of that **Connect…** lists:
   1. **For the whole organization**;
   2. the viewer's own and shared workspaces;
   3. other people's personal workspaces, under a collapsed **Other people's personal workspaces**
@@ -2023,12 +2164,12 @@ pieces those pages rely on.
 - **Guides use placeholders** that `GET /v1/apps/{app}/guide` fills in for the viewer (C-940):
   - `{{aurora.callback_url}}`;
   - `{{aurora.external_id}}` (only for org members);
-  - `{{aurora.page:oauth_clients}}`, `{{aurora.page:self_hosted}}`, `{{aurora.page:plugins}}`,
-    `{{aurora.page:app_setup}}`.
+  - `{{aurora.app_setup}}`, `{{aurora.page:oauth_clients}}`, `{{aurora.page:self_hosted}}`,
+    `{{aurora.page:packages}}`.
 
-  Page placeholders become links to the page the viewer can open (a workspace owner's workspace OAuth
-  clients tab; an org admin's org tab; an instance admin's Admin page). A viewer who cannot open the
-  page sees the role that can.
+  Page placeholders become links to the Apps & services tab the viewer can open, at the highest level
+  they can act on: a workspace owner's workspace tab, an org admin's org tab, an instance admin's
+  Administration tab. A viewer who cannot open the page sees the role that can.
 - **Guide checks** (C-941): an unknown `{{aurora.*}}` placeholder is a package error. The builtin check
   refuses the literal patterns `<your Aurora URL>`, `<external_url>`, "Admin, Apps," and "Instances" as
   a page name.

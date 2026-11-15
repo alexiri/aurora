@@ -17,6 +17,19 @@ for them. The current controls stay under **Advanced**.
 - Normative: `14 §First run and connecting` §1 (all steps, entry points, failure sentences), `14 §Visual
   design`, `14 §Key flows` (the C-842 dialog, now under Advanced; Reconnect unchanged).
 
+## Placement in the new structure (D-342)
+
+The journey belongs to the workspace's **Apps & services** topic and the agent's **Access** tab
+(`14 §Information architecture`).
+- The workspace entry is **Apps & services › Apps › Connect** at `…/apps?tab=apps&connect=<app>`. The old
+  `…/credentials?tab=apps&connect=<app>` redirects (C-960, P5-IA-1).
+- The per-app setup page (P5-UX-9) has a **Connect** that opens the journey too.
+- Links go through `web/src/lib/routes.ts`.
+- Text uses the vocabulary: "app", "connection", "service", never "credential". The Done step says "<Agent>
+  can now …".
+
+Below, "Apps tab" means Apps & services › Apps.
+
 ## Context
 
 - **Today's dialog:** `web/src/components/apps/connect-dialog.tsx`.
@@ -69,7 +82,8 @@ for them. The current controls stay under **Advanced**.
    - Agent page › Access: an **Add an app** button in the Connections section; the "No connections in
      scope" empty state becomes that button.
    - The deep link `?tab=access&connect=<app>`, or `connect=` empty for the app step.
-   - Credentials › Apps **Connect** opens the journey with the agent step, `?connect=<app>` kept.
+   - Apps & services › Apps **Connect** opens the journey with the agent step, `?connect=<app>` kept
+     (the old Credentials path redirects).
    - Welcome and Overview guide "Connect an app" → the default agent's journey (C-927; replaces P5-UX-1's
      interim link).
    - The tour's Agents stop text (C-927, `web/src/components/onboarding/tour.tsx`).
@@ -121,6 +135,8 @@ for them. The current controls stay under **Advanced**.
 ## Dependencies
 
 - **P5-UX-2** merged (plan, `grant`, C-958 details, regenerated types).
+- **P5-IA-1** merged (Apps & services routes and `routes.ts`); otherwise build at today's Credentials page
+  and let P5-IA-1 move it.
 - P5-UX-4 for the agent step's preselection. If P5-UX-4 has not merged, implement the preselection rule
   locally in the journey's agent step and leave `give-access.tsx` to P5-UX-4.
 

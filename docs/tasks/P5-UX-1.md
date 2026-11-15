@@ -19,6 +19,17 @@ empty states ask only people who cannot act, and fixes the small first-run defec
 - Normative: `14 §First run and connecting` §2, `14 §Organization` (nav note), `14 §Onboarding` (empty
   states teach; role-aware), `14 §Visual design`.
 
+## Placement in the new structure (D-342)
+
+The owner approved one structure for every level (D-338, `14 §Information architecture`):
+- **Navigation visibility per role is P5-IA-1's** (C-961). If P5-IA-1 has merged, skip Scope 2. If not,
+  implement Scope 2 with C-961's member list, not the old Credentials / Apps / Governance one.
+- **This task keeps** the refusals (Scope 3), the empty states (Scope 4), the Welcome links (Scope 5) and
+  the first-run fixes (Scope 6).
+- **Links and names.** Every link goes through `web/src/lib/routes.ts` (P5-IA-1; add the helper here if it
+  doesn't exist yet). Every page name follows the vocabulary table: People, not Settings › Access; Apps &
+  services, not Credentials.
+
 ## Context (facts found 2026-11-15)
 
 - **Nav.** `web/src/components/app-shell.tsx` ~299–323 `OrgNav` shows Workspaces, Credentials, Apps and
@@ -48,9 +59,10 @@ empty states ask only people who cannot act, and fixes the small first-run defec
 1. **Role hook.** Add `useViewerRoles(org, ws?)` → `{ orgRole, wsRole, isOrgAdmin, canOwn, canApprove }`
    in `web/src/lib/api/roles.ts`, from the existing queries. Replace the ad-hoc `my_role === "owner"`
    checks this task touches; do not sweep the rest of the app.
-2. **Nav (C-915).** `OrgNav` lists Credentials and Apps only for org owners and admins. Members keep
-   Workspaces and Governance. Update the `14` org-section note (already in the spec) only if the code
-   differs from it.
+2. **Nav (C-915, C-961)**, only if P5-IA-1 has not merged: an org member's sidebar shows Workspaces and
+   read-only AI models, Internet access and Agents. Until P5-IA-1 creates those topics, that means
+   Workspaces and Governance, with Credentials and Apps hidden. P5-IA-1 replaces this with
+   `visibleTopics`.
 3. **Refusals (C-915).**
    - Add `forbiddenError(requiredRole)` returning an `ApiError`, and use it in every gate listed above.
      Any other bare `{ code }` error object found by `grep` gets the same treatment.
@@ -72,8 +84,10 @@ empty states ask only people who cannot act, and fixes the small first-run defec
    - Where a role can act, pass the primary action instead.
    - The "ask" text names owners with `useOwnerNames`.
 5. **Welcome links (C-927, interim).**
-   - "Connect an app" → `…/credentials?tab=apps` until P5-UX-3 replaces it with the journey.
-   - "Invite a teammate" is hidden until P5-UX-5 merges; P5-UX-5 adds it back pointing at Add people.
+   - "Connect an app" → the workspace's Apps & services › Apps (`routes.ts`; `…/credentials?tab=apps`
+     before P5-IA-1, which redirects) until P5-UX-3 replaces it with the journey.
+   - "Invite a teammate" is hidden until P5-UX-5 merges; P5-UX-5 adds it back pointing at the
+     workspace's People › Add people.
    - Each remaining link gets a test that its href resolves to an existing route (a route-table test over
      `src/app`).
 6. **First-run fixes (C-916, `14 §First run and connecting` §2):**

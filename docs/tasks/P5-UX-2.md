@@ -26,6 +26,15 @@ This task gives the server what the connect journey (P5-UX-3) needs:
 - Builds on D-306 / FIX-153 (link builder `access_url`, agent page by id) and FIX-154 (connection
   inside the grant, `grant_connection_in_tx`). Unchanged: C-410, C-504, C-740, C-741, C-842, I-29.
 
+## Placement in the new structure (D-342)
+
+- **Dashboard paths.** Every path this task emits follows the C-960 routes of
+  `14 §Information architecture`: the `Unlock.admin_path`, the gateway's `connect_url` and
+  `connect_url_workspace`, and the journey deep link. One server-side path table mirrors
+  `web/src/lib/routes.ts`.
+- **Wording.** `Unlock` sentences use the vocabulary: "organization admins", "Administration", "OAuth
+  client".
+
 ## Context
 
 - **Connect service:** `services/aurora-api/src/domains/connect/{routes,service,flow,page}.rs`.
@@ -67,11 +76,15 @@ This task gives the server what the connect journey (P5-UX-3) needs:
 
    The `Unlock.people` are the display names of up to three active org owners/admins, owners first, then
    by name. Never e-mails, never instance admins. `admin_path` for `register_oauth_client`:
-   - the org OAuth clients tab (`/o/<org>/credentials?tab=oauth&package=<pkg>&client_key=<key>`) when
-     `who = org_admin`;
-   - the workspace tab when `caller_can` and the caller is a workspace owner who would register a
-     workspace client;
-   - `/admin/oauth-clients?…` for instance-bound apps (`who = instance_admin`).
+   - the org's Apps & services › OAuth clients tab
+     (`/o/<org>/apps?tab=oauth-clients&package=<pkg>&client_key=<key>`, C-960) when `who = org_admin`;
+   - the workspace's Apps & services › OAuth clients tab (`…/apps?tab=oauth-clients&…`) when
+     `caller_can` and the caller is a workspace owner who would register a workspace client;
+   - Administration › Apps & services › OAuth clients (`/admin/apps?tab=oauth-clients&…`) for
+     instance-bound apps (`who = instance_admin`).
+
+   Paths come from one server-side table that mirrors C-960. The gateway link builder (C-891) uses the
+   same paths.
 
    Add it to the OpenAPI document and regenerate `web/openapi.json` and `schema.d.ts`.
 3. **Connect with a grant (C-957, SEC-130).** Extend `ConnectRequest` with `grant`.

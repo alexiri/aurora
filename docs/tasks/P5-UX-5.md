@@ -20,6 +20,13 @@ and without exposing the org's member list.
   (by-email, pending, the `invite` rate class), `02 §Limits` (`PENDING_ACCESS_TTL`,
   `PENDING_ACCESS_MAX`), `14 §First run and connecting` §5.
 
+## Placement in the new structure (D-342)
+
+- **Add people** lives on the workspace's **People** page (`…/people`), which P5-IA-1/P5-IA-4 make from
+  today's Settings › Access tab. If P5-IA-4 has not merged, build the dialog in `access-tab.tsx`; it moves
+  with the tab.
+- The dialog says "people" and "organization", never "members" and "bindings".
+
 ## Context
 
 - **Bindings.** `services/aurora-api/src/domains/tenancy/routes.rs`: `put_access` (~631–646) refuses 422
@@ -62,7 +69,7 @@ and without exposing the org's member list.
    Add a sweeper for expired rows on the existing periodic-task mechanism.
 6. **No org setting** (C-921 is not built, D-328).
 7. **Web.**
-   - Settings › Access › **Add people** dialog: e-mail, role (Member, Approver or Owner; the server
+   - The workspace's **People** page (`…/people`, was Settings › Access, C-960) › **Add people** dialog: e-mail, role (Member, Approver or Owner; the server
      refuses Owner for a non-member with 422 `owner_requires_member`, shown in words) and the result
      sentence:
      - "<email> now has access as <role>."
@@ -70,7 +77,8 @@ and without exposing the org's member list.
      - plus the `org_entry` sentence per `14` §5, with org admin names from `useOwnerNames`' org
        equivalent.
    - The "Waiting for first sign-in" list with **Remove**.
-   - Welcome "Invite a teammate" → this dialog (`?tab=access&add=1`), shown when `canOwn` (C-927).
+   - Welcome "Invite a teammate" → this dialog (`…/people?add=1` via `routes.ts`), shown when `canOwn`
+     (C-927).
 8. **Tests.** API ITs per SEC-128's "Proven by":
    - added vs pending; rate limits; owner for a non-member → 422; the limit;
    - sign-in with verified/unverified e-mail; a non-member at sign-in → nothing applied and no membership;
@@ -108,7 +116,8 @@ and without exposing the org's member list.
 
 ## Dependencies
 
-P5-UX-1 (it hides the Welcome link this task brings back). No other.
+P5-UX-1 (it hides the Welcome link this task brings back). P5-IA-4 (the People page) is soft; see
+Placement.
 
 ## Suggested agent/model and reason
 

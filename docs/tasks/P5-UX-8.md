@@ -19,6 +19,12 @@ projection of it.
   D-74 (instances), C-20 (availability), I-27 (org connection read access).
 - Normative: `14 §App setup` §7, `05` (setup row).
 
+## Placement in the new structure (D-342)
+
+The setup status feeds the per-app setup pages inside each level's **Apps & services** topic (P5-UX-9).
+Its `Unlock.admin_path` values and every other dashboard path use P5-UX-2's server-side path table, which
+mirrors C-960.
+
 ## Context
 
 - OAuth client resolution: `crates/aurora-db/src/repo/connections.rs` ~366 (workspace → org → instance,

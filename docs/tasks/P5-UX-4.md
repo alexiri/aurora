@@ -14,6 +14,13 @@ nobody can use, and explains effective access in words.
 - Normative: `14 §First run and connecting` §3, `05` rows for the secrets and connections lists and for
   `GET /v1/agents/{agent}/effective`, `14 §Visual design`.
 
+## Placement in the new structure (D-342)
+
+- The badge and **Give access** appear on the rows of the workspace's and the org's **Apps & services**
+  (Overview, Connections and Services tabs) and on **AI models** (LLM keys).
+- The agent's **Access** tab hosts the "Not given to <Agent>" group.
+- Rows say "app", "service" and "LLM key", never "secret" (vocabulary, `14 §Information architecture`).
+
 ## Context
 
 - **Picker.** `web/src/components/credentials/give-access.tsx` `GiveAccessPanel` (~205–341, nothing

@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 115 | 51 | 4 (P4-LLM-4, P4-LLM-5, SET-4, P5-FILES-1) | 56 (incl. P5-WEBHOOK-1..4; P5-UX-1..15 and FIX-159, spec on branch `alexiri/p5-ux`) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 120 | 51 | 4 (P4-LLM-4, P4-LLM-5, SET-4, P5-FILES-1) | 61 (incl. P5-WEBHOOK-1..4; P5-UX-1..15, P5-IA-1..5 and FIX-159, spec on branch `alexiri/p5-ux`) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 4 | 0 | 0 | 1 (P4-S3: specified and briefed, moved from phase 5, D-318) | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **437** | **361** | **6** | **57** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **442** | **361** | **6** | **62** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
@@ -111,6 +111,11 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-UX-13 | Setup guides with `{{aurora.*}}` placeholders filled for the viewer, guide checks, builtin guides rewritten (no "Admin, Apps," pages), external id shown on AWS and Bedrock assume-role forms (`show_context`) | D-334, C-940..C-942 | M | both | — | `P5-UX-13.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-14 | Test connection (probe, gateway database login, hook mint) and connection health on every row; post-connect test for probe-less methods | D-335, SEC-129, C-943..C-945, migration (next free when placed) | M | both | — | `P5-UX-14.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-15 | Names and labels: multi-workspace pickers lead with the workspace, agent name on New workspace, OAuth client picker by method (`used_by_methods`), GitLab method labels, `personal_of` for the Connect chooser | D-336, C-946..C-949 | S–M | both | — | `P5-UX-15.md` | ready (spec on branch, not merged; not placed) |
+| P5-IA-1 | One structure for every level (owner, D-338): topic navigation per level, `routes.ts`, every old route redirected, role visibility, Administration entry and level badge, tour; page contents moved unchanged | D-338, D-342, C-960..C-962, C-975 | M–L | Next.js (+ gateway link paths) | — (first of P5-IA and the P5-UX screen briefs) | `P5-IA-1.md` | ready (spec on branch `alexiri/p5-ux`, not merged; not placed) |
+| P5-IA-2 | Scope ladder primitive; Internet access as one page at each level (Governance › Egress + Policy merged), workspace overrides route | D-339, C-963..C-965 | M | both | P5-IA-1 | `P5-IA-2.md` | ready (spec on branch, not merged; not placed) |
+| P5-IA-3 | AI models and Agents topics at each level (model access, LLM keys, keys to fix; BYO ladder, defaults, approvals, terminal, previews, skills) | D-338..D-340, C-966, C-967 | M | Next.js | P5-IA-1, P5-IA-2 | `P5-IA-3.md` | ready (spec on branch, not merged; not placed) |
+| P5-IA-4 | People, Data (one retention form), Platform, Chat platforms and Settings topics; settings sections rendered inside topics; All settings index; Administration Overview | D-338..D-340, C-968..C-971 | M–L | Next.js | P5-IA-1 (P5-IA-2 for the ladder); coordinate with SET-4/5 | `P5-IA-4.md` | ready (spec on branch, not merged; not placed) |
+| P5-IA-5 | Settings in words: field metadata registry (labels, help, choices, defaults, docs), read-only current values for not-yet-editable sections, UI text test | D-340, D-341, C-972..C-974 | M | both | P5-IA-4 | `P5-IA-5.md` | ready (spec on branch, not merged; not placed) |
 | P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after P5-FILES-4) |
 | P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1, P5-FILES-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
 | SPEC-SETTINGS | Instance settings move from Helm into the app (Helm-set values locked) — spec batch | D-195, D-236..D-238, SEC-89/90 | L | docs | — | `SPEC-SETTINGS.md` | done (merged 76bb566a) |
@@ -172,7 +177,7 @@ At most three implementation lanes at a time, disjoint ownership; a lane starts 
 - **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
 - **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-153 → FIX-154 (owner 2026-11-15) ‖ FIX-146 ‖ P5-FILES-1 → 2 → 3 → 4 (owner 2026-11-15, D-316: before P4-SSH; FILES-1 builds the `exec.*` engine P4-SSH-2 extends) ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
 - **Wave 3 queue** (placed 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 3 queue): `p5-apps` P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → FIX-151 → 6 → 7 (7 only after FIX-150, P4-UTOK and P4-EVAL-2 are merged: `domains/tools/`) ‖ P5-ICS → P5-CALDAV; `p5-agent` FIX-150 → FIX-158 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3; `p5-platform` P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P5-CALINV (P4-S3 moved to phase 6, D-318).
-- **Not placed yet**: P5-UX-1..15 and FIX-159 (spec on branch `alexiri/p5-ux`, awaiting the owner's merge; order in §Open questions).
+- **Not placed yet**: P5-UX-1..15, P5-IA-1..5 and FIX-159 (spec on branch `alexiri/p5-ux`, awaiting the owner's merge; order in §Open questions). Meanwhile SET-4/5 add no sidebar entries (D-340).
 - **No spec yet**: none in phase 5 (P4-NARR, P4-UTOK and P4-EVAL specified 2026-11-15; P5-SLACK moved to phase 6, D-285).
 
 ### Exit criteria (phase 5)
@@ -196,7 +201,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-160, D-338, C-960, SEC-131, migration `20261201000244`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-160, D-343, C-980, SEC-131, migration `20261201000244`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -218,12 +223,27 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | P5-FILES-1..4 (spec merged 2026-11-15; Files page over SFTP, owner D-316) | D-316 (used) | C-898..C-907 (used) | `20261201000241`, `…000242` | SEC-125, SEC-126 (used) |
 | P5-UX-1..7 (spec on branch `alexiri/p5-ux`, 2026-11-15; first run and connecting, owner walkthrough) | D-321..D-328, D-337 (used) | C-914..C-927, C-955..C-959 (used; C-921 not built, D-328), C-928, C-929 | P5-UX-5's migration takes the next free number when placed | SEC-130, SEC-128 (used) |
 | P5-UX-8..15 + FIX-159 (same branch, 2026-11-15; app setup, owner's second walkthrough) | D-329..D-336 (used) | C-930..C-949 (used), C-950..C-954 | P5-UX-14's migration takes the next free number when placed | SEC-129 (used) |
+| P5-IA-1..5 (same branch, 2026-11-15; one structure for every level, owner D-338) | D-338..D-342 (used) | C-960..C-975 (used), C-976..C-979 | none | none |
 | P5-MODELS-1..3 (spec merged 2026-11-15; the harness chooses models, owner D-302) | D-302..D-304 (used) | C-875..C-884 (used), C-885..C-889 | migrations for P5-MODELS-1 and -2 take the next free numbers when placed | SEC-122, SEC-123 (used) |
 
 ## Open questions for the owner
 
 - **Phase 5:** review of the coordinator defaults recorded in D-268.
-- **Phase 5, P5-UX (spec on branch `alexiri/p5-ux`):** merge the spec batch? (Q-UX-1 and Q-UX-2 answered, D-328.) Suggested order once merged: **FIX-159 first** (high priority: Simulate can show a false allow). Then P5-UX-1 ∥ P5-UX-2 → P5-UX-4 → P5-UX-3 → P5-UX-7; P5-UX-5 after P5-UX-1; P5-UX-6 after P5-UX-2. App setup: P5-UX-8 after P5-UX-2 (same function) → P5-UX-9; P5-UX-10 after FIX-159; P5-UX-11 after P5-UX-3; P5-UX-12, -13, -14, -15 any time, serialized among themselves where they share builtin `plugin.yaml` files (12, 13, 15) and the probe code (14 with 2). The Orchestrator places the lanes.
+- **Phase 5, P5-UX (spec on branch `alexiri/p5-ux`):** merge the spec batch? (Q-UX-1 and Q-UX-2 answered, D-328.) Suggested order once merged (one coherent design, D-342):
+1. **FIX-159 first** (high priority: Simulate can show a false allow).
+2. **Structure:** **P5-IA-1** (shell and routes) before every brief that adds pages. Then P5-IA-2 (ladder, Internet access) → P5-IA-3 ∥ P5-IA-4 → P5-IA-5. P5-IA-4/5 are coordinated with SET-4/5 on the settings form files.
+3. **Backend, independent:** P5-UX-2 → P5-UX-8, P5-UX-4, P5-UX-14, P5-UX-12/-13/-15. These are serialized where they share builtin `plugin.yaml` files (12, 13, 15) and the probe code (14 with 2).
+4. **Screens after P5-IA-1:**
+   - P5-UX-1 (refusals and empty states; navigation is P5-IA-1's);
+   - P5-UX-3 after P5-UX-2;
+   - P5-UX-7 after P5-UX-3/-4 and with P5-IA-2;
+   - P5-UX-5 after P5-UX-1;
+   - P5-UX-6 after P5-UX-2;
+   - P5-UX-9 after P5-UX-8;
+   - P5-UX-10 after FIX-159 and P5-IA-2;
+   - P5-UX-11 after P5-UX-3.
+
+The Orchestrator places the lanes.
 - **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). (The P6-MODELS questions were answered 2026-11-15, D-302.) Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
 
 ## Open security findings
