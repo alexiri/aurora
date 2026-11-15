@@ -777,6 +777,23 @@ done when its tests exist, pass in CI, and the security invariants it touches
   assertions. Selectors change only where the copy or structure changed by
   design, and no assertion is removed to make a test pass.
 
+### Live narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-852, SEC-111)
+- **Projector** (`api/it/narration.rs`, a scripted turn with fake tool events): one card per turn created in place of the receipt; steps added and updated from `tool.started`/`tool.finished`; `NARR_MAX_STEPS` cut with "N earlier"; the card collapsed (D-286: one closing update with the collapsed content of C-847, no delete op) at answer post, at failed turn and at stalled turn, the closing update retried after `rate_limited` and never superseded, a collapsed card not counted toward `NARR_CARDS_PER_SPACE`; restart mid-turn resumes the same card (no second `narr:<turn_id>` post).
+- **Privacy** (SEC-111): no `activity`, `thinking.delta` or `text.delta` content in any card write; a shared-space card carries names only, a `direct` one carries the sanitized summary; canary argument and canary secret absent from every card write and from the connector request log.
+- **Budget** (`NARR_MIN_INTERVAL`, `NARR_SPACE_UPDATES_PER_MINUTE`, `NARR_CARDS_PER_SPACE`): bursts of tool events coalesce; the space cap holds under two concurrent turns; a third turn in a full space gets no card and its answer is unchanged; `rate_limited` drops the update and never retries it.
+- **Connector** (Mattermost, `20 §Rendering`; pinned dev server): a card with `@here`, `@all`, `<@user:…>`, a group mention and a bare URL in a label produces no notification and no link preview (checked against the server's notification and preview data); the card fits `message_max_chars` at the cap.
+- **Degradation**: a connector without `edits` gets no card and the receipt of `13 §4.5`; `forbidden` on a card write leaves the turn running and the answer posted.
+- **Dashboard**: vitest for the Channels switch (default off, PATCH on change, error inline); Playwright at 390 px and both themes for the help text.
+
+### User tokens (phase 5, P4-UTOK, D-281..D-284, C-853..C-859, SEC-112, SEC-113)
+- **Add and verify** (`api/it/user_tokens.rs`, the connector mocked for verify): a token of the caller's own link → 201 and `active`; another platform user → 422 `user_token_mismatch`; rejected → 422 `user_token_invalid`; limit 5 → 409; store unavailable → 503 with nothing stored; the token absent from responses, audit rows, captured logs and the request-log body (canary token).
+- **Custody** (SEC-112): the per-op copy exists from the send's claim to its terminal state and is then null with no store version left; a claim after revoke finds no copy and fails the op `credential_revoked`; the gateway, runner and sandbox fixtures carry no `user_token` purpose (static check plus boot-document snapshot).
+- **Eligibility** (SEC-113): the matrix of C-856 — another speaker in a shared channel, scheduled, webhook, watch, peer, system, dashboard and API turns, a grant of another agent, an inactive token or link — each refused with its code and no approval row; the owner's own DM and the owner's own thread succeed to the approval step.
+- **Approval**: a decision by another approver, even one with `can_approve`, refused; there is no `allow` route (route-table test); expiry sends nothing; `USER_TOKEN_PENDING_MAX` refuses the sixth pending send; revoke during a pending approval → rejected `credential_revoked` and no `message.post` reaches the connector.
+- **Connector** (`aurora-connector-mattermost`, mock platform): only `GET /api/v4/users/me` (verify) and `POST /api/v4/posts` (send) carry a person's token; the footer is present and the post has no `ephemeral` or file; `401` → `credential_dead` and the token `invalid` with the presence untouched.
+- **Audit**: one `user_token.send` row per send (no text, no token, no platform user id by value); the `user_token.revoke` row is critical; the cascade rows (deletion of owner, agent, integration) each appear once.
+- **e2e (live, gated)**: against the pinned Mattermost dev server: add a personal token, grant an agent, the owner's DM turn asks for a post in a channel, the owner approves in the dashboard, the post appears under the owner's account with the footer; a second person's turn in the same channel cannot trigger it; revoke, then the same request is refused.
+
 ### Architecture guards (CI scripts)
 - No app/platform names in core paths (SEC-33).
 - Dependency graph: `aurora-gateway` and `aurora-api` do not depend on

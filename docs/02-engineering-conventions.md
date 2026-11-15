@@ -211,6 +211,13 @@ overridden by the named configuration key (`15`).
 | `WEBSOCKET_IDLE_TIMEOUT` | 600 s | — | 06 |
 | `TUNNEL_HANDSHAKE_TIMEOUT` / `TUNNEL_HEADER_TIMEOUT` / `TUNNEL_IDLE_TIMEOUT` | (FIX-106) 10 s inner TLS handshake and open-lane dial / 30 s request head inside a tunnel / 600 s idle, every tunnel kind | — | 06 §Tunnel limits |
 | `TUNNEL_PER_CREDENTIAL_MAX` / `TUNNEL_TOTAL_MAX` | (FIX-106) 64 concurrent tunnels per credential / 4 096 per gateway | — | 06 §Tunnel limits |
+| `NARR_MIN_INTERVAL` | (phase 5, P4-NARR, D-280) 5 s between narration-card updates of one turn | — | 10 §Live narration cards, 13 §5.12 |
+| `NARR_SPACE_UPDATES_PER_MINUTE` | (phase 5, P4-NARR, D-280) 10 narration writes per space per minute (a third of the connector's `writes_per_space_per_minute`, 30) | — | 13 §5.12, 20 |
+| `NARR_CARDS_PER_SPACE` | (phase 5, P4-NARR, D-280) 3 narration cards at a time per space; a further turn gets no card | — | 13 §5.12 |
+| `NARR_MAX_STEPS` | (phase 5, P4-NARR, D-280) 12 steps listed per card, then "N earlier" | — | 10 §Live narration cards |
+| `NARR_STEP_CHARS` | (phase 5, P4-NARR, D-280) 120 characters per step label and per detail | — | 10, 20 |
+| `USER_TOKENS_PER_PERSON` | (phase 5, P4-UTOK, D-284) 5 user tokens per person | — | 05, 13 §5.11 |
+| `USER_TOKEN_PENDING_MAX` | (phase 5, P4-UTOK, D-284) 5 pending `send_as_me` approvals per token | — | 13 §5.11 |
 | `KEYRING_MAX` | (phase 2, RFE-007) 4 entries per signing-key / internal-secret ring | — | 08 §4 |
 | `FREEZE_REPLY_INTERVAL` | (phase 2, RFE-006) 10 min per (space/thread, person) | — | 04, 13 |
 | `OIDC_AUTH_RATE` | (phase 1, RFE-004) 20 / min / IP for each of OIDC `start` and `callback` | — | 04 |

@@ -94,7 +94,7 @@ rcgen = "0.13"
 x509-parser = "0.16"
 futures = "0.3"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
-lru = "0.18"
+lru = "0.19"
 openidconnect = { version = "4.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 
 # containers (podman API)
@@ -117,7 +117,7 @@ uuid = { version = "1.22", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
 croner = "3"
-toml = "0.9"
+toml = "1.2"
 graphql-parser = "0.4"
 mail-parser = "1.0"
 regex = "1"

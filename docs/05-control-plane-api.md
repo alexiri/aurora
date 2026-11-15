@@ -751,6 +751,12 @@ standard body.
 
 | Method & path | Auth | Purpose |
 |---|---|---|
+| PATCH `/v1/agents/{agent}` (`narration_cards`) | S/K | (phase 5, P4-NARR, C-846) boolean, default `false`; the agent's other settings' rules apply |
+| GET `/v1/me/user-tokens` | S/K | (phase 5, P4-UTOK, C-853) `{ tokens: UserToken[] }` |
+| POST `/v1/me/user-tokens` | SO | (phase 5, P4-UTOK, C-853) `{ integration_id, token, label? }` → 201 `UserToken`; the token is sealed and verified (`user_token.verify`) before the response; never returned or logged |
+| PATCH `/v1/me/user-tokens/{id}` | SO | (phase 5, P4-UTOK, C-855) `{ label }`; 404 for another person's token |
+| DELETE `/v1/me/user-tokens/{id}` | SO | (phase 5, P4-UTOK, C-855) 204; revokes, discards the sealed value, cancels pending sends (`credential_revoked`); audit `user_token.revoke` (critical) |
+| PUT / DELETE `/v1/me/user-tokens/{id}/agents/{agent}` | SO | (phase 5, P4-UTOK, C-855) grant / remove one agent; idempotent, 204; grant needs `can_use` on the agent |
 | GET `/v1/me/ssh-keys` | S/K | (phase 5, P4-SSH-1, C-790) the caller's keys: `{ keys: [{ id, name, algorithm: "ssh-ed25519", public_key, fingerprint, created_at, last_used_at }] }` |
 | POST `/v1/me/ssh-keys` | SO | (phase 5, P4-SSH-1, C-790) `{ public_key, name? }` → 201 key; `public_key` is one OpenSSH line (`ssh-ed25519 AAAA… [comment]`, ≤ 4 KiB, no options prefix); 422 `ssh_key_invalid` (unparsable, options, a certificate, private key material), 422 `ssh_key_unsupported_type` (anything but `ssh-ed25519`), 409 `ssh_key_exists`, 409 `ssh_key_limit` (`SSH_KEYS_PER_USER`); audit `ssh_key.create` (critical) |
 | PATCH `/v1/me/ssh-keys/{id}` | SO | (phase 5, P4-SSH-1, C-790) `{ name }`; 404 for another person's key |

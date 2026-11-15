@@ -17,7 +17,7 @@ is not a target (MM-001 findings were identical on 12.0.2).
 - Capabilities: `threads`, `edits`, `reactions`, `buttons`, `menus`, `files`,
   `commands`, `history`, `presence_shared`, `presence_dedicated`,
   `email_verified`, `ephemeral` = true; `text_input`, `native_status`,
-  `user_tokens` = false. Per-integration narrowing at `credentials.validate`:
+  `user_tokens` = true (phase 5, P4-UTOK, D-281: per-person personal access tokens for `send_as_me`, `13 §5.11`; read-as-user stays hidden, Q-UTOK-1). Per-integration narrowing at `credentials.validate`:
   without a system-admin token → no `ephemeral`, no `presence_dedicated`;
   when the server hides email addresses from the bot → no `email_verified`.
   (phase 1, RFE-001) Even when `email_verified` is offered, the core uses it only
@@ -278,11 +278,31 @@ integration config.
 | `presence.provision` (admin) | `POST /api/v4/bots` (`username = <handle>` or `<handle>-agent` on collision), add to team, `POST /api/v4/users/{id}/tokens`, set image from `avatar_url` |
 | `presence.deprovision` | revoke tokens, `POST /api/v4/bots/{id}/disable` — (phase 3, RFE-024) driven entirely by the op's own payload and `credentials` (`platform_user_ref`, `tenant_ref`, `config.server_url`, the admin token from `credentials.admin_token`), never by looking up the integration or presence rows, which may already be deleted; 404 on the bot → `not_found` (`dropped`) |
 | `presence.rename` / `set_icon` | `PUT /api/v4/bots/{id}`, `POST /api/v4/users/{id}/image` |
+| `user_token.verify` (phase 5, P4-UTOK, C-854) | `GET /api/v4/users/me` with the person's token only (`user_credential`); the result must be the person's own platform user (the core compares it with their link). `401` → `credential_dead` |
+| `message.post` with `sender.user_token` (phase 5, P4-UTOK, C-857) | `POST /api/v4/posts` with the person's token (`user_credential`), the post ending with the footer below. No other endpoint is called with a person's token: no user, token, team or channel-membership write, no reads in phase 5 |
 | `credentials.validate` | as above |
 
 Error mapping: 401 → `credential_dead`; 403 → `forbidden`; 404 → `not_found`;
 429 → `rate_limited` (`retry_after` from `X-Ratelimit-Reset`); 413 →
 `too_large`; 5xx/timeouts → `unavailable`.
+
+### Narration cards and user-token posts (phase 5, P4-NARR, P4-UTOK; D-279, D-280, D-281, C-847..C-851, C-857)
+
+- **Narration card** (`13 §5.12`): a post whose body is a plain list, with a header line
+  `Working on it` or `Done` or `Stopped`, and one line per listed step as `- <name>: running|done|failed`.
+  `<name>` goes in a code span (never Markdown, never a ping; `detail` text appears only in a `direct`
+  conversation, `10 §Live narration cards`); a bare URL
+  inside a label is wrapped in a code span too, so Mattermost never fetches it (D-270). The `N earlier` line
+  is last when steps were cut. Words only, no emoji. A collapsed card (D-286) is the single line
+  `Done: 4 steps, 42 s`, `Failed after 3 steps (1 failed), 1 min 5 s` or `Stopped after 2 steps, 12 s`,
+  with no list. Edits, including the collapse, go through `PUT …/posts/{id}/patch`; a card is never deleted. The card is built within `message_max_chars` by construction (`NARR_MAX_STEPS`
+  × `NARR_STEP_CHARS` < 16 383).
+- **Footer of a user-token post** (D-283(c)): the last line of the post, italic, platform-authored:
+  `_Sent by <agent name> for <owner label>_`. The agent and owner labels are sanitized and escaped; the footer
+  is added by the connector at send time, not by the model; the owner approves the text without it, and the
+  approval summary (`13 §5.11`) does not count it.
+- **Tokens.** A person's token is used only for the calls of the Operations table above. Its value is never
+  written to a log, a metric label or an error message; a `401` answers `credential_dead` with no detail.
 
 ## Managed (dashboard)
 

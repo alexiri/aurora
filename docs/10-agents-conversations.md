@@ -17,6 +17,7 @@ Phase: **0**. Tables: `03 §5–8`. The machinery that runs hosted agents is in
 | `brief`               | operator-authored instructions, rendered after the platform preamble and labelled as the operator's.                                                                                     |
 | `avatar`              | PNG/JPEG/WebP ≤ `AVATAR_MAX`, re-encoded to PNG 256×256 by the API; served publicly only at `/v1/public/avatars/{avatar_public_key}` (rotated on change) so chat platforms can fetch it. |
 | `resource_overrides`  | instance admins only; per-agent CPU/memory/home size over org overrides over runner defaults.                                                                                            |
+| `narration_cards` | (phase 5, P4-NARR, D-279, C-846) `true` shows a live steps card for this agent's turns on chat platforms that can edit messages (`§Live narration cards`); default `false`. Settable by whoever may `can_own` the agent. |
 | `proactive_messaging` | `ask` / `allow` / `off` (`13 §Messaging tools`).                                                                                                                                         |
 
 
@@ -335,6 +336,38 @@ harness's message framing decides message boundaries. (FIX-115) When a turn ends
 without a result (failed, stalled, cancelled, restarted), the text buffered since
 its last tool call is written as durable `text` events before the `error` event and
 `turn.finished`; nothing is discarded silently.
+
+### Live narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-851, SEC-111)
+
+(phase 5, P4-NARR) A chat-platform connector may show a turn's progress as one **narration card**
+instead of the seen-receipt: a message listing the turn's tool steps and their status, updated as
+the steps run and deleted when the answer is posted (`13 §5.12`, `20 §Rendering`). It is a view of
+existing durable events and changes nothing else:
+
+- **Events.** Only `tool.started` and `tool.finished` (durable, `§Transcript events`) and
+  `turn.started` / `turn.finished` drive the card. Their `summary` is already sanitized and capped
+  at 200 characters, and never carries raw arguments. `activity`, `thinking.delta` and `text.delta`
+  never reach a card, and nothing a tool returned is shown.
+- **Who sees what.** A card in a `direct` conversation with the agent shows each step's name and
+  summary. Any other conversation (a shared space) shows the step's name only. A card never shows
+  arguments, file contents, attachment names, secrets or the answer text.
+- **Setting.** `narration_cards` (agent setting, default `false`) enables it. Without it, or on a
+  platform whose connector does not declare `edits` (`13 §4.5`), the turn behaves exactly as before
+  (receipt or placeholder, answer posted once). Dashboard chat is unchanged: it already folds tool
+  calls (`14`, *Agent chat*).
+- **Bounds.** At most `NARR_MAX_STEPS` steps are listed (then "N earlier"), each label at most
+  `NARR_STEP_CHARS`; at most one update per `NARR_MIN_INTERVAL`; at most `NARR_SPACE_UPDATES_PER_MINUTE`
+  narration writes per space; at most `NARR_CARDS_PER_SPACE` cards per space at a time (`02 §Limits`).
+  A `rate_limited` answer supersedes the pending update (the next state replaces it), it is not
+  retried. Limits and cadence (pending owner answers Q-NARR-3 and Q-NARR-5; Q-NARR-4 answered, D-286): the defaults above are
+  the recommendation.
+- **Failure and restart.** The card is derived from durable events keyed by `turn_id` and the event
+  sequence, so a restarted projector resumes the same card (`dedupe_key narr:<turn_id>:<seq>`) and
+  never posts a second one. A turn that ends without a result still gets the answer rule of
+  `§Turns` before `turn.finished`; the card is **collapsed** in every case (owner, D-286): its last update replaces the step list with one line — the outcome, the step count (failed ones named as a count) and the elapsed time — and that update is never superseded or dropped.
+
+(pending owner answer Q-NARR-1) The default is off per agent; the owner may instead ask for it on for
+every agent of a workspace.
 
 ### Archive, delete, redaction, retention, export (phase 2, RFE-010, D-53)
 
