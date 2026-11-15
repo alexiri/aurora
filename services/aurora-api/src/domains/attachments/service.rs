@@ -137,12 +137,7 @@ pub async fn upload(
             hasher.update(&chunk);
             buf.extend_from_slice(&chunk);
         }
-        file = Some((
-            filename,
-            content_type,
-            buf,
-            format!("{:x}", hasher.finalize()),
-        ));
+        file = Some((filename, content_type, buf, hex::encode(hasher.finalize())));
     }
     let (filename, content_type, bytes, sha256) = file.ok_or_else(|| {
         ApiError::invalid_request(

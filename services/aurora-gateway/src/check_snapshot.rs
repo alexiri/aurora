@@ -205,7 +205,7 @@ pub fn run_paths(snapshot: &Path, fixtures: &Path) -> Result<Report, String> {
 /// `files` are `(file name, yaml text)`.
 pub fn run(snapshot_json: &[u8], files: &[(String, String)]) -> Result<Report, String> {
     let snap = Snapshot::from_slice(snapshot_json).map_err(|e| format!("snapshot: {e}"))?;
-    let hash = format!("{:x}", Sha256::digest(snapshot_json));
+    let hash = hex::encode(Sha256::digest(snapshot_json));
     let loaded = Loaded::new(&hash, snap)?;
     let mut results = Vec::new();
     for (file, text) in files {
