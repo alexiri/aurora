@@ -7,6 +7,7 @@ import { useCallback, useId, useState, type ComponentType, type ReactNode, type 
 
 import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
 import { useScimSettings } from "@/lib/api/scim";
+import { clearDrafts } from "@/components/chat/composer/drafts";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
@@ -243,6 +244,8 @@ function UserMenu() {
     else router.push("/?tour=1");
   }
   async function onLogout() {
+    // Composer drafts belong to the signed-in person (P5-CHAT-3): they go with the session.
+    clearDrafts();
     try {
       await logout();
     } finally {

@@ -72,3 +72,16 @@ export const ReplyIcon = make(<><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 
 export const ArrowDownIcon = make(<><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></>);
 export const StopIcon =make(<><rect x="6" y="6" width="12" height="12" rx="2"/></>);
 export const CalendarIcon = make(<><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></>);
+// Composer formatting row (P5-CHAT-3).
+export const BoldIcon = make(<><path d="M7 4h6a3.5 3.5 0 010 7H7zM7 11h7a3.5 3.5 0 010 7H7z"/></>);
+export const ItalicIcon = make(<><path d="M10 4h8M6 20h8M15 4L9 20"/></>);
+export const StrikeIcon = make(<><path d="M4 12h16"/><path d="M16.5 7A4.5 3 0 0012 5c-2.5 0-4.5 1.2-4.5 3s2 2.5 4.5 3M7.5 17a4.5 3 0 004.5 2c2.5 0 4.5-1.2 4.5-3"/></>);
+export const HeadingIcon = make(<><path d="M5 4v16M19 4v16M5 12h14"/></>);
+export const CodeIcon = make(<><path d="M8 8l-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"/></>);
+export const CodeBlockIcon = make(<><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 10l-2 2 2 2M15 10l2 2-2 2"/></>);
+export const QuoteIcon = make(<><path d="M5 6v12M10 8h9M10 12h9M10 16h6"/></>);
+export const ListBulletIcon = make(<><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></>);
+export const ListNumberedIcon = make(<><path d="M10 6h10M10 12h10M10 18h10M4 5l1.5-1v4M3.5 13.5c0-1 2.5-1 2.5 0s-2.5 2-2.5 3H6"/></>);
+export const TaskListIcon = make(<><rect x="3.5" y="4.5" width="5" height="5" rx="1"/><path d="M12 7h8M12 17h8"/><path d="M4 16.5l1.5 1.5 3-3.5"/></>);
+export const TableIcon = make(<><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M10 4v16"/></>);
+export const SmileIcon = make(<><circle cx="12" cy="12" r="9"/><path d="M8.5 14a4 4 0 007 0M9 9.5h.01M15 9.5h.01"/></>);

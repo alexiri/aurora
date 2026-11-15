@@ -51,3 +51,31 @@ its shortcut; the suggestion list is a `listbox` tied to the textarea (`aria-act
 
 ## Suggested agent/model and reason
 Sonnet (`nextjs-developer`); Haiku can take the emoji data wiring once the composer structure is in.
+
+## Completion report
+- **Built**: `composer.tsx` rewritten; pure editing logic in `composer/format.ts` (actions, shortcuts, fence and list
+  rules, smart paste, emoji query), `composer/edit.ts` (applies an edit through `execCommand("insertText")`, direct
+  `setRangeText` fallback), `composer/drafts.ts` (key `aurora:chat-draft:<user id>:<conversation id>`; `clearDrafts()`
+  runs in the sign-out handler of `app-shell.tsx`; `Aa` preference `aurora:chat-formatting`), `composer/emoji.ts`
+  (lazy `node-emoji`). New primitives: `ui/toolbar.tsx` (`Toolbar` with roving focus, `ToolbarButton`, `ToolbarSeparator`,
+  `Tooltip`, `Kbd`; these did not exist after P5-CHAT-2, whose message toolbar is its own markup), `ui/suggestion-list.tsx`,
+  `ui/emoji-picker.tsx`, `ui/drop-zone.tsx`, formatting icons in `ui/icons.tsx`. `chat-thread.tsx` wraps the thread
+  pane in the `DropZone` and hands dropped files to the composer's uploader (a ref); `queries.ts` types `user.id`.
+- **Dependency**: `web/package.json` gains `node-emoji` `2.2.0` (MIT; exact pin). It was already installed as the
+  dependency of `remark-emoji` 5.0.2 (the renderer), so the lockfile gains one direct edge and no new package.
+  Emoji data is loaded by dynamic import on first use; the built chunks that contain it are 178 KB and 237 KB
+  uncompressed (not measured as a separate delta: the data is shared with the renderer's emoji extra).
+- **Decisions in code**: the text field is `role="combobox"` (ARIA editable combobox with list autocomplete) so
+  `aria-controls` / `aria-activedescendant` / `aria-expanded` are valid; Preview keeps the textarea mounted (hidden) so the
+  caret and the undo stack survive; a restored attachment the server no longer knows is detected from the 422 on
+  Send (`/attachment_ids` field error), not by a probe, because there is no read route for a pending attachment.
+  The phone composer is two rows now: `e2e/chat-v2.spec.ts` "composer is one row" was changed to the two-row rule
+  and `getByRole("textbox")` to `"combobox"`.
+- **Not done / noted**: undo after a toolbar action is asserted in Chromium only (Firefox and WebKit are not in the
+  Playwright projects); "format → Preview → send renders the same in the transcript" is covered as request body +
+  the shared renderer (the chat mock does not append sent messages to the transcript). The reply target's time is
+  not stored in the draft (`ReplyTarget` has none).
+- **Gate (this task)**: `pnpm typecheck`, `lint` clean; vitest full 1602 tests: new `composer-format` (21) and
+  `composer-p5` (18) pass; `build` ok; Playwright mocked: `chat-composer` (16 tests ×2 repeats), `chat-reply`,
+  `chat-v2`, `stage4-axe` pass at 1280/390 px in both themes with axe; the full mocked project runs at the end of the
+  P5-CHAT-4 B batch.
