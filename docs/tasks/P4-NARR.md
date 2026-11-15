@@ -4,7 +4,7 @@
 On a chat platform whose connector can edit messages, an agent with `narration_cards` on shows its turn's progress as one card: the tool steps and their status, updated as they run and removed when the answer posts. The card is built only from durable `tool.started` and `tool.finished` events, shows no arguments, secrets or answer text, never notifies or links, and stays within the connector's write budget. The dashboard chat is unchanged.
 
 ## Linked requirements
-- D-225 (moved to phase 5, needs a spec task); D-279 (card as the turn's receipt, events, no new op kind, dashboard unchanged); D-280 (shared-space names only, bounds and cadence, deletion at completion).
+- D-225 (moved to phase 5, needs a spec task); D-279 (card as the turn's receipt, events, no new op kind, dashboard unchanged); D-280 (shared-space names only, bounds and cadence); D-286 (owner: the card is collapsed at completion, not deleted).
 - Contracts C-846 (agent setting), C-847 (`narration` content), C-848 (card lifecycle on existing ops), C-849 (cadence and budget), C-850 (events and privacy), C-851 (Mattermost rendering), C-852 (dashboard switch) in `docs/API_CONTRACTS.md` §Phase 5 — P4-NARR / P4-UTOK.
 - SEC-111 (`docs/17-security.md`): no argument, secret, file content or answer text in a card; no ping or link; a failed card write never fails a turn.
 - Spec sections: `docs/10-agents-conversations.md` §Live narration cards; `docs/13-channels-connectors.md` §4.5, §5.2, §5.10, §5.12; `docs/20-mattermost-connector.md` §Operations, §Rendering; `docs/18-testing.md` §Live narration cards; `docs/02-engineering-conventions.md` §Limits (`NARR_*`); `docs/03-data-model.md` §Planned changes (`agents.narration_cards`, migration `20261201000231`).
@@ -24,14 +24,14 @@ On a chat platform whose connector can edit messages, an agent with `narration_c
 ### In scope
 **Part A — API (Rust, Sonnet)**
 - Migration `20261201000231_agent_narration_cards.sql`: `agents.narration_cards boolean not null default false`; repo, DTO, `PATCH /v1/agents/{agent}` (C-846).
-- Projector (new module under `services/aurora-api/src/domains/channels/`, e.g. `narration.rs`): reads only the four event kinds of C-850, keeps per-turn state, coalesces, emits `message.post` / `message.update` / `message.delete` with `narr:<turn_id>` / `narr:<turn_id>:<seq>` / `narr:<turn_id>:end` dedupe keys (C-848). Replaces the receipt when the setting is on and the connector declares `edits`; otherwise the receipt path is untouched.
+- Projector (new module under `services/aurora-api/src/domains/channels/`, e.g. `narration.rs`): reads only the four event kinds of C-850, keeps per-turn state, coalesces, emits `message.post` / `message.update` (the last one the collapse, D-286; no `message.delete`) with `narr:<turn_id>` / `narr:<turn_id>:<seq>` / `narr:<turn_id>:end` dedupe keys (C-848). Replaces the receipt when the setting is on and the connector declares `edits`; otherwise the receipt path is untouched.
 - Cadence and budget (C-849): `NARR_MIN_INTERVAL`, `NARR_SPACE_UPDATES_PER_MINUTE`, `NARR_CARDS_PER_SPACE`; per-space counter in the existing shared rate-limit primitive if it fits (`docs/03` and `docs/05` §Shared rate-limit counters, P4-CNT, D-119), otherwise a bounded in-process counter with the same cap per replica (document the choice).
 - Limits `NARR_MAX_STEPS` (12) and `NARR_STEP_CHARS` (120) in `aurora-core::limits`; remove their `doc-only` lines from `scripts/guards/limits-gaps.allow`.
 - `narration` content variant (C-847) in the neutral content type used by the connector contract (`crates/aurora-connector-sdk` or the wire type that carries `Content`; verify).
 
 **Part B — connector (Rust, Sonnet)**
 - `connectors/mattermost/src/render.rs`: card rendering per C-851 (header, one line per step, code spans, `N earlier`, bare-URL wrapping, defuse per D-271).
-- Conformance: `tests/conformance/connector/` scenario for a card's create, update, delete.
+- Conformance: `tests/conformance/connector/` scenario for a card's create, update, collapse.
 
 **Part C — dashboard (Next.js, nextjs-developer)**
 - Channels page switch "Show progress in chat" bound to `narration_cards` (C-852), help text as in `docs/14`, off by default, inline error on failure. Vitest + Playwright at 390 px in both themes.
@@ -49,7 +49,7 @@ Streaming the answer as edits; narration in the dashboard chat; tool arguments o
 - Lanes: `docs/tasks/LANE_RULES.md` gates per task. Opus reviews the privacy filter in `narration.rs` before merge (security-adjacent).
 
 ## Acceptance criteria (failing-first: each new test fails before its code)
-1. API ITs (`services/aurora-api/tests/it/narration.rs`): one card per turn in place of the receipt; steps added and updated from `tool.started`/`tool.finished`; `NARR_MAX_STEPS` cut with "N earlier"; deletion at answer post, failed turn and stalled turn; a restart mid-turn resumes the same card (no second `narr:<turn_id>` post).
+1. API ITs (`services/aurora-api/tests/it/narration.rs`): one card per turn in place of the receipt; steps added and updated from `tool.started`/`tool.finished`; `NARR_MAX_STEPS` cut with "N earlier"; collapse (D-286) at answer post, failed turn and stalled turn, the closing update retried after `rate_limited`; a restart mid-turn resumes the same card (no second `narr:<turn_id>` post).
 2. Privacy IT: no `activity`, `thinking.delta` or `text.delta` content in any card write; a shared-space card carries names only; a `direct` card carries the sanitized summary; a canary argument and a canary secret appear in no card write and in no connector request log.
 3. Budget IT: bursts coalesce to at most one update per `NARR_MIN_INTERVAL`; two concurrent turns in one space cap updates at `NARR_SPACE_UPDATES_PER_MINUTE`; a third turn in a full space gets no card and its answer is unchanged; `rate_limited` drops the update and is not retried.
 4. Connector test (Mattermost, mock server then the pinned dev server, `docs/20`): card with `@here`, `@all`, `<@user:…>`, a group mention and a bare URL in a label produces no notification and no preview; the card fits `message_max_chars` at the cap.
@@ -75,7 +75,7 @@ Each has the recommended answer; the spec text follows it, marked "(pending owne
 - **Q-NARR-1 — Default and level of the setting.** Recommended: off by default, set per agent on the agent's Channels page. Alternative: on for every agent of a workspace or of the instance.
 - **Q-NARR-2 — What a shared space sees.** Recommended: step names only in any conversation that is not `direct`; the sanitized summary only in a `direct` conversation. Alternative: sanitized summaries everywhere (more useful, puts argument-bearing text in shared channels).
 - **Q-NARR-3 — Cadence and budget.** Recommended: one update per turn at least every 5 s; at most 10 narration writes per space per minute; at most 3 cards per space at a time. Alternative: faster updates, a larger share of the connector's 30 writes per minute.
-- **Q-NARR-4 — After completion.** Recommended: the card is deleted when the answer posts, as the receipt is today. Alternative: the card stays as a settled summary ("Done, 4 steps").
+- **Q-NARR-4 — After completion. Answered (owner, 2026-11-15, D-286): collapsed, not deleted** — the card's last update shrinks it to one line (outcome, step count, elapsed time). Original recommendation: the card is deleted when the answer posts, as the receipt is today. Alternative: the card stays as a settled summary ("Done, 4 steps").
 - **Q-NARR-5 — Platforms without message edits.** Recommended: no card; the receipt stays as today. Alternative: one "Working on it" post with no updates and no step list.
 - **Q-NARR-6 — Which events feed the card.** Recommended: tool steps only (`tool.started`, `tool.finished`). Alternative: also the sanitized `activity` lines, which are free-text status lines and would widen what reaches shared spaces (not recommended).
 

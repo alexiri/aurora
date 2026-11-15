@@ -559,7 +559,7 @@ no behaviour in phase 0.
   same info string, a table is split by rows with the header and delimiter
   rows repeated, a list between items; no post exceeds `message_max_chars`
   after the connector's conversion (§4.6).
-- **Narration cards** (phase 5, P4-NARR, D-279, C-847, C-848): when the agent's `narration_cards` is on and the platform declares `edits`, the turn's receipt is a card that lists its tool steps and is updated as they run; it is deleted when the answer posts or the turn ends, and it is never the answer. Bounds and privacy: §5.12.
+- **Narration cards** (phase 5, P4-NARR, D-279, C-847, C-848): when the agent's `narration_cards` is on and the platform declares `edits`, the turn's receipt is a card that lists its tool steps and is updated as they run; it is collapsed to one summary line when the answer posts or the turn ends (D-286), and it is never the answer. Bounds and privacy: §5.12.
 - **Doorless turns** (system follow-ups, watch fires, schedule and peer-task
   reports, action-approval outcomes) in a conversation that has thread links
   are posted to its most recently used thread link.
@@ -805,8 +805,12 @@ stays hidden until Q-UTOK-1 is answered.
 - **Updates.** Each change of the step list is a `message.update`, coalesced within the bounds of
   C-849 (`NARR_MIN_INTERVAL`, `NARR_SPACE_UPDATES_PER_MINUTE`, `NARR_CARDS_PER_SPACE`). A pending
   update that a newer state supersedes is dropped, never sent late.
-- **Completion.** When the answer posts, or the turn ends without one, the card is deleted
-  (`message.delete`, `dedupe_key narr:<turn_id>:end`). The answer rule of `10 §Turns` is unchanged.
+- **Completion** (owner, D-286). When the answer posts, or the turn ends without one, the card is
+  **collapsed**: a last `message.update` (`dedupe_key narr:<turn_id>:end`) with the collapsed form of
+  C-847 — no step list, one line with the outcome, the step count and the elapsed time. The closing
+  update is never superseded or dropped (on `rate_limited` it waits for the retry hint like any
+  channel op), and a collapsed card no longer counts toward `NARR_CARDS_PER_SPACE`. The card is not
+  deleted; the answer rule of `10 §Turns` is unchanged.
 - **Content.** The card carries no ping and no link. Step labels are sanitized data; the card is never
   an agent message body (§4.3). Who sees which fields: `10 §Live narration cards`, D-280.
 - **Failure never fails the turn.** `forbidden` (the bot is not in the channel) or `rate_limited` on a

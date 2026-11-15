@@ -293,8 +293,9 @@ Error mapping: 401 → `credential_dead`; 403 → `forbidden`; 404 → `not_foun
   `<name>` goes in a code span (never Markdown, never a ping; `detail` text appears only in a `direct`
   conversation, `10 §Live narration cards`); a bare URL
   inside a label is wrapped in a code span too, so Mattermost never fetches it (D-270). The `N earlier` line
-  is last when steps were cut. Words only, no emoji. Edits go through `PUT …/posts/{id}/patch`, deletion
-  through `DELETE …/posts/{id}`. The card is built within `message_max_chars` by construction (`NARR_MAX_STEPS`
+  is last when steps were cut. Words only, no emoji. A collapsed card (D-286) is the single line
+  `Done: 4 steps, 42 s`, `Failed after 3 steps (1 failed), 1 min 5 s` or `Stopped after 2 steps, 12 s`,
+  with no list. Edits, including the collapse, go through `PUT …/posts/{id}/patch`; a card is never deleted. The card is built within `message_max_chars` by construction (`NARR_MAX_STEPS`
   × `NARR_STEP_CHARS` < 16 383).
 - **Footer of a user-token post** (D-283(c)): the last line of the post, italic, platform-authored:
   `_Sent by <agent name> for <owner label>_`. The agent and owner labels are sanitized and escaped; the footer
