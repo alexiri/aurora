@@ -332,9 +332,9 @@ test.describe("layout, 390 px", () => {
     await expect(page.getByRole("log")).toBeHidden();
   });
 
-  test("the composer is one row of 44 px controls and every thread control is at least 44 px", async ({ page }) => {
+  test("the composer is two rows (text, then 44 px controls) and every thread control is at least 44 px", async ({ page }) => {
     await openChat(page, "light", { ...DEFAULT, direct: working as never, active: [working as never, ...DEFAULT.active.slice(1)] }, `?c=${MINE.id}`);
-    const box = async (name: string | RegExp, role: "button" | "textbox" = "button") => {
+    const box = async (name: string | RegExp, role: "button" | "combobox" = "button") => {
       const b = await page.getByRole(role, { name }).first().boundingBox();
       expect(b, String(name)).not.toBeNull();
       return b!;
@@ -342,14 +342,16 @@ test.describe("layout, 390 px", () => {
     const attach = await page.getByText("Attach", { exact: true }).locator("xpath=ancestor::label").boundingBox();
     const send = await box("Follow up");
     const stop = await box("Stop");
-    const text = await box("Message", "textbox");
+    const text = await box("Message", "combobox");
     for (const [name, b] of Object.entries({ attach, send, stop })) {
       expect(b!.width, `${name} width`).toBeGreaterThanOrEqual(43.5);
       expect(b!.height, `${name} height`).toBeGreaterThanOrEqual(43.5);
     }
     expect(text.height).toBeGreaterThanOrEqual(43.5);
-    const centres = [attach!, text, stop, send].map((b) => b.y + b.height / 2);
-    expect(Math.max(...centres) - Math.min(...centres), "one row").toBeLessThanOrEqual(8);
+    // Phase 5 (docs/14 "Below 768 px", P5-CHAT-3): the text field on its own row, then Attach, `Aa`, Stop and Send.
+    const centres = [attach!, stop, send].map((b) => b.y + b.height / 2);
+    expect(Math.max(...centres) - Math.min(...centres), "one action row").toBeLessThanOrEqual(8);
+    expect(text.y + text.height, "the text field is above the action row").toBeLessThanOrEqual(attach!.y + 1);
     expect(await box("Back to conversations").then((b) => b.height)).toBeGreaterThanOrEqual(43.5);
     expect(await box("Conversation actions").then((b) => b.height)).toBeGreaterThanOrEqual(43.5);
     await expect(page.getByText("Enter to send")).toBeHidden();

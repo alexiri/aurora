@@ -119,7 +119,7 @@ export async function logout(): Promise<void> {
 }
 
 export interface MeInfo {
-  user: { display_name: string; email: string; is_instance_admin?: boolean };
+  user: { id?: string; display_name: string; email: string; is_instance_admin?: boolean };
 }
 
 /**

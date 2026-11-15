@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConversationActions } from "@/components/agents/conversation-actions";
 import { Avatar } from "@/components/agent-avatar";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { DropZone } from "@/components/ui/drop-zone";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, type Conversation } from "@/lib/api/conversations";
@@ -66,6 +67,8 @@ export function ChatThread({
   const [stopErr, setStopErr] = useState<string | null>(null);
   // (P5-CHAT-2) Reply target, jump requests and the "not available" notice for a permalink or quote that points nowhere.
   const [reply, setReply] = useState<ReplyTarget | null>(null);
+  // Files dropped anywhere on the thread pane go to the composer's uploader (P5-CHAT-3).
+  const attachRef = useRef<((files: File[]) => void) | null>(null);
   // A permalink (`?c=&m=`) is read at mount; the transcript performs the jump once its history is shown.
   const [jump, setJump] = useState<{ seq: number; n: number } | null>(() => {
     const seq = typeof window === "undefined" ? null : permalinkSeq(window.location.search, convId);
@@ -117,6 +120,7 @@ export function ChatThread({
 
   return (
     <ChatActionsContext.Provider value={actions}>
+      <DropZone className="flex min-h-0 flex-1 flex-col" disabled={readOnly} onFiles={(files) => attachRef.current?.(files)}>
       <section aria-label="Chat" className="flex min-h-0 flex-1 flex-col">
         <ThreadHeader
           title={title}
@@ -202,9 +206,12 @@ export function ChatThread({
             autoFocus={empty}
             reply={reply}
             onClearReply={() => setReply(null)}
+            onRestoreReply={setReply}
+            attachRef={attachRef}
           />
         )}
       </section>
+      </DropZone>
     </ChatActionsContext.Provider>
   );
 }

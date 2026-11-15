@@ -53,6 +53,9 @@ importers:
       next:
         specifier: ^16.4.5
         version: 16.4.5(@babel/core@7.29.13)(@playwright/test@1.65.0)(@types/node@20.19.43)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      node-emoji:
+        specifier: 2.2.0
+        version: 2.2.0
       openapi-fetch:
         specifier: ^0.17.0
         version: 0.17.0

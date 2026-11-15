@@ -1,25 +1,78 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent, type MutableRefObject } from "react";
 
 import { Button } from "@/components/ui/button";
-import { PaperclipIcon, SendIcon, StopIcon } from "@/components/ui/icons";
+import { EmojiPicker } from "@/components/ui/emoji-picker";
+import {
+  BoldIcon,
+  CodeBlockIcon,
+  CodeIcon,
+  HeadingIcon,
+  ItalicIcon,
+  LinkIcon,
+  ListBulletIcon,
+  ListNumberedIcon,
+  PaperclipIcon,
+  QuoteIcon,
+  SendIcon,
+  SmileIcon,
+  StopIcon,
+  StrikeIcon,
+  TableIcon,
+  TaskListIcon,
+} from "@/components/ui/icons";
+import { Markdown } from "@/components/ui/markdown";
+import { Notice } from "@/components/ui/notice";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { SuggestionList, optionId } from "@/components/ui/suggestion-list";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
+import { Kbd, Toolbar, ToolbarButton, ToolbarSeparator } from "@/components/ui/toolbar";
 import { ApiError } from "@/lib/api/client";
 import { uploadAttachment, uploadErrorMessage, type Attachment } from "@/lib/api/attachments";
 import { chatApi, type Followup } from "@/lib/api/conversations";
+import { useMe } from "@/lib/api/queries";
 import { newIdempotencyKey } from "@/lib/chat/idempotency";
 import { classifySend, pendingFollowups, type TranscriptState } from "@/lib/chat/transcript";
 
 import { ComposerChip, UploadChip } from "./attachments";
 import type { ReplyTarget } from "./chat-actions";
+import { loadDraft, loadFormattingPref, saveDraft, saveFormattingPref } from "./composer/drafts";
+import { applyEdit } from "./composer/edit";
+import { searchEmoji, type EmojiHit } from "./composer/emoji";
+import { SHORTCUTS, applyFormat, continueList, emojiQuery, inOpenFence, shortcutAction, smartPaste, type Edit, type FormatAction } from "./composer/format";
 import { ReplyBar } from "./reply-bar";
 import { ErrorBlock, QueuedRow } from "./status-rows";
 
+/** `Pasted image 2026-11-14 23.37.09.png`: what the clipboard calls `image.png` is named by when it was pasted. */
+export function pastedName(file: File, now = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  const ext = (file.type.split("/")[1] || "png").split("+")[0];
+  return `Pasted image ${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}.${p(now.getMinutes())}.${p(now.getSeconds())}.${ext}`;
+}
+
+const ACTIONS: { action: FormatAction; label: string; icon: typeof BoldIcon; group: number }[] = [
+  { action: "bold", label: "Bold", icon: BoldIcon, group: 0 },
+  { action: "italic", label: "Italic", icon: ItalicIcon, group: 0 },
+  { action: "strike", label: "Strikethrough", icon: StrikeIcon, group: 0 },
+  { action: "heading", label: "Heading", icon: HeadingIcon, group: 0 },
+  { action: "link", label: "Link", icon: LinkIcon, group: 1 },
+  { action: "code", label: "Code", icon: CodeIcon, group: 1 },
+  { action: "codeblock", label: "Code block", icon: CodeBlockIcon, group: 1 },
+  { action: "quote", label: "Quote", icon: QuoteIcon, group: 2 },
+  { action: "bullet", label: "Bulleted list", icon: ListBulletIcon, group: 2 },
+  { action: "numbered", label: "Numbered list", icon: ListNumberedIcon, group: 2 },
+  { action: "task", label: "Task list", icon: TaskListIcon, group: 2 },
+  { action: "table", label: "Table", icon: TableIcon, group: 3 },
+];
+
+const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
 /**
- * The pinned composer: queued follow-ups above the box, then a bordered box with attachment chips, an
- * auto-growing textarea (2 to 8 lines, CSS only) and one toolbar row (Attach, the hint, Stop, Send). At 390 px it
- * is a single row of 44 px controls. Enter sends, Shift+Enter adds a new line.
+ * The pinned composer: queued follow-ups above the box, then a bordered box with the reply bar, attachment chips,
+ * the auto-growing text field (or its Preview), the formatting row and one action row (Attach, `Aa`, the hint, Stop,
+ * Send). Markdown helpers, smart paste, emoji, files and drafts are P5-CHAT-3 (docs/14 "Composer (phase 5)").
  */
 export function Composer({
   agentId,
@@ -31,10 +84,16 @@ export function Composer({
   autoFocus = false,
   reply = null,
   onClearReply,
+  onRestoreReply,
+  attachRef,
 }: {
   /** (P5-CHAT-2, C-725) The message this one replies to; sent as `reply_to.seq`. */
   reply?: ReplyTarget | null;
   onClearReply?: () => void;
+  /** A draft's reply target, put back when the person returns. */
+  onRestoreReply?: (t: ReplyTarget) => void;
+  /** The thread pane's drop zone hands dropped files to this uploader. */
+  attachRef?: MutableRefObject<((files: File[]) => void) | null>;
   agentId: string;
   convId: string;
   base: string;
@@ -46,6 +105,7 @@ export function Composer({
   autoFocus?: boolean;
 }) {
   const qc = useQueryClient();
+  const userId = useMe().data?.user.id ?? null;
   // `?draft=` fills the box (the getting-started guide suggests a first message); it is never sent for the person.
   // Read at mount regardless of `autoFocus`: on a slow load the composer mounts while the transcript is still
   // loading (`autoFocus` false), and the initializer would never run again — the guide's suggested message was
@@ -57,10 +117,22 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState<string[]>([]);
-  const [uploadErr, setUploadErr] = useState<string | null>(null);
+  const [uploadErrs, setUploadErrs] = useState<string[]>([]);
+  const [expired, setExpired] = useState(0);
+  const [mode, setMode] = useState<"write" | "preview">("write");
+  const [fmtPref, setFmtPref] = useState<boolean | null>(null);
+  const [wide, setWide] = useState(false);
+  const [caret, setCaret] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [hits, setHits] = useState<EmojiHit[]>([]);
+  const [active, setActive] = useState(0);
+  const [dismissed, setDismissed] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const keyRef = useRef<{ sig: string; key: string } | null>(null);
+  const restored = useRef<string | null>(null);
   const waiting = useMemo(() => pendingFollowups(followups, state), [followups, state]);
+  const ids = useId().replace(/:/g, "");
+  const listId = `${ids}-emoji`;
 
   useEffect(() => {
     if (autoFocus) area.current?.focus();
@@ -80,44 +152,132 @@ export function Composer({
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
+  // The `Aa` choice and the width the unset default depends on.
+  useEffect(() => {
+    setFmtPref(loadFormattingPref());
+    const mq = window.matchMedia?.("(min-width: 768px)");
+    if (!mq) return;
+    setWide(mq.matches);
+    const on = (e: MediaQueryListEvent) => setWide(e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const fmtOn = fmtPref ?? wide;
+
+  // Drafts: restored once per user and conversation (a `?draft=` suggestion wins over a stored text), then saved
+  // on every change; the saved copy is removed when everything is empty (after Send).
+  useEffect(() => {
+    if (!userId) return;
+    const key = `${userId}:${convId}`;
+    if (restored.current === key) return;
+    restored.current = key;
+    const d = loadDraft(userId, convId);
+    if (!d) return;
+    setText((t) => t || d.text);
+    if (d.attachments.length > 0) setPending(d.attachments);
+    if (d.reply) onRestoreReply?.({ seq: d.reply.seq, author: d.reply.author, excerpt: d.reply.excerpt });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, convId]);
+  useEffect(() => {
+    if (!userId || restored.current !== `${userId}:${convId}`) return;
+    saveDraft(userId, convId, { text, reply: reply ? { seq: reply.seq, author: reply.author, excerpt: reply.excerpt } : null, attachments: pending });
+  }, [userId, convId, text, reply, pending]);
+
+  // Emoji suggestions: `:` and two letters at the caret.
+  const eq = mode === "write" ? emojiQuery(text, caret) : null;
+  const eqKey = eq ? `${eq.from}:${eq.query}` : null;
+  useEffect(() => {
+    if (!eq) {
+      setHits([]);
+      return;
+    }
+    let live = true;
+    void searchEmoji(eq.query).then((h) => {
+      if (!live) return;
+      setHits(h);
+      setActive(0);
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eqKey]);
+  const suggesting = !!eq && hits.length > 0 && dismissed !== eqKey;
+
+  function edit(e: Edit) {
+    const ta = area.current;
+    if (!ta) return;
+    applyEdit(ta, e, setText);
+    setCaret(ta.selectionEnd);
+  }
+  function format(action: FormatAction) {
+    const ta = area.current;
+    if (!ta) return;
+    setMode("write");
+    edit(applyFormat(ta.value, ta.selectionStart, ta.selectionEnd, action));
+  }
+  function chooseEmoji(h: EmojiHit) {
+    const ta = area.current;
+    if (!ta || !eq) return;
+    edit({ from: eq.from, to: ta.selectionEnd, insert: h.emoji, selStart: eq.from + h.emoji.length, selEnd: eq.from + h.emoji.length });
+  }
+  function insertEmoji(emoji: string) {
+    const ta = area.current;
+    if (!ta) return;
+    setPickerOpen(false);
+    setMode("write");
+    const at = ta.selectionStart;
+    edit({ from: at, to: ta.selectionEnd, insert: emoji, selStart: at + emoji.length, selEnd: at + emoji.length });
+  }
+
   async function submit(e?: FormEvent) {
     e?.preventDefault();
     const t = text.trim();
-    if (!t || busy || uploading.length > 0) return;
+    // Send is enabled with text or at least one uploaded file (C-726), never while an upload runs.
+    if ((!t && pending.length === 0) || busy || uploading.length > 0) return;
     setBusy(true);
     setSendErr(null);
     // One key per message (RFE-018): a retry of the same text and attachments reuses it, so a lost response never
     // makes a second turn; an edited message gets a fresh one (the server refuses a key reused with other content).
-    const ids = pending.map((a) => a.id);
-    const sig = JSON.stringify([convId, t, [...ids].sort(), reply?.seq ?? null]);
+    const attIds = pending.map((a) => a.id);
+    const sig = JSON.stringify([convId, t, [...attIds].sort(), reply?.seq ?? null]);
     if (keyRef.current?.sig !== sig) keyRef.current = { sig, key: newIdempotencyKey() };
     try {
-      const out = classifySend(await chatApi.send(convId, t, ids, keyRef.current.key, reply?.seq));
+      const out = classifySend(await chatApi.send(convId, t, attIds, keyRef.current.key, reply?.seq));
       keyRef.current = null;
       if (out.kind === "followup") setFollowups((f) => [...f, out.followup]);
       setText("");
       setPending([]);
+      setMode("write");
       onClearReply?.();
       void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
     } catch (err) {
       // The server took the key for other content: never reuse it.
       if (err instanceof ApiError && err.code === "idempotency_key_reused") keyRef.current = null;
-      setSendErr(err);
+      // A restored attachment the sweeper deleted (`ATTACH_PENDING_TTL`): drop the chips, keep the text.
+      if (err instanceof ApiError && err.status === 422 && attIds.length > 0 && JSON.stringify(err.details ?? "").includes("/attachment_ids")) {
+        setExpired(attIds.length);
+        setPending([]);
+        keyRef.current = null;
+      } else {
+        setSendErr(err);
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  async function attach(files: FileList | null) {
-    if (!files) return;
-    setUploadErr(null);
-    for (const file of Array.from(files)) {
+  async function attach(list: File[]) {
+    if (list.length === 0) return;
+    setUploadErrs([]);
+    setExpired(0);
+    for (const file of list) {
       setUploading((n) => [...n, file.name]);
       try {
         const a = await uploadAttachment(convId, file);
         setPending((p) => [...p, a]);
       } catch (err) {
-        setUploadErr(`Upload failed: ${file.name}: ${uploadErrorMessage(err)}`);
+        setUploadErrs((m) => [...m, `Upload failed: ${file.name}: ${uploadErrorMessage(err)}`]);
       } finally {
         setUploading((n) => {
           const i = n.indexOf(file.name);
@@ -126,6 +286,13 @@ export function Composer({
       }
     }
   }
+  useEffect(() => {
+    if (!attachRef) return;
+    attachRef.current = (files) => void attach(files);
+    return () => {
+      attachRef.current = null;
+    };
+  });
 
   async function act(fn: () => Promise<unknown>) {
     setSendErr(null);
@@ -136,21 +303,80 @@ export function Composer({
     }
   }
 
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.clipboardData.files);
+    if (files.length > 0) {
+      e.preventDefault();
+      void attach(files.map((f) => (f.type.startsWith("image/") && /^image\.\w+$/i.test(f.name) ? new File([f], pastedName(f), { type: f.type }) : f)));
+      return;
+    }
+    // Plain text only (the textarea never takes the clipboard's HTML); a URL over a selection and spreadsheet rows
+    // get Markdown.
+    const ta = e.currentTarget;
+    const smart = smartPaste(ta.value, ta.selectionStart, ta.selectionEnd, e.clipboardData.getData("text/plain"));
+    if (smart) {
+      e.preventDefault();
+      edit(smart);
+    }
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    const ta = e.currentTarget;
+    if (suggesting) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setActive((a) => (a + (e.key === "ArrowDown" ? 1 : -1) + hits.length) % hits.length);
+        return;
+      }
+      if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
+        e.preventDefault();
+        chooseEmoji(hits[active] ?? hits[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setDismissed(eqKey);
+        return;
+      }
+    }
     if (e.key === "Escape" && reply) {
       e.preventDefault();
       onClearReply?.();
       return;
     }
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void submit();
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod) {
+      const action = shortcutAction(e);
+      if (action) {
+        e.preventDefault();
+        format(action);
+        return;
+      }
+    }
+    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      if (mod) {
+        e.preventDefault();
+        void submit();
+      } else if (e.shiftKey) {
+        const c = continueList(ta.value, ta.selectionStart);
+        if (c && ta.selectionStart === ta.selectionEnd) {
+          e.preventDefault();
+          edit(c);
+        }
+      } else if (!inOpenFence(ta.value, ta.selectionStart)) {
+        e.preventDefault();
+        void submit();
+      }
     }
   }
 
   const tooMany = sendErr instanceof ApiError && sendErr.code === "too_many_attachments";
   // (C-725) The original was redacted (or is gone) since Reply was chosen: say so in the bar, keep the text.
   const replyGone = sendErr instanceof ApiError && sendErr.code === "reply_target_invalid";
+  const fenced = mode === "write" && inOpenFence(text, caret);
+  const mac = isMac();
+  const keysOf = (a: FormatAction) => SHORTCUTS[a]?.keys.map((k) => (mac && k === "Ctrl" ? "⌘" : k));
+  const canSend = (!!text.trim() || pending.length > 0) && !busy && uploading.length === 0;
   return (
     <div className="shrink-0 space-y-2 border-t border-line bg-surface p-3 dark:bg-canvas md:px-5">
       {waiting.map((f) => (
@@ -163,9 +389,14 @@ export function Composer({
       ) : sendErr && !replyGone ? (
         <ErrorBlock code={sendErr instanceof ApiError ? sendErr.code : null} message={sendErr instanceof ApiError ? sendErr.message : undefined} base={base} />
       ) : null}
+      {expired > 0 ? (
+        <Notice role="status">
+          {expired} attached {expired === 1 ? "file" : "files"} expired. Attach {expired === 1 ? "it" : "them"} again.
+        </Notice>
+      ) : null}
       <form
         onSubmit={(e) => void submit(e)}
-        className="rounded-card border border-line-strong bg-surface p-2 focus-within:border-accent dark:bg-canvas md:p-2.5">
+        className="rounded-card border border-line-strong bg-surface p-2 focus-within:border-accent data-[dropping]:border-accent dark:bg-canvas md:p-2.5">
         {reply ? <ReplyBar target={reply} onCancel={() => onClearReply?.()} error={replyGone ? "You can't reply to that message any more" : null} /> : null}
         {pending.length > 0 ? (
           <ul aria-label="Pending attachments" className="mb-2 flex flex-wrap gap-2">
@@ -174,15 +405,17 @@ export function Composer({
             ))}
           </ul>
         ) : null}
-        {uploading.length > 0 || uploadErr ? (
+        {uploading.length > 0 || uploadErrs.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-2">
             {uploading.map((n, i) => (
               <UploadChip key={`${n}-${i}`} name={n} />
             ))}
-            {uploadErr ? <UploadChip name="" error={uploadErr} /> : null}
+            {uploadErrs.map((m, i) => (
+              <UploadChip key={`err-${i}`} name="" error={m} />
+            ))}
           </div>
         ) : null}
-        <div className="flex flex-wrap items-end gap-1 md:gap-1.5">
+        <div className="relative" id={tabPanelId(ids, "write")} role="tabpanel" aria-labelledby={tabId(ids, "write")} hidden={mode === "preview"}>
           <label htmlFor="chat-input" className="sr-only">
             Message
           </label>
@@ -192,11 +425,128 @@ export function Composer({
             rows={1}
             value={text}
             placeholder={activeTurn ? "Add a follow-up…" : `Message ${agentName}…`}
-            onChange={(e) => setText(e.target.value)}
+            role="combobox"
+            aria-expanded={suggesting}
+            aria-controls={suggesting ? listId : undefined}
+            aria-autocomplete="list"
+            aria-activedescendant={suggesting ? optionId(listId, active) : undefined}
+            onChange={(e) => {
+              setText(e.target.value);
+              setCaret(e.target.selectionEnd);
+            }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionEnd)}
             onKeyDown={onKeyDown}
-            className="order-2 block max-h-44 min-h-11 min-w-0 flex-1 resize-none rounded-control bg-transparent px-2 py-2.5 text-sm text-ink [field-sizing:content] placeholder:text-muted focus-visible:shadow-none focus-visible:outline-none md:order-1 md:min-h-14 md:basis-full md:py-1.5"
+            onPaste={onPaste}
+            className="block max-h-44 min-h-11 w-full min-w-0 resize-none rounded-control bg-transparent px-2 py-2.5 text-base text-ink [field-sizing:content] placeholder:text-muted focus-visible:shadow-none focus-visible:outline-none md:min-h-14 md:py-1.5 md:text-sm"
           />
-          <label className="order-1 inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink focus-within:outline focus-within:outline-2 focus-within:outline-accent md:order-2 md:size-9">
+          {suggesting ? (
+            <SuggestionList
+              id={listId}
+              label="Emoji suggestions"
+              active={active}
+              onChoose={(i) => chooseEmoji(hits[i])}
+              className="absolute bottom-full left-0 z-30 mb-1 w-full md:w-72"
+              items={hits.map((h) => ({
+                id: h.name,
+                node: (
+                  <>
+                    <span aria-hidden="true" className="text-lg">
+                      {h.emoji}
+                    </span>
+                    <span className="font-mono text-xs text-ink-2">
+                      :<b className="font-bold text-ink">{h.name.slice(0, eq?.query.length)}</b>
+                      {h.name.slice(eq?.query.length)}:
+                    </span>
+                  </>
+                ),
+              }))}
+            />
+          ) : null}
+        </div>
+        <div
+          id={tabPanelId(ids, "preview")}
+          role="tabpanel"
+          tabIndex={mode === "preview" ? 0 : undefined}
+          aria-labelledby={tabId(ids, "preview")}
+          hidden={mode !== "preview"}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && shortcutAction(e)) {
+              e.preventDefault();
+              setMode("write");
+              requestAnimationFrame(() => area.current?.focus());
+            }
+          }}
+          className="max-h-44 min-h-14 overflow-y-auto rounded-control px-2 py-1.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+          {mode === "preview" ? (
+            text.trim() ? (
+              <div className="min-w-0 max-w-full space-y-2 break-words rounded-card rounded-tr-tail bg-bubble px-3.5 py-2.5 text-bubble-ink">
+                <Markdown source={text} breaks />
+              </div>
+            ) : (
+              <p className="text-muted">Nothing to preview.</p>
+            )
+          ) : null}
+        </div>
+        <div className={fmtPref === null ? "hidden md:block" : fmtOn ? "block" : "hidden"} data-testid="formatting-row">
+          <div className="mt-1 flex items-center gap-1 border-t border-line pt-1 max-md:overflow-x-auto">
+            <Tabs
+              label="Message view"
+              idBase={ids}
+              value={mode}
+              onValueChange={(v) => {
+                setMode(v as "write" | "preview");
+                if (v === "write") requestAnimationFrame(() => area.current?.focus());
+              }}
+              items={[
+                { value: "write", label: "Write" },
+                { value: "preview", label: "Preview" },
+              ]}
+              tabClassName="min-h-11 md:min-h-8"
+              className="shrink-0"
+            />
+            <Toolbar label="Formatting" className="shrink-0">
+              {ACTIONS.map((a, i) => (
+                <span key={a.action} className="contents">
+                  {i > 0 && ACTIONS[i - 1].group !== a.group ? <ToolbarSeparator /> : null}
+                  <ToolbarButton
+                    label={a.label}
+                    keys={keysOf(a.action)}
+                    ariaKeys={SHORTCUTS[a.action]?.aria}
+                    disabled={mode === "preview"}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => format(a.action)}>
+                    <a.icon aria-hidden="true" width={18} height={18} />
+                  </ToolbarButton>
+                </span>
+              ))}
+              <ToolbarSeparator />
+              <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                <PopoverAnchor asChild>
+                  <span className="inline-flex">
+                    <ToolbarButton
+                      label="Emoji"
+                      disabled={mode === "preview"}
+                      onClick={() => setPickerOpen((o) => !o)}
+                      aria-haspopup="dialog"
+                      aria-expanded={pickerOpen}>
+                      <SmileIcon aria-hidden="true" width={18} height={18} />
+                    </ToolbarButton>
+                  </span>
+                </PopoverAnchor>
+                <PopoverContent
+                  side="top"
+                  align="end"
+                  aria-label="Emoji picker"
+                  collisionPadding={16}
+                  onCloseAutoFocus={(e) => e.preventDefault()}>
+                  <EmojiPicker onPick={insertEmoji} />
+                </PopoverContent>
+              </Popover>
+            </Toolbar>
+          </div>
+        </div>
+        <div className="mt-1 flex items-center gap-1 md:gap-1.5">
+          <label className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink focus-within:outline focus-within:outline-2 focus-within:outline-accent md:size-9">
             <PaperclipIcon width={18} height={18} />
             <span className="sr-only">Attach</span>
             <input
@@ -205,30 +555,45 @@ export function Composer({
               className="sr-only"
               aria-label="Attach files"
               onChange={(e) => {
-                void attach(e.target.files);
+                void attach(Array.from(e.target.files ?? []));
                 e.target.value = "";
               }}
             />
           </label>
-          <span className="order-3 hidden flex-1 px-1 text-xs text-muted md:block">Enter to send · Shift+Enter for a new line</span>
+          <button
+            type="button"
+            aria-label="Formatting"
+            aria-pressed={fmtOn}
+            onClick={() => {
+              saveFormattingPref(!fmtOn);
+              setFmtPref(!fmtOn);
+            }}
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-sm font-semibold text-ink-2 hover:bg-subtle hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent aria-pressed:bg-subtle aria-pressed:text-ink md:size-9">
+            <span aria-hidden="true">Aa</span>
+          </button>
+          <span className="hidden min-w-0 flex-1 px-1 text-xs text-muted md:block" data-testid="composer-hint">
+            {fenced ? (
+              <>
+                Enter for a new line · <Kbd>{mac ? "⌘" : "Ctrl"}</Kbd> <Kbd>Enter</Kbd> to send
+              </>
+            ) : (
+              "Enter to send · Shift+Enter for a new line"
+            )}
+          </span>
+          <span className="flex-1 md:hidden" />
           {activeTurn ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
               aria-label="Stop"
-              className="order-4 size-11 min-h-11 shrink-0 px-0 md:w-auto md:min-h-9 md:px-3"
+              className="size-11 min-h-11 shrink-0 px-0 md:w-auto md:min-h-9 md:px-3"
               onClick={() => void act(() => chatApi.abort(activeTurn))}>
               <StopIcon width={16} height={16} />
               <span className="hidden md:inline">Stop</span>
             </Button>
           ) : null}
-          <Button
-            type="submit"
-            size="lg"
-            className="order-5 size-11 min-h-11 shrink-0 px-0"
-            aria-label={activeTurn ? "Follow up" : "Send"}
-            disabled={busy || uploading.length > 0 || !text.trim()}>
+          <Button type="submit" size="lg" className="size-11 min-h-11 shrink-0 px-0" aria-label={activeTurn ? "Follow up" : "Send"} disabled={!canSend}>
             <SendIcon width={18} height={18} />
           </Button>
         </div>
