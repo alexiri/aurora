@@ -66,9 +66,9 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
 - (phase 5, FIX-146, D-232(h)) **Browser tracing**, off unless the deployment enables it:
   - The root layout reads `AURORA_TRACING_SAMPLE_RATIO` at request time (the chart renders it only
     when an OTLP endpoint is set, `23`) and hands it to a client provider. Absent, nothing loads and
-    nothing is sent. Present, the OpenTelemetry web SDK (`@opentelemetry/api`,
-    `@opentelemetry/sdk-trace-web`, the OTLP/HTTP JSON exporter; **no zone.js**) is loaded with a
-    dynamic import into its own lazy chunk, never in the main bundle.
+    nothing is sent. Present, a small hand-rolled tracer (W3C `traceparent`, the
+    rule-2 sampler, an OTLP/HTTP JSON export; **no OpenTelemetry web SDK, no zone.js**, D-253) is
+    loaded with a dynamic import into its own lazy chunk, never in the main bundle.
   - Spans: `navigate {route template}` per App Router navigation, ending at the first commit of the
     new page (template rebuilt from the pathname and `useParams` as `[param]` segments, never ids);
     `{METHOD} {schemaPath}` per API call, from an `openapi-fetch` middleware that injects

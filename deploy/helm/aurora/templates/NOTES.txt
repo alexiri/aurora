@@ -14,6 +14,11 @@ WARNING: the Kubernetes API server addresses are unknown (the `kubernetes` Endpo
 the runner's and the secrets hook's egress policies carry no API rule and the runner cannot start sandboxes. Grant the installing
 identity `get` on endpointslices.discovery.k8s.io in `default`, set networkPolicy.kubeApiCidrs, or (not recommended) networkPolicy.kubeApiOpen=true.
 {{- end }}
+{{- if and (.Values.config.telemetry | default dict).otlp_endpoint .Values.networkPolicy.enabled (not .Values.networkPolicy.telemetryTo) }}
+
+WARNING: config.telemetry.otlp_endpoint is set but networkPolicy.telemetryTo is empty: the default-deny NetworkPolicies
+block the services' egress to the collector, so no span is exported. Set networkPolicy.telemetryTo to the collector's peers.
+{{- end }}
 {{- if .Values.database.allowSharedLogin }}
 
 WARNING: database.allowSharedLogin is set: the gateway logs in with the main database login (every privilege the API

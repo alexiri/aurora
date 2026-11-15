@@ -49,6 +49,7 @@ async fn main() -> ExitCode {
         SERVICE,
         &cfg.telemetry.log_level,
         cfg.telemetry.otlp_endpoint.as_deref(),
+        cfg.telemetry.sample_ratio,
     );
     tracing::info!(instance_id = %instance, "starting");
     match serve(cfg).await {
@@ -168,6 +169,7 @@ async fn serve(cfg: RelayConfig) -> std::io::Result<()> {
         )
         .await;
     });
+    let ops = service::traced(ops, service::INTERNAL_TRUST);
     let served = service::serve_all(vec![(ops_listener, ops)]).await;
     let _ = stop_tx.send(true);
     served

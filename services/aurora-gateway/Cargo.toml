@@ -74,6 +74,11 @@ aurora-secrets = { workspace = true, features = ["memory-store"] }
 aurora-testkit = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
+# FIX-146: tests/it/proxy.rs (the gateway span is a child of the turn's context; no canary in a span)
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "gateway_perf"

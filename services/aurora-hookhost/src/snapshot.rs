@@ -1,5 +1,6 @@
 //! Snapshot and module catalogue pulled from the API's internal endpoint (D-23).
 
+use aurora_core::telemetry::InternalRequest;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -96,7 +97,7 @@ impl Catalog {
                     })
                     .collect(),
             )
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| e.without_url().to_string())?;
         if !resp.status().is_success() {

@@ -87,6 +87,7 @@ fn start_item(sandbox: Uuid, boot: Uuid) -> WorkItem {
         item_id: Uuid::new_v4(),
         sandbox_id: sandbox,
         boot_id: boot,
+        trace_context: None,
         body: WorkItemBody::SandboxStart(SandboxStart {
             spec: SandboxSpec {
                 image: "aurora-sandbox:test".into(),
@@ -111,6 +112,7 @@ fn stop_item(sandbox: Uuid, boot: Uuid) -> WorkItem {
         item_id: Uuid::new_v4(),
         sandbox_id: sandbox,
         boot_id: boot,
+        trace_context: None,
         body: WorkItemBody::SandboxStop(SandboxStop {
             reason: StopReason::Idle,
             grace_secs: 1,
@@ -728,6 +730,7 @@ async fn executor_serializes_per_sandbox_and_forwards_socket_work() {
             item_id: Uuid::new_v4(),
             sandbox_id: a,
             boot_id: boot,
+            trace_context: None,
             body: kind,
         });
     }
@@ -735,6 +738,7 @@ async fn executor_serializes_per_sandbox_and_forwards_socket_work() {
         item_id: Uuid::new_v4(),
         sandbox_id: b,
         boot_id: boot,
+        trace_context: None,
         body: WorkItemBody::TurnAbort(aurora_protocol::runner::TurnRef { turn_id: turn }),
     });
     assert!(exec.drain(Duration::from_secs(5)).await);

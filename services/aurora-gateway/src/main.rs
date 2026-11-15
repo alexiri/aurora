@@ -116,6 +116,7 @@ async fn main() -> ExitCode {
         SERVICE,
         &cfg.telemetry.log_level,
         cfg.telemetry.otlp_endpoint.as_deref(),
+        cfg.telemetry.sample_ratio,
     );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command else {
@@ -416,11 +417,13 @@ async fn serve(
         port: 443,
         limiter: aurora_gateway::library_fetch::Limiter::default(),
     });
-    let internal = aurora_gateway::status::readyz_router(outage.clone())
-        .merge(aurora_gateway::status::router_with(ring, Some(outage)))
-        .merge(aurora_gateway::library_fetch::router(library))
-        .fallback_service(service::ops_router(metrics, Vec::new()))
-        .layer(axum::middleware::from_fn(service::trace_context));
+    let internal = service::traced(
+        aurora_gateway::status::readyz_router(outage.clone())
+            .merge(aurora_gateway::status::router_with(ring, Some(outage)))
+            .merge(aurora_gateway::library_fetch::router(library))
+            .fallback_service(service::ops_router(metrics, Vec::new())),
+        service::INTERNAL_TRUST,
+    );
     // (phase 1, RFE-002) The proxy listener is TLS-only; startup fails (naming the key) when the
     // certificate cannot be established.
     let proxy_tls = match (

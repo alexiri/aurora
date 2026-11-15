@@ -102,9 +102,12 @@ mod settings_signin;
 mod skill_library;
 mod skills;
 mod sse_revocation;
+mod telemetry_ingest;
 mod tenancy;
 mod terminal;
 mod tools;
+mod trace_e2e;
+mod turn_trace_context;
 mod webhooks;
 
 #[test]

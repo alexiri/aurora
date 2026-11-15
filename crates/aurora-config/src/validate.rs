@@ -1459,8 +1459,15 @@ fn check_keyring(c: &mut Ctx, s: &EnvSecrets) -> Option<Keyring> {
 }
 
 /// Class names accepted under `ratelimit.api.classes` (docs/05 §Conventions).
-pub const API_RATE_CLASSES: [&str; 7] = [
-    "general", "write", "message", "upload", "simulate", "search", "export",
+pub const API_RATE_CLASSES: [&str; 8] = [
+    "general",
+    "write",
+    "message",
+    "upload",
+    "simulate",
+    "search",
+    "export",
+    "telemetry",
 ];
 
 fn check_ratelimit(c: &mut Ctx, r: &ApiRateSection) {
@@ -1913,6 +1920,9 @@ fn check_common(c: &mut Ctx, tls: &TlsSection, t: &TelemetrySection) {
         c.err("telemetry.log_level", "must not be empty");
     }
     check_url(c, "telemetry.otlp_endpoint", t.otlp_endpoint.as_deref());
+    if !(t.sample_ratio.is_finite() && (0.0..=1.0).contains(&t.sample_ratio)) {
+        c.err("telemetry.sample_ratio", "must be a number from 0.0 to 1.0");
+    }
 }
 
 fn check_auth(

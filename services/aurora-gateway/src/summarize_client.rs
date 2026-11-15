@@ -6,6 +6,7 @@
 //! headers are dropped.
 
 use aurora_core::limits::HOOK_WALL_SUMMARIZE;
+use aurora_core::telemetry::InternalRequest;
 use aurora_summary::{ApprovalSummary, SummaryField, SummarySource};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -151,9 +152,8 @@ impl Summarizer for HttpSummarizer {
                 .bearer_auth(&self.secret)
                 .headers(crate::key_id_headers(self.key_id.as_deref()))
                 .headers(crate::key_id_headers(self.key_id.as_deref()))
-                .headers(aurora_core::telemetry::headers())
                 .json(&body)
-                .send()
+                .send_internal("aurora-hookhost")
                 .await
                 .map_err(|e| tracing::warn!(error = ?e, "approval.summarize request failed"))
                 .ok()?;

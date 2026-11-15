@@ -48,6 +48,7 @@ async fn main() -> ExitCode {
         SERVICE,
         &cfg.telemetry.log_level,
         cfg.telemetry.otlp_endpoint.as_deref(),
+        cfg.telemetry.sample_ratio,
     );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command;
@@ -138,6 +139,7 @@ async fn serve(cfg: &RunnerConfig) -> std::io::Result<()> {
         }
     });
 
+    let app = service::traced(app, service::INTERNAL_TRUST);
     let served = service::serve_all(vec![(listener, app)]).await;
     let _ = stop_tx.send(true);
     let _ = channel_task.await;

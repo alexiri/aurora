@@ -3,6 +3,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { traceAction } from "@/lib/telemetry";
+
 import { ACTION_POLL_MS, actionApprovalKeys } from "./action-approvals";
 import { api, ApiError } from "./client";
 import { useWorkspace } from "./queries";
@@ -181,7 +183,9 @@ export function useDecide(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: Decision }) =>
-      unwrap(api.POST("/v1/approvals/{id}/decision", { params: { path: { id } }, body: { decision } })),
+      traceAction("approval_decide", () =>
+        unwrap(api.POST("/v1/approvals/{id}/decision", { params: { path: { id } }, body: { decision } })),
+      ),
     onSettled: (_d, err, vars) => {
       // On 409 someone else decided; either way it is no longer pending for us.
       if (!err || isAlreadyDecided(err)) removeFromPending(qc, wsId, [vars.id]);

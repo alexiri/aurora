@@ -49,6 +49,8 @@ pub enum Class {
     Simulate,
     Search,
     Export,
+    /// (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces`: browser telemetry never spends `write`.
+    Telemetry,
 }
 
 impl Class {
@@ -60,6 +62,7 @@ impl Class {
             Self::Simulate => "simulate",
             Self::Search => "search",
             Self::Export => "export",
+            Self::Telemetry => "telemetry",
         }
     }
 }
@@ -79,6 +82,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
     let post = *method == Method::POST;
     let last = rest.last().copied().unwrap_or("");
     match rest {
+        ["telemetry", "traces"] if post => return Some(Class::Telemetry),
         ["conversations", _, "messages"] if post => return Some(Class::Message),
         ["turns", _, "send-now"] if post => return Some(Class::Message),
         ["conversations", _, "attachments"] if post => return Some(Class::Upload),
@@ -204,6 +208,7 @@ pub struct Limits {
     pub simulate: Spec,
     pub search: Spec,
     pub export: Spec,
+    pub telemetry: Spec,
     pub preview: Spec,
     pub org: Spec,
     pub unauth_get: Spec,
@@ -241,6 +246,7 @@ impl Limits {
             simulate: class("simulate", Spec::per_min(20, 5)),
             search: class("search", Spec::per_min(30, 10)),
             export: class("export", Spec::per_hour(6, 2)),
+            telemetry: class("telemetry", Spec::per_min(60, 20)),
             preview: Spec::per_sec(c.preview_per_second, c.preview_burst).scaled(m),
             org: Spec::per_min(c.org_per_minute, org_burst).scaled(m),
             unauth_get: Spec::per_min(UNAUTH_GET_PER_MIN, UNAUTH_GET_PER_MIN).scaled(m),
@@ -258,6 +264,7 @@ impl Limits {
             Class::Simulate => self.simulate,
             Class::Search => self.search,
             Class::Export => self.export,
+            Class::Telemetry => self.telemetry,
         }
     }
 }
