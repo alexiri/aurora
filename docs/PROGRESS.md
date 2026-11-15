@@ -179,7 +179,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-159, D-321, C-914, SEC-128, migration `20261201000244`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-160, D-338, C-960, SEC-131, migration `20261201000244`.** (Reserved by the unmerged branch `alexiri/p5-ux`: FIX-159, D-320..D-336, C-909..C-954, SEC-127..SEC-129 — they collide with P5-WEBHOOK's D-320, C-909..C-913, SEC-127 on master, so at merge the branch's D-320 → **D-337**, C-909..C-913 → **C-955..C-959**, SEC-127 → **SEC-130**; those are held for that.) Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
