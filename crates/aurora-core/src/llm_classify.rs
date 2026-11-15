@@ -1,6 +1,7 @@
 //! (P4-LLM-1, C-808, `08 §Error classification`) The one table that sorts an upstream LLM error. The gateway calls it
 //! with the status and, for Bedrock only, the `x-amzn-ErrorType` header (it never reads a response body); the harness
-//! adapters call it with the body's error type or the stream event's and refine the turn code.
+//! adapters call it with the body's error type or the stream event's and refine the turn code. (P4-LLM-5) Lives in
+//! `aurora-core` (re-exported by `aurora-llm`) so the supervisor, which has no use for the provider stack, shares it.
 
 /// What kind of failure an upstream answer is. `Other` is not recorded as a request-log `error_code`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

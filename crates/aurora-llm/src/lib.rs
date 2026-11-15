@@ -7,7 +7,6 @@
 mod anthropic;
 mod azure_openai;
 mod bedrock;
-mod classify;
 mod endpoint;
 mod error;
 pub mod governance;
@@ -27,7 +26,8 @@ mod vertex;
 pub use anthropic::{ANTHROPIC_BASE_URL, AnthropicProvider};
 pub use azure_openai::AzureOpenaiProvider;
 pub use bedrock::BedrockProvider;
-pub use classify::{LlmErrorClass, classify};
+// (P4-LLM-5) The table lives in `aurora-core` so the sandbox's supervisor shares it without the provider stack.
+pub use aurora_core::llm_classify::{LlmErrorClass, classify};
 pub use endpoint::Endpoint;
 pub use error::{LlmError, Result};
 pub use litellm::LitellmProvider;

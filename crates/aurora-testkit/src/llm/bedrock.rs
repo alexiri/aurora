@@ -48,22 +48,30 @@ pub fn stream_body() -> Vec<u8> {
     stream_frames().concat()
 }
 
-/// The frames of [`stream_body`], one by one.
+/// The frames of [`stream_body`], one by one: each is a `chunk` event whose `bytes` are one Anthropic Messages stream
+/// event, so a real Claude Code on Bedrock reads the answer `pong` (P4-LLM-5).
 pub fn stream_frames() -> Vec<Vec<u8>> {
-    ["hel", "lo"]
-        .iter()
-        .map(|t| {
-            let payload = format!("{{\"bytes\":\"{}\"}}", base64_of(t));
-            aws::event_frame(
-                &[
-                    (":event-type", "chunk"),
-                    (":content-type", "application/json"),
-                    (":message-type", "event"),
-                ],
-                payload.as_bytes(),
-            )
-        })
-        .collect()
+    [
+        r#"{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"mock","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong"}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}"#,
+        r#"{"type":"message_stop"}"#,
+    ]
+    .iter()
+    .map(|event| {
+        let payload = format!("{{\"bytes\":\"{}\"}}", base64_of(event));
+        aws::event_frame(
+            &[
+                (":event-type", "chunk"),
+                (":content-type", "application/json"),
+                (":message-type", "event"),
+            ],
+            payload.as_bytes(),
+        )
+    })
+    .collect()
 }
 
 fn base64_of(s: &str) -> String {
@@ -156,15 +164,16 @@ async fn handle(State(st): State<Arc<Shared>>, req: Request) -> Response {
             let body = match gate {
                 None => Body::from(frames.concat()),
                 Some(gate) => Body::from_stream(futures::stream::unfold(
-                    (frames.into_iter(), gate, true),
-                    |(mut it, gate, first)| async move {
+                    (frames.into_iter(), gate, 0usize),
+                    |(mut it, gate, n)| async move {
                         let frame = it.next()?;
-                        if !first {
+                        // The second frame waits for the gate; once it is open the rest follow at once.
+                        if n == 1 {
                             gate.notified().await;
                         }
                         Some((
                             Ok::<_, std::convert::Infallible>(bytes::Bytes::from(frame)),
-                            (it, gate, false),
+                            (it, gate, n + 1),
                         ))
                     },
                 )),
@@ -183,12 +192,20 @@ async fn handle(State(st): State<Arc<Shared>>, req: Request) -> Response {
 impl MockBedrock {
     /// A mock that knows no credentials yet; add them with [`Self::accept_key`] / [`Self::accept_api_key`].
     pub async fn start() -> Self {
+        Self::start_on("127.0.0.1").await
+    }
+
+    /// [`Self::start`] bound to another loopback address (one the sandbox's `NO_PROXY` does not cover, so a sandbox's
+    /// call goes through the proxy and the gateway).
+    pub async fn start_on(ip: &str) -> Self {
         let st = Arc::new(Shared {
             list_status: Mutex::new(200),
             ..Shared::default()
         });
         let app = Router::new().fallback(handle).with_state(st.clone());
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let l = tokio::net::TcpListener::bind(format!("{ip}:0"))
+            .await
+            .unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move {
             let _ = axum::serve(l, app).await;

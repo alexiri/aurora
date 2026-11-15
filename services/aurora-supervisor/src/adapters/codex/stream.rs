@@ -19,6 +19,7 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
+use crate::adapters::provider_error;
 use crate::harness::HarnessEvent;
 
 const SUMMARY_MAX: usize = 120;
@@ -305,11 +306,14 @@ pub fn classify_failure(text: &str) -> (String, String) {
         .and_then(|e| e.get("message"))
         .and_then(Value::as_str)
         .unwrap_or(text);
-    if let Some(code) = err.and_then(|e| e.get("code")).and_then(Value::as_str)
-        && err.and_then(|e| e.get("type")).is_none()
+    if let Some(e) = err
+        && let Some(code) = e.get("code").and_then(Value::as_str)
+        && e.get("type").is_none()
     {
+        // (P4-LLM-5, D-261) A rejected LLM credential mint is `provider_auth`; every other gateway code stays
+        // `gateway_refused`.
         return (
-            "gateway_refused".into(),
+            provider_error::gateway_code(e).into(),
             trunc(&format!("[{code}] {inner}"), MESSAGE_MAX),
         );
     }
@@ -329,7 +333,11 @@ pub fn classify_failure(text: &str) -> (String, String) {
         || err_type == "insufficient_quota"
         || lower.contains("billing")
         || status == Some(402);
-    let code = if quota {
+    // (P4-LLM-5, C-808) The shared table first, on the error type the body or event carries (OpenAI `insufficient_quota`,
+    // a Bedrock exception name, a Vertex status); then the status and phrase rules for Codex's free text.
+    let code = if let Some(c) = provider_error::table_code(err, body.as_ref(), text) {
+        c
+    } else if quota {
         "provider_quota"
     } else if matches!(status, Some(401 | 403))
         || lower.contains("unauthorized")
@@ -508,6 +516,51 @@ mod tests {
         );
         assert_eq!(c("stream disconnected before completion"), "harness_failed");
         assert_eq!(c(""), "harness_failed");
+    }
+
+    /// (P4-LLM-5, C-808, D-261) Bedrock's OpenAI surface and Azure through the shared table; the gateway's codes.
+    #[test]
+    fn the_shared_table_and_the_gateway_codes_drive_the_turn_code() {
+        let c = |t: &str| classify_failure(t).0;
+        assert_eq!(
+            c("stream error: ThrottlingException: Too many requests"),
+            "provider_rate_limited"
+        );
+        assert_eq!(
+            c(
+                r#"unexpected status 400 Bad Request: {"__type":"ServiceQuotaExceededException","message":"x"}"#
+            ),
+            "provider_quota"
+        );
+        assert_eq!(
+            c(r#"unexpected status 403: {"error":{"status":"PERMISSION_DENIED"}}"#),
+            "provider_auth"
+        );
+        let gw = |code: &str, details: &str| {
+            c(&format!(
+                r#"unexpected status 502 Bad Gateway: {{"error":{{"code":"{code}","message":"m","details":{details}}}}}"#
+            ))
+        };
+        assert_eq!(gw("llm_path_not_permitted", "{}"), "gateway_refused");
+        assert_eq!(gw("llm_request_too_large", "{}"), "gateway_refused");
+        assert_eq!(
+            gw(
+                "credential_unavailable",
+                r#"{"kind":"llm_mint","reason":"mint_rejected"}"#
+            ),
+            "provider_auth"
+        );
+        assert_eq!(
+            gw(
+                "credential_unavailable",
+                r#"{"kind":"llm_mint","reason":"mint_unavailable"}"#
+            ),
+            "gateway_refused"
+        );
+        let (_, msg) = classify_failure(
+            r#"unexpected status 502: {"error":{"code":"credential_unavailable","message":"rejected","details":{"kind":"llm_mint","reason":"mint_rejected"}}}"#,
+        );
+        assert!(msg.starts_with("[credential_unavailable]"), "{msg}");
     }
 
     #[test]
