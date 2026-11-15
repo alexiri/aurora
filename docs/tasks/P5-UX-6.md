@@ -1,129 +1,117 @@
-# P5-UX-6: Admin defaults that carry the user (owner walkthrough, 2026-11-15)
+# P5-UX-6: Administration › Overview, and defaults that carry the user (owner, 2026-11-15)
 
 ## Goal
 
-In the walkthrough, the best first run (one click from sign-in to a working chat) happened only because
-the admin found and ticked "Give it to every new user's agent". Other defaults made things worse:
-
-- Without that tick, every user had to find an LLM key on their own.
-- Users who signed in earlier never got the key.
-- The workspace was named after the IdP subject (`dev-bob`).
+In the first walkthrough, the best first run (one click from sign-in to a working chat) happened only
+because the admin found and ticked "Give it to every new user's agent". Other defaults made things
+worse:
+- Without that tick, every person had to find an AI key on their own, and people who had signed in
+  earlier never got it.
+- A personal workspace was named after the sign-in provider's internal id ("dev-bob",
+  "dev-dana@example.test").
 - Nothing told the admin that people could not sign in to Linear or Notion until someone registered an
-  OAuth client.
-- The kind dev image shipped no app packages at all.
+  OAuth client; three different pages were going to say it in three ways.
+- The setup wizard stayed the first sidebar item for ever, and there was no health page.
+- The kind dev image shipped no apps at all.
 
-This task changes those defaults.
+This task makes Administration's first page a setup checklist that turns into a health page, and changes
+the defaults so that a new person's agent works from the first minute.
 
 ## Linked requirements
 
-- D-326; contracts **C-922, C-923, C-924**.
-- Normative: `04 §New-user placement` (display name template, starter grants), `14 §Onboarding` §1 (setup
-  wizard) and `14 §First run and connecting` §4, `05` placement rows, `09 §10` (builtin source; doc fix).
-- Unchanged: D-162 (slug from `{sub}`), C-521, C-525 (starter grant rules), SEC-77.
+- D-326, D-351; contracts **C-922, C-923, C-924**.
+- Normative: `14 §Agents, accounts and access` §9 (Administration › Overview, defaults),
+  `14 §Onboarding` §1 (the setup steps), `04 §New-user placement` (display-name template, starter
+  grants), `05` placement rows, `09 §10` (the builtin source).
+- Unchanged: D-162 (the slug comes from `{sub}`), C-521, C-525 (starter grant rules), SEC-77.
 
-## Placement in the new structure (D-342)
+## Wave and order
 
-- **The setup wizard** is the checklist of **Administration › Overview** (`/admin`, P5-IA-4). Its steps
-  link to the topic pages that hold each setting:
-  - placement: People & sign-in › New users;
-  - LLM keys: AI models;
-  - OAuth clients and packages: Apps & services;
-  - chat platforms: Chat platforms.
-- **The display-name template** sits on People & sign-in › New users, next to the slug template.
-- **The workspace selector's "(personal)" label** follows the vocabulary.
+- **Wave 3.** Starts after P5-IA-4 (New users under People; the pages this one links to), P5-UX-9 (app
+  setup pages and the OAuth client form's prefill) and P5-UX-2 (the setup status function).
 
 ## Context
 
-- **Wizard.** `web/src/components/admin/setup-view.tsx`: `StarterSwitch` ~196–224 (only the org LLM
-  secret; disabled unless placement is `shared_org` with personal workspaces), and step 5 "Optional"
-  ~323–335. Setup status and reasons are C-533/C-534 (the API's setup-status route).
-- **Placement.** `GET/PUT /v1/admin/placement` (C-520..C-529); the placement form is
-  `web/src/components/admin/placement-view.tsx`. Workspace creation at first sign-in sets name and slug
-  from the template; find the function in the API's placement code.
-- **Builtins.** In production they activate automatically when signed with the project key
-  (`09 §10`; `ingest.rs` ~202).
-  - The kind dev image (`deploy/dev/thin.Containerfile`) copies only the binary, so a dev cluster has no
-    apps.
-  - `docs/operator/plugins-and-connectors.md:19` and `09` ~1085 still say "Phase 0 ships none".
-  - 11 packages ship (`docs/operator/apps-and-catalogue.md`). `plugins/builtin/aws-role` and
-    `github-app` are untracked leftovers (only `hooks/target`); delete them from your worktree if
-    present, never commit them.
+- **The wizard.** `web/src/components/admin/setup-view.tsx`, at `/admin` since P5-IA-1: `StarterSwitch`
+  ~196–224 (only the organization's AI key; disabled unless placement is a shared organization with
+  personal workspaces), and step 5 "Optional" ~323–335. Setup status and its reasons are C-533 and C-534.
+- **Placement.** `GET/PUT /v1/admin/placement` (C-520..C-529); the form is
+  `web/src/components/admin/placement-view.tsx`, under People › New users. A workspace's name and slug
+  are set from the template when it is created at first sign-in.
+- **Builtin apps.** In production they are active automatically when signed with the project key
+  (`09 §10`). The kind dev image (`deploy/dev/thin.Containerfile`) copies only the binary, so a dev
+  cluster has no apps. `docs/operator/plugins-and-connectors.md:19` and `09` ~1085 still say "Phase 0
+  ships none". Eleven packages ship. `plugins/builtin/aws-role` and `github-app` are untracked leftovers;
+  delete them from your worktree if present and never commit them.
 
 ## Scope
 
-1. **Starter by default (C-922 a).** In the wizard's LLM step, adding a default-org LLM key also adds it to
-   `placement.starter_grants` (one PUT after the key's POST, or one API call if the lane prefers a combined
-   route; say which in the report) whenever placement allows starter grants. The switch shows **on** with
-   the C-922 text, and turning it off removes the key from the starter grants.
-2. **Backfill (C-922 b, c).**
-   - Add `POST /v1/admin/placement/starter-grants/backfill` (instance admin). It is idempotent, grants
-     through the normal grant path with `actor_label = placement` and `backfill = true`, and answers
-     `{ granted, skipped }`.
-   - Setup status gains `personal_workspaces_without_starter`.
-   - The wizard step offers **Also give it to the <n> existing personal workspaces' agents** when n > 0.
-3. **Display name template (C-923).**
-   - Add `personal_workspace.display_name_template` (default `{given_name}|{name}|{email_local}`) to the
-     placement document. It is validated like the name template (same variables, same fallback syntax,
-     length limit), shown in the placement form with its own preview, and used for the workspace
-     **name** at creation; the existing template keeps setting the slug.
-   - Nothing existing is renamed (D-162(e)).
-   - The Welcome title for a personal workspace is "Welcome, <display name>"; the workspace selector
-     shows "<name> (personal)".
-4. **Wizard Apps step (C-924).**
-   - Add setup reasons `app_needs_oauth_client` and `app_token_only` (C-534), computed with the P5-UX-2
-     plan function for the default org. If P5-UX-2 has not merged, compute readiness with the same
-     OAuth-client query and leave a note.
-   - Replace step 5 with **Apps**:
-     - each active app whose person methods all need a missing client says "People can't sign in to
-       <App> yet", with **Register an OAuth client** linking to Administration › Apps & services › OAuth
-       clients (`/admin/apps?tab=oauth-clients`, `routes.ts`) with `package` and `client_key` prefilled
-       (the form reads them from the query);
-     - token-only apps get an informational line;
-     - Chat platforms and Packages keep their links.
-5. **Docs and dev image (D-326 d).**
+1. **Administration › Overview** (`/admin`).
+   - Until setup is complete: the checklist (the wizard's steps), each step linking to the topic page
+     that holds its settings (People › New users, AI models, Apps & accounts, Chat platforms).
+   - After: a health page from the same setup status:
+     - runners, the gateway and AI endpoints;
+     - **Apps people can't sign in to yet** (below);
+     - storage;
+     - **Run setup again**.
+2. **Apps people can't sign in to yet (C-924).**
+   - Setup status gains the reasons `app_needs_oauth_client` and `app_token_only`, computed with the
+     setup status function of P5-UX-2 for the default organization.
+   - One component lists each app whose ways for a person to connect all need an OAuth client that does
+     not exist: "People can't sign in to <App> yet", with **Register an OAuth client** (the OAuth clients
+     tab with the app and client prefilled) and a link to the app's setup page. Apps a person can connect
+     with a token get one informational line.
+   - It replaces the wizard's step 5, and is also shown at the top of the organization's Apps tab for org
+     admins.
+3. **Starter by default (C-922).** Adding an AI key for the default organization in the checklist also
+   adds it to the starter grants, whenever placement allows them. The switch shows **on**: "Every new
+   person's agent can use this key from the first minute. Turn off to make people add their own."
+4. **Backfill (C-922).** `POST /v1/admin/placement/starter-grants/backfill` (instance admin): idempotent,
+   through the normal grant path with `actor_label = placement` and `backfill = true`; answer
+   `{ granted, skipped }`. Setup status gains `personal_workspaces_without_starter`, and the step offers
+   **Also give it to the <n> people who signed in before** when n > 0.
+5. **Display-name template (C-923).** `personal_workspace.display_name_template` (default
+   `{given_name}|{name}|{email_local}`) in the placement document: validated like the existing template,
+   shown beside it on People › New users with its own preview, and used for a new workspace's **name**.
+   The existing template keeps setting the slug. Nothing existing is renamed. Welcome reads "Welcome,
+   <display name>" for a personal workspace, and the workspace selector shows "<name> (personal)".
+6. **Docs and dev image.**
    - Fix the two "Phase 0 ships none" sentences.
-   - `deploy/dev/kind-dev.sh` builds the builtin archives (`aurora plugin build`, unsigned) into the API
-     image or a mounted volume at `plugins.builtin_dir`.
-   - `deploy/kind/values-dev.yaml` sets `config.plugins.allow_unsigned: true` (dev only; comment why).
-   - Unsigned builtins in dev arrive `pending approval` unless the builtin-source rule activates them;
-     if they are pending, the dev script approves them through the API after install. Say which happened.
-   - `docs/operator/install-kind-dev.md` mentions it.
-6. **Tests.**
-   - API ITs: backfill idempotence and audit; the template default and the fallback chain; the slug
-     unchanged; setup reasons for an OAuth-only app with no client and with an org client.
-   - Vitest: wizard switch default on; the backfill offer; the Apps step rendering.
-   - The kind dev check: after `just kind-up`, `GET /v1/apps` lists the builtins (manual, reported).
+   - `deploy/dev/kind-dev.sh` builds the builtin packages (`aurora plugin build`, unsigned) into the API
+     image, at `plugins.builtin_dir`; `deploy/kind/values-dev.yaml` sets
+     `config.plugins.allow_unsigned: true` (dev only, with a comment saying why). If unsigned builtins
+     arrive pending approval, the script approves them through the API after install. Say in the report
+     which happened. Mention it in `docs/operator/install-kind-dev.md`.
+7. **Tests.**
+   - API: backfill idempotence and audit; the template's default and fallback chain; the slug unchanged;
+     the setup reasons for an app with no client and with an organization client.
+   - Vitest: the Overview in both states; the starter switch on by default; the backfill offer; the "can't
+     sign in yet" component.
+   - Manual, reported: after `just kind-up`, the workspace's Apps tab lists the builtin apps.
 
 ## Constraints / file ownership
 
-- Owns: `setup-view.tsx`, `placement-view.tsx`, the placement and setup-status API code, the
-  workspace-creation naming function, `deploy/dev/kind-dev.sh`, `deploy/kind/values-dev.yaml`,
-  `docs/operator/{plugins-and-connectors,install-kind-dev}.md`, the `09 §10` sentence.
-- Admin OAuth clients form: reading `package` and `client_key` from the query only.
-- No migration (the placement document is stored where it is today; if it is a typed column set, report
-  and add the key the way C-521's keys were added).
+- Owns: `setup-view.tsx` and the Overview page; `placement-view.tsx` (the template field); the placement
+  and setup-status API code; the function that names a workspace at creation; the "can't sign in yet"
+  component and its place on the organization's Apps tab; `deploy/dev/kind-dev.sh`,
+  `deploy/kind/values-dev.yaml`; `docs/operator/{plugins-and-connectors,install-kind-dev}.md`; the
+  `09 §10` sentence.
+- No migration: the placement document is stored where it is today.
 
 ## Acceptance criteria
 
-1. Fresh instance: the admin saves placement and adds an org LLM key in the wizard, touching nothing else.
-   A new user's agent answers with no key step (Welcome shows steps 1–2 done).
-2. An existing user's agent gets the key after **Also give it to … existing**, and running it again
-   grants nothing new.
-3. A new personal workspace is titled from the display template ("Bob") with the slug unchanged
-   (`dev-bob`).
-4. With Linear and Notion active and no OAuth clients, the wizard's Apps step lists both with a prefilled
-   **Register an OAuth client**; with an org client for Linear, Linear leaves the list.
-5. `just kind-up` gives a dev cluster whose Apps tab lists the builtin apps.
-6. Rust and web gates as usual; axe and narrow-route suites, both themes.
-
-## Dependencies
-
-P5-UX-2 for the shared readiness function (soft, see Scope 4). **After P5-IA-4**: P5-IA-4 moves the
-wizard to Administration › Overview and the placement form to People & sign-in › New users; this task
-then edits their content (`setup-view.tsx`, `placement-view.tsx`), not their place. Not beside P5-UX-5 if
-both change the sign-in placement code: P5-UX-5 first.
+1. On a fresh instance, the admin sets where new people land and adds an organization AI key, touching
+   nothing else. A new person's agent answers with no key step.
+2. People who signed in before get the key with **Also give it to …**, and running it again changes
+   nothing.
+3. A new personal workspace is titled from the display template ("Bob") with its slug unchanged.
+4. With Linear and Notion active and no OAuth clients, the Overview lists both with a prefilled
+   **Register an OAuth client**; with an organization client for Linear, Linear leaves the list.
+5. After setup, `/admin` is a health page, and the checklist is one click away.
+6. `just kind-up` gives a dev cluster whose Apps tab lists the builtin apps.
+7. Rust and web gates; axe and narrow-route suites, both themes.
 
 ## Suggested agent/model and reason
 
-Sonnet: backend plus wizard, plus a dev-script change that needs care with image builds. Haiku could take
-Scope 5 alone.
+Sonnet: backend, one page and a dev-script change that needs care with image builds. Haiku could take
+scope 6 alone.

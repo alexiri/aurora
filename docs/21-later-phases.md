@@ -293,63 +293,39 @@ instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§A
 `§Adapter codex`; `16`; `03`; `05`; `15`; `14`; `02 §Limits`; `17` (SEC-122, SEC-123); `18`;
 `API_CONTRACTS` C-875..C-884.
 
-### First run and connecting (phase 5, P5-UX, owner walkthrough 2026-11-15, D-321..D-327, D-337) — specified
+### Agents, accounts and access; one structure for every level (phase 5, P5-UX and P5-IA, owner 2026-11-15, D-321..D-352) — specified
 
-Owner, after a first-run walkthrough on the kind cluster: "the experience of figuring out how to
-connect their agent to things and how they have to configure their workspace is entirely too
-complicated". The owner singled out "one Connect journey per app" as the core of the fix.
+Owner, after three walkthroughs on the kind cluster (a new user, a team lead setting up apps, the
+instance owner): "the experience of figuring out how to connect their agent to things and how they have
+to configure their workspace is entirely too complicated"; "figuring out how to configure apps is really
+confusing"; "we want a coherent user experience". A design review of the first specs followed, and the
+owner adopted all of it (D-343): "eliminate as much accidental complexity as possible and make Aurora
+simple to understand and to use".
 
-- **Connect journey.** "Give <Agent> <App>" starts from the agent and ends with a connection and a
-  grant made in one request (also across an OAuth sign-in, sealed and re-authorized, SEC-130). The
-  person chooses the app, what the agent may do, an optional limit, and signs in with the one method
-  that works for them; the full controls stay under Advanced.
-- **Who unblocks it.** A connect plan says which methods are ready for this person and who can fix the
-  others, by name.
-- **Role-aware pages.** No link leads a person to a page they cannot open, refusals name the role
-  needed, and empty states ask only people who cannot act.
-- **No silent gaps.** Give-access pickers preselect the obvious agent, and credentials no agent can use
-  are flagged.
-- **Adding people.** Workspace owners add people by e-mail, with pending access applied at a verified
-  first sign-in (SEC-128).
-- **Admin defaults.** Starter grants on by default, with backfill; human workspace names; the wizard
-  lists apps nobody can sign in to yet.
-- **Simple layers.** A plain Overview on Credentials and a plain-language summary on Policy.
+The model, in five sentences: an agent works on its own computer and thinks with an AI model; it can use
+the accounts you connect for it (apps, other websites, an AI key); for each account you choose its access
+(Read only, Ask before changes, Change without asking); everything goes through the gateway, which holds
+the keys and puts anything that needs your say in Approvals; administrators set limits above you, and
+each level below can only tighten them.
 
-Briefs P5-UX-1..7. Owning sections: `14 §First run and connecting`; `09 §3.4`; `04 §Workspace
-access by e-mail`, `§New-user placement`; `05`; `03 §Planned changes`; `02 §Limits`; `17` (SEC-130,
-SEC-128); `API_CONTRACTS` C-914..C-927, C-955..C-959.
+- **One list of accounts** for a workspace, an agent and an organization, and **one access choice** per
+  agent and account. A shared account has a limit.
+- **One journey** to give an agent an app, ending with the account and the access in one request; **one
+  setup page** per app; guides with real values.
+- **Approvals as the everyday experience**: a sentence, and Allow once, Always allow or Block, in the
+  conversation. An agent can **ask for an app in the conversation** and carries on when it gets it.
+- **Health from real use**, and **one summary** of what an agent can do, shown the same way everywhere.
+- **One way to say who can fix something.**
+- **One structure**: the same topics and names at Administration, organization and workspace level,
+  at most four tabs each, every old route redirected, settings inside their topics and in words, a notice
+  when pages move.
+- **Simulate decides like the gateway** (FIX-159; it could show a false allow).
 
-**App setup** (the owner's second walkthrough, 2026-11-15: "figuring out how to configure apps is
-really confusing"; D-329..D-336). It followed a team lead (an org member who owns a team workspace) and
-the org owner above her.
-- **Simulate fix (FIX-159, high priority).** Simulate decides app requests like the gateway. It had
-  skipped every connection grant and could show a false allow.
-- **Setup page.** Every app gets one setup page, at the workspace and the org level, with fixes inline.
-- **One access answer.** Each agent gets one answer per app, saying which layer decided each tool.
-- **Org-wide connections** in the dashboard.
-- **Access editor** defaults from the connection, in plain words.
-- **Setup guides and forms** filled with real values: callback URL, external id, links to pages that
-  exist.
-- **Test connection** and connection health (SEC-129).
-- **Names and labels** that tell agents and OAuth clients apart.
-
-Briefs FIX-159 and P5-UX-8..15. Owning sections: `14 §App setup`, `07 §Authoring`, `09 §3.4` and
-`§6`, `05`, `03 §Planned changes`, `17` (SEC-129), `API_CONTRACTS` C-930..C-949.
-
-**One structure for every level** (the owner's administration walkthrough, 2026-11-15; "I like your
-direction … we want a coherent user experience"; D-338..D-342). The dashboard is reorganized by topic,
-with the same topics and names at Administration, organization and workspace level:
-Overview, People, AI models, Apps & services, Internet access, Agents, Chat platforms, Data, Platform
-(Administration only) and Settings.
-- "Governance", "Policy" and "Credentials" are retired as page names.
-- Every old route redirects.
-- A scope ladder shows each inherited setting with the levels above and below.
-- Settings sections render inside their topics, with All settings as the index.
-- Every field reads in words from one registry.
-- The P5-UX briefs are built inside this structure (D-342).
-
-Briefs P5-IA-1..5. Owning sections: `14 §Information architecture` › "One structure for every level",
-`15 §Instance settings` (the note on movable keys), `05`, `API_CONTRACTS` C-960..C-975.
+Twenty briefs in four fixed waves (D-352): FIX-159, P5-IA-1..5, P5-UX-1..7, -9, -10, -11, -13, -14, -16,
+-17. Owning sections: `14 §Information architecture` › "One structure for every level" and
+`14 §Agents, accounts and access`; `04 §Workspace access by e-mail`, `§New-user placement`; `05`;
+`07 §Authoring`; `09 §3.4`, `§6`; `03 §Planned changes`; `02 §Limits`; `15 §Instance settings`;
+`17` (SEC-128..SEC-132); `API_CONTRACTS` "P5-UX and P5-IA".
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 Also in phase 6, already specified: the **S3-compatible blob store** (P4-S3, D-120; moved from phase 5

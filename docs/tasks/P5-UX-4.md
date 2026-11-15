@@ -1,95 +1,138 @@
-# P5-UX-4: Give-access defaults, "No agent can use this", effective access in words (owner walkthrough, 2026-11-15)
+# P5-UX-4: One list of accounts, one access choice (owner, 2026-11-15)
 
 ## Goal
 
-In the walkthrough, a person saved a secret. The "Give agents access" panel then listed the workspace's
-only agent **unticked**, with a greyed-out button. They moved on believing the agent could use the secret,
-and the agent's Access tab later said "not selected", next to rule ids such as
-`selected by 1 rule(s): 01a1e05c-…`. This task makes the obvious choice the default, flags credentials
-nobody can use, and explains effective access in words.
+After the walkthroughs, "what can Daneel use, and what may it do there?" had too many homes:
+- three Credentials tabs (Secrets, LLM keys, Connections);
+- three sections of the agent's Access tab (Connections, Secrets, Effective access, with rule ids);
+- two access settings for one app account: the connection's read-only switch and the per-tool grant,
+  which could disagree ("3 tools set to Ask" on a read-only connection);
+- a "Give agents access" panel that listed the workspace's only agent unticked.
+
+This task builds the heart of the new model (D-344, D-345):
+- **one list of accounts** (apps, websites, AI keys), used by the workspace, by each agent's Access tab
+  and by the organization;
+- **one access choice** per agent and account: Read only, Ask before changes, Change without asking, with
+  a Custom view per tool;
+- a **limit** only on shared accounts.
 
 ## Linked requirements
 
-- D-324; contracts **C-917, C-918**.
-- Normative: `14 §First run and connecting` §3, `05` rows for the secrets and connections lists and for
-  `GET /v1/agents/{agent}/effective`, `14 §Visual design`.
+- D-344, D-345, D-351; SEC-131 (the access part).
+- Contracts **C-917, C-925, C-938, C-948, C-980**.
+- Normative: `14 §Agents, accounts and access` §1 and §2, `14 §Information architecture` (vocabulary),
+  `05` (accounts and grants rows), `07` (grants compile into rules; read-only connections, D-240), C-410
+  (`custom_only`), C-504 (bulk grant).
 
-## Placement in the new structure (D-342)
+## Wave and order
 
-- The badge and **Give access** appear on the rows of the workspace's and the org's **Apps & services**
-  (Overview, Connections and Services tabs) and on **AI models** (LLM keys).
-- The agent's **Access** tab hosts the "Not given to <Agent>" group.
-- Rows say "app", "service" and "LLM key", never "secret" (vocabulary, `14 §Information architecture`).
+- **Wave 1.** Starts after P5-UX-2 (level expansion, `WhoCan`, C-988) and P5-IA-1 (the Accounts tabs and
+  routes).
+- Consumers: P5-UX-3 (uses `AccessControl` and the picker), P5-UX-9, P5-UX-10, P5-UX-11, P5-UX-14,
+  P5-UX-16, P5-UX-7.
+- Not beside P5-UX-1 on `components/states.tsx`; otherwise disjoint from the other wave-1 briefs.
 
 ## Context
 
-- **Picker.** `web/src/components/credentials/give-access.tsx` `GiveAccessPanel` (~205–341, nothing
-  preselected) and `AccessDialog` (~371). Used after saving secrets (`generic-form.tsx`), LLM keys
-  (`llm-form.tsx`, which already preselects via `preselect` on the Welcome step, ~78) and connections
-  (`connect-dialog.tsx` `ConnectedStep`).
-- **Lists.** Workspace and org secrets and connections lists: `services/aurora-api/src/domains/{secrets,
-  connections}` DTOs. The rows are `credentials-view.tsx` and `connections-tab.tsx`.
-- **Effective view.** `services/aurora-api/src/domains/grants/effective.rs` ~57–66, ~100–104, ~153–157
-  (`selected_by` = logical ids of enabled allow rules; grants compile into derived rules,
-  `domains/grants/compile.rs`). Rendered raw at `web/src/components/agents/access-tab.tsx:98`.
+- **Lists today.** Secrets and LLM keys: `services/aurora-api/src/domains/secrets`; connections:
+  `domains/connections`; grants: `domains/grants/{routes,service,compile,effective}.rs`
+  (`GrantMode` full|custom, `allow_tools`, `ask_tools`).
+- **Connection access.** `app_connections.access` (`read`|`write`, FIX-133, D-240), changed by
+  `PATCH /v1/connections/{id}` (C-740). The gateway blocks every write on a read-only connection.
+- **Level expansion.** P5-UX-2 added one function that expands `read`, `ask`, `act` into a grant and one
+  that derives a connection's `access` from levels.
+- **Web.**
+  - Hosted by P5-IA-1 under the Accounts tab: `components/credentials/credentials-view.tsx`,
+    `secret-row.tsx`, `components/apps/connections-tab.tsx`.
+  - Access tab: `components/agents/access-tab.tsx`, `connection-grants.tsx`, `grant-editor.tsx`
+    (read-only note ~155–160), `model-readiness.tsx`.
+  - Pickers: `components/credentials/give-access.tsx` (`GiveAccessPanel` ~205–341, `AccessDialog` ~371,
+    `AgentPicker` ~145–171).
+  - Per-tool form: `components/grants/grant-form.tsx`, `lib/grant-editor.ts` (`initialDecisions` ~64–71).
+  - AI-key form: `components/credentials/llm-form.tsx`.
 
 ## Scope
 
-1. **API (C-917).** Add `grant_count` (active agent grants) to the items of `GET /v1/workspaces/{ws}/secrets`,
-   `GET /v1/orgs/{org}/secrets`, `GET /v1/workspaces/{ws}/connections` and `GET /v1/orgs/{org}/connections`.
-   Compute it with one aggregate join per list query, never per row.
-2. **API (C-918).** Effective credential items gain `selected_by_details`. Derived rules of a grant are
-   `kind: grant` with label "given on this page". Authored workspace rules are `rule` and org rules
-   `org_rule`, both with the rule's name ("unnamed rule" when empty). Keep `selected_by` for
-   compatibility. Regenerate OpenAPI and the web types.
-3. **Preselection (C-917).** `GiveAccessPanel` and `AccessDialog` take an optional `contextAgentId`.
-   - Preselect it. Otherwise, when exactly one agent is grantable by the caller, preselect that agent.
-     Otherwise preselect none.
-   - The primary button reads **Give <Agent> access** or **Give <n> agents access**. With nothing selected
-     it reads **Choose an agent** and is disabled.
-   - Apply this to every caller, including the journey's agent step (P5-UX-3 passes `contextAgentId`).
-4. **"No agent can use this" (C-917).**
-   - Service, LLM-key and connection rows with `grant_count = 0` show a `warning` `Badge` **No agent can use
-     this** and a **Give access** button that opens `AccessDialog`.
-   - The agent's Access tab gains a collapsed group "Not given to <Agent> (n)" listing the workspace's
-     credentials with no grant to this agent, each with **Give access**. LLM keys are listed under the
-     model-readiness section's existing "Give access" affordance if there is one; do not duplicate it.
-5. **Effective access labels (C-918).** `access-tab.tsx` shows the labels and puts rule ids in a tooltip
-   for authored rules only. LLM keys are labelled **LLM key**, never "secret".
-6. **Tests.**
-   - API ITs: `grant_count` on all four lists (0, 1, 2 grants; a revoked grant not counted);
-     `selected_by_details` for a grant, a workspace rule and an org rule.
-   - Vitest: the preselection rule (context, sole agent, several agents, none grantable) and the button
-     text; the badge; the labels.
-   - Playwright: save a service in a one-agent workspace → **Give Daneel access** is enabled and
-     preselected → after it, the agent's Access tab lists the service as selected and "given on this
-     page".
+1. **Accounts API (C-917).** `GET /v1/workspaces/{ws}/accounts` and `GET /v1/orgs/{org}/accounts`, with
+   the `Account` and `AgentAccess` shapes of C-917.
+   - One query per list, with joins over connections, secrets, grants and agents.
+   - `shared`, `limit` and `levels` per C-917; a level reads as it takes effect.
+   - `managed_by` for shared accounts (`WhoCan`).
+   - `health` uses the connection status until P5-UX-14 adds the check fields: `sign_in_expired`,
+     `disabled`, else `unknown`.
+   - `model` on AI-key rows comes from the model readiness function.
+   - OpenAPI, generated types, `permission_matrix` rows.
+2. **Access API (C-980, SEC-131).** `PUT /v1/agents/{agent}/grants/connections/{conn}` accepts `level`.
+   - Not shared: the connection's `access` is set in the same transaction.
+   - Shared: a level above the limit → 422 `above_account_limit` with `who_can`.
+   - `mode: "custom"` with tool lists stays, with the same two rules.
+3. **`AccountsList` (C-925).** One component over C-917 with the rows, kind chips, "who can use it",
+   health line, "Shared by <org>", the row menu and the "No agent can use this" badge of `14` §1.
+   - **Workspace Accounts tab:** replaces the lists P5-IA-1 hosted there. **Add** has two entries:
+     - **Connect an app or website** opens the Apps tab in this wave; P5-UX-3 points it at the journey.
+     - **Add an AI key** opens the existing form, with the agents picker ticked per the preselection
+       rule, saved through C-988.
+   - **Agent Access tab:** the same list with `agent_id`. Accounts the agent can use come first, with
+     `AccessControl` in the row; "Not given to <Agent> (n)" follows, collapsed. The AI-key row shows the
+     model line. The Connections, Secrets and Effective access sections are removed.
+   - **Organization Accounts tab:** the same list, read from the organization route. P5-UX-11 adds the
+     organization's actions.
+4. **`AccessControl` and Custom (C-938).**
+   - Three `ChoiceCards` from the account's `levels`; "Limited by the shared account" with `WhoCan` when
+     choices are cut; no control for accounts with no choice.
+   - **Custom…** opens the per-tool editor, starting from the current choice. Rows show the tool's name
+     and description; method and host pattern sit under **Technical details**. At least one tool must be
+     allowed or asked.
+   - A `custom_only` app (C-410) opens Custom directly, with reads allowed.
+   - One save applies the choice (C-980). Nothing else on the page needs to change to make it take
+     effect.
+5. **Pickers (C-925, C-948).** `GiveAccessPanel` and `AccessDialog` take the contextual agent and
+   preselect it, else the only agent the person may choose, else none. The button names the result
+   ("Give Daneel access"). Rows read "<workspace> · <agent>" when agents of more than one workspace are
+   listed. The picker includes `AccessControl` for accounts that have a choice.
+6. **Words.** Every string of these components follows the vocabulary: account, App, Website, AI key,
+   access, limit. No rule id, host pattern or "secret" outside Technical details.
+7. **Tests.**
+   - API:
+     - the list for a workspace with an app account, a website, an AI key and an organization's account;
+     - `shared` and `limit` for one agent, two agents and an organization's account;
+     - a saved choice above a lowered limit reads as the limit;
+     - `PUT level` for a non-shared account sets the connection's `access`; with a second agent it does
+       not; above the limit → 422;
+     - `act` on `custom_only` → 422;
+     - a non-owner → 403;
+     - no N+1 (query count).
+   - Vitest: the row for each kind; the Access tab's two groups; `AccessControl` with full and cut
+     `levels`; Custom's defaults for each starting choice; picker preselection (context, one agent,
+     several, none); row format.
+   - Playwright:
+     - the walkthrough's case: a read-only AWS account with writes set to ask shows **Read only**, and
+       choosing **Ask before changes** is one click and one save, after which a write asks;
+     - saving a website in a one-agent workspace gives that agent access without a second step;
+     - a second agent given an account makes its row show the limit.
+   - Axe and narrow-route suites `ws-accounts` and `agent-access`, both themes, 390 px.
 
 ## Constraints / file ownership
 
-- Owns: the four list DTOs and queries, `domains/grants/effective.rs` (details only),
-  `give-access.tsx`, `credentials-view.tsx` and `connections-tab.tsx` (badge only), `access-tab.tsx`,
-  `llm-form.tsx` and `generic-form.tsx` (pass-through only).
-- Not beside P5-UX-3 (both touch the give-access callers), P5-UX-7 (Apps & services Overview list), or
-  P5-UX-11 and P5-UX-14 (both also edit `connections-tab.tsx`): serialize.
-  Order: P5-UX-4 → P5-UX-3 → P5-UX-7, or P5-UX-3 first, implementing preselection locally (see P5-UX-3).
+- Owns: the accounts routes (a new `domains/accounts` or next to `connections`); the `level` path of
+  `domains/grants`; `components/accounts/*` (new: `AccountsList`, `AccessControl`, the row);
+  `access-tab.tsx`, `connection-grants.tsx`, `grant-editor.tsx`, `grant-form.tsx`, `lib/grant-editor.ts`,
+  `give-access.tsx`, `llm-form.tsx` and `generic-form.tsx` (picker pass-through); the Accounts tab
+  content of the workspace and organization pages.
+- The old list components (`credentials-view.tsx`, `connections-tab.tsx`, `secret-row.tsx`) are removed
+  from the pages; delete them when nothing imports them.
+- No data migration: saved grants are read through the level mapping.
 
 ## Acceptance criteria
 
-1. In a one-agent workspace, every give-access picker opens with that agent ticked, and from an agent page
-   with that agent ticked.
-2. A credential no agent holds shows **No agent can use this** on its row; giving access removes the badge
-   without a reload.
-3. Effective access shows no bare uuid; an LLM key reads "LLM key".
-4. `grant_count` adds no N+1 query (asserted by the IT's query count or by `EXPLAIN` in review).
-5. `cargo fmt --check`, clippy, targeted ITs; web typecheck, lint, vitest and build; axe and narrow-route
-   suites, both themes.
-
-## Dependencies
-
-None. It may land before or after P5-UX-2.
+1. A workspace has one list of what its agents can use, and an agent's Access tab is that list filtered.
+2. For an account one agent uses, access is one choice and one save; no state exists in which the choice
+   and the connection disagree.
+3. A shared account shows its limit, and choices above it are not offered.
+4. No picker opens with the obvious agent unticked; no account that nobody can use goes unmarked.
+5. Rust and web gates; axe and narrow-route suites, both themes.
 
 ## Suggested agent/model and reason
 
-Sonnet: two small backend additions and several web components. A capable Haiku could do the web part
-alone, but the shared picker deserves Sonnet.
+Sonnet, as one lane: Rust first (two routes), then the components. The level and limit rules need a
+careful reviewer against SEC-131.

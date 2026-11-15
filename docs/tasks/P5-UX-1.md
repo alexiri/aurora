@@ -1,140 +1,113 @@
-# P5-UX-1: Role-aware navigation, refusals and empty states; first-run fixes (owner walkthrough, 2026-11-15)
+# P5-UX-1: Who can fix this, refusals in words, honest empty states, first-run fixes (owner, 2026-11-15)
 
 ## Goal
 
-The first-run walkthrough found pages that lie to people about why they cannot proceed:
-
-- An org member saw **Credentials** and **Apps** in the org sidebar. Both pages, and the Welcome page's
-  "Invite a teammate" (the org Members page), said **"Could not reach the server. Check your connection
-  and try again."** The API had answered 403.
-- The Welcome page's **"Connect an app"** was a 404.
+The first-run walkthrough found pages that misled people about why they could not proceed:
+- A page the person may not open said **"Could not reach the server. Check your connection and try
+  again."** The API had answered 403.
 - A workspace **owner** was told "Ask a workspace owner to add one." right under the Add button.
+- The Welcome page's **"Connect an app"** was a 404, and "Invite a teammate" led to a refused page.
+- A design review then counted six different ways the specs said "who can help".
 
-This task makes the dashboard show each person only what they can open, turns refusals into words, makes
-empty states ask only people who cannot act, and fixes the small first-run defects found on the way.
+This task builds the one component that says who can fix something, uses it for refusals and empty
+states, repairs the broken Welcome links and fixes the small first-run defects.
 
 ## Linked requirements
 
-- D-323; contracts **C-915, C-916**, the interim link of **C-927**; renders C-958's `required_role`.
-- Normative: `14 §First run and connecting` §2, `14 §Organization` (nav note), `14 §Onboarding` (empty
-  states teach; role-aware), `14 §Visual design`.
+- D-323, D-349; contracts **C-915, C-916, C-981 (component)**.
+- Normative: `14 §Information architecture` "Who can fix this", `14 §Agents, accounts and access` §9
+  (first-run fixes), `14 §Visual design`.
 
-## Placement in the new structure (D-342)
+## Wave and order
 
-The owner approved one structure for every level (D-338, `14 §Information architecture`):
-- **This task runs after P5-IA-1.** Navigation, role visibility, `routes.ts` and `useViewerRoles` are
-  P5-IA-1's (C-961). This task owns the refusals (Scope 3), the empty states (Scope 4), the Welcome links
-  (Scope 5) and the first-run fixes (Scope 6). It does not edit `app-shell.tsx`.
-- **Links and names.** Every link goes through `web/src/lib/routes.ts`. Every page name follows the
-  vocabulary table: People, not Settings › Access; Apps & services and Services, not Credentials and
-  Secrets.
+- **Wave 1.** Starts after P5-IA-1 (routes, navigation, `useViewerRoles`) and P5-UX-2 (`who_can` in
+  refusals, `contacts`).
+- Navigation and role visibility are P5-IA-1's. This task does not edit `app-shell.tsx`.
+- Not beside P5-UX-4 on `components/states.tsx`.
+- P5-UX-7 rewrites Welcome's content later; this task only repairs its links.
 
 ## Context (facts found 2026-11-15)
 
-- **Nav.** `web/src/components/app-shell.tsx` ~299–323 `OrgNav` shows Workspaces, Credentials, Apps and
-  Governance to every role. `ORG_LINKS` (~284–297) are already admin-gated. `WorkspaceNav` (~337–368).
 - **The cause of the network sentence.**
   - `web/src/components/org/org-gate.tsx:24` returns `<ErrorState error={{ code: "forbidden" }} />`, a
     plain object.
   - `errorMessage` (`web/src/lib/api/errors.ts` ~238–245) looks codes up only for `instanceof ApiError`
-    and otherwise returns the network sentence. `ERROR_MESSAGES.forbidden` already exists (~16).
-  - The same plain-object pattern is in `components/channels/shared.tsx:96`,
+    and otherwise returns the network sentence. `ERROR_MESSAGES.forbidden` exists (~16).
+  - The same pattern is in `components/channels/shared.tsx:96`,
     `components/credentials/workspace-credentials.tsx:18,20` and
     `components/policy/workspace-policy.tsx:41`.
-- **Empty states.**
-  - `components/states.tsx` ~32–58 `EmptyState` renders `ask` whenever there is no `action`.
-  - `credentials-view.tsx:58–72` always passes `ask`; `schedules-tab.tsx:260` does the same.
-  - The correct conditional use is in `connections-tab.tsx:238` and `policy-view.tsx:240`.
-  - Name helpers: `ownerAsk` and `useOwnerNames` in `components/onboarding/getting-started.tsx` ~56–66.
-- **Welcome.** `getting-started.tsx` ~351–371 `OptionalNext`:
-  - "Connect an app" links to the non-existent `${base}/apps`;
-  - "Invite a teammate" links to the admin-only `/o/<org>/members` and shows when the *workspace* role is
-    owner.
-- **Role data.** `useOrg(org).data.my_role`, `useWorkspace(ws).data.my_role`, `useCanApprove`, and
-  `/v1/me` `memberships[].workspaces[].my_role` (`lib/api/queries.ts`). There is no shared role hook.
+- **Empty states.** `components/states.tsx` ~32–58: `EmptyState` renders `ask` whenever there is no
+  `action`. Callers that always pass `ask`: the Accounts lists' predecessors and
+  `schedules-tab.tsx:260`. Correct conditional use: `policy-view.tsx:240`.
+- **Names.** `useOwnerNames` in `components/onboarding/getting-started.tsx` ~56–66 reads the workspace's
+  access list, which needs `can_own`. P5-UX-2's `contacts` replaces it.
+- **Welcome.** `getting-started.tsx` ~351–371 `OptionalNext`: "Connect an app" links to a route that
+  does not exist; "Invite a teammate" links to an admin-only page.
 
 ## Scope
 
-1. **Role hook.** Use P5-IA-1's `useViewerRoles` (`web/src/lib/api/roles.ts`). Replace the ad-hoc
-   `my_role === "owner"` checks this task touches; do not sweep the rest of the app.
-2. **Nav:** none here (P5-IA-1, C-961).
-3. **Refusals (C-915).**
-   - Add `forbiddenError(requiredRole)` returning an `ApiError`, and use it in every gate listed above.
-     Any other bare `{ code }` error object found by `grep` gets the same treatment.
-   - `errorMessage` maps any object with a string `code` through `ERROR_MESSAGES`, and renders
-     `forbidden` with `details.required_role` as "Only <phrase> can open this page." The phrases:
-     - `org_admin` → "organization owners and admins"
-     - `org_owner` → "organization owners"
-     - `workspace_owner` → "workspace owners"
-     - `workspace_approver` → "workspace owners and approvers"
-   - `ErrorState` accepts `askNames` and appends "Ask <names>." when given.
-   - The network sentence stays only for transport failures (`TypeError` from fetch, `AbortError`, a
-     non-JSON 5xx).
-   - Add `ERROR_MESSAGES` keys for C-958's codes: `connect_probe_failed` per cause and
-     `oauth_client_required`. Coordinate with P5-UX-3 on `errors.ts` (append only).
-4. **Empty states (C-916).**
-   - `EmptyState`'s `ask` becomes `ask?: { text: string; canAct: boolean }`, or an equivalent the type
-     system enforces, and renders only when `!canAct`.
-   - Fix every caller (credentials, schedules, any other `ask` user).
-   - Where a role can act, pass the primary action instead.
-   - The "ask" text names owners with `useOwnerNames`.
-5. **Welcome links (C-927, interim).**
-   - "Connect an app" → the workspace's Apps & services › Apps (`routes.ts`) until P5-UX-3 replaces it
-     with the journey.
-   - "Invite a teammate" is hidden until P5-UX-5 merges; P5-UX-5 adds it back pointing at the
-     workspace's People › Add people.
-   - Each remaining link gets a test that its href resolves to an existing route (a route-table test over
-     `src/app`).
-6. **First-run fixes (C-916, `14 §First run and connecting` §2):**
-   1. Chat empty state: "Say hello to <Agent>" and the handle, not the brief (the chat component's empty
-      view).
-   2. The message editor toolbar wraps at any width, with no clipped buttons at about 1250 px or at
-      390 px.
-   3. The tab bars of Credentials and Settings show no stray scrollbar widget (the tab primitive's
-      overflow styles; fix it in the primitive).
-   4. Connect-form labels never print "(optional) (optional)" (the label builder).
+1. **`WhoCan` component (C-981)** in the shared primitives. Input: a `WhoCan` value from the server, or a
+   role plus `contacts` from the workspace or organization. Output: the sentence ("Ask Ada Lovelace or
+   Alan Turing (organization admins).", "An Aurora administrator can set this up."), or the action or
+   link when the viewer can do it themselves. The role phrases:
+   - `workspace_owner` → "workspace owners"
+   - `workspace_approver` → "workspace owners and approvers"
+   - `org_admin` → "organization owners and admins"
+   - `org_owner` → "organization owners"
+   - `instance_admin` → "an Aurora administrator" (never names)
+2. **Refusals (C-915).**
+   - Add `forbiddenError(whoCan)` returning an `ApiError`, and use it in every page gate listed above and
+     any other bare `{ code }` error object `grep` finds.
+   - `errorMessage` maps any object with a string `code` through `ERROR_MESSAGES`.
+   - `ErrorState` renders a refused page as "Only <role phrase> can open this page." followed by
+     `WhoCan`.
+   - "Could not reach the server" stays only for transport failures (`TypeError` from fetch,
+     `AbortError`, a non-JSON 5xx).
+   - Add `ERROR_MESSAGES` keys for `connect_probe_failed` per cause, `oauth_client_required`,
+     `above_account_limit` and `always_not_available`.
+3. **Empty states (C-916).** `EmptyState`'s `ask` becomes `ask?: { whoCan; canAct: boolean }`, enforced by
+   the type, and renders (through `WhoCan`) only when `!canAct`. Fix every caller; where the viewer can
+   act, pass the action. Remove `useOwnerNames`.
+4. **Welcome links.** "Connect an app" goes to the workspace's Apps & accounts › Apps (`routes.ts`).
+   "Invite a teammate" is removed; P5-UX-5 adds **Add people**. A test checks that every Welcome link
+   resolves to an existing route.
+5. **First-run fixes** (`14 §Agents, accounts and access` §9):
+   1. The chat's empty state shows "Say hello to <Agent>" and the handle, not the agent's instructions.
+   2. The message editor toolbar wraps at any width; no clipped buttons at about 1250 px or at 390 px.
+   3. Tab bars show no stray scrollbar widget (fix it in the tab primitive).
+   4. Form labels never print "(optional) (optional)" (the label builder).
    5. Help links render "Where do I find this?" without the URL in the text (the field renderer).
-   6. The agent header names the computer state in words: Off, Starting, On, Stopping, Failed, with
-      the reason on hover or tap.
-   7. The admin landing never flashes "You are not in an organization yet" before redirecting to
-      Administration › Overview (`/admin`; gate the root page's empty-org view on the setup-status
-      query).
-7. **Tests.** Vitest for:
-   - the hook;
-   - `errorMessage` over `ApiError`, plain objects and transport errors;
-   - `EmptyState` typing (a `// @ts-expect-error` case for `ask` without `canAct`);
-   - each fix.
-
-   Playwright:
-   - a member opening `/o/<org>/people` by direct URL reads "Only organization owners and admins can
-     open this page.";
-   - an owner's empty Services tab shows **Add a service** and no "Ask" line;
-   - a member's empty Services tab shows the "Ask <owner names>" line and no button.
+   6. The agent header names the computer's state in words: Off, Starting, On, Stopping, Failed, with the
+      reason on hover or tap.
+   7. The admin landing never flashes "You are not in an organization yet" before Administration ›
+      Overview (gate the root page's empty-organization view on the setup-status query).
+6. **Tests.**
+   - Vitest: `WhoCan` for each role, with names, without names, and when the viewer can act;
+     `errorMessage` over `ApiError`, plain objects and transport errors; `EmptyState` typing (a
+     `// @ts-expect-error` case for `ask` without `canAct`); each fix.
+   - Playwright:
+     - a member opening `/o/<org>/people` by direct URL reads "Only organization owners and admins can
+       open this page. Ask …" with the admins' names;
+     - a workspace owner's empty Accounts list shows its Add action and no "Ask" line;
+     - a workspace member's shows the "Ask <owner names>" line and no button.
 
 ## Constraints / file ownership
 
-- Owns: `org-gate.tsx`, the listed gate callers, `states.tsx`, `errors.ts` (shared with P5-UX-3:
-  append), the empty-state callers, `getting-started.tsx` (`OptionalNext` only; P5-UX-3 and P5-UX-5
-  edit it after this task), and the files of the seven fixes. Not `app-shell.tsx` (P5-IA-1).
-- Do not touch `connect-dialog.tsx` beyond the label and help-link renderers it shares with other forms
-  (P5-UX-3 owns the dialog).
+- Owns: the `WhoCan` component; `org-gate.tsx` and the other gate callers; `states.tsx`; `errors.ts`
+  (later briefs append keys); the empty-state callers; `getting-started.tsx` (`OptionalNext` links only);
+  the files of the seven fixes.
 - `14 §Visual design` for every changed screen.
 
 ## Acceptance criteria
 
-1. No sidebar item and no Welcome link leads a member to a 403 or a 404 (Playwright over a member and an
-   owner).
-2. A 403 never renders the network sentence (unit plus Playwright); a real network failure still does.
-3. No `EmptyState` renders an "Ask…" line to a viewer who can act (unit over every caller).
-4. Each of the seven fixes has a test or a screenshot check in the narrow-route suite.
-5. Typecheck, lint, vitest and `npm run build` green; axe and narrow-route suites green, both themes.
-
-## Dependencies
-
-P5-IA-1 merged (routes, navigation, role hook). P5-UX-3 and P5-UX-5 later replace the interim Welcome
-links, in that order.
+1. A refused page never shows the network sentence; a real network failure still does.
+2. Every "who can help" sentence this task touches is rendered by `WhoCan`.
+3. No empty state asks someone else when the viewer can act.
+4. No Welcome link leads to a 403 or a 404.
+5. Each of the seven fixes has a test or a screenshot check in the narrow-route suite.
+6. Typecheck, lint, vitest and `npm run build` green; axe and narrow-route suites, both themes.
 
 ## Suggested agent/model and reason
 
-Sonnet (`nextjs-developer`). Many small, well-located changes across shared components; the risk is in
-the shared primitives (`EmptyState`, tabs, errors).
+Sonnet (`nextjs-developer`). Many small, well-located changes in shared components; the risk is in the
+shared primitives (`EmptyState`, tabs, errors).

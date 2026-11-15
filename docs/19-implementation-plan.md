@@ -233,7 +233,7 @@ caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIM
 and limits items are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run
 when the owner starts phase 6. See `21 §Phase 6`. (The third proposal, "the harness chooses models",
 was moved to phase 5 by the owner on 2026-11-15, D-302(f), and is specified as P5-MODELS-1..3,
-`21 §The harness chooses models`.) Phase 5 also gains the owner's UX batches of 2026-11-15
-(`21 §First run and connecting`): first run and connecting (P5-UX-1..7, D-321..D-328, D-337), app setup
-(P5-UX-8..15 and FIX-159, D-329..D-336), and one structure for every level (P5-IA-1..5, D-338..D-342),
-built as one design (D-342).
+`21 §The harness chooses models`.) Phase 5 also gains the owner's UX work of 2026-11-15
+(`21 §Agents, accounts and access; one structure for every level`): one model of agents, accounts and
+access, and one structure for every level, as twenty briefs in four fixed waves (FIX-159, P5-IA-1..5,
+P5-UX-1..7, -9..-11, -13, -14, -16, -17; D-321..D-352).

@@ -1,176 +1,158 @@
-# P5-UX-2: Connect plan and connect-with-grant, backend (owner walkthrough, 2026-11-15)
+# P5-UX-2: Connecting, backend: setup status, connect with access, who can fix it (owner, 2026-11-15)
 
 ## Goal
 
-The owner walked through a first sign-in and found that connecting an agent to anything is "entirely too
-complicated". The specific problems were these:
-
-- GitHub's recommended method asked a member for an App ID and a `.pem` private key.
+The owner's walkthroughs found that connecting an agent to anything was a maze:
+- GitHub's recommended method asked a member for an App ID and a private key.
 - Linear and Notion failed with "No usable OAuth client is configured" only after the whole form.
 - A wrong token answered "The connection probe failed.", with no reason.
-- A connection and its grant were two separate acts, so it was easy to leave with neither done.
+- Making the account and giving the agent access were two separate acts, so it was easy to leave with
+  neither done.
+- Nothing said who could fix a missing piece.
 
-This task gives the server what the connect journey (P5-UX-3) needs:
-
-- a **connect plan** that says which methods are ready for this person and who unblocks the rest;
-- manifest keys for **audience**, **limits** and **scope presets**;
-- **connect with a grant** in one request, including across an OAuth sign-in;
-- refusals that say **why**.
+This task gives the server what the journey (P5-UX-3), the setup page (P5-UX-9) and every "who can fix
+this" sentence need:
+- one **setup status** per app, which says which ways to connect work here, what is missing and who can
+  fix it;
+- **connect with access**: the account and the agents' access in one request, including across an OAuth
+  sign-in;
+- the same for a **website or an AI key**;
+- refusals that say **why** and **who can help**.
 
 ## Linked requirements
 
-- D-337, D-321, D-322; SEC-130.
-- Contracts **C-955, C-956, C-957, C-958, C-959**.
-- Normative: `14 §First run and connecting` §1 (what the dashboard needs); `09 §3.4` (journey keys) and
-  `§11` (OAuth client resolution); `05` apps rows; `17` SEC-130.
-- Builds on D-306 / FIX-153 (link builder `access_url`, agent page by id) and FIX-154 (connection
-  inside the grant, `grant_connection_in_tx`). Unchanged: C-410, C-504, C-740, C-741, C-842, I-29.
+- D-321, D-322, D-330, D-344, D-349; SEC-130.
+- Contracts **C-931, C-946 (API), C-955, C-956, C-957, C-958, C-981 (server), C-988**.
+- Normative: `14 §Agents, accounts and access` §3 and §4, `14 §Information architecture` "Who can fix
+  this", `09 §3.4` (journey keys) and `§11` (OAuth client resolution), `05` (apps, secrets, org and
+  workspace rows), `17` SEC-130.
+- Builds on FIX-153 (agent page by id), FIX-154 (connection made inside the grant,
+  `grant_connection_in_tx`). Unchanged: C-410, C-504, C-740, C-741, C-842, I-29.
 
-## Placement in the new structure (D-342)
+## Wave and order
 
-- **Dashboard paths.** Every path this task emits follows the C-960 routes of
-  `14 §Information architecture`: the `Unlock.admin_path`, the gateway's `connect_url` and
-  `connect_url_workspace`, and the journey deep link. One server-side path table mirrors
-  `web/src/lib/routes.ts`.
-- **Wording.** `Unlock` sentences use the vocabulary: "organization admins", "Administration", "OAuth
-  client".
+- **Wave 0**, in the Rust lane after FIX-159 (both edit `crates/aurora-registry`).
+- P5-UX-13 (registry lints, builtin packages) starts after this task.
+- Consumers: P5-UX-4 (access levels), P5-UX-3 (journey), P5-UX-9 (setup page), P5-UX-1 (`WhoCan`
+  component), P5-UX-6 and P5-UX-7.
 
 ## Context
 
 - **Connect service:** `services/aurora-api/src/domains/connect/{routes,service,flow,page}.rs`.
-  - The OAuth flow object is sealed and user-bound, sent as the `state` parameter plus a cookie and
-    opened by `Flow::open` (`service.rs` ~1260).
-  - The callback is `run_callback`.
+  - The OAuth flow object is sealed and bound to the user, sent as the `state` parameter plus a cookie
+    and opened by `Flow::open` (`service.rs` ~1260). The callback is `run_callback`.
   - `oauth_client_required` and `instance_oauth_client_required` are raised at `service.rs` ~226–239,
-    and `connect_probe_failed` at ~51.
-- **OAuth client resolution:** `crates/aurora-db/src/repo/connections.rs` ~366, ordered workspace, org,
-  instance, enabled only, `instance_id IS NOT DISTINCT FROM`. The plan **must call the same query**; do
-  not write a second resolver.
-- **Grants:** `domains/grants/{routes,service}.rs`.
-  - `grant_connection_in_tx` and `write_connection_grant` come from FIX-154.
-  - The bulk grant checks are C-504.
-- **Gateway link builder:** C-891, in the gateway (FIX-153).
-- **`request_app_connection`:** `domains/tools/apps.rs` ~250.
-- **Registry snapshot and manifest model:** `crates/aurora-registry` (`manifest/model.rs`, `snapshot.rs`);
-  linter at `09 §6`.
+    `connect_probe_failed` at ~51. The probe runner is `connect/probe.rs`.
+- **OAuth client resolution:** `crates/aurora-db/src/repo/connections.rs` ~366 (workspace, then
+  organization, then instance; enabled only; `instance_id IS NOT DISTINCT FROM`). The setup status
+  **must call the same query**.
+- **Apps:** `GET /v1/apps/{app}` and `AppDetail.oauth_clients[]` with `redirect_uri` built from
+  `config.external_url` (`domains/apps/service.rs` ~258–295).
+- **Grants:** `domains/grants/{routes,service}.rs` (`grant_connection_in_tx`, the C-504 bulk checks).
+- **Secrets:** `domains/secrets/` (generic and LLM create).
+- **Role helpers:** `require_admin`, `require_owner`, the `can_own` and `can_approve` checks
+  (`src/http/auth.rs` ~171 and the callers).
+- **External id:** `organizations.external_id`, in `GET /v1/orgs/{org}` for any member
+  (`tenancy/routes.rs` ~156–161). An app needs it when `permissions.context` includes `org_external_id`.
+- **Registry:** `crates/aurora-registry` (`manifest/model.rs`, `snapshot.rs`); linter at `09 §6`.
 
 ## Scope
 
-1. **Manifest keys (C-956).** Add to the manifest model, the snapshot and the linter:
-   - `connect[].audience` (`person`|`admin`, default `person`);
-   - `connect[].fields[].limit` (bool; refused on a required field);
-   - `connect[].scope_presets` (`read`/`write` lists; each a method scope, and `read` only `access: read`).
+1. **Manifest keys (C-956).** Add `connect[].audience` (`person`|`admin`, default `person`) and
+   `connect[].scope_presets` to the manifest model, the snapshot and the linter. Old packages stay valid
+   (a golden test over every builtin and fixture). Set the two values the tests need: the `github_app`
+   method of `plugins/builtin/github` is `audience: admin`; `plugins/builtin/linear` gets
+   `scope_presets.write: [read, write]`. Bump each package's patch version and run `check-builtin.sh`.
+2. **`WhoCan` on the server (C-981).**
+   - One type and one builder: action, role, up to three display names (owners first, then by name;
+     never e-mails; never instance admins), a path from the server's table of C-960 paths when the caller
+     can do it themselves.
+   - The shared role helpers put it in every `403 forbidden` (`details.who_can`). Do this in the helpers,
+     not route by route.
+   - `GET /v1/workspaces/{ws}` and `GET /v1/orgs/{org}` gain `contacts` (up to three names each), readable
+     by every member of that level.
+3. **Setup status and plan (C-931, C-955, C-946).**
+   - One function, `setup_status(ctx, app, view)` in `domains/apps/setup.rs`, where `view` is a workspace
+     or an organization. It computes availability, each method's readiness with `needs` and `who_can`, the
+     suggested method, OAuth clients by level (refs only; the instance as set up or not), self-hosted
+     apps, values to copy and what the caller can do.
+   - Routes `GET /v1/apps/{app}/setup` and `GET /v1/apps/{app}/connect-plan` (a projection of the same
+     function).
+   - `used_by_methods` on client refs and on `AppDetail.oauth_clients[]`.
+   - The setup status does not list the app's accounts: the setup page reads them from the accounts list
+     (C-917, P5-UX-4) filtered by app.
+4. **Access levels (the shared expansion).** In `domains/grants`, one function expands a level (`read`,
+   `ask`, `act`) into a grant from the app's tools in the snapshot, and one derives the connection's
+   `access` from a set of levels. P5-UX-4 reuses both for C-980.
+5. **Connect with access (C-957, SEC-130).** Extend `ConnectRequest` with `grant: { agent_ids, level }`.
+   - Before any write or redirect: check the agents like C-504; refuse `act` on a `custom_only` app.
+   - `connected`: the connection and the access in one transaction (reuse FIX-154's `write_in_tx` and
+     `grant_connection_in_tx`); the connection's `access` derived from the levels; audit
+     `via: "connect_journey"`; the answer adds `grants`.
+   - `redirect`: keep the intent only inside the sealed `Flow`; at the callback, after the exchange and
+     in the connection's transaction, re-authorize and write the access. On failure, commit the
+     connection without access and report `grant_failed { code }` in the callback's `BroadcastChannel`
+     message, next to `granted_agent_ids`.
+   - A reconnect with `grant` → 422 `grant_not_allowed_on_reconnect`. Without `grant`, behaviour is
+     unchanged.
+6. **A website or an AI key with access (C-988).** `POST /v1/workspaces/{ws}/secrets` accepts
+   `grant: { agent_ids }`, checked like C-504 and written in the secret's transaction.
+7. **Refusals (C-958).** `connect_probe_failed` gets `details.cause` and `details.host`, classified in
+   the probe runner (401/403 → `rejected`; DNS, connect, TLS or timeout → `unreachable`; anything else →
+   `unexpected`). `oauth_client_required` and `instance_oauth_client_required` carry `details.who_can`.
+8. **OpenAPI.** Regenerate the document, `web/openapi.json` and `schema.d.ts`.
 
-   Old packages stay valid (a golden test over every builtin and fixture). Package edits:
-   - `plugins/builtin/github/plugin.yaml`: the `github_app` hook method gets `audience: admin`;
-   - `plugins/builtin/linear/plugin.yaml`: `scope_presets.write: [read, write]`.
+## Tests (each seen failing first)
 
-   Bump each package's patch version the way the repo does for package changes, and run
-   `check-builtin.sh`.
-2. **Connect plan (C-955).** Add `GET /v1/apps/{app}/connect-plan?workspace_id=` in `domains/apps` (or
-   `domains/connect`, wherever `GET /v1/apps/{app}` lives). It needs `can_own` of the workspace.
-   Compute, per C-955:
-   - `available` with `unlock`, using the posture check the connect service already uses;
-   - each method's `ready` / `blocked { reason, unlock }`;
-   - `suggested_method`, `presets`, `limits` and `existing`.
-
-   The `Unlock.people` are the display names of up to three active org owners/admins, owners first, then
-   by name. Never e-mails, never instance admins. `admin_path` for `register_oauth_client`:
-   - the org's Apps & services › OAuth clients tab
-     (`/o/<org>/apps?tab=oauth-clients&package=<pkg>&client_key=<key>`, C-960) when `who = org_admin`;
-   - the workspace's Apps & services › OAuth clients tab (`…/apps?tab=oauth-clients&…`) when
-     `caller_can` and the caller is a workspace owner who would register a workspace client;
-   - Administration › Apps & services › OAuth clients (`/admin/apps?tab=oauth-clients&…`) for
-     instance-bound apps (`who = instance_admin`).
-
-   Paths come from one server-side table that mirrors C-960. The gateway link builder (C-891) uses the
-   same paths.
-
-   Add it to the OpenAPI document and regenerate `web/openapi.json` and `schema.d.ts`.
-3. **Connect with a grant (C-957, SEC-130).** Extend `ConnectRequest` with `grant`.
-   - **Before any write or redirect:** validate the agents like C-504 and refuse `full` on `custom_only`.
-     Expand the preset server-side from the snapshot's tools (`read`, `ask_writes`, `full`). Put the
-     expansion in `domains/grants` so P5-UX-4 and the tool path can reuse it.
-   - **`connected`:** create the connection and the grants in one transaction. Reuse FIX-154's
-     `write_in_tx` / `grant_connection_in_tx`. Audit `via: "connect_journey"`. The answer adds `grants`.
-   - **`redirect`:**
-     - Add `grant` to the sealed `Flow` (agent ids and preset only).
-     - At the callback, after the exchange and inside the connection's transaction, re-authorize (the
-       caller's `can_own`, agents visible and in the workspace, `custom_only`) and write the grants.
-     - On failure, commit the connection without grants, and put `grant_failed { code }` in the callback
-       page's `BroadcastChannel` message (C-842) next to the new `granted_agent_ids`.
-   - **Reconnect** ignores `grant` (422 `grant_not_allowed_on_reconnect` if sent).
-4. **Refusals (C-958).**
-   - `connect_probe_failed` gets `details.cause` and `details.host`. Classify in the probe runner:
-     401/403 → `rejected`; DNS, connect, TLS or timeout → `unreachable`; anything else → `unexpected`.
-   - `oauth_client_required` and `instance_oauth_client_required` get `details.unlock` from the same plan
-     function.
-   - Dashboard-reachable `forbidden` refusals get `details.required_role`. Do this in the shared helpers
-     (`require_admin`, `require_owner`, the `can_own` / `can_approve` checks), not route by route.
-5. **Links (C-959).**
-   - Add `connect_journey_url(agent, app)` to the gateway builder.
-   - Use it for `connect_url` wherever the refusal knows the agent; keep the workspace URL in `details`
-     as `connect_url_workspace`.
-   - `request_app_connection` links to it. A credential-free app keeps `access_url` (FIX-154).
-   - Update the tests that assert these URLs.
+- **Linter:** a `scope_presets.read` entry that is a write scope or not a method scope → error; every
+  builtin and fixture still validates.
+- **Setup status** (`api/it/app_setup.rs`):
+  - GitHub with no OAuth clients: `github_app` is `admin`; `oauth` and `oauth_app` need a client, with
+    `who_can` naming the org admins; the suggested method is `token`.
+  - With an organization client for `oauth`: suggested `oauth`. With a workspace client: ready in that
+    workspace only.
+  - An instance client: `instance.set_up = true`, no id.
+  - Linear with no client: suggested `null`, with `who_can`.
+  - `aws-keys` returns `values.external_id`; `linear` does not.
+  - GitLab without a registered server: the instance-bound methods need `instance`.
+  - A restricted organization without the app: `available: false`.
+  - The plan and the setup status agree for every method.
+  - No client secret, client id or e-mail appears in any answer (a scan of the JSON). Instance admins
+    are never named.
+- **`WhoCan`:** a non-owner's 403 carries role and names; `contacts` is readable by a member and holds at
+  most three names.
+- **Connect with access:**
+  - `fields`: account and access in one transaction; a forced failure of the access part rolls back both.
+  - Each level expands to the expected allowed and asked tools; the connection's `access` follows.
+  - `act` on `custom_only` → 422, nothing written.
+  - OAuth (the fake provider of the existing connect tests): access applied at the callback; the caller
+    demoted, or the agent deleted, between start and callback → the account is kept, no access,
+    `grant_failed`; tampered state → `oauth_state_invalid`, nothing written; the state parameter and the
+    cookie contain no agent id in clear.
+  - Reconnect with `grant` → 422. Without `grant`, the existing tests stay green.
+- **Secrets with access:** one transaction; refusals as C-504.
+- **Probe:** 401 → `rejected`; an unroutable host → `unreachable` with `host`; 500 → `unexpected`.
+- `permission_matrix` rows for the new routes; OpenAPI drift check green; a `security-coverage.md` row
+  for SEC-130.
 
 ## Constraints / file ownership
 
-- Owns: `crates/aurora-registry` (manifest keys, linter); `services/aurora-api/src/domains/{connect,
-  apps}` and the grant-preset expansion in `domains/grants`; the forbidden-details helper; the gateway link
-  builder and its messages (`services/aurora-gateway`, messages only); `domains/tools/apps.rs` (link
-  only); `plugins/builtin/{github,linear}/plugin.yaml`; OpenAPI and the generated web types.
-- No dashboard work. That is P5-UX-3, plus P5-UX-1 for `required_role` rendering.
-- Not beside P5-GUIDE-1/3 (registry and manifest model) or P5-ICS (registry): run before or after them in
-  the same lane.
-- Rust conventions as in `02`: `cargo fmt --check`, clippy `-D warnings`, targeted tests per step. Full
-  suites at the batch end.
+- Owns: `crates/aurora-registry` (manifest keys, linter); `domains/{connect,apps}`; the level expansion
+  in `domains/grants`; `domains/secrets` (the `grant` field); the `WhoCan` type and the role helpers;
+  the server's table of dashboard paths; `plugins/builtin/{github,linear}/plugin.yaml` (the two keys
+  only); OpenAPI and the generated web types.
+- No dashboard work.
+- Rust conventions: `cargo fmt --check`, clippy `-D warnings`, targeted tests per step; full suites at the
+  batch end.
 
-## Acceptance criteria (each test seen failing first)
+## Acceptance criteria
 
-1. Linter:
-   - `limit` on a required field → error;
-   - a `scope_presets.read` entry that is a write scope or not a method scope → error;
-   - every builtin and fixture still validates (golden list).
-2. Connect plan ITs (`api/it/connect_plan.rs`):
-   - **GitHub with no OAuth clients:** `github_app` is `audience: admin`; `oauth` and `oauth_app` are
-     blocked `oauth_client_missing` with `who: org_admin` and the org admins' names; the suggested
-     method is `token`.
-   - **The same with an org client for `oauth`:** suggested `oauth`.
-   - **The same with a workspace client:** `oauth` is ready.
-   - **Linear with no client:** suggested `null`, with `unlock`.
-   - **Restricted posture without the app:** `available: false`, `enable_app`.
-   - **An instance-bound app with no instance:** `instance_missing`, `who: instance_admin`, no names.
-   - A non-owner gets 403 with `required_role: workspace_owner`.
-   - `existing` lists an active connection with its granted agents.
-   - Instance admins are never named; e-mails appear nowhere in the answer.
-3. Connect with grant ITs:
-   - **`fields`:** connection plus grants in one transaction; a forced grant failure rolls back both.
-   - **Presets:** each expands to the expected `allow` / `ask` lists from the snapshot.
-   - **`full` on `custom_only`:** 422, nothing written.
-   - **OAuth (fake provider, the existing connect ITs' harness):** the grant is applied at the callback.
-   - **Caller demoted between start and callback:** the connection is kept, there is no grant, and
-     `grant_failed` is set.
-   - **Agent deleted between start and callback:** the same.
-   - **Tampered state:** `oauth_state_invalid`, no connection, no grant.
-   - The state parameter and the cookie, base64-decoded, contain no agent id in clear.
-   - Reconnect with `grant` → 422.
-   - Without `grant`, behaviour is unchanged (the existing tests stay green).
-4. Probe ITs: a fake upstream answering 401 gives `cause: rejected`; an unroutable host gives
-   `unreachable` with `host`; a 500 gives `unexpected` with `upstream_status`.
-5. Gateway: the refusals for an agent without the app carry the journey URL. `request_app_connection`'s
-   notice links to the journey for an app that needs sign-in, and to `access_url` for a credential-free
-   app.
-6. `permission_matrix` rows for the new route; OpenAPI drift check green; `docs/tests/security-coverage.md`
-   row for SEC-130.
-7. `cargo fmt --check`, clippy, the targeted suites green; report the test counts.
-
-## Dependencies
-
-- FIX-153 and FIX-154 merged (they are).
-- No migration.
+1. Every test above passes; test counts reported.
+2. One function serves the setup status and the plan.
+3. Every refused route carries `who_can`.
+4. An account and its access are never left half-made by a successful request.
 
 ## Suggested agent/model and reason
 
-Sonnet (`rust-developer`). It touches several crates but each part is bounded. The OAuth re-authorization
-needs care, and the reviewer should read SEC-130 against the callback code.
+Sonnet (`rust-developer`). Several domains, each part bounded. The OAuth re-authorization needs care, and
+the reviewer should read SEC-130 against the callback code.

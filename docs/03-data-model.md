@@ -1614,11 +1614,35 @@ The placement document (C-520, wherever placement is stored today) gains
 
 (Landed, FIX-146 Part B: `turns.trace_context` and `gateway_credentials.trace_context` are in §6 and §3 with migration `20261201000150_turn_trace_context.sql`. The gateway role gets no grant on `turns`: the value is copied onto the context credential at mint.)
 
-#### `app_connections` (connection health; phase 5, P5-UX-14, D-335)
+#### `app_connections` and `secrets` (account health; phase 5, P5-UX-14, D-335, D-350)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| last_check_at | timestamptz null | set by `POST /v1/connections/{id}/test` and the post-connect test (C-943, C-945); never by the gateway | 5 (P5-UX-14) |
-| last_check_result | text null | CHECK in (`ok`, `rejected`, `unreachable`, `unexpected`); `not_testable` is answered but never stored | 5 (P5-UX-14) |
+| last_check_at | timestamptz null | on both tables. Set by `POST /v1/accounts/{type}/{id}/test` and the post-connect test (C-943, C-945), and by the gateway when real use shows a change (C-985): an upstream 401 on a request with this account's credential, or a later success. The gateway writes only on a change of state, at most once a minute per account, in the batch that writes `last_used_at` | 5 (P5-UX-14) |
+| last_check_result | text null | on both tables. CHECK in (`ok`, `rejected`, `unreachable`, `unexpected`); `not_testable` is answered but never stored | 5 (P5-UX-14) |
+
+The gateway role gains `UPDATE (last_check_at, last_check_result)` on both tables, next to the `last_used_at` grant it has.
+
+#### `agent_access_requests` (an agent asks for access; phase 5, P5-UX-17, D-348)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid PK | | 5 (P5-UX-17) |
+| org_id, workspace_id | uuid FK (cascade) | the agent's | 5 (P5-UX-17) |
+| agent_id | uuid FK → agents ON DELETE CASCADE | | 5 (P5-UX-17) |
+| conversation_id | uuid FK → conversations ON DELETE CASCADE | where the agent asked | 5 (P5-UX-17) |
+| turn_id | uuid null FK → turns ON DELETE SET NULL | the asking turn, so the API knows whether it has ended | 5 (P5-UX-17) |
+| kind | text not null | CHECK in (`app`, `website`) | 5 (P5-UX-17) |
+| app_id | text null | for `app` | 5 (P5-UX-17) |
+| secret_id | uuid null FK → secrets ON DELETE CASCADE | for `website`: the proposed secret (`08 §5`) | 5 (P5-UX-17) |
+| reason | text not null | the agent's words, one line, at most 300 characters | 5 (P5-UX-17) |
+| status | text not null default `open` | CHECK in (`open`, `given`, `dismissed`, `expired`) | 5 (P5-UX-17) |
+| created_at, resolved_at | timestamptz | `resolved_by uuid null FK → users` beside them | 5 (P5-UX-17) |
+
+UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
+
+#### `user_onboarding` (one-time notices; phase 5, P5-IA-1, C-987)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| notices_seen | text[] not null default `{}` | keys of one-time notices the person has dismissed, at most `ONBOARDING_NOTICES_MAX` (50). The migration leaves existing rows empty and marks `renames-2026-11` as seen for accounts created after it, so only people who used the dashboard before see "Pages have new names" | 5 (P5-IA-1) |
 
 #### `approvals` (park and resume; phase 5, D-138)
 | Planned column | Type | Notes | Phase |

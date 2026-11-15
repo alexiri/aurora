@@ -1,135 +1,143 @@
-# P5-IA-1: One structure for every level, navigation shell and routes (owner, 2026-11-15)
+# P5-IA-1: One structure for every level: navigation, routes, names (owner, 2026-11-15)
 
 ## Goal
 
 The owner's administration walkthrough found the dashboard organized by when each feature was built:
 - 18 Admin sidebar items plus 13 Settings sections;
-- 14 org items;
-- the same topic under different names at each level (Governance, Policy and Settings › Governance for
-  internet access);
+- 14 organization items;
+- the same topic under different names at each level;
 - Administration reachable only through "All organizations" in the org switcher.
 
-The owner approved one structure with the same topics at every level and asked for a coherent experience
-(D-338, D-342).
+The owner approved one structure with the same topics and names at every level (D-338, D-351). This task
+builds it: the navigation, the routes and tabs, a redirect from every old route, role visibility, the
+Administration entry, the level badge, the new labels, settings sections rendered inside their topics,
+the tour and a one-time notice that pages have new names.
 
-This task builds the **shell**: the navigation per level, the routes and tabs, the redirects from every
-old route, role visibility, the Administration entry, the level badge and the tour. Existing page
-content moves under the new routes **unchanged**; the content work is P5-IA-2..5 and the P5-UX briefs.
+Existing page **content moves unchanged** under the new routes. The briefs of waves 1 to 3 then rebuild
+content inside those pages.
 
 ## Linked requirements
 
-- D-338, D-342; contracts **C-960, C-961, C-962, C-975**; C-915 (refusals, P5-UX-1) and C-891 (gateway
-  link builder) are touched for paths only.
-- Normative: `14 §Information architecture` › "One structure for every level" (vocabulary, topics per
-  level, who sees what, Administration entry), `14 §Onboarding` §3 (tour), `14 §Visual design`.
+- D-338, D-340, D-351, D-352; contracts **C-926, C-960, C-961, C-962, C-971, C-975, C-987**.
+- Normative: `14 §Information architecture` › "One structure for every level" (the five sentences, the
+  vocabulary, topics per level, who sees what, settings in their topics), `14 §Onboarding` §3 (tour),
+  `15 §Instance settings` (sections; unchanged), `14 §Visual design`.
+
+## Wave and order
+
+- **Wave 0**, the first web task. Every other web brief starts after it.
+- **Release gate (D-352):** master is not deployed between this merge and the end of wave 1.
+- **SET-4/5** (lane `p5-apps`) edit the settings form this task refactors. The Orchestrator orders them;
+  they add no sidebar entries (D-340).
 
 ## Context
 
-- **Navigation.** `web/src/components/app-shell.tsx`:
-  - `ADMIN_LINKS` (18 items);
-  - `ORG_LINKS` and `OrgNav` (~283–323);
-  - `WorkspaceNav` (~337–368);
-  - `NavItem` `data-tour` (~68).
-- **Org switcher.** It lists "All organizations" as the way into Admin.
-- **Pages.** They live under `web/src/app/admin/*`, `web/src/app/o/[org]/*` and
-  `web/src/app/o/[org]/w/[ws]/*`. Credentials, governance and policy components are listed in
-  P5-IA-2..4.
-- **Tour.** `web/src/components/onboarding/tour.tsx` `TOUR_STOPS` (~19–28) drops stops whose nav link is
-  missing (~87).
-- **Header.** `PageHeader`: `web/src/components/ui/page-header.tsx`.
-- **Role data.** `useOrg().my_role`, `useWorkspace().my_role`, `useCanApprove`. This task adds
-  `useViewerRoles` (`lib/api/roles.ts`); P5-UX-1, which runs after it, uses it.
-- **Gateway links.** The C-891 link builder lives in the gateway.
+- **Navigation.** `web/src/components/app-shell.tsx`: `ADMIN_LINKS` (18 items), `ORG_LINKS` and `OrgNav`
+  (~283–323), `WorkspaceNav` (~337–368), `NavItem` `data-tour` (~68), the account menu (~265–274).
+- **Pages** live under `web/src/app/admin/*`, `web/src/app/o/[org]/*` and
+  `web/src/app/o/[org]/w/[ws]/*`.
+- **Settings.** `web/src/components/admin/settings/`: `settings-index-view.tsx`,
+  `settings-section-view.tsx`, `settings-section-form.tsx` (`labelOf` ~133),
+  `governance-settings-view.tsx`, `llm-settings-view.tsx`.
+- **Old pages to host:** credentials (`components/credentials/credentials-view.tsx`), org governance
+  (`components/governance/governance-view.tsx`, `byo-panel.tsx`, `apps-posture-panel.tsx`), policy
+  (`components/policy/*`), workspace settings (`components/settings/settings-view.tsx`), org settings
+  (`components/org/settings-view.tsx`).
+- **Tour.** `web/src/components/onboarding/tour.tsx` `TOUR_STOPS` (~19–28).
+- **Header.** `web/src/components/ui/page-header.tsx`.
+- **Role data.** `useOrg().my_role`, `useWorkspace().my_role`, `useCanApprove`.
+- **Onboarding state.** `user_onboarding` (`services/aurora-api/src/domains/onboarding/`), read in the
+  web through `useMeOnboarding` (`web/src/lib/api/onboarding.ts`).
 
 ## Scope
 
-1. **Route helper** `web/src/lib/routes.ts`: one function per topic and tab at each level, plus the setup
-   page and the journey deep links (C-959). Replace every hard-coded internal `href` with it, and add a
-   test that fails on a hard-coded old path anywhere in `web/src`.
-2. **Topic pages as tab hosts.** For each row of `14`'s table, create the route (`page.tsx`) with
-   `PageHeader` and a tab bar (`?tab=`, the existing tab primitive). Each tab renders the **existing**
-   component of the page it replaces (for example `admin/plugins` content under
-   `/admin/apps?tab=packages`). Tabs whose content another brief builds render the existing page until it
-   lands:
-   - Internet access (P5-IA-2) renders org Governance › Egress above the org Policy component, and the
-     workspace Policy component.
-   - AI models, Agents, People, Data and Platform (P5-IA-3/4) render the old components side by side.
-3. **Redirects (C-960).** Implement every redirect of C-960: Next.js `redirects` for static paths, plus a
-   small client redirect for `?tab=` mappings on pages that stay (`/o/<org>/governance`,
-   `…/credentials`). Preserve the query and the anchor. The C-842 `connect=` and `reconnect=` links
-   survive.
-4. **Navigation (C-961).** Each level's sidebar lists its topics in `14`'s order, from
-   `visibleTopics(level, roles)`:
-   - org members: Workspaces, AI models, Internet access, Agents (read-only);
-   - workspace members: no People or Settings;
-   - Approvals only for approvers;
-   - Administration only for instance admins.
-
-   Read-only pages hide write controls and show one line naming who can change them. This task owns all
-   navigation gating; P5-UX-1 (after this task) owns refusals and empty states.
-5. **Administration entry and level badge (C-962).**
-   - **Administration** goes in the sidebar footer and the account menu for instance admins.
+1. **Route helper and role hook.**
+   - `web/src/lib/routes.ts`: one function per topic and tab at each level, the per-app setup page and
+     the query parameters of C-960. Every internal `href` uses it; a test fails on a hard-coded old path
+     anywhere in `web/src`.
+   - `web/src/lib/api/roles.ts`: `useViewerRoles(org, ws?)` and `visibleTopics(level, roles)` (C-961).
+2. **Topic pages.** For each row of `14`'s table, create the route with `PageHeader`, the level badge
+   and at most four tabs. Each tab renders the **existing** component of the page it replaces. The
+   mapping is C-960's redirect list read backwards. Where a later brief rebuilds a tab, this task hosts
+   the existing lists under the new names:
+   - **Apps & accounts › Accounts** (workspace and organization): the existing connection, secret and
+     LLM-key lists under the headings Apps, Websites and AI keys. P5-UX-4 replaces them.
+   - **Internet access** (workspace and organization): the existing policy editor; at organization level
+     the Governance egress panel above it. P5-IA-2 rebuilds the page.
+   - **Apps & accounts › Apps**: the existing app lists. In a workspace, OAuth clients are reached from
+     this tab until P5-UX-9's setup pages hold them.
+3. **Settings sections inside topics (C-971).**
+   - Factor the section form into `SettingsSectionFields { section, keys? }`: a whole section or a subset
+     of its keys, inside any page, with the section's draft, preview, Helm locks, errors and save (the
+     full document is sent, untouched keys unchanged).
+   - Render each section in its topic per `14`'s map. `governance` splits three ways: AI models › Rules,
+     Internet access, Agents › BYO.
+   - `/admin/settings` becomes **All settings**: sections grouped by topic, each linking to its topic
+     tab, a search box over section names and descriptions, Export and Import, the Helm notice.
+     `/admin/settings/<section>` redirects.
+   - Secret stores exists once, under Platform.
+4. **Redirects (C-960).** Every old route, with query and anchor preserved. `connect=` and `reconnect=`
+   deep links survive.
+5. **Navigation and visibility (C-961).** Each level's sidebar lists its topics in `14`'s order, from
+   `visibleTopics`. Read-only pages hide write controls. This task owns all navigation gating.
+6. **Administration entry, level badge, your account (C-962).**
+   - **Administration** in the sidebar footer and the account menu, for instance admins.
    - The org switcher lists organizations only.
-   - `PageHeader` gains `level`, and every page passes it:
-     - "Administration";
-     - "<org>";
-     - "<org> › <workspace>".
-6. **Labels.** Apply the vocabulary table to nav labels, page titles and tab names (C-960 / `14`). Inside
-   page bodies, change only text that names a page or a navigation place ("see Governance" becomes "see
-   Internet access"). Content wording belongs to the topic briefs.
-7. **Gateway and docs links.**
-   - Update the gateway's C-891 builder and its tests to the new paths (the old ones redirect, so this is
-     cleanliness, not breakage).
-   - Grep `docs/operator/`, `docs/14` page references and the builtin `docs/setup.md` guides for page
-     names ("Admin ›", "Governance", "Policy page", "Credentials ›"), and update the operator docs.
-   - Builtin guides are P5-UX-13's (placeholders); list what you found in the report for it.
-8. **Tour (C-975).** One stop per visible workspace topic with its new name, plus the Agents › Access
-   sentence of P5-UX-3. It is driven by `visibleTopics`.
-9. **Tests.**
-   - Vitest: the route helper; `visibleTopics` per role and level; each C-960 redirect (a table test);
-     the level badge.
-   - Playwright:
-     - an instance admin reaches Administration from the footer link;
-     - a member's org sidebar shows exactly Workspaces, AI models, Internet access and Agents;
-     - every old route in C-960 lands on its new tab (one parametrised test);
-     - `…/credentials?tab=apps&connect=github` opens the connect dialog (or journey) at the new route.
-   - Axe and narrow-route suites gain the new topic pages (both themes, 390 px; at 390 px the tab bars
-     scroll inside their own container).
+   - `PageHeader` gains `level`; every page passes it.
+   - The account menu item and `/account` title read **Your account**.
+7. **Labels (C-926) and names.** Apply the vocabulary to navigation labels, page titles, tab names and
+   every sentence that names a page ("see Governance" becomes "see Internet access"). Apply the C-926
+   label renames on the pages this task moves, including Allow once and Block on the Approvals page and
+   card.
+8. **"Pages have new names" (C-987).**
+   - API: `user_onboarding.notices_seen text[]`, returned by `GET /v1/me/onboarding` and appended by
+     `PATCH { notice_seen }`. The migration marks `renames-2026-11` as seen for accounts created after
+     it. Take the next free migration number from PROGRESS when you start, and edit that line. Move the
+     planned row of `03` into its table and regenerate `spec_schema.json`. Add `ONBOARDING_NOTICES_MAX`
+     to `crates/aurora-core/src/limits.rs`.
+   - Web: a dismissible notice listing old name → new name for the pages the viewer can see, from one
+     table next to `routes.ts`; **What moved** in the account menu replays it.
+9. **Tour (C-975).** One stop per visible workspace topic, with the new names.
+10. **Operator docs.** Update page names in `docs/operator/` ("Admin ›", "Governance", "Policy",
+    "Credentials"). Builtin package guides are P5-UX-13's.
+11. **Tests.**
+    - Vitest: the route helper; `visibleTopics` per role and level; every C-960 redirect (a table test);
+      the level badge; `SettingsSectionFields` with a subset (saving keeps the other keys); the notice.
+    - API test: `notices_seen` append, the limit, the default for new accounts.
+    - Playwright:
+      - an instance admin reaches Administration from the footer link;
+      - a member's organization sidebar shows exactly Workspaces, AI models and Internet access;
+      - every old route lands on its new tab (one parametrised test);
+      - `…/credentials?tab=apps&connect=github` opens the connect dialog at the new route;
+      - the notice appears once for an existing account and never for a new one.
+    - Axe and narrow-route suites for the new topic pages, both themes, 390 px (tab bars scroll inside
+      their own container).
 
 ## Constraints / file ownership
 
-- **Owns:**
-  - `app-shell.tsx`;
-  - the new route folders and redirect config;
-  - `lib/routes.ts`;
-  - `page-header.tsx` (the `level` prop);
-  - `tour.tsx`;
-  - the org switcher;
-  - link edits across `web/src`, done mechanically through the helper;
-  - the gateway link builder (paths);
-  - operator doc page references.
-- **Does not change** page contents beyond labels and the "see …" texts; it moves them.
-- **Runs first** among P5-IA and the P5-UX screen briefs (D-342). Not in parallel with any brief that adds
-  pages under `web/src/app` (P5-UX-3, -5, -7, -9, -10, -11, P5-IA-2..4): those start after this merges,
-  or build at the new routes and leave the redirects to this task.
-- **SET-4/5:** their section pages must not add sidebar entries (D-340); this task does not wait for them.
+- **Owns:** `app-shell.tsx`; the new route folders and redirect config; `lib/routes.ts`;
+  `lib/api/roles.ts`; `page-header.tsx` (the `level` prop); `tour.tsx`; the org switcher; the settings
+  form components and the All settings index; the onboarding API fields and migration; link edits across
+  `web/src` through the helper; operator doc page names.
+- **Does not change** what a page does, only where it is and what it is called.
+- This is a large task. The Orchestrator may run it as two back-to-back parts in one lane: the shell
+  (scope 1, 2, 4, 5, 6) and the content (scope 3, 7, 8, 9, 10).
 
 ## Acceptance criteria
 
-1. Each level's sidebar shows the `14` topics for each role, and no item leads to a refusal.
-2. Every C-960 old route redirects to the right tab, and no source file hard-codes an old path.
-3. Administration has a labelled entry; the org switcher lists organizations only; every page shows its
-   level badge.
-4. Existing page contents work unchanged at their new routes (the existing page tests pass with updated
-   paths only).
-5. Web gates (typecheck, lint, vitest, build); axe and narrow-route suites, both themes; gateway tests for
-   the link builder.
-
-## Dependencies
-
-None. Merge before the content briefs (D-342 order).
+1. Each level's sidebar shows the `14` topics for each role; no topic has more than four tabs; no item
+   leads to a refusal.
+2. Every old route redirects to the right tab, and no source file hard-codes an old path.
+3. Administration has a labelled entry; every page shows its level badge; the person's own account is
+   "Your account".
+4. Every settings section renders inside its topic page; All settings indexes them; Secret stores exists
+   once.
+5. No page title, tab or navigation label uses a retired word of the vocabulary table.
+6. Existing page contents work unchanged at their new routes.
+7. Rust and web gates (fmt, clippy, targeted tests, migration check, limits guard; typecheck, lint,
+   vitest, build); axe and narrow-route suites, both themes.
 
 ## Suggested agent/model and reason
 
-Sonnet (`nextjs-developer`). It is wide but mechanical: routing, navigation and a large link sweep through
-a helper. The redirect table and visibility function need tests more than design.
+Sonnet. Wide but mechanical: routing, navigation, a large link sweep through a helper, one form refactor
+and one small migration. The redirect table and the visibility function need tests more than design.

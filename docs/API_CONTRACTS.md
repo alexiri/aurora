@@ -1671,287 +1671,224 @@ Rule: `11 §Files`, `12 §SSH channels` (the `sftp` exec mode), `16 §W21` (on `
   - **Connection card:** name, host, Read only, Edit (the same steps without the URL), **Send test** (values form → result: status, body, delivery id; or a dry-run preview), and the effective limit with its source.
   - **Admin › Settings** `outgoing_webhooks` section, and the org settings switch and limits.
   - Shared primitives and page patterns only, both themes, 390 px. The code editor is the shared one used for JSON elsewhere, added to the shared set if missing. `webhook_config_invalid.fields[].path` maps to the field in the editor.
-### Phase 5 — P5-UX (first run and connecting: the connect journey, role-aware pages, people, admin defaults, simple layers, D-321..D-327, D-337, SEC-130, SEC-128)
+### Phase 5 — P5-UX and P5-IA (agents, accounts and access; one structure for every level; D-321..D-352, SEC-128..SEC-132)
 
-Rule: `14 §First run and connecting`, `09 §3.4` (C-956 keys) and `§11`, `05` (apps, grants, access, placement rows), `04 §New-user placement`, `§Workspace access by e-mail`, `03 §Planned changes`, `17` (SEC-130, SEC-128), D-306 (FIX-153/154, extended here). Reserved numbers C-914..C-929, C-955..C-959 (C-928, C-929 spare). Errors use the standard body. P5-UX-2 implements C-955..C-959; P5-UX-3 C-914 and C-927 (journey parts); P5-UX-1 C-915, C-916 and C-927 (links); P5-UX-4 C-917, C-918; P5-UX-5 C-919, C-920 (C-921 not built, D-328); P5-UX-6 C-922..C-924; P5-UX-7 C-925, C-926.
+Rule: `14 §Information architecture` › "One structure for every level" and `14 §Agents, accounts and access` (normative for every screen, name and place), with `04`, `05`, `07`, `09`, `03 §Planned changes`, `15 §Instance settings` and `17`. Errors use the standard body.
 
-- C-955 **Connect plan** `GET /v1/apps/{app}/connect-plan?workspace_id=` (**S/K**, `can_own` of the workspace; 404 `app_not_found`). Read-only. Computed from the active registry snapshot, the org's app posture (C-20), the OAuth clients resolvable for (workspace, org, instance) exactly as `09 §11` step 2 resolves them, and registered instances (D-74). Answer:
-  `{ app_id, available: bool, unlock?: Unlock, methods: PlanMethod[], suggested_method: string|null, access: { has_write_tools: bool, custom_only: bool }, presets: { read: string[], write: string[] } per method id (C-956), limits: { method_id, field }[], existing: { connection_id, label, access: "read"|"write", created_by: {id, name}, granted_agent_ids: uuid[] }[] }`.
-  - `PlanMethod = { id, kind, label, description, recommended, audience: "person"|"admin", ready: bool, blocked?: { reason, unlock: Unlock } }`.
-  - `blocked.reason` ∈ `oauth_client_missing` (an `oauth2` method with no resolvable enabled client), `instance_missing` (an instance-bound app with no registered instance), `package_pending`, `app_unavailable`.
-  - `Unlock = { action: "register_oauth_client"|"register_instance"|"enable_app"|"approve_package", who: "org_admin"|"instance_admin"|"workspace_owner", people: { name }[] (at most 3, display names of the org's active owners/admins; empty for `instance_admin`), admin_path: string (dashboard path; for `register_oauth_client` it carries `package`, `client_key` query values), caller_can: bool }`. Instance admins are never named. `caller_can` is true when the caller holds the needed role.
-  - `suggested_method` is the first `ready` method with `audience = person`, taken in this order: the `recommended` one, then the first `oauth2`, then the first `fields`, then the first `hook`. It is `null` when no person-audience method is ready.
-  - `existing` lists the workspace's active connections of this app (and the org's, when the caller may grant from them).
-- C-956 **Manifest keys** (`09 §3.4`; package contract 1, additive, optional; the linter checks them):
-  - `connect[].audience: person|admin` (default `person`). `admin` means the method needs material only an administrator has. It is never suggested, but stays available under Advanced.
-  - `connect[].fields[].limit: bool` (default false). A field shown in the journey's access step as a limit; it must be optional.
-  - `connect[].scope_presets: { read: [scope], write: [scope] }`. Each listed scope must be one of the method's scopes, and `read` may hold only scopes with `access: read`. Without it, `read` is the method's scopes with `access: read`, and `write` is all of the method's scopes.
+Numbers: C-914..C-949, C-955..C-959, C-960..C-975, C-980..C-989. Spare: C-928, C-929, C-950..C-954, C-976..C-979, C-990..C-999. **Not built** (numbers kept, no content): C-918, C-921, C-935. This section replaces the three sections drafted earlier on the branch (first run, app setup, P5-IA) after the design review (D-343).
 
-  The builtin `github` package sets `audience: admin` on the GitHub App installation method. `linear` sets `scope_presets.write: [read, write]`, because Linear's `write` covers every change (its connect note).
-- C-957 **Connect with a grant** (amends `POST /v1/apps/{app}/connect`, C-842/C-243). The body gains `grant?: { agent_ids: uuid[] (1..`GRANT_BULK_MAX`), preset: "read"|"ask_writes"|"full" }`. Before any write or redirect, each agent is checked like `POST /v1/connections/{id}/grants` (C-504): visible, same workspace, caller `can_own`. A `full` preset on a `custom_only` app → 422 `full_grant_forbidden`.
+Briefs, in four fixed waves (D-352):
+- Wave 0: FIX-159 C-930 · P5-UX-2 C-931, C-946 (API), C-955..C-958, C-981 (server), C-988 · P5-IA-1 C-926, C-960..C-962, C-971, C-975, C-987.
+- Wave 1: P5-IA-2 C-963..C-965, C-986 (Internet access sentences), C-989 · P5-UX-1 C-915, C-916, C-981 (component) · P5-UX-4 C-917, C-925, C-938, C-948, C-980 · P5-UX-13 C-939..C-942, C-949.
+- Wave 2: P5-UX-3 C-914 · P5-UX-9 C-932, C-933, C-946 (forms) · P5-IA-3 C-966, C-967 · P5-IA-4 C-968..C-970 · P5-IA-5 C-972..C-974 · P5-UX-14 C-943..C-945, C-985 · P5-UX-16 C-982, C-983.
+- Wave 3: P5-UX-7 C-927, C-986 (agent sentences) · P5-UX-5 C-919, C-920 · P5-UX-6 C-922..C-924 · P5-UX-10 C-934 · P5-UX-11 C-936, C-937, C-947 · P5-UX-17 C-959, C-984.
 
-  The preset expands server-side from the app's tools in the snapshot:
-  - `read`: mode `custom`, every read tool `allow`, write tools absent (blocked).
-  - `ask_writes`: mode `custom`, read tools `allow`, write tools `ask` (default ask timeout).
-  - `full`: mode `full`.
+#### Structure
 
-  The journey sends `access` with it: `read` for `read`, `write` otherwise.
-  - **`kind: connected`**: the connection and its grants are written in one transaction. The answer adds `grants: ConnectionGrant[]`. Audit `connection.create` with `via: "connect_journey"`, plus one grant audit row per agent.
-  - **`kind: redirect`**: the grant intent (agent ids, preset) is stored only inside the sealed OAuth flow object (`domains/connect/flow`, authenticated encryption, bound to the user). At the callback, after the token exchange and in the connection's transaction, it is re-authorized (the caller is still `can_own`, the agents still exist and are visible, `custom_only` is still respected) and applied (SEC-130).
-    - A re-authorization or grant failure keeps the connection, writes no grant, and reports `grant_failed: { code }` in the callback result.
-    - The callback's `BroadcastChannel` message (C-842) adds `granted_agent_ids` and `grant_failed?`.
-  - Without `grant` the route behaves exactly as before.
-- C-958 **Refusals the journey reads**:
-  - `422 connect_probe_failed`: `details` gains `cause: "rejected"|"unreachable"|"unexpected"`. `rejected` is a 401 or 403 from the probe. `unreachable` is DNS, connect, TLS or timeout, and `details.host` is set. `unexpected` is any other status; `upstream_status` is kept. The message is the C-914 sentence.
-  - `422 oauth_client_required` and `instance_oauth_client_required`: `details.unlock: Unlock` (C-955).
-  - `403 forbidden` from every dashboard-reachable route: `details.required_role` ∈ `org_owner`, `org_admin`, `workspace_owner`, `workspace_approver`, where the route knows it.
-
-  `ERROR_MESSAGES` gains keys for each code.
-- C-959 **Links into the journey**. The deep link is `/o/<org>/w/<ws>/agents/<agent id>?tab=access&connect=<app>`, with the app empty for the app step. The agent page accepts the id (FIX-153).
-  - The C-891 builder gains `connect_journey_url(agent, app)`.
-  - The `connect_url` of gateway refusals for a known agent, and the `request_app_connection` notice (I-29), use it. The workspace link (Apps & services › Apps, `…/apps?tab=apps&connect=<app>`, C-960) stays in `details` as `connect_url_workspace` for callers without an agent.
-  - A credential-free app keeps FIX-154's `access_url`.
-- C-914 **Connect journey (dashboard)**, `14 §First run and connecting` §1: entry points, steps App → Account → Access → Sign in → Done, the preselection of C-917, Advanced holding the C-842 controls, failure sentences per C-958, the deep links of C-959, and Apps & services › Apps' Connect opening the journey. Reconnect is unchanged. Test ids are `ws-connect-journey` (axe and narrow-route suites).
-- C-915 **Role-aware navigation and refusals** (`14 §First run and connecting` §2):
-  - Navigation shows each role only the topics C-961 lists for it (the nav itself is P5-IA-1's; P5-UX-1 owns the refusals and empty states below).
-  - Every page gate returns an `ApiError`-shaped value (`code`, `status`, `details.required_role`), never a bare object.
-  - `errorMessage` maps any value with a string `code` through `ERROR_MESSAGES`. The network sentence is only for a missing response, an abort or a non-JSON 5xx.
-  - `forbidden` with `required_role` reads "Only <role phrase> can open this page." and adds "Ask <names>." where the page knows the names.
-- C-916 **Empty states and the first-run fixes** (§2):
-  - `EmptyState` takes `ask` only together with `canAct: boolean` and renders `ask` only when `!canAct` (type-enforced; the lint/test fails on an unconditional `ask`).
-  - The fixes are listed in §2: chat empty state, toolbar wrap, tab-bar scrollbar, "(optional)" duplication, help-link text, computer state words, the admin landing flash.
-- C-917 **Give-access defaults and grant counts**:
-  - Preselection: the contextual agent, else the sole grantable agent, else none. The primary button names the result.
-  - List items gain `grant_count: int` (active grants to agents): `GET /v1/workspaces/{ws}/secrets` and `GET /v1/orgs/{org}/secrets` (generic and LLM), and `GET /v1/workspaces/{ws}/connections` and `GET /v1/orgs/{org}/connections`.
-  - The **No agent can use this** badge shows when `grant_count = 0`.
-  - The Access tab's "Not given to <Agent> (n)" group lists ungranted workspace credentials (`grant_count` and the agent's grants).
-- C-918 **Effective access labels**. `GET /v1/agents/{agent}/effective` credential items gain `selected_by_details: { id, kind: "grant"|"rule"|"org_rule", label }[]` next to `selected_by`.
-  - `grant` covers the derived rules of a grant, with label "given on this page".
-  - `rule` and `org_rule` carry the authored rule's name, or "unnamed rule" when it has none.
-- C-919 **Add people by e-mail** `POST /v1/workspaces/{ws}/access/by-email` (**S/K**, `can_own`; rate class `invite`, 30 per hour per workspace). Body `{ email, role: "member"|"approver"|"owner" }`; 422 `owner_requires_member` when `role = owner` and the e-mail is not an active org member's. The e-mail is normalized like invitations. Answer `200 { result: "added"|"pending", org_entry }`. One exact address per call: there is no search, prefix match or list of org members behind it (SEC-128). The result discloses whether that one address belongs to an active member, which is accepted (owner, D-328: Q-UX-2 "yes").
-  - **Active org member** with a verified matching e-mail: upsert the `workspace_access` row, audit `workspace.access.grant`.
-  - **Otherwise**: upsert a pending row (C-920), audit `workspace.access.pending_create`.
-
-  `org_entry` (only meaningful for `pending`) is one of `open_signup` (sign-up is open and placement's default org is this org), `invitation_needed` (an org owner/admin must invite the person, D-328). It drives the dialog's extra sentence.
-- C-920 **Pending access**:
-  - Routes: `GET /v1/workspaces/{ws}/access/pending` (`can_own`) → `Page<{ id, email, role, invited_by, created_at, expires_at }>`; `DELETE /v1/workspaces/{ws}/access/pending/{id}`.
-  - Table `workspace_pending_access` (`03 §Planned changes`).
-  - At sign-in, when the user becomes or is an active member of the org and holds a verified e-mail equal to a pending row's, each such row becomes a `workspace_access` row with its role (never higher than `owner_requires_member` allows), is deleted, and is audited `workspace.access.pending_apply`.
-  - Expired rows (`PENDING_ACCESS_TTL` = 30 days) are swept and never applied.
-  - Limits: `PENDING_ACCESS_MAX` = 50 per workspace (422 `pending_access_limit`).
-- C-921 **Not built** (owner, D-328: Q-UX-1 answered "no"). There is no org setting that lets a workspace owner invite a non-member into the organization. The number stays used, with no content.
-- C-922 **Starter grants by default and backfill**:
-  - (a) The setup wizard's add of a default-org LLM key adds the key to `placement.starter_grants` in the same flow, whenever placement allows starter grants (C-521). The switch shows **on**, and turning it off removes the key.
-  - (b) `POST /v1/admin/placement/starter-grants/backfill` (**S**, instance admin) with `{ credential_ids?: uuid[] }`, default all current starter grants. It grants each to the default agent of every existing personal workspace in the default org that lacks it. It is idempotent, audited per grant with `actor_label = placement` and `backfill = true`, and answers `{ granted: int, skipped: int }`.
-  - (c) Setup status (C-533) gains the count `personal_workspaces_without_starter`.
-- C-923 **Placement display name template**. `placement.personal_workspace.display_name_template`, default `{given_name}|{name}|{email_local}`, uses the variables of C-521. It sets the personal workspace's **name**; the existing template keeps setting its **slug**. For existing workspaces nothing is migrated (D-162(e)). The Welcome title for a personal workspace is "Welcome, <first name or display name>".
-- C-924 **Setup reasons for apps**. C-534 gains `app_needs_oauth_client` (with `app_id`, `package`, `client_key`) for each active app whose person-audience methods are all `oauth2` with no resolvable instance or default-org client, and `app_token_only` (informational) for apps whose only ready person method is `fields`. The wizard's **Apps** step renders them (`14 §First run and connecting` §4).
-- C-925 **Apps & services › Overview** (`…/apps?tab=overview`, the default tab of the workspace's Apps & services page, C-960).
-  - One list over connections and services (generic secrets): name, kind chip (App, Service), agents with access (avatars, or "No agent"), access level, menu; one line links to AI models for LLM keys.
-  - **Add**: An app (journey), A service (Name, Website, Token, with Advanced for the `08 §5` path and recipes).
-  - Tabs: Overview · Apps · Connections · Services · OAuth clients (`can_own`) · Proposals (only when proposals wait).
-- C-926 **Internet access summary and wording** (workspace and org Internet access pages, C-965):
-  - A summary of plain sentences computed client-side from the scope ladder (C-963): the effective posture, defaults and rules of this level and the ones above. Its source table (setting → sentence) lives in `web/src/lib/policy/summary.ts` with unit tests.
-  - **Common changes** create ordinary draft rules through the existing policy draft and apply routes, and show the draft before applying.
-  - Label renames per `14 §First run and connecting` §6. Simulate becomes **Test a request**, with Speaker and Lane under **More**. The corrected empty-rules sentence.
-  - No API change.
-- C-927 **Welcome and tour links**:
-  - Welcome's optional steps: "Connect an app" goes to the journey (C-959) for the default agent; "Invite a teammate" goes to the workspace's People page › Add people, shown when the viewer is `can_own` of the workspace.
-  - The tour's Agents stop mentions Access › Add an app (P5-IA-1 owns the rest of the tour, C-975).
-  - Until P5-UX-3 merges, P5-UX-1 points "Connect an app" at `…/credentials?tab=apps`.
-
-### Phase 5 — P5-UX app setup (setup page, per-app access answer, org connections, editor defaults, guides, test connection, labels; FIX-159; D-329..D-336, SEC-129)
-
-Rule: `14 §App setup`, `07 §Authoring` (simulate), `09 §3.4` (C-939, C-942 keys) and `§6` (guide checks), `05`, `03 §Planned changes` (connection health), `17` (SEC-129). Reserved numbers C-930..C-954 (C-950..C-954 spare). Errors use the standard body. FIX-159 implements C-930; P5-UX-8 C-931; P5-UX-9 C-932, C-933; P5-UX-10 C-934, C-935; P5-UX-11 C-936, C-937; P5-UX-12 C-938, C-939; P5-UX-13 C-940..C-942; P5-UX-14 C-943..C-945; P5-UX-15 C-946..C-949.
-
-- C-930 **Simulate evaluates app connections like the gateway** (amends C-83 and `07 §Authoring`; FIX-159, D-329).
-  - For `lane: request`, the simulator:
-    1. identifies the app (host, port and path against **Active** host claims, instance-aware, as the gateway's `decide.rs` does);
-    2. adds that app's connections in scope as candidates;
-    3. selects candidates by the rules;
-    4. picks the winner with the gateway's rule (connections before secrets);
-    5. identifies the tool (`params` and `connect_methods` included);
-    6. sets `tool_tags`, and builds `Credential::Connection` with `read_only`.
-
-    It then evaluates with the same facts the gateway builds.
-  - App and tool identification moves into one shared function in `crates/aurora-registry`, used by the gateway, the simulator and the effective view (C-934). No copy.
-  - The response's `candidates` may be `kind: connection`. A new `app: { app_id, tool_id|null }` is added. The trace includes the checks that run before any rule (`read_only_connection`, `app_untooled_blocked`, `missing_scope`).
-  - Invariant test: a table of requests run through the gateway decision function and through simulate yields the same verdict, winner and reason.
-- C-931 **Setup status** `GET /v1/apps/{app}/setup?org_id=&workspace_id=` (**S/K**). `workspace_id` needs `can_own` and gives the workspace view; `org_id` alone needs org owner/admin and gives the org view.
-  - It is computed by the same function as C-955 (one function; the plan is a projection of it). Answer: `{ app_id, name, family?, available, posture, methods: SetupMethod[], clients: { workspace: ClientRef[]|null, organization: ClientRef[]|null, instance: { set_up: bool } }, instances: { id, label, base_url, scope }[], connections: { workspace: ConnRef[], organization: ConnRef[] }, values: { callback_url, external_id?: string (only when the app's `permissions.context` includes `org_external_id`) }, can: { register_workspace_client, register_org_client, register_instance, set_availability, connect_workspace, connect_org } }`.
-  - `SetupMethod = { id, label, description, kind, audience, ready, needs: ("oauth_client"|"instance"|"admin_material")[], client_key?, unlock?: Unlock }` (C-955 `Unlock`).
-  - `ClientRef = { id, client_key, enabled, label }`. Client secrets and ids are never included. The org view's `clients.workspace` is `null`. The workspace view's `clients.organization` is shown only as refs.
-- C-932 **App setup page** (`14 §App setup` §7): routes `/o/<org>/w/<ws>/apps/<app>` (workspace view) and `/o/<org>/apps/<app>` (org view).
-  - Sections: status sentences per method, what is set up and where, values to copy, inline actions per `can`, the guide (C-940), the connections.
-  - Apps & services › Apps' **Details** opens this page (the details dialog's content moves into a section of it). Both pages sit inside their level's Apps & services topic (C-960).
-  - The old `/o/<org>/w/<ws>/apps/<app>/connect` route keeps redirecting to the journey.
-  - Test ids `ws-app-setup` and `org-app-setup`.
-- C-933 **Indexes link to the setup page.** Every app name in the OAuth clients, Self-hosted apps, Packages (app rows) and Connections tabs of Apps & services, at every level that has them (C-960), links to its setup page at the viewer's level. The org's Apps & services › Apps tab renders the posture control (C-20, the same `PUT` as the retired Governance › Apps tab) at its top, above the availability list, with one Save. Governance › Apps redirects there (C-960).
-- C-934 **Agent app access** `GET /v1/agents/{agent}/apps/{app}/access` (**S/K**, `can_use` of the agent's workspace; rate class `simulate`).
-  - Answer: `{ connections: [{ connection_id, label, scope, access, tools: [{ tool_id, name, access: "read"|"write", decision: "allow"|"ask"|"block", reasons: [{ layer: "connection"|"grant"|"workspace_rule"|"org_rule"|"governance"|"package", label, rule_id?, link }] }], unreachable: { tool_ids, because } }] }`.
-  - `reasons[0]` is the deciding layer.
-  - `unreachable` lists the tools a grant sets to allow or ask that can never run (for example, write tools on a read-only connection).
-  - It is computed with the C-930 shared evaluator over one synthetic request per tool. The effective view (`GET /v1/agents/{agent}/effective`) is re-implemented on the same path, and a test asserts the two agree.
-- C-935 **Access tab and Internet access** (`14 §App setup` §8):
-  - Access tab connection rows expand to the C-934 table; `unreachable` is shown next to the grant's save.
-  - The Internet access pages (workspace and org, C-965) list grant-derived rules read-only under **From agents' access**, one line per (agent, connection), linking to the Access tab. The data comes from the existing rules route with `derived` filtering. If the route does not mark derived rules, add `derived_from: { kind: "grant", agent_id, credential_id }` to rule items.
-- C-936 **Org-wide connect (dashboard)**.
-  - The journey (C-914) gains an org mode: connect with `scope: "organization"`, `org_id`, no agent step, org owner/admin only.
-  - Its Done step offers:
-    - a starter grant (`PUT /v1/admin/placement` adding the connection, only for the default org and an instance admin; otherwise not shown);
-    - give agents access now (C-504 bulk grant over agents of any workspace the caller owns, implicit included);
-    - done.
-  - The org's Apps & services › Apps **Connect…** and the org setup page start it. Workspace owners see org connections in the journey (C-955 `existing`, already including the org's) labelled "Shared by <org>".
-- C-937 **Org connections tab**. The org's Apps & services › Connections tab lists org connections with Reconnect (C-842 reconnect), access toggle (C-740 `PATCH access`), Disable, Delete; empty state with **Connect an app for the organization**. The org tab is org owners/admins only (C-961). Workspace owners (I-27 read access) see org connections read-only on their **workspace's** Apps & services › Connections tab and on the Access tab, labelled "Shared by <org>" with "Managed by <org> admins".
-- C-938 **Grant editor defaults** (`14 §App setup` §10).
-  - `GrantSubject` and `GrantForm` take the connection's `access`.
-  - Custom on `access = read`: read tools `allow`, write tools collapsed and not sent (they stay blocked). Custom on `access = write`: read tools `allow`, write tools `ask`.
-  - Existing grants are loaded as saved.
-  - Rows show `name` and `description`, with method and pattern under **Technical details**.
-  - The read-only note renders in every `GrantForm` with `access = read`.
-  - No API change, except `description` on tools in `GET /v1/apps/{app}` if it is not already returned (it is, per `apps/dto.rs`).
-- C-939 **Tool descriptions and naming** (package contract 1, lint).
-  - Every builtin tool has a `description` (≤ 200 characters, one sentence); a builtin check fails without one. Third-party packages get a linter warning (`tool_description_missing`).
-  - In `aws-keys`, `ec2_call` gets the name "Any other EC2 action (changes, and reads not covered above)". `ec2_describe`'s description names the Describe* actions.
-  - Each changed package bumps its patch version.
-- C-940 **Guide placeholders**. `GET /v1/apps/{app}/guide?workspace_id=|org_id=` renders `{{aurora.callback_url}}`, `{{aurora.external_id}}`, `{{aurora.page:<name>}}` and `{{aurora.app_setup}}` for the caller before returning Markdown.
-  - Names: `oauth_clients`, `self_hosted`, `packages` (tabs of the Apps & services topic at each level, C-960), and `app_setup`.
-  - A page placeholder becomes a Markdown link to that page at the highest level the caller can open, or the text "(an organization admin can do this)" / "(an Aurora administrator can do this)" when the caller can open none. Workspaces have no `self_hosted` or `packages` tab (C-960), so for those a workspace owner gets the org tab if they are an org admin, else the sentence.
-  - `external_id` is filled only for an org member, else "(shown to members of your organization)".
-  - Unknown placeholders never reach a viewer (C-941). The raw guide stays available to package tooling (`aurora plugin docs`).
-- C-941 **Guide checks** (`09 §6`):
-  - `guide_unknown_placeholder` (error): a `{{aurora.…}}` token outside the C-940 set.
-  - `scripts/guards` or `check-builtin.sh` refuses, in builtin guides and builtin `connect_note`s only, the literal strings `<your Aurora URL>`, `<external_url>`, `Admin, Apps,` and the page name "Instances" (renamed "Self-hosted apps", FIX-132).
-- C-942 **`connect[].show_context`** (manifest, optional): a list of context variables (`org_external_id` only for now). The connect form, the journey's sign-in step and the setup page show it as a labelled value with Copy above the method's fields, read from `GET /v1/orgs/{org}` (`external_id`, already readable by any org member).
-  - `aws-keys` `assume_role` declares it.
-  - The Bedrock assume-role LLM key form shows the same block (C-811, not built until now).
-- C-943 **Test connection** `POST /v1/connections/{id}/test` (**S/K**; `can_own` of the connection's workspace, or org owner/admin for an org connection; rate class `check`; SEC-129).
-  - It runs, in order of what the method has: the method's `probe` (the connect-time probe code, `connect/probe.rs`); for `database` apps a gateway login up to `ReadyForQuery` with no statement, through an internal gateway route on the existing internal channel the API already uses for the gateway, or a new one with the same authentication if none exists (the lane reports which); for a `hook` token method one mint through the hook host.
-  - Answer `{ result: "ok"|"rejected"|"unreachable"|"unexpected"|"not_testable", cause_detail?: { host?, status?, code? }, checked_at }`.
-  - It never returns an upstream body. It is audited `connection.test`.
-- C-944 **Connection health fields**. `app_connections.last_check_at timestamptz null` and `last_check_result text null` (CHECK in the C-943 results, `not_testable` excluded from storage). Both are set by C-943 and by the post-connect test (C-945), exposed on `Connection` and never written by the gateway.
-- C-945 **Test UI**:
-  - **Test connection** on each connection row (workspace and org) with the result sentence of `14 §App setup` §12.
-  - The health line "Checked <time> · <result>" next to "Last used".
-  - The journey's and connect dialog's Done step run C-943 once for methods without a probe and show a failure as a warning.
-- C-946 **OAuth client labels**. `AppDetail.oauth_clients[]` gains `used_by_methods: { id, label }[]` from the connect methods whose `client` is that key. The OAuth client form's app picker shows "<app> — for <method label>[, <method label>]" and never shows `client_key` (it stays in a tooltip for operators).
-- C-947 **Workspace chooser data**. `Workspace` items of `GET /v1/orgs/{org}/workspaces` gain `personal_of?: { id, name }` (the user a personal workspace belongs to; absent for shared workspaces). The org's Apps & services › Apps **Connect…** chooser orders: For the whole organization (C-936), the caller's own and shared workspaces, then others' personal workspaces under a collapsed group.
-- C-948 **Agent naming**:
-  - `POST /v1/orgs/{org}/workspaces` accepts optional `agent_name` (validated by the same function as an agent's `name` on create/PATCH; the handle is slugified as today), defaulting to `agents.default_name`. The New workspace dialog shows it.
-  - Every multi-workspace agent picker row reads "<workspace> · <agent>".
-- C-949 **GitLab method labels** (package): `token` "Personal access token" with a description (scopes, expiry, project or group tokens), `oauth` "Sign in with GitLab" with a description (needs an OAuth client; self-managed via a registered server). Patch version bump.
-
-### Phase 5 — P5-IA (one structure for every level: topics, scope ladder, settings in their topics, settings in words, D-338..D-342)
-
-Rule: `14 §Information architecture` › "One structure for every level" (normative for every page's place, name and visibility), `15 §Instance settings` (sections unchanged), D-338..D-342. Reserved numbers C-960..C-979 (C-976..C-979 spare). Errors use the standard body. P5-IA-1 implements C-960..C-962 and C-975; P5-IA-2 C-963..C-965; P5-IA-3 C-966, C-967; P5-IA-4 C-968..C-971; P5-IA-5 C-972..C-974. Every P5-UX brief builds its screens in these places and names (D-342).
-
-- C-960 **Routes, tabs and redirects.** The route of each topic and tab is `14 §Information architecture`'s table. Every old route answers a client-side redirect (and the Next.js `redirects` entry where the old path is static) to its new place, query and anchor preserved:
+- C-960 **Routes, tabs and redirects.** The route of each topic and tab is the table of `14 §Information architecture`. Every old route redirects to its new place, query and anchor preserved (Next.js `redirects` for static paths, a client redirect for `?tab=` mappings):
   - **Administration:**
     - `/admin/setup` → `/admin`
     - `/admin/users` → `/admin/people?tab=users`
-    - `/admin/orgs` → `/admin/people?tab=organizations`
-    - `/admin/orgs/<id>` → `/admin/people/organizations/<id>`
+    - `/admin/orgs` → `/admin/people?tab=organizations`; `/admin/orgs/<id>` → `/admin/people/organizations/<id>`
     - `/admin/identity` → `/admin/people?tab=sign-in`
     - `/admin/placement` → `/admin/people?tab=new-users`
-    - `/admin/secret-stores` → `/admin/platform?tab=secret-stores`
-    - `/admin/plugins` → `/admin/apps?tab=packages`
-    - `/admin/plugins/<id>` → `/admin/apps/packages/<id>`
-    - `/admin/addon-sources` → `/admin/apps?tab=sources`
-    - `/admin/trusted-keys` → `/admin/apps?tab=publishers`
-    - `/admin/host-claims` → `/admin/apps?tab=host-conflicts`
+    - `/admin/plugins` → `/admin/apps?tab=apps`; `/admin/plugins/<id>` → `/admin/apps/packages/<id>`
+    - `/admin/addon-sources`, `/admin/trusted-keys`, `/admin/host-claims` → `/admin/apps?tab=advanced` (anchors `#package-sources`, `#publishers`, `#host-conflicts`)
     - `/admin/instances` → `/admin/apps?tab=self-hosted`
     - `/admin/oauth-clients` → `/admin/apps?tab=oauth-clients`
     - `/admin/connectors` → `/admin/chat-platforms`
-    - `/admin/runners` → `/admin/platform?tab=runners`
-    - `/admin/storage` → `/admin/data?tab=storage`
-    - `/admin/audit` → `/admin/data?tab=audit`
+    - `/admin/secret-stores` → `/admin/platform?tab=secret-stores`; `/admin/runners` → `/admin/platform?tab=runners`
+    - `/admin/storage` → `/admin/data?tab=storage`; `/admin/audit` → `/admin/data?tab=audit`
     - `/admin/settings/<section>` → its topic page per C-971; `/admin/settings` stays (All settings).
   - **Organization:**
-    - `/o/<org>/members` → `/o/<org>/people?tab=members`
-    - `/o/<org>/groups` → `/o/<org>/people?tab=groups`
-    - `/o/<org>/groups/<id>` → `/o/<org>/people/groups/<id>`
-    - `/o/<org>/settings/directory` → `/o/<org>/people?tab=directory-sync`
-    - `/o/<org>/credentials?tab=secrets|llm|connections|oauth` → `/o/<org>/apps?tab=services`, `/o/<org>/ai-models?tab=keys`, `/o/<org>/apps?tab=connections`, `/o/<org>/apps?tab=oauth-clients`; `/o/<org>/credentials` with no tab or an unknown one → `/o/<org>/apps?tab=services` (today's fallback tab is Secrets)
+    - `/o/<org>/members` → `/o/<org>/people?tab=members`; `/o/<org>/groups` → `…?tab=groups`; `/o/<org>/groups/<id>` → `/o/<org>/people/groups/<id>`; `/o/<org>/settings/directory` → `…?tab=directory-sync`
+    - `/o/<org>/credentials` (no tab, `secrets`, `connections`) → `/o/<org>/apps?tab=accounts`; `?tab=llm` → `/o/<org>/apps?tab=accounts&kind=ai-key`; `?tab=oauth` → `/o/<org>/apps?tab=oauth-clients`
     - `/o/<org>/apps` → `/o/<org>/apps?tab=apps`
-    - `/o/<org>/governance?tab=model|egress|apps|byo|compliance` → `/o/<org>/ai-models?tab=access`, `/o/<org>/internet-access`, `/o/<org>/apps?tab=apps`, `/o/<org>/agents?tab=byo`, `/o/<org>/ai-models?tab=keys-to-fix`
+    - `/o/<org>/governance?tab=model|compliance` → `/o/<org>/ai-models`; `?tab=egress` → `/o/<org>/internet-access`; `?tab=apps` → `/o/<org>/apps?tab=apps`; `?tab=byo` → `/o/<org>/agents?tab=byo`
     - `/o/<org>/policy` → `/o/<org>/internet-access`
-    - `/o/<org>/skills` → `/o/<org>/agents?tab=skills`
-    - `/o/<org>/skills/libraries` → `/o/<org>/agents/skills/libraries`
-    - `/o/<org>/channels` → `/o/<org>/chat-platforms`
-    - `/o/<org>/instances` → `/o/<org>/apps?tab=self-hosted`
-    - `/o/<org>/api-keys` → `/o/<org>/settings?tab=api-keys`
-    - `/o/<org>/audit` → `/o/<org>/data?tab=audit`
-    - `/o/<org>/storage` → `/o/<org>/data?tab=storage`
-    - `/o/<org>/settings/previews` → `/o/<org>/agents?tab=previews`
+    - `/o/<org>/skills` → `/o/<org>/agents?tab=skills`; `/o/<org>/skills/libraries` → `/o/<org>/agents/skills/libraries`; `/o/<org>/settings/previews` → `/o/<org>/agents?tab=previews`
+    - `/o/<org>/channels` → `/o/<org>/chat-platforms`; `/o/<org>/instances` → `/o/<org>/apps?tab=self-hosted`
+    - `/o/<org>/api-keys` → `/o/<org>/settings?tab=api-keys`; `/o/<org>/audit` → `/o/<org>/data?tab=audit`; `/o/<org>/storage` → `/o/<org>/data?tab=storage`
   - **Workspace:**
-    - `…/credentials` (no tab) → `…/apps?tab=overview`
-    - `…/credentials?tab=apps|connections|secrets|oauth|proposals` → `…/apps?tab=apps|connections|services|oauth-clients|proposals`
-    - `…/credentials?tab=llm` → `…/ai-models`
+    - `…/credentials` (no tab, `secrets`, `connections`) → `…/apps?tab=accounts`; `?tab=llm` → `…/apps?tab=accounts&kind=ai-key`; `?tab=apps` and `?tab=oauth` → `…/apps?tab=apps`; `?tab=proposals` → `…/apps?tab=accounts#requests`
     - `…/policy` → `…/internet-access`
-    - `…/settings?tab=access` → `…/people`; the other workspace Settings tabs (`general`, `api-keys`, `audit`, `danger`) keep their paths.
-  - Query parameters the new pages accept: `connect=`, `reconnect=` (C-842), `add=1` on `…/people` (opens Add people, P5-UX-5), and `package=` / `client_key=` on the OAuth clients tabs (P5-UX-6, P5-UX-9).
-  - The C-842 / C-891 deep links (`connect=`, `reconnect=`) survive the redirect.
-  - The gateway link builder (C-891) emits the new paths.
-  - Every `href` in the web app goes through one route helper module (`web/src/lib/routes.ts`), and a test fails on a hard-coded old path.
-- C-961 **Visibility per role** (`14 §Information architecture` "Who sees what"):
-  - one function `visibleTopics(level, roles)` drives the navigation, the tour (C-975) and the Welcome links;
-  - pages a role sees read-only render without write controls and with one line naming who can change them;
-  - pages a role cannot open answer the C-915 refusal.
-- C-962 **Administration entry and level badge.**
-  - The sidebar footer and the account menu carry **Administration** for instance admins.
-  - The org switcher lists organizations only.
+    - `…/settings?tab=access` → `…/people`
+  - Query parameters the new pages accept: `connect=`, `reconnect=` (C-842), `kind=` on Accounts, `add=1` on `…/people`, `package=` and `client_key=` on the OAuth clients tabs, `focus=` on Approvals (C-983).
+  - Every `href` in the web app comes from one helper module (`web/src/lib/routes.ts`), and a test fails on a hard-coded old path. The API keeps one table of the same paths for links it emits (C-959).
+- C-961 **Visibility per role** (`14` "Who sees what"). One function `visibleTopics(level, roles)` drives the navigation, the tour (C-975) and the Welcome links. Pages a role sees read-only render without write controls and with `WhoCan` (C-981). Pages a role cannot open answer the C-915 refusal.
+- C-962 **Administration entry, level badge, your account.**
+  - The sidebar footer and the account menu carry **Administration** for instance admins. The org switcher lists organizations only.
   - `PageHeader` takes `level: { kind: "instance"|"org"|"workspace", label }` and renders the badge; every page passes it.
-- C-963 **Scope ladder** (`ScopeLadder` in the shared primitives): `above: { label, source: "instance"|"org", value_display, link? }[]`, `here: ReactNode` (this level's controls, with `minimumNote?` naming the floor), `below?: { columns, rows: { label, values, link }[] }`. Used on every topic page that shows an inherited value (`14` list).
-- C-964 **What the levels below changed.**
-  - Instance → organizations: the existing `GET /v1/admin/settings/governance/orgs` (SET-2), extended with BYO token age and retention days when SET-5 registers them.
-  - Organization → workspaces: new `GET /v1/orgs/{org}/workspace-overrides` (**S/K**, org owner/admin) → `Page<{ workspace: { id, name, personal_of? }, internet_access: { uncredentialed: "inherit"|"block", open_lane: "inherit"|"allowlist_only"|"disabled", default_rule: "none"|"allow"|"block", rule_count }, byo: { posture } }>`. It lists only workspaces that differ from the org unless `?all=true`.
-- C-965 **Internet access pages**:
-  - **Administration:** the `governance` section's egress and open-lane keys, with the orgs table (C-964).
-  - **Organization:** one page with:
-    - the summary (C-926);
-    - Common changes;
-    - posture, allow-list and browser connections (was Governance › Egress), with the instance floor above;
-    - rules and default rule (was Policy) with draft and apply;
-    - From agents' access (C-935);
-    - Test a request (C-930);
-    - the workspaces table (C-964).
-  - **Workspace:** the same layout with the workspace's controls (requests without a credential, browser connections, allow-list, rules), the org above.
-  - Saving keeps today's two routes: governance `PUT` and the policy draft and apply.
-- C-966 **AI models pages**:
-  - **Administration:** Endpoints (the `llm` section) and Rules for organizations (the `governance` LLM keys), with the orgs table.
-  - **Organization:** Access (was Governance › Model access), with the instance floor above; Keys (org LLM keys); Keys to fix (was Compliance).
-  - **Workspace:** LLM keys and the model-readiness summary of its agents.
-- C-967 **Agents pages**:
-  - **Administration:** Defaults (`agents`), BYO (the `governance` BYO and agent-token keys, with the orgs table), Approvals, Terminal, Previews, Skills (their sections).
-  - **Organization:** BYO (was Governance › BYO agents), with the instance floor above and the workspaces table; Skills (and libraries); Previews (was Settings › Previews).
-  - **Workspace:** the agents list, with the workspace BYO posture (was Settings › General) in its header as a ladder row.
-- C-968 **People pages**:
-  - **Administration:** Users, Organizations (and detail), Sign-in (the `sign_in` section plus the role-mapping view that was Identity; until SET-4 merges, Identity's content), New users (placement), Directory sync (`scim`).
+  - The account menu item and the `/account` page title read **Your account**.
+- C-987 **"Pages have new names" notice.**
+  - `user_onboarding.notices_seen text[]` (at most `ONBOARDING_NOTICES_MAX` = 50 keys). `GET /v1/me/onboarding` returns it; `PATCH /v1/me/onboarding` accepts `{ notice_seen: "<key>" }` and appends it.
+  - Notice key `renames-2026-11`. People whose account was created after the release never see it (the migration marks it seen for accounts created later).
+  - The notice lists old name → new name for the pages the viewer can see (from one table next to `routes.ts`). It is dismissible, and replayable from the account menu (**What moved**).
+- C-926 **Labels** (strings only, on the pages P5-IA-1 moves):
+  - "No default (defer)" → **Let the organization decide** (workspace) / **None: only rules decide** (organization; there is no instance rule scope).
+  - "Uncredentialed requests" → **Requests without an account**.
+  - "Browser tunnels (open lane)" → **Browser connections (not inspected)**.
+  - Simulate → **Check what would happen**, with Speaker and Lane under **More**.
+  - Empty rules: "Until you add one, requests follow the limits and defaults below."
+  - Approve / Deny → **Allow once** / **Block** (C-983).
+- C-975 **Tour.** One stop per topic the viewer sees at workspace level (`visibleTopics`), with the new names. The Agents stop says that an agent gets apps on its Access tab.
+- C-963 **Scope ladder** (`ScopeLadder` in the shared primitives): `above: { label, value_display, source: "instance"|"org", who_can: WhoCan }[]`, `here: ReactNode` with an optional `minimumNote`, a `collapsed` mode for workspaces (**Tighten…**), and `below?: { columns, rows: { label, values, link }[] }`.
+- C-964 **What the levels below tightened** (Internet access only).
+  - Administration → organizations: the existing `GET /v1/admin/settings/governance/orgs` (SET-2).
+  - Organization → workspaces: `GET /v1/orgs/{org}/workspace-overrides` (**S/K**, org owner/admin) → `Page<{ workspace: { id, name, personal_of? }, uncredentialed: "inherit"|"block", open_lane: "inherit"|"allowlist_only"|"disabled", default_rule: "none"|"allow"|"block", rule_count }>`; only workspaces that differ from the organization unless `?all=true`.
+- C-965 **Internet access pages.**
+  - **Workspace:** the summary (C-986); **Common changes** (C-989); the rules people wrote, with **Add rule**; the line "What agents may do in apps is set for each agent, on its Access tab." linking to Agents; the limits from above as ladder rows with **Tighten…** holding the workspace's four controls (default rule, requests without an account, browser connections, allow-list); **Check what would happen** (C-930).
+  - **Organization:** the same order, with the organization's limits open (posture, allow-list, browser connections), the Administration limits above, and the workspaces table below (C-964).
+  - **Administration:** the `governance` section's egress and browser-connection keys (C-971) and the organizations table.
+  - Members see the pages read-only (C-961).
+- C-989 **One way to save Internet access, and Common changes.**
+  - The page has one pending-changes bar: **Apply changes** and **Discard**. There is no "Save draft" button; edits to rules and workspace defaults are saved to the policy draft as they are made.
+  - Workspace: Apply publishes the draft (`07 §Authoring`, routes unchanged).
+  - Organization: Apply sends the governance document (`PUT /v1/orgs/{org}/governance`) when it changed, then publishes the policy draft. If the second step fails, the bar says which part was applied and keeps the rest pending.
+  - **Common changes** are two buttons that add an ordinary rule to the draft and show it for confirmation: **Ask me before changes on a website** (methods `POST|PUT|PATCH|DELETE`, a host, ask) and **Block a website**.
+- C-966 **AI models pages.**
+  - **Administration:** Endpoints (the `llm` section) and Rules (the `governance` AI-key rules), with each organization's effective values.
+  - **Organization:** one page with the model rules (was Governance › Model access) under the Administration limits, and a notice "<n> AI keys no longer follow these rules" linking to Accounts filtered to them (was Compliance).
+  - **Workspace:** none. AI keys are accounts (C-917).
+- C-967 **Agents pages.**
+  - **Administration:** Defaults (`agents`, `approvals`), BYO (the `governance` BYO and agent-token keys), Computers (`terminal`, `previews`), Skills (`skills`).
+  - **Organization:** BYO (was Governance › BYO agents) under the Administration limits, Skills (and libraries), Previews.
+  - **Workspace:** the agents list; the workspace BYO setting (was Settings › General) is a ladder row in its header.
+- C-968 **People pages.**
+  - **Administration:** Users, Organizations (and detail), Sign-in (`sign_in`, `scim`, and the role-mapping view that was Identity), New users (placement).
   - **Organization:** Members, Groups, Directory sync.
-  - **Workspace:** People (was Settings › Access), with P5-UX-5's Add people.
-- C-969 **Data pages**:
-  - **Administration:** Retention (`retention`), Storage (usage), Audit log.
-  - **Organization:** Retention: conversation days (was Settings) and attachment days and quota (was Storage), as one form with the instance maximums above; Storage (usage); Audit log.
-  - **Workspace:** audit stays in Settings.
-- C-970 **Platform and Chat platforms.**
-  - **Administration › Platform:** Runners, Secret stores (one page; the Settings duplicate is gone), Email (`email`), Limits (`limits`).
+  - **Workspace:** People (was Settings › Access), with Add people (C-919).
+- C-969 **Data pages.**
+  - **Administration:** Retention (`retention`), Storage, Audit log.
+  - **Organization:** Retention as one form (conversation days, attachment days and quota) under the Administration maximums; Storage; Audit log.
+- C-970 **Platform, Chat platforms, Settings.**
+  - **Administration › Platform:** Runners, Secret stores (one page), Email (`email`), Rate limits (`limits`).
   - **Chat platforms:** Administration (was Connectors) and organization (was Channels); content unchanged.
-  - **Organization › Settings:** General (name, URL, members can create workspaces, member and agent limits), API keys, Danger zone (freeze, delete).
-- C-971 **Settings sections in topic pages.**
-  - `SettingsSectionFields { section, keys? }` renders a section, or a subset of its keys, inside any page with the section's draft, preview, Helm locks and save.
-  - Saving a subset sends the section's whole document with untouched keys unchanged.
-  - The section → topic map is `14`'s table.
-  - `/admin/settings` (All settings) lists every section with its topic link, a search over field labels and help (C-972), and Export / Import.
-- C-972 **Field metadata.**
-  - `GET /v1/admin/settings/{section}` items gain `fields: { key, label, help, kind: "bool"|"int"|"duration"|"enum"|"list"|"text"|"secret"|"keyed_list", choices?: { value, label, description }[], default_display, unit?, doc?: { title, path } }[]`.
-  - It comes from one registry next to the section registry in `crates/aurora-config` (`settings.rs` / a `fields.rs`).
-  - A test fails if a movable key (`deploy/helm/aurora/movable-keys.txt`) has no metadata.
-  - The dashboard renders labels, help, choice cards and list editors from it. `labelOf(key)` is removed.
-- C-973 **Read-only current values.**
-  - For a section whose keys are not editable yet (registered by SET-4/5 later), `GET /v1/admin/settings/{section}` answers `editable: false` and `current: { key, value_display, source: "helm"|"default" }[]` from the running configuration. Secret keys read only "set" or "not set".
-  - The topic page shows them read-only with the operator doc (`doc` of C-972). It never shows an empty form.
-- C-974 **UI text rules.** A web test scans the built message strings and page components and fails on: `§` followed by a digit, the substring `docs/`, a raw enum value rendered as a label (a list of known enum ids), `[]` as a rendered value, or a key-derived label (`labelOf`).
-- C-975 **Tour stops.** The tour (`14 §Onboarding` §3) follows `visibleTopics`, one stop per visible topic of the workspace level plus Agents › Access (P5-UX-3's sentence), each with its new name.
+  - **Organization › Settings:** General, API keys, Danger zone. **Workspace › Settings:** General, API keys, Audit, Danger zone.
+- C-971 **Settings sections in topic pages.** `SettingsSectionFields { section, keys? }` renders a section, or a subset of its keys, inside any page with the section's draft, preview, Helm locks and save. Saving a subset sends the section's whole document with untouched keys unchanged. `/admin/settings` (All settings) lists every section under its topic, with search over field labels and help (C-972), Export and Import.
+- C-972 **Field metadata.** `GET /v1/admin/settings/{section}` items gain `fields: { key, label, help, kind: "bool"|"int"|"duration"|"enum"|"list"|"text"|"secret"|"keyed_list", choices?: { value, label, description }[], default_display, unit?, doc?: { title, path } }[]`, from one registry next to the section registry in `crates/aurora-config`. A test fails if a movable key (`deploy/helm/aurora/movable-keys.txt`) has no metadata. The dashboard renders from it; `labelOf(key)` is removed.
+- C-973 **Read-only current values.** For a section whose keys are not editable yet, `GET /v1/admin/settings/{section}` answers `editable: false` and `current: { key, value_display, source: "helm"|"default" }[]` from the running configuration; secret keys read only "set" or "not set". The page shows them read-only with the operator doc, never an empty form.
+- C-974 **UI text rules.** A web test scans the rendered strings of `web/src/components` and `web/src/app` and fails on: `§` followed by a digit; the substring `docs/`; a raw enum id shown as a label (a list of known ids); `[]` shown as a value; a key-derived label; and the retired words of the vocabulary table used as page names or labels ("Governance", "Policy", "Credentials", "Simulate", "grant", "secret", "connection" as a noun for an account). For the vocabulary check, the test keeps a list of files that a later brief rewrites; the list is empty at the end of wave 3.
+
+#### Who can fix this
+
+- C-981 **`WhoCan`.**
+  - Shape: `WhoCan = { action: string, role: "workspace_owner"|"workspace_approver"|"org_admin"|"org_owner"|"instance_admin", people: { name }[] (at most 3 display names; always empty for `instance_admin`), path?: string (a C-960 path, present only when `you_can`), you_can: bool }`.
+  - The server puts it in: `403 forbidden` (`details.who_can`, from the shared role helpers, so every refused route carries it); blocked connect methods (C-931, C-955); `above_account_limit` (C-980); shared accounts (`managed_by`, C-917); guide link fallbacks (C-940).
+  - `GET /v1/workspaces/{ws}` and `GET /v1/orgs/{org}` gain `contacts: { owners: { name }[], admins?: { name }[] }` (at most 3 each, readable by every member of that level), for places where nothing was refused (empty states, ladder rows).
+  - The dashboard renders all of them with one component, `WhoCan`: the sentence ("Ask Ada Lovelace or Alan Turing (organization admins).", "An Aurora administrator can set this up.") or, when `you_can`, the action or link.
+- C-915 **Refusals in words.** Every page gate returns an `ApiError`-shaped value with `who_can`, never a bare object. `errorMessage` maps any value with a string `code` through `ERROR_MESSAGES`. "Could not reach the server" is only for a missing response, an abort or a non-JSON 5xx. A refused page reads "Only <role phrase> can open this page." with `WhoCan`.
+- C-916 **Empty states and first-run fixes.** `EmptyState` takes `ask` only together with `canAct: boolean` and renders it (through `WhoCan`) only when `!canAct`; a viewer who can act sees the action. The first-run fixes are the list in `14 §Agents, accounts and access` §9.
+
+#### Accounts and access
+
+- C-917 **Accounts API.** `GET /v1/workspaces/{ws}/accounts?agent_id=&kind=&app_id=` (**S/K**, `can_use`) and `GET /v1/orgs/{org}/accounts?kind=&app_id=` (**S/K**, org owner/admin) → `Page<Account>`:
+  - `Account = { ref: { type: "connection"|"secret", id }, kind: "app"|"website"|"ai_key", name, app?: { app_id, name, family? }, scope: "workspace"|"organization", shared: bool, limit?: "read"|"write", levels: ("read"|"ask"|"act")[], health: Health (C-944), connected_by?: { name }, agents: AgentAccess[], managed_by?: WhoCan, can: { give_access, change_access, manage } }`.
+  - `AgentAccess = { agent: { id, name, handle }, workspace: { id, name }, level: "read"|"ask"|"act"|"custom"|"use", custom?: { allowed: int, asks: int }, model?: string }`. `use` is the level of accounts with no choice (websites, AI keys, read-only apps). `model` is set on AI-key rows: the model the agent's next turn uses through that key.
+  - `shared` is true for an organization's account and for one given to more than one agent. `limit` is present only when `shared` and the app can change things. `levels` lists the choices that exist for the account, already cut to the limit.
+  - A workspace's list includes the organization's accounts its agents can be given. With `agent_id`, each item adds `given: bool` and the given ones come first.
+  - A level is reported as it takes effect: a saved choice above a lowered limit reads as the limit.
+  - One query per list, with joins; no per-row lookups. It replaces the separate secrets, LLM-key and connection lists in the dashboard (their routes stay for the API).
+- C-980 **Access API.**
+  - `PUT /v1/agents/{agent}/grants/connections/{conn}` accepts `{ level: "read"|"ask"|"act" }` in place of `mode` and the tool lists. The server expands it from the app's tools in the snapshot: `read` allows every read tool; `ask` allows reads and asks for writes; `act` is mode `full`. `mode: "custom"` with tool lists stays for the Custom editor.
+  - **Not shared** (workspace scope, no other agent): in the same transaction the connection's `access` is set to `read` for level `read`, and to `write` otherwise (for custom: `write` when any write tool is allowed or asked). The connection has no access setting of its own to manage.
+  - **Shared**: a level above the connection's `access` (the limit) is refused `422 above_account_limit` with `who_can`. The limit is changed with `PATCH /v1/connections/{id}` `{ access }` (C-740) by whoever manages the account.
+  - A connection that becomes shared keeps its current `access` as the limit. `act` on a `custom_only` app is refused `422 full_grant_forbidden`, as today.
+  - No data migration: saved grants are read through the level mapping of C-917.
+  - `PUT …/grants/secrets/{secret}` is unchanged (level `use`).
+- C-925 **Accounts list (dashboard)**, `14 §Agents, accounts and access` §1: one component `AccountsList` over C-917, used by the workspace Accounts tab, the agent's Access tab (`agent_id`) and the organization's Accounts tab. Rows, kind chips, who can use it, health line, "Shared by <org>", the row menu, **Add** (Connect an app or website; Add an AI key), the requests banner (C-984) and the "Not given to <Agent>" group. The picker preselects the contextual agent, else the only agent the person may choose, else none; its button names the result.
+- C-938 **Access control and Custom editor (dashboard)**, §2: one component `AccessControl` (three `ChoiceCards` from `levels`; "Limited by the shared account" with `WhoCan` when choices are cut) used in the row, the picker and the journey; **Custom…** opens the per-tool editor, which starts from the current choice, shows each tool's name and description with method and host pattern under **Technical details**, and requires at least one allowed or asked tool.
+- C-948 **Agent rows.** Wherever agents of more than one workspace are listed, a row reads "<workspace> · <agent>". (A separate agent name on New workspace is not built.)
+- C-934 **What exactly** `GET /v1/agents/{agent}/apps/{app}/access` (**S/K**, `can_use`; rate class `simulate`) → `{ accounts: [{ ref, name, tools: [{ tool_id, name, description, access: "read"|"write", decision: "allow"|"ask"|"block", reason?: { layer: "limit"|"workspace_rule"|"org_rule"|"organization"|"package", label, link? } }] }] }`. `reason` is present only when something other than the agent's access decided. It is computed with the C-930 shared code over one synthetic request per tool; `GET /v1/agents/{agent}/effective` is rebuilt on the same path and a test asserts they agree.
+- C-986 **Summary sentences.** Two pure functions in `web/src/lib/summary/`, each a table of condition → sentence that the unit tests walk; every sentence must be true under `07 §Evaluation`.
+  - `internet.ts` (P5-IA-2): from a level's effective Internet access (limits, defaults, rules) to sentences such as "Agents here can reach any website." and "Nothing asks you first." Rendered at the top of the Internet access pages, followed by the line "What agents may do in apps is set for each agent, on its Access tab."
+  - `agent.ts` (P5-UX-7): from one agent's accounts (C-917) plus the `internet.ts` sentences to the agent's summary (`14` §8). Rendered on Welcome and at the top of the agent's Access tab.
+- C-930 **Check what would happen decides like the gateway** (amends C-83 and `07 §Authoring`; FIX-159, D-329).
+  - For `lane: request`, the simulator identifies the app (host, port and path against **Active** host claims, instance-aware), adds that app's connections in scope as candidates, selects them by the rules, picks the winner with the gateway's rule (connections before secrets), identifies the tool (`params` and `connect_methods` included), sets `tool_tags`, builds `Credential::Connection` with `read_only`, and evaluates with the same facts the gateway builds.
+  - App and tool identification is one shared function in `crates/aurora-registry`, used by the gateway, the simulator and C-934.
+  - The response's `candidates` may be `kind: connection`; a new `app: { app_id, tool_id|null }` is added; the trace includes the checks that run before any rule.
+  - A table test runs the same cases through the gateway's decision function and the simulator and asserts the same verdict, winner and reason.
+
+#### Connecting and setting up apps
+
+- C-931 **Setup status** `GET /v1/apps/{app}/setup?org_id=&workspace_id=` (**S/K**). `workspace_id` needs `can_own` and gives the workspace view; `org_id` alone needs org owner/admin and gives the org view.
+  - Answer: `{ app_id, name, family?, available, methods: SetupMethod[], suggested_method: string|null, clients: { workspace: ClientRef[]|null, organization: ClientRef[]|null, instance: { set_up: bool } }, instances: { id, label, base_url, scope }[], values: { callback_url, external_id?: string }, can: { register_workspace_client, register_org_client, register_instance, set_availability, connect_workspace, connect_org } }`.
+  - `SetupMethod = { id, label, description, kind, audience: "person"|"admin", ready: bool, needs: ("oauth_client"|"instance"|"admin_material")[], client_key?, who_can?: WhoCan }`.
+  - `ClientRef = { id, client_key, enabled, used_by_methods: { id, label }[] }`. Client secrets and client ids are never included.
+  - `suggested_method` is the first ready method with `audience = person`, in the order: `recommended`, `oauth2`, `fields`, `hook`.
+  - `external_id` is present only when the app's `permissions.context` includes `org_external_id`.
+- C-955 **Connect plan** `GET /v1/apps/{app}/connect-plan?workspace_id=|org_id=`: a projection of C-931 for the journey (`methods`, `suggested_method`, `scope_presets` per method, the existing accounts the caller may give, `available` with `who_can`). One function computes both.
+- C-956 **Manifest keys** (`09 §3.4`; contract 1, additive):
+  - `connect[].audience: person|admin` (default `person`); an `admin` method is never suggested.
+  - `connect[].scope_presets: { read: [scope], write: [scope] }`; each a method scope, `read` only `access: read` scopes. Without it, `read` is the method's read scopes and `write` is all of them.
+  - The builtin `github` package marks the GitHub App installation method `admin`; `linear` sets `scope_presets.write: [read, write]`.
+  - (A `limit` field key for repository or project limits is not built in this phase.)
+- C-957 **Connect with access** (amends `POST /v1/apps/{app}/connect`). The body gains `grant?: { agent_ids: uuid[] (1..`GRANT_BULK_MAX`), level: "read"|"ask"|"act" }`.
+  - Before any write or redirect, each agent is checked like C-504, and `act` on a `custom_only` app is refused.
+  - The connection's `access` follows C-980: with one agent it is derived from the level; with several it is the highest any of them needs. For `scope: organization` (no `grant`), `access` is the limit the journey asks for.
+  - **`kind: connected`**: the connection and the access are written in one transaction; the answer adds `grants`.
+  - **`kind: redirect`**: the intent (agent ids, level) is kept only inside the sealed OAuth flow object, re-authorized at the callback, and applied in the connection's transaction (SEC-130). A failure keeps the connection and reports `grant_failed: { code }`; the callback's `BroadcastChannel` message adds `granted_agent_ids` and `grant_failed?`.
+  - A reconnect with `grant` → 422 `grant_not_allowed_on_reconnect`.
+- C-988 **A website or an AI key with access, in one request.** `POST /v1/workspaces/{ws}/secrets` (generic and LLM) accepts `grant?: { agent_ids }`, checked like C-504 and written in the same transaction as the secret. The Welcome AI-key form and the journey's "Another website or API" use it.
+- C-958 **Refusals the journey reads.**
+  - `422 connect_probe_failed`: `details.cause: "rejected"|"unreachable"|"unexpected"`; `rejected` is a 401 or 403 from the probe; `unreachable` is DNS, connect, TLS or timeout, with `details.host`; `unexpected` keeps `upstream_status`.
+  - `422 oauth_client_required` and `instance_oauth_client_required`: `details.who_can`.
+- C-959 **Links.** The journey's deep link is `/o/<org>/w/<ws>/agents/<agent id>?tab=access&connect=<app>` (the agent page accepts an id, FIX-153). The gateway's link builder (C-891) emits it as `connect_url` for refusals that know the agent, keeps the workspace link (`…/apps?tab=apps&connect=<app>`) as `connect_url_workspace`, and uses the C-960 paths everywhere. A credential-free app keeps FIX-154's `access_url`.
+- C-914 **Connect journey (dashboard)**, `14` §3: entry points, steps App → Account → Access → Sign in → Done, "Another website or API", **Advanced** holding the C-842 controls, failure sentences per C-958, `grant_failed` retry. Reconnect is unchanged. Test id `ws-connect-journey`.
+- C-932 **App setup page**, `14` §4: routes `/o/<org>/w/<ws>/apps/<app>` and `/o/<org>/apps/<app>`; status sentences per method; what is set up and where; the workspace's OAuth clients for the app managed on the page; values to copy; actions per `can` with `WhoCan`; the app's tools; the guide (C-940). The Apps tab's **Details** opens it. Test ids `ws-app-setup`, `org-app-setup`.
+- C-933 **Lists link to the setup page.** Every app name in the Apps, OAuth clients, Self-hosted apps and Accounts tabs links to the app's setup page at the viewer's level. The organization's Apps tab renders the availability switch (C-20) above the list, with one Save; the Governance › Apps tab is removed.
+- C-946 **OAuth clients named by method.** `AppDetail.oauth_clients[]` and `ClientRef` carry `used_by_methods: { id, label }[]`. The OAuth client forms and lists show "<app> — for <method label>" and never a bare `client_key`.
+- C-939 **Tool descriptions.** Every builtin tool has a one-sentence `description` (at most 200 characters); `check-builtin.sh` fails without one; third-party packages get the linter warning `tool_description_missing`. In `aws-keys`, `ec2_call` is named "Any other EC2 action (changes, and reads not covered above)".
+- C-949 **Method labels.** Every builtin connect method has a `label` and a `description` (`check-builtin.sh`); the builtin `gitlab` package gains them ("Personal access token", "Sign in with GitLab").
+- C-940 **Guide placeholders.** `GET /v1/apps/{app}/guide?workspace_id=|org_id=` fills `{{aurora.callback_url}}`, `{{aurora.external_id}}` (only for a member of the organization), `{{aurora.app_setup}}` and `{{aurora.page:<name>}}` (`oauth_clients`, `self_hosted`, `packages`) for the caller. A page placeholder becomes a Markdown link to the page at the highest level the caller can open (a workspace has no such tabs: `oauth_clients` resolves to the app's setup page there), else the `WhoCan` sentence. Substitution is literal and non-recursive; values are Markdown-escaped.
+- C-941 **Guide checks** (`09 §6`): `guide_unknown_placeholder` (error) for a `{{aurora.…}}` token outside the C-940 set; `check-builtin.sh` refuses, in builtin guides and `connect_note`s, the literal strings `<your Aurora URL>`, `<external_url>`, `Admin, Apps,` and "Instances" used as a page name.
+- C-942 **`connect[].show_context`** (manifest, optional; `org_external_id` only, and it must be in `permissions.context`): the journey's sign-in step, the setup page and the Bedrock assume-role AI-key form show the value with **Copy** above the method's fields. `aws-keys` `assume_role` declares it.
+
+#### Approvals and requests
+
+- C-982 **Answering an approval.**
+  - The gateway fills `app_id`, `tool_id` and `connection_id` when it creates an approval.
+  - `Approval` gains:
+    - `sentence: { agent: { id, name }, action: string, app?: { app_id, name }, account?: { ref, name } }`. `action` is the app's approval title when the package provides one, else the tool's name, else "send a <METHOD> request to <host>".
+    - `asked_by: { kind: "access", agent_id, connection_id, tool_id } | { kind: "rule", rule_id, rule_name, scope: "workspace"|"organization" }`, resolved from the derived-rule record of the rule that asked.
+    - `can_always_allow: bool` and `allowed_recently: int` (approvals of the same agent, account and tool the caller approved in the last 7 days).
+  - `POST /v1/approvals/{id}/decision` accepts `{ decision: "approve"|"deny", always?: true }`. `always` is valid only with `approve`, when `asked_by.kind = "access"`, the caller is `can_own` of the agent's workspace, and the tool is within the account's limit; otherwise `422 always_not_available`.
+  - With `always`, one transaction approves the request, moves the tool from asked to allowed in the agent's access for that account, and approves the other pending approvals of the same agent, account and tool. It is audited as an access change with `via: "approval"` and the approval id (SEC-131). The answer adds `always_applied: { tool: { id, name }, also_approved: int }`.
+  - The batch route and chat-platform decisions do not take `always`.
+- C-983 **Where approvals appear.**
+  - The API writes the transcript events `approval.pending`, `approval.decided` and `approval.expired` (`10 §Events`) for an approval that belongs to a conversation, so the conversation shows the card where the agent paused.
+  - The card (conversation and Approvals page) shows the sentence, the app's details, the account, the expiry and the answers: **Allow once**, **Always allow** (when `can_always_allow`), **Block**; "Asked by the rule <name>" for `asked_by.kind = "rule"`; the nudge when `allowed_recently ≥ 3`. People who cannot answer see "Waiting for <names>" (`WhoCan`).
+  - The Approvals page has **Waiting** and **History**; `?focus=<id>` puts that approval first and highlights it; the browser notification links there.
+  - Chat-platform cards and e-mail use the same sentence and the labels Allow once and Block.
+- C-984 **An agent asks for access.**
+  - Table `agent_access_requests` (`03 §Planned changes`): one open request per (agent, app) or (agent, proposed website); `request_app_connection` and `propose_custom_connection` create or refresh it next to the notice they already write, and the notice payload gains `request_id`.
+  - The conversation renders those notices as a card: "<Agent> needs <App> for this", the reason marked as the agent's words, **Give <Agent> <App>** (the journey, C-959) or `WhoCan`, and **Not now** (`POST /v1/access-requests/{id}/dismiss`, `can_own`).
+  - `GET /v1/workspaces/{ws}/access-requests?status=open` (**S/K**, `can_use`) feeds the banner on Accounts.
+  - When access to an account of that app is written for that agent (any path), the same transaction marks the request `given` and appends the notice `app_access_given` ("<Agent> can now <level> <App>") to the conversation. If the requesting turn has ended, the API queues one system turn (door `system`, speaker label "Access") with the fixed text "Access to <App> was given (<level>). Continue with what you were doing." (SEC-132).
+  - Open requests expire after `ACCESS_REQUEST_TTL` (14 days).
+  - For a `direct` conversation mirrored to a chat platform, the mirror posts one line: "<Agent> needs <App> for this. Give access: <link>". Nothing is posted in shared spaces.
+
+#### Health
+
+- C-943 **Test** `POST /v1/accounts/{type}/{id}/test` (**S/K**; `can_own` of the account's workspace, or org owner/admin for an organization's account; rate class `check`; SEC-129). It runs, in order of what the account has: the connect method's `probe`; for a `database` app a gateway login up to `ReadyForQuery` with no statement; for a hook-minted token one mint; for an AI key the existing verify (C-502). Answer `{ result: "ok"|"rejected"|"unreachable"|"unexpected"|"not_testable", detail?: { host?, status?, code? }, checked_at }`. It never returns an upstream body and is audited `account.test`.
+- C-944 **Health fields.** `app_connections` and `secrets` gain `last_check_at timestamptz null` and `last_check_result text null` (CHECK in `ok`, `rejected`, `unreachable`, `unexpected`). `Health = { state: "ok"|"rejected"|"sign_in_expired"|"unreachable"|"disabled"|"unknown", detail?: string, checked_at?, last_used_at? }`: `sign_in_expired` is connection status `reauth_required`; `disabled` is status `disabled`; otherwise the last check result; `unknown` when never used or tested.
+- C-985 **Health from real use.** When an upstream answers 401 to a request in which the gateway injected an account's credential, the gateway records `rejected`; when a later such request gets a 2xx or 3xx, it records `ok`. It writes only on a change of state, at most once a minute per account, in the batch that already writes `last_used_at`. A 403 is not recorded (it is usually a permission, not a broken credential). Recording never disables an account.
+- C-945 **Health in the dashboard**, `14` §7: the health line and **Test** on every account row; **Reconnect** or **Replace token** beside a failure; "<n> account(s) need attention" on the agent header; a banner above the message box of the agent's conversations; the workspace Overview. The journey's Done step runs C-943 once for a method without a probe and shows a failure as a warning.
+
+#### First run, people, organization
+
+- C-927 **Welcome**, `14` §9: three cards from the five sentences, the third being the agent summary (C-986); the guide with two steps (AI key with "<Agent> can use this key" ticked, C-988; Say hello) and a give-access step only when a key exists that the agent cannot use; **Next** links (the journey for the default agent; instructions; schedule; Add people when the viewer may).
+- C-922 **Starter grants by default and backfill.**
+  - Adding a default-organization AI key in the setup checklist also adds it to `placement.starter_grants` whenever placement allows starter grants (C-521); the switch shows on, and turning it off removes the key.
+  - `POST /v1/admin/placement/starter-grants/backfill` (**S**, instance admin) with `{ credential_ids?: uuid[] }` gives the starter grants to the default agent of every existing personal workspace of the default organization that lacks them. Idempotent, audited per grant (`actor_label = placement`, `backfill = true`), answer `{ granted, skipped }`.
+  - Setup status (C-533) gains `personal_workspaces_without_starter`.
+- C-923 **Display name template.** `placement.personal_workspace.display_name_template`, default `{given_name}|{name}|{email_local}`, sets a personal workspace's **name**; the existing template keeps setting its **slug** (D-162). Nothing existing is renamed. Welcome reads "Welcome, <display name>".
+- C-924 **Apps people can't sign in to yet.** Setup status (C-534) gains the reasons `app_needs_oauth_client` (`app_id`, `package`, `client_key`) and `app_token_only`, computed with the C-931 function for the default organization. One component renders them on Administration › Overview and on the organization's Apps tab, each with **Register an OAuth client** (prefilled).
+- C-919 **Add people by e-mail** `POST /v1/workspaces/{ws}/access/by-email` (**S/K**, `can_own`; rate class `invite`, and 30 per hour per workspace). Body `{ email, role: "member"|"approver"|"owner" }`; `422 owner_requires_member` when the role is owner and the e-mail is not an active org member's. Answer `{ result: "added"|"pending", org_entry: "open_signup"|"invitation_needed" }`. One exact address per call, no search (SEC-128). The dashboard offers Member and Owner, and Approver only when the workspace already has an approver.
+- C-920 **Pending access.** `GET /v1/workspaces/{ws}/access/pending` and `DELETE …/pending/{id}` (`can_own`). Table `workspace_pending_access`. A row is applied at a sign-in once the person is an active member of the organization and holds that verified e-mail, then deleted. Rows expire after `PENDING_ACCESS_TTL` (30 days); at most `PENDING_ACCESS_MAX` (50) per workspace.
+- C-936 **Connect for the whole organization.** The journey gains an org mode: `scope: "organization"`, no agent step; the access step sets the account's **limit**; the Done step offers **Give agents access now** (C-504 over agents of the workspaces the caller owns) or **Done**. Org owners and admins only.
+- C-937 **The organization's accounts.** The organization's Accounts tab lists them (C-917) with the limit control and Reconnect, Disable and Remove for org owners and admins. Workspace owners see them in their workspace's list, marked "Shared by <org>" with `managed_by`, and can give them to their agents within the limit.
+- C-947 **Where to connect.** `GET /v1/orgs/{org}/workspaces` items gain `personal_of?: { id, name }`. The chooser lists **For the whole organization**, then the caller's own and shared workspaces, then other people's personal workspaces under a collapsed group.
 
 ## Shared schemas
 

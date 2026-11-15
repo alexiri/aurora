@@ -1268,6 +1268,9 @@ A workspace owner (`can_own`) can give a person access by e-mail without being a
 - One exact address per request, rate-limited (`invite` class) and audited; there is no member
   search for workspace owners. The answer says whether that one address was added or is pending
   (owner, D-328: Q-UX-2 "yes").
+- The API accepts the roles above. The dashboard's **Add people** offers **Member** and **Owner**
+  (Owner only for someone already in the organization), and **Approver** only in a workspace that
+  already has an approver (D-352; `14 §Agents, accounts and access` §10).
 
 This replaces the sentence of §Personal workspaces that the user "can invite others into it":
 personal-workspace owners add people this way.
