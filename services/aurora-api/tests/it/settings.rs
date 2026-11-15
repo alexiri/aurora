@@ -891,7 +891,13 @@ async fn import_is_one_transaction_and_refuses_plaintext_secrets() {
     // `set` without a stored secret.
     let doc = json!({ "aurora_settings": 1, "sections": { "settings_test": { "settings_test.token": { "$secret": "set" } } } });
     let (s, e) = call(&h, &a.cookie, Method::POST, "/v1/admin/settings/import", Some(json!({ "document": doc.to_string(), "format": "json", "dry_run": false, "generations": { "settings_test": 0 } }))).await;
-    assert_eq!(s, 400, "{e}");
+    // C-776: 422 `settings_invalid` with the field code `secret_missing` (M4; it was 400).
+    assert_eq!(
+        (s, e["error"]["code"].as_str()),
+        (422, Some("settings_invalid")),
+        "{e}"
+    );
+    assert_eq!(e["error"]["details"]["fields"][0]["code"], "secret_missing");
     // An unknown document version.
     let (s, _) = call(&h, &a.cookie, Method::POST, "/v1/admin/settings/import", Some(json!({ "document": "aurora_settings: 2\nsections: {}\n", "format": "yaml", "dry_run": true }))).await;
     assert_eq!(s, 400);
@@ -1052,4 +1058,101 @@ async fn a_failing_reload_keeps_the_snapshot_and_counts_it() {
         h.state.settings.snapshot().effective.keys["settings_test.limit"].value,
         json!(12)
     );
+}
+
+// ---------------------------------------------------------------------- review fixes (SEC-90)
+
+#[tokio::test]
+async fn concurrent_writes_to_two_sections_cannot_be_invalid_together() {
+    // `settings_test.limit > 10` with `settings_test_b.count > 5` is a cross-section violation.
+    // Each write is valid alone and neither section has a row to lock, so only a settings-wide
+    // lock keeps the second writer from validating against the stale view.
+    for round in 0..4 {
+        let h = Harness::new().await;
+        let a = admin(&h, &format!("root{round}@x.io")).await;
+        let (r1, r2) = tokio::join!(
+            put(
+                &h,
+                &a,
+                "settings_test",
+                0,
+                json!({ "settings_test.limit": 20 })
+            ),
+            put(
+                &h,
+                &a,
+                "settings_test_b",
+                0,
+                json!({ "settings_test_b.count": 8 })
+            ),
+        );
+        let mut codes = [r1.0, r2.0];
+        codes.sort_unstable();
+        assert_eq!(codes, [200, 422], "round {round}: {r1:?} {r2:?}");
+        let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM instance_settings")
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        assert_eq!(stored, 1, "round {round}: only one of the two was stored");
+    }
+}
+
+#[tokio::test]
+async fn a_secret_key_set_in_helm_is_locked_like_any_other() {
+    let h = Harness::new()
+        .await
+        .with_helm("[settings_test]\ntoken = \"from-helm\"\n");
+    let a = admin(&h, "root@x.io").await;
+    for word in [json!("set-by-dashboard"), json!("keep")] {
+        let (s, e) = put(
+            &h,
+            &a,
+            "settings_test",
+            0,
+            json!({ "settings_test.token": { "$secret": word } }),
+        )
+        .await;
+        assert_eq!(s, 409, "{word}: {e}");
+        assert_eq!(e["error"]["code"], "setting_locked");
+        assert_eq!(e["error"]["details"]["key"], "settings_test.token");
+    }
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM instance_settings")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "nothing was sealed or stored");
+}
+
+#[tokio::test]
+async fn a_write_refused_after_sealing_stores_nothing() {
+    // M1: the secret is sealed before the cross-section check refuses the write; the sealed value
+    // is discarded and no row changes. (The inline store keeps no state, so the discard itself is
+    // not observable here; this pins the refusal after the seal.)
+    const CANARY: &str = "canary-sealed-then-refused";
+    let h = Harness::new().await;
+    let a = admin(&h, "root@x.io").await;
+    let (s, v) = put(
+        &h,
+        &a,
+        "settings_test_b",
+        0,
+        json!({ "settings_test_b.count": 8 }),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, e) = put(
+        &h,
+        &a,
+        "settings_test",
+        0,
+        json!({ "settings_test.token": { "$secret": CANARY }, "settings_test.limit": 20 }),
+    )
+    .await;
+    assert_eq!(s, 422, "{e}");
+    assert!(!e.to_string().contains(CANARY));
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM instance_settings")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
 }

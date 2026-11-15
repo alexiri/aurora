@@ -303,54 +303,70 @@ async fn build_status(state: &AppState) -> Result<StoresStatus, ApiError> {
         .get(STORES_KEY)
         .map(|d| d.helm_key.clone());
 
-    // Health and counts: at most one probe per store per interval, whatever the page loads.
-    let mut guard = caches().lock().await;
-    let cache = guard.entry(db_key(state)).or_default();
+    // Health and counts: at most one probe per store per interval, whatever the page loads. The
+    // global cache lock is held only to read and to write the cache, never across a probe or the
+    // count query (M6).
+    let key_db = db_key(state);
     let live: Vec<usize> = registry
         .stores()
         .map(|s| Arc::as_ptr(s).cast::<()>() as usize)
         .collect();
-    cache.stores.retain(|k, _| live.contains(k));
     let mut health: HashMap<String, (bool, DateTime<Utc>)> = HashMap::new();
-    for store in registry.stores() {
-        let key = Arc::as_ptr(store).cast::<()>() as usize;
-        let fresh = cache
-            .stores
-            .get(&key)
-            .filter(|p| p.at.elapsed() < limits::SECRET_STORE_HEALTH_INTERVAL);
-        let (ok, at) = match fresh {
-            Some(p) => (p.ok, p.checked_at),
-            None => {
-                let ok = probe_health(store).await;
-                let now = Utc::now();
-                cache.stores.insert(
-                    key,
-                    Probed {
-                        at: Instant::now(),
-                        checked_at: now,
-                        ok,
-                    },
-                );
-                (ok, now)
+    let mut stale = Vec::new();
+    let cached_counts = {
+        let mut guard = caches().lock().await;
+        let cache = guard.entry(key_db.clone()).or_default();
+        cache.stores.retain(|k, _| live.contains(k));
+        for store in registry.stores() {
+            let key = Arc::as_ptr(store).cast::<()>() as usize;
+            match cache
+                .stores
+                .get(&key)
+                .filter(|p| p.at.elapsed() < limits::SECRET_STORE_HEALTH_INTERVAL)
+            {
+                Some(p) => {
+                    health.insert(store.id().to_owned(), (p.ok, p.checked_at));
+                }
+                None => stale.push((key, store.clone())),
             }
-        };
-        health.insert(store.id().to_owned(), (ok, at));
-    }
-    let counts = match cache
-        .counts
-        .as_ref()
-        .filter(|(at, _)| at.elapsed() < limits::SECRET_STORE_HEALTH_INTERVAL)
-    {
-        Some((_, c)) => c.clone(),
-        None => {
-            let c = secrets_migrate::tally(&state.pool)
-                .await
-                .map_err(|e| ApiError::internal(format!("counting stored values: {e}")))?;
-            cache.counts = Some((Instant::now(), c.clone()));
-            c
         }
+        cache
+            .counts
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < limits::SECRET_STORE_HEALTH_INTERVAL)
+            .map(|(_, c)| c.clone())
     };
-    drop(guard);
+    let mut probed = Vec::new();
+    for (key, store) in &stale {
+        let ok = probe_health(store).await;
+        let now = Utc::now();
+        health.insert(store.id().to_owned(), (ok, now));
+        probed.push((*key, ok, now));
+    }
+    let counted = cached_counts.is_none();
+    let counts = match cached_counts {
+        Some(c) => c,
+        None => secrets_migrate::tally(&state.pool)
+            .await
+            .map_err(|e| ApiError::internal(format!("counting stored values: {e}")))?,
+    };
+    {
+        let mut guard = caches().lock().await;
+        let cache = guard.entry(key_db).or_default();
+        for (key, ok, now) in probed {
+            cache.stores.insert(
+                key,
+                Probed {
+                    at: Instant::now(),
+                    checked_at: now,
+                    ok,
+                },
+            );
+        }
+        if counted {
+            cache.counts = Some((Instant::now(), counts.clone()));
+        }
+    }
 
     let mut org_ids = Vec::new();
     for e in &entries {
@@ -622,13 +638,28 @@ async fn delete_store(
         Some(Source::Helm) => return Err(helm_locked(&id)),
         Some(_) => {}
     }
+    // The default is read from the database row, not from this replica's snapshot (which may
+    // not have seen a just-made change); a Helm-set default is the configuration's. The write's
+    // own validation, in its transaction, remains the authority.
     let snap = s.settings.snapshot();
-    let configured_default = snap
-        .effective
-        .keys
-        .get(DEFAULT_KEY)
-        .and_then(|k| k.value.as_str())
-        .unwrap_or("inline");
+    let default_key = snap.effective.keys.get(DEFAULT_KEY);
+    let configured_default = if default_key.is_some_and(|k| k.source == Source::Helm) {
+        default_key
+            .and_then(|k| k.value.as_str())
+            .unwrap_or("inline")
+            .to_owned()
+    } else {
+        aurora_db::repo::instance_settings::get(&s.pool, SECTION)
+            .await
+            .map_err(|e| ApiError::internal(format!("reading the secrets settings: {e}")))?
+            .and_then(|r| {
+                r.value
+                    .get(DEFAULT_KEY)
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "inline".to_owned())
+    };
     if configured_default == id {
         return Err(ApiError::conflict(
             "store_is_default",
@@ -854,6 +885,15 @@ async fn test_store(
     if !aurora_config::dashboard_store_kind_allowed(&kind) {
         return Ok(fail("configuration", "store_kind_not_allowed"));
     }
+    // SEC-89/SEC-90: nothing is read from the server's environment or files for a dashboard store.
+    if let Some((k, _)) =
+        aurora_config::dashboard_store_violations(&Value::Object(entry.clone())).first()
+    {
+        return Ok(fail(
+            "configuration",
+            &format!("dashboard_reference_refused:{k}"),
+        ));
+    }
     let Ok(keyring) = crate::app::build_keyring(&s.config) else {
         return Ok(fail("configuration", "internal"));
     };
@@ -866,6 +906,12 @@ async fn test_store(
         .and_then(Value::as_array)
         .and_then(|l| l.iter().find(|e| entry_id(e) == req.id).cloned());
     let mut entry = Value::Object(entry);
+    // SEC-90: a kept secret is not tried against a different destination.
+    if let Some(old) = snap_entry.as_ref()
+        && service::keep_retargets(&entry, old)
+    {
+        return Ok(fail("configuration", "secret_reentry_required"));
+    }
     if let Err(code) = resolve_for_test(&keyring, &mut entry, snap_entry.as_ref(), &mut Vec::new())
     {
         return Ok(fail("configuration", code));
@@ -874,6 +920,16 @@ async fn test_store(
         Ok(c) => c,
         Err(_) => return Ok(fail("configuration", "invalid_config")),
     };
+    let guard = aurora_secrets::DialGuard::new(&s.config.gateway_allowed_private);
+    if let Some(addr) = cfg
+        .settings
+        .expose()
+        .get("address")
+        .and_then(|v| v.as_str())
+        && !guard.permits_address(addr).await
+    {
+        return Ok(fail("configuration", "destination_refused"));
+    }
     if kind == aurora_config::VAULT_KIND
         && let Err(errs) = VaultSettings::parse(&cfg)
     {
@@ -891,6 +947,7 @@ async fn test_store(
         &cfg,
         keyring,
         s.config.tls.extra_ca_bundle.as_deref(),
+        Some(&guard),
     ) {
         Ok(st) => st,
         Err(e) => return Ok(fail("configuration", error_code(&e))),

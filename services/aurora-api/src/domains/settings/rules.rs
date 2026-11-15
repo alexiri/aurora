@@ -33,6 +33,14 @@ pub fn cross_rules(eff: &Effective) -> Vec<Problem> {
                     ),
                 ));
             }
+            // SEC-89/SEC-90: no environment-variable or file reference in a dashboard store.
+            for (k, m) in aurora_config::dashboard_store_violations(&e.value) {
+                out.push(Problem::new(
+                    format!("secrets.stores/{}/{}", e.id, k.replace('.', "/")),
+                    "dashboard_reference_refused",
+                    m,
+                ));
+            }
             if e.id == "inline" {
                 out.push(Problem::new(
                     "secrets.stores",
@@ -49,6 +57,16 @@ pub fn cross_rules(eff: &Effective) -> Vec<Problem> {
             "settings_test.flag",
             "requires_flag",
             "must be on while `settings_test.mode` is `open`",
+        ));
+    }
+    // Test-only rule across two sections (S2: concurrent writes that are only invalid together).
+    if get("settings_test.limit").and_then(Value::as_i64) > Some(10)
+        && get("settings_test_b.count").and_then(Value::as_i64) > Some(5)
+    {
+        out.push(Problem::new(
+            "settings_test_b.count",
+            "conflicts_with_other_section",
+            "must be at most 5 while `settings_test.limit` is above 10",
         ));
     }
     out

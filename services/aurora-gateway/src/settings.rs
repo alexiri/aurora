@@ -170,11 +170,8 @@ impl Settings {
                 != effective.keys.get(*k).map(|e| &e.value)
         });
         if secrets_changed && let Some(t) = self.secrets_target.get() {
-            t.vault.rebuild_from(
-                &effective.raw.secrets,
-                t.keyring.clone(),
-                t.extra_ca.as_deref(),
-            );
+            t.vault
+                .rebuild_from_effective(&effective, t.keyring.clone(), t.extra_ca.as_deref());
         }
         self.snap.store(Arc::new(Snapshot {
             generations,

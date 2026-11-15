@@ -194,6 +194,7 @@ async fn serve(
             cfg.tls.extra_ca_bundle.as_deref(),
         )?,
     ));
+    vault.set_allowed_private(cfg.gateway.allowed_private.clone());
     // (FIX-124) Kept for the settings reload: the stores the dashboard defines.
     let settings_vault = (vault.clone(), keyring, cfg.tls.extra_ca_bundle.clone());
     let governance = Arc::new(

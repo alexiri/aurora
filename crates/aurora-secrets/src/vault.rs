@@ -18,6 +18,8 @@ pub struct SecretVault {
     /// registry once, so an in-flight call finishes against the stores it started with.
     registry: ArcSwap<StoreRegistry>,
     failures: ArcSwap<Vec<StoreFailure>>,
+    /// `gateway.allowed_private`, which opens private addresses to dashboard Vault stores.
+    allowed_private: std::sync::OnceLock<Vec<String>>,
 }
 
 impl SecretVault {
@@ -25,6 +27,7 @@ impl SecretVault {
         Self {
             registry: ArcSwap::from_pointee(registry),
             failures: ArcSwap::from_pointee(Vec::new()),
+            allowed_private: std::sync::OnceLock::new(),
         }
     }
 
@@ -48,7 +51,41 @@ impl SecretVault {
         keyring: Arc<aurora_crypto::Keyring>,
         extra_ca_bundle: Option<&str>,
     ) {
-        let (reg, failed) = StoreRegistry::from_config_tolerant(cfg, keyring, extra_ca_bundle);
+        let (reg, failed) =
+            StoreRegistry::from_config_tolerant(cfg, keyring, extra_ca_bundle, None);
+        self.registry.store(Arc::new(reg));
+        self.failures.store(Arc::new(failed));
+    }
+
+    /// Set `gateway.allowed_private` once, before the first rebuild from settings.
+    pub fn set_allowed_private(&self, entries: Vec<String>) {
+        let _ = self.allowed_private.set(entries);
+    }
+
+    /// [`Self::rebuild_from`] over the merged settings: stores defined in the dashboard are
+    /// dialled through the destination guard (SEC-89, SEC-90); Helm-defined ones are not.
+    pub fn rebuild_from_effective(
+        &self,
+        eff: &aurora_config::Effective,
+        keyring: Arc<aurora_crypto::Keyring>,
+        extra_ca_bundle: Option<&str>,
+    ) {
+        let guard = crate::StoreGuard::for_dashboard_stores(
+            eff,
+            self.allowed_private.get().map_or(&[][..], Vec::as_slice),
+        );
+        let (reg, failed) = StoreRegistry::from_config_tolerant(
+            &eff.raw.secrets,
+            keyring,
+            extra_ca_bundle,
+            Some(&guard),
+        );
+        if let Some(configured) = reg.fell_back_from() {
+            tracing::error!(
+                store = configured,
+                "the configured default secret store failed to start; new values go to the inline store until it is fixed"
+            );
+        }
         self.registry.store(Arc::new(reg));
         self.failures.store(Arc::new(failed));
     }

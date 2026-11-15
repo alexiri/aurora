@@ -36,3 +36,4 @@ pub use settings::{
     dashboard_store_kind_allowed, registry, sections,
 };
 pub use validate::*;
+pub use vault_store::dashboard_store_violations;

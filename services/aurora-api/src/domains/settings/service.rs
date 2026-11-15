@@ -182,6 +182,70 @@ fn is_secret_marker(v: &Value) -> bool {
         .is_some_and(|m| m.len() == 1 && m.contains_key("$secret"))
 }
 
+/// Entry fields that do not say where or as whom a stored secret is used: they may change while a
+/// secret is kept.
+const KEEP_EXEMPT_FIELDS: &[&str] = &[
+    "reference_scopes",
+    "references",
+    "kv_mount",
+    "managed_prefix",
+];
+
+fn without_secrets(v: &Value) -> Value {
+    if is_secret_marker(v) {
+        return Value::Null;
+    }
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .map(|(k, c)| (k.clone(), without_secrets(c)))
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(without_secrets).collect()),
+        other => other.clone(),
+    }
+}
+
+fn has_keep(v: &Value) -> bool {
+    if is_secret_marker(v) {
+        return v["$secret"].as_str() == Some("keep");
+    }
+    match v {
+        Value::Object(m) => m.values().any(has_keep),
+        Value::Array(a) => a.iter().any(has_keep),
+        _ => false,
+    }
+}
+
+/// SEC-90: `{ "$secret": "keep" }` may not carry a stored secret to a different destination. True
+/// when `new` keeps a stored secret but any other field of the entry (address, auth mount, role,
+/// CA …) differs from the stored entry `old`: the secret must be entered again.
+pub fn keep_retargets(new: &Value, old: &Value) -> bool {
+    if !has_keep(new) {
+        return false;
+    }
+    let strip = |v: &Value| {
+        let mut v = without_secrets(v);
+        if let Value::Object(m) = &mut v {
+            m.retain(|k, c| !KEEP_EXEMPT_FIELDS.contains(&k.as_str()) && !c.is_null());
+        }
+        v
+    };
+    strip(new) != strip(old)
+}
+
+pub fn reentry_required(path: &str) -> ApiError {
+    ApiError::unprocessable(
+        "secret_reentry_required",
+        "The connection settings changed, so the stored secret cannot be kept. Enter it again.",
+    )
+    .with_details(json!({ "fields": [field(
+        path.to_string(),
+        "secret_reentry_required",
+        "enter the secret again: its destination changed",
+    )] }))
+}
+
 /// Every stored secret `(owner, ref)` anywhere in a value.
 fn collect_secrets(v: &Value, out: &mut Vec<(Uuid, String)>) {
     if is_stored_secret(v) {
@@ -270,6 +334,8 @@ fn store_unavailable() -> ApiError {
 async fn resolve_secrets(
     state: &AppState,
     dry: bool,
+    import: bool,
+    fresh: &mut Vec<(Uuid, String)>,
     v: &mut Value,
     old: Option<&Value>,
     id_field: Option<&str>,
@@ -281,6 +347,11 @@ async fn resolve_secrets(
         match word.as_str() {
             Some("keep") => match old.filter(|o| is_stored_secret(o)) {
                 Some(o) => *v = o.clone(),
+                None if import => fields.push(field(
+                    path.to_string(),
+                    "secret_missing",
+                    "there is no stored secret to keep; enter it on the page",
+                )),
                 None => {
                     return Err(ApiError::invalid_request(
                         "There is no stored secret to keep.",
@@ -307,6 +378,7 @@ async fn resolve_secrets(
                         .seal_inline(&ctx, Secret::from(plain.as_bytes().to_vec()))
                         .await
                         .map_err(|_| store_unavailable())?;
+                    fresh.push((owner, r.to_column()));
                     *v = json!({ "$secret": { "ref": r.to_column(), "owner": owner, "updated_at": Utc::now() } });
                 }
             }
@@ -323,7 +395,10 @@ async fn resolve_secrets(
             for (k, child) in m.iter_mut() {
                 let o = old.and_then(|o| o.get(k));
                 let p = format!("{path}/{k}");
-                Box::pin(resolve_secrets(state, dry, child, o, None, &p, fields)).await?;
+                Box::pin(resolve_secrets(
+                    state, dry, import, fresh, child, o, None, &p, fields,
+                ))
+                .await?;
             }
         }
         Value::Array(items) => {
@@ -340,7 +415,15 @@ async fn resolve_secrets(
                     _ => None,
                 };
                 let p = format!("{path}/{}", id.as_deref().unwrap_or("?"));
-                Box::pin(resolve_secrets(state, dry, item, o, None, &p, fields)).await?;
+                if let Some(o) = o
+                    && keep_retargets(item, o)
+                {
+                    return Err(reentry_required(&p));
+                }
+                Box::pin(resolve_secrets(
+                    state, dry, import, fresh, item, o, None, &p, fields,
+                ))
+                .await?;
             }
         }
         _ => {}
@@ -402,6 +485,18 @@ fn normalize(
                     "a secret is written as { \"$secret\": \"…\" }",
                 ));
                 continue;
+            }
+            // A secret Helm sets is Helm's: the dashboard neither sets, keeps nor clears it.
+            if h.source.sets(key) {
+                if import && matches!(val["$secret"].as_str(), Some("set" | "keep")) {
+                    warnings.push(SettingWarning {
+                        code: "locked_ignored".into(),
+                        key: Some(key.clone()),
+                        message: format!("`{key}` is configured in Helm and is ignored."),
+                    });
+                    continue;
+                }
+                return Err(locked(key, &d.helm_key));
             }
             if import
                 && val["$secret"]
@@ -517,7 +612,7 @@ fn build_new(
                     out.insert(key.to_string(), Value::Array(list));
                 }
             }
-            _ if !d.secret && h.source.sets(key) => {
+            _ if h.source.sets(key) => {
                 // The mirrored copy stays as it is (mirroring owns it); nothing is invented here.
                 if let Some(v) = old.get(key) {
                     out.insert(key.to_string(), v.clone());
@@ -731,6 +826,7 @@ async fn plan_section(
     values: &Map<String, Value>,
     import: bool,
     dry: bool,
+    fresh: &mut Vec<(Uuid, String)>,
 ) -> Result<Plan, ApiError> {
     let h = &state.settings;
     let (current, old) = row_object(row);
@@ -747,6 +843,8 @@ async fn plan_section(
             resolve_secrets(
                 state,
                 dry,
+                import,
+                fresh,
                 v,
                 old.get(d.key),
                 id_field_of(d),
@@ -795,6 +893,56 @@ fn overlay(stored: &mut Stored, plans: &[&Plan]) {
 
 // ------------------------------------------------------------------------------------ apply
 
+/// SEC-89/SEC-90 (S1): a Vault address chosen in the dashboard may not be a metadata, private,
+/// loopback or link-local destination unless `gateway.allowed_private` opens it. Only entries the
+/// write adds or re-addresses are resolved; Helm entries are the operator's choice.
+async fn guard_dashboard_addresses(state: &AppState, changed: &[&Plan]) -> Result<(), ApiError> {
+    let Some(p) = changed.iter().find(|p| p.section == "secrets") else {
+        return Ok(());
+    };
+    let helm_ids = registry()
+        .get("secrets.stores")
+        .map(|d| helm_entry_ids(&state.settings, d))
+        .unwrap_or_default();
+    let list = |m: &Map<String, Value>| -> Vec<Value> {
+        m.get("secrets.stores")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let (old, new) = (list(&p.old), list(&p.new));
+    let guard = aurora_secrets::DialGuard::new(&state.config.gateway_allowed_private);
+    let mut fields = Vec::new();
+    for e in &new {
+        let id = e.get("id").and_then(Value::as_str).unwrap_or_default();
+        let Some(addr) = e.get("address").and_then(Value::as_str) else {
+            continue;
+        };
+        if helm_ids.iter().any(|h| h == id) {
+            continue;
+        }
+        let before = old
+            .iter()
+            .find(|o| o.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|o| o.get("address").and_then(Value::as_str));
+        if before == Some(addr) {
+            continue;
+        }
+        if !guard.permits_address(addr).await {
+            fields.push(field(
+                format!("/secrets.stores/{id}/address"),
+                "destination_refused",
+                "this address is not reachable from here (private, loopback, link-local or metadata); an operator can open it with gateway.allowed_private",
+            ));
+        }
+    }
+    if fields.is_empty() {
+        Ok(())
+    } else {
+        Err(invalid(fields))
+    }
+}
+
 pub struct SectionRequest {
     pub section: String,
     /// The generation the writer read; `None` for the CLI (the current one under the row lock).
@@ -811,8 +959,54 @@ pub async fn apply(
     state: &AppState,
     via: &Via,
     kind: Kind,
+    reqs: Vec<SectionRequest>,
+    import: bool,
+) -> Result<Applied, ApiError> {
+    // Secrets sealed for a write that then fails (stale, invalid, audit down) are discarded at
+    // once: nothing references them.
+    let mut fresh = Vec::new();
+    let r = apply_inner(state, via, kind, reqs, import, &mut fresh).await;
+    if r.is_err() {
+        discard_secrets(state, fresh, std::time::Duration::ZERO).await;
+    }
+    r
+}
+
+/// Discard sealed instance-setting secrets (after `grace` when they were replaced by a committed
+/// write: a replica that has not reloaded yet may still open the old one).
+async fn discard_secrets(
+    state: &AppState,
+    secrets: Vec<(Uuid, String)>,
+    grace: std::time::Duration,
+) {
+    if secrets.is_empty() {
+        return;
+    }
+    if !grace.is_zero() {
+        tokio::time::sleep(grace).await;
+    }
+    for (owner, r) in secrets {
+        if let Ok(r) = r.parse::<SecretRef>() {
+            let ctx = SealContext {
+                purpose: Purpose::InstanceSetting,
+                owner_id: owner,
+                org_id: Uuid::nil(),
+                workspace_id: None,
+            };
+            if let Err(e) = state.vault.discard(&ctx, &r, ValueSource::Managed).await {
+                tracing::warn!(error = %e, "settings secret not discarded");
+            }
+        }
+    }
+}
+
+async fn apply_inner(
+    state: &AppState,
+    via: &Via,
+    kind: Kind,
     mut reqs: Vec<SectionRequest>,
     import: bool,
+    fresh: &mut Vec<(Uuid, String)>,
 ) -> Result<Applied, ApiError> {
     for r in &reqs {
         section_def(&r.section)?;
@@ -821,6 +1015,9 @@ pub async fn apply(
     reqs.sort_by(|a, b| a.section.cmp(&b.section));
     let h = &state.settings;
     let mut tx = audit::begin(state).await?;
+    // One settings writer at a time (also against Helm mirroring): the cross-section validation
+    // below reads every section, including rows that do not exist yet and cannot be row-locked.
+    repo::lock_mirroring(&mut tx).await.map_err(dberr)?;
     let mut plans: Vec<Plan> = Vec::new();
     for r in &reqs {
         let row = repo::get_for_update(&mut tx, &r.section)
@@ -830,7 +1027,18 @@ pub async fn apply(
         if r.expected.is_some_and(|e| e != current) {
             return Err(stale(&r.section, current));
         }
-        plans.push(plan_section(state, &r.section, row.as_ref(), &r.values, import, false).await?);
+        plans.push(
+            plan_section(
+                state,
+                &r.section,
+                row.as_ref(),
+                &r.values,
+                import,
+                false,
+                fresh,
+            )
+            .await?,
+        );
     }
     let changed: Vec<&Plan> = plans.iter().filter(|p| p.new != p.old).collect();
     if changed.is_empty() {
@@ -838,6 +1046,7 @@ pub async fn apply(
             changed: Vec::new(),
         });
     }
+    guard_dashboard_addresses(state, &changed).await?;
     // The merged view of every section, with the new values in place, must be valid.
     let rows = repo::list_all(&mut *tx).await.map_err(dberr)?;
     let (mut stored, _) = stored_from_rows(&rows);
@@ -910,18 +1119,13 @@ pub async fn apply(
         collect_secrets(&Value::Object(p.new.clone()), &mut after);
         dropped.extend(before.into_iter().filter(|b| !after.contains(b)));
     }
-    for (owner, r) in dropped {
-        if let Ok(r) = r.parse::<SecretRef>() {
-            let ctx = SealContext {
-                purpose: Purpose::InstanceSetting,
-                owner_id: owner,
-                org_id: Uuid::nil(),
-                workspace_id: None,
-            };
-            if let Err(e) = state.vault.discard(&ctx, &r, ValueSource::Managed).await {
-                tracing::warn!(error = %e, "replaced settings secret not discarded");
-            }
-        }
+    // Replaced secrets go after the migration job's grace: a replica that has not reloaded yet
+    // may still open the old one.
+    if !dropped.is_empty() {
+        let st = state.clone();
+        tokio::spawn(async move {
+            discard_secrets(&st, dropped, limits::SECRET_MIGRATION_DISCARD_GRACE).await;
+        });
     }
     notify_admins(state, via, &changed, &reqs);
     Ok(Applied { changed: written })
@@ -988,7 +1192,7 @@ pub async fn preview(
     if generation != current {
         return Err(stale(section, current));
     }
-    let plan = plan_section(state, section, row, values, false, true).await?;
+    let plan = plan_section(state, section, row, values, false, true, &mut Vec::new()).await?;
     let (stored_before, _) = stored_from_rows(&rows);
     let mut stored_after = stored_before.clone();
     overlay(&mut stored_after, &[&plan]);
@@ -1416,7 +1620,7 @@ async fn preview_import(
     let h = &state.settings;
     let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
     let row = rows.iter().find(|r| r.section == section);
-    let plan = plan_section(state, section, row, values, true, true).await?;
+    let plan = plan_section(state, section, row, values, true, true, &mut Vec::new()).await?;
     let (stored_before, _) = stored_from_rows(&rows);
     let mut stored_after = stored_before.clone();
     overlay(&mut stored_after, &[&plan]);
@@ -1523,7 +1727,16 @@ pub async fn reset(
     };
     if dry_run {
         let row = rows.iter().find(|r| r.section == section);
-        let plan = plan_section(state, section, row, &req.values, false, true).await?;
+        let plan = plan_section(
+            state,
+            section,
+            row,
+            &req.values,
+            false,
+            true,
+            &mut Vec::new(),
+        )
+        .await?;
         return Ok(stored_changes(section, &plan.old, &plan.new));
     }
     let applied = apply(state, via, Kind::Reset, vec![req], false).await?;

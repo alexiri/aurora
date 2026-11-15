@@ -356,6 +356,42 @@ impl VaultSettings {
     }
 }
 
+/// Fields a store defined in the dashboard may not carry (SEC-89, SEC-90): each names a server
+/// environment variable or file whose content would be sent to the admin-chosen Vault address.
+/// They stay available to Helm-defined stores, where the operator, not a browser session, decides.
+/// Dashboard credentials are a literal `role_id` plus a sealed `secret_id`, the CA is `ca_pem`.
+/// Returns `(key relative to the store, message)`.
+#[must_use]
+pub fn dashboard_store_violations(entry: &serde_json::Value) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut refuse = |k: &str, hint: &str| {
+        out.push((
+            k.to_owned(),
+            format!("not accepted for a store configured in the dashboard ({hint})"),
+        ));
+    };
+    if entry.get("ca_file").is_some() {
+        refuse("ca_file", "give the CA as `ca_pem`");
+    }
+    if let Some(auth) = entry.get("auth") {
+        for (k, hint) in [
+            ("role_id_env", "give the role id as `role_id`"),
+            ("secret_id_env", "enter the secret id on the page"),
+            ("token_env", "token authentication is Helm-only"),
+            ("token", "token authentication is Helm-only"),
+            (
+                "jwt_path",
+                "the Kubernetes service-account token path is fixed",
+            ),
+        ] {
+            if auth.get(k).is_some() {
+                refuse(&format!("auth.{k}"), hint);
+            }
+        }
+    }
+    out
+}
+
 fn parse_auth(a: RawAuth, errs: &mut Vec<(String, String)>) -> Option<VaultAuthSettings> {
     let mut err = |k: &str, m: &str| errs.push((k.to_owned(), m.to_owned()));
     let method = a.method.as_deref().unwrap_or("");
@@ -546,5 +582,33 @@ mod tests {
         v.as_object_mut().unwrap().remove("ca_file");
         v["ca_pem"] = json!("not a certificate");
         assert!(parse(v).unwrap_err().iter().any(|(k, _)| k == "ca_pem"));
+    }
+
+    #[test]
+    fn a_dashboard_store_names_no_environment_variable_or_file() {
+        let e = json!({
+            "id": "v", "kind": "hashicorp-vault", "ca_file": "/x",
+            "auth": { "method": "approle", "role_id_env": "A", "secret_id_env": "B",
+                      "token_env": "C", "token": "t", "jwt_path": "/etc/passwd" }
+        });
+        let keys: Vec<String> = dashboard_store_violations(&e)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        for k in [
+            "ca_file",
+            "auth.role_id_env",
+            "auth.secret_id_env",
+            "auth.token_env",
+            "auth.token",
+            "auth.jwt_path",
+        ] {
+            assert!(keys.iter().any(|x| x == k), "{k} in {keys:?}");
+        }
+        let ok = json!({
+            "id": "v", "kind": "hashicorp-vault", "ca_pem": "x",
+            "auth": { "method": "approle", "role_id": "r", "secret_id": { "$secret": "keep" } }
+        });
+        assert!(dashboard_store_violations(&ok).is_empty());
     }
 }

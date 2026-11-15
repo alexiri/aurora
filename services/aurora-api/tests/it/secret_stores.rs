@@ -817,3 +817,236 @@ async fn reference_scopes_are_edited_per_organization_and_validated() {
     assert_eq!(scopes[0]["paths"], json!(["teams/acme/*"]));
     assert!(scopes[0]["org_slug"].is_string());
 }
+
+// ---------------------------------------------------------------------- review fixes (SEC-89/90)
+
+/// A listener that records every connection it gets: nothing may be sent to it.
+struct Tripwire {
+    port: u16,
+    hits: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+async fn tripwire() -> Tripwire {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let n = hits.clone();
+    tokio::spawn(async move {
+        while l.accept().await.is_ok() {
+            n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    Tripwire { port, hits }
+}
+
+impl Tripwire {
+    fn hits(&self) -> usize {
+        self.hits.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+fn field_paths(e: &Value) -> Vec<String> {
+    e["error"]["details"]["fields"]
+        .as_array()
+        .map(|f| {
+            f.iter()
+                .map(|x| x["path"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_dashboard_store_cannot_name_an_environment_variable_or_a_file() {
+    let h = harness().await;
+    let a = admin(&h, "root@example.com", true).await;
+    let g = status(&h, &a).await["generation"].as_i64().unwrap();
+    let t = tripwire().await;
+    let addr = format!("http://127.0.0.1:{}", t.port);
+    for (auth, forbidden) in [
+        (
+            json!({ "method": "approle", "role_id": "r", "secret_id_env": "AURORA_DATABASE_URL" }),
+            "secret_id_env",
+        ),
+        (
+            json!({ "method": "approle", "role_id_env": "HOME", "secret_id": { "$secret": "x" } }),
+            "role_id_env",
+        ),
+        (
+            json!({ "method": "kubernetes", "role": "r", "jwt_path": "/etc/passwd" }),
+            "jwt_path",
+        ),
+        (
+            json!({ "method": "token", "token_env": "HOME" }),
+            "token_env",
+        ),
+    ] {
+        let (s, e) = call(
+            &h,
+            &a,
+            Method::PUT,
+            "/v1/admin/secret-stores/v",
+            Some(json!({ "generation": g, "store": {
+                "kind": "hashicorp-vault", "address": "https://vault.invalid:8200", "auth": auth } })),
+        )
+        .await;
+        assert_eq!(s, 422, "{forbidden}: {e}");
+        assert!(
+            field_paths(&e)
+                .iter()
+                .any(|p| p.ends_with(&format!("auth/{forbidden}"))),
+            "{forbidden}: {e}"
+        );
+        // Test connection refuses the same, without dialling.
+        let (s, t2) = call(
+            &h,
+            &a,
+            Method::POST,
+            "/v1/admin/secret-store-test",
+            Some(json!({ "id": "v", "store": {
+                "kind": "hashicorp-vault", "address": addr, "auth": auth } })),
+        )
+        .await;
+        assert_eq!(s, 200, "{t2}");
+        assert_eq!(t2["ok"], false);
+        assert!(
+            t2["steps"][0]["error_code"]
+                .as_str()
+                .unwrap()
+                .contains(forbidden),
+            "{t2}"
+        );
+    }
+    let (s, e) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-stores/v",
+        Some(json!({ "generation": g, "store": {
+            "kind": "hashicorp-vault", "address": "https://vault.invalid:8200",
+            "ca_file": "/etc/ssl/cert.pem",
+            "auth": { "method": "kubernetes", "role": "r" } } })),
+    )
+    .await;
+    assert_eq!(s, 422, "{e}");
+    assert!(
+        field_paths(&e).iter().any(|p| p.ends_with("/ca_file")),
+        "{e}"
+    );
+    assert_eq!(t.hits(), 0, "nothing was sent anywhere");
+}
+
+#[tokio::test]
+async fn keeping_a_secret_while_the_destination_changes_needs_the_secret_again() {
+    let h = harness().await;
+    let a = admin(&h, "root@example.com", true).await;
+    let g = status(&h, &a).await["generation"].as_i64().unwrap();
+    let store_body = |address: &str, role_id: &str, secret: Value| {
+        json!({ "kind": "hashicorp-vault", "address": address,
+            "auth": { "method": "approle", "role_id": role_id, "secret_id": secret } })
+    };
+    let (s, v) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-stores/v",
+        Some(json!({ "generation": g, "store":
+            store_body("https://vault.invalid:8200", "r1", json!({ "$secret": CANARY })) })),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let g1 = v["generation"].as_i64().unwrap();
+    let t = tripwire().await;
+    let keep = json!({ "$secret": "keep" });
+    for (address, role) in [
+        (format!("http://127.0.0.1:{}", t.port), "r1"),
+        ("https://other.invalid:8200".to_owned(), "r1"),
+        ("https://vault.invalid:8200".to_owned(), "r2"),
+    ] {
+        let body = store_body(&address, role, keep.clone());
+        let (s, e) = call(
+            &h,
+            &a,
+            Method::PUT,
+            "/v1/admin/secret-stores/v",
+            Some(json!({ "generation": g1, "store": body.clone() })),
+        )
+        .await;
+        assert_eq!(s, 422, "{address} {role}: {e}");
+        assert_eq!(e["error"]["code"], "secret_reentry_required", "{e}");
+        assert!(
+            e["error"]["details"]["fields"][0]["code"] == "secret_reentry_required",
+            "{e}"
+        );
+        let (s, r) = call(
+            &h,
+            &a,
+            Method::POST,
+            "/v1/admin/secret-store-test",
+            Some(json!({ "id": "v", "store": body })),
+        )
+        .await;
+        assert_eq!(s, 200, "{r}");
+        assert_eq!(r["ok"], false);
+        assert_eq!(
+            r["steps"][0]["error_code"], "secret_reentry_required",
+            "{r}"
+        );
+    }
+    assert_eq!(t.hits(), 0, "the kept secret was never sent anywhere");
+    // Entering it again is allowed.
+    let (s, e) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-stores/v",
+        Some(json!({ "generation": g1, "store":
+            store_body("https://other.invalid:8200", "r1", json!({ "$secret": "fresh" })) })),
+    )
+    .await;
+    assert_eq!(s, 200, "{e}");
+}
+
+#[tokio::test]
+async fn a_dashboard_vault_address_may_not_be_loopback_private_or_metadata() {
+    let h = harness().await;
+    let a = admin(&h, "root@example.com", true).await;
+    let g = status(&h, &a).await["generation"].as_i64().unwrap();
+    let t = tripwire().await;
+    for address in [
+        "http://169.254.169.254".to_owned(),
+        format!("http://127.0.0.1:{}", t.port),
+        "https://10.1.2.3:8200".to_owned(),
+        "https://[fd00::1]:8200".to_owned(),
+    ] {
+        let store = json!({ "kind": "hashicorp-vault", "address": address,
+            "auth": { "method": "kubernetes", "role": "r" } });
+        let (s, e) = call(
+            &h,
+            &a,
+            Method::PUT,
+            "/v1/admin/secret-stores/v",
+            Some(json!({ "generation": g, "store": store.clone() })),
+        )
+        .await;
+        assert_eq!(s, 422, "{address}: {e}");
+        assert!(
+            e["error"]["details"]["fields"][0]["code"] == "destination_refused",
+            "{address}: {e}"
+        );
+        let (s, r) = call(
+            &h,
+            &a,
+            Method::POST,
+            "/v1/admin/secret-store-test",
+            Some(json!({ "id": "v", "store": store })),
+        )
+        .await;
+        assert_eq!(s, 200, "{r}");
+        assert_eq!(
+            r["steps"][0]["error_code"], "destination_refused",
+            "{address}: {r}"
+        );
+    }
+    assert_eq!(t.hits(), 0);
+}

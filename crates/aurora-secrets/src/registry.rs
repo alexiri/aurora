@@ -18,6 +18,8 @@ pub struct StoreFailure {
 pub struct StoreRegistry {
     stores: HashMap<String, Arc<dyn SecretStore>>,
     default_store: String,
+    /// The configured default that could not be used, so the default is `inline` (M3).
+    fell_back_from: Option<String>,
 }
 
 fn build_store(
@@ -25,6 +27,7 @@ fn build_store(
     s: &SecretStoreConfig,
     opener: &InlineStore,
     extra_ca_bundle: Option<&str>,
+    guard: Option<&crate::DialGuard>,
 ) -> Result<Arc<dyn SecretStore>> {
     if s.id.is_empty() || s.id.contains(':') {
         return Err(SecretError::InvalidConfig(
@@ -52,6 +55,7 @@ fn build_store(
                 settings,
                 extra_ca_bundle,
                 Some(opener),
+                guard,
             )?)
         }
         #[cfg(feature = "memory-store")]
@@ -88,7 +92,7 @@ impl StoreRegistry {
         let opener = InlineStore::new("inline", keyring.clone());
         let mut stores: HashMap<String, Arc<dyn SecretStore>> = HashMap::new();
         for (i, s) in cfg.stores.iter().enumerate() {
-            let store = build_store(i, s, &opener, extra_ca_bundle)?;
+            let store = build_store(i, s, &opener, extra_ca_bundle, None)?;
             if stores.insert(s.id.clone(), store).is_some() {
                 return Err(SecretError::InvalidConfig(format!(
                     "duplicate secret store id '{}'",
@@ -105,6 +109,7 @@ impl StoreRegistry {
         let reg = Self {
             stores,
             default_store: cfg.default_store.clone(),
+            fell_back_from: None,
         };
         reg.check_default()?;
         Ok(reg)
@@ -116,9 +121,10 @@ impl StoreRegistry {
         cfg: &SecretStoreConfig,
         keyring: Arc<Keyring>,
         extra_ca_bundle: Option<&str>,
+        guard: Option<&crate::DialGuard>,
     ) -> Result<Arc<dyn SecretStore>> {
         let opener = InlineStore::new("inline", keyring);
-        build_store(0, cfg, &opener, extra_ca_bundle)
+        build_store(0, cfg, &opener, extra_ca_bundle, guard)
     }
 
     /// Rebuild at run time from the merged settings (FIX-124): a store that fails to initialise
@@ -128,12 +134,16 @@ impl StoreRegistry {
         cfg: &SecretsSection,
         keyring: Arc<Keyring>,
         extra_ca_bundle: Option<&str>,
+        guard: Option<&crate::StoreGuard>,
     ) -> (Self, Vec<StoreFailure>) {
         let opener = InlineStore::new("inline", keyring.clone());
         let mut stores: HashMap<String, Arc<dyn SecretStore>> = HashMap::new();
         let mut failed = Vec::new();
         for (i, s) in cfg.stores.iter().enumerate() {
-            match build_store(i, s, &opener, extra_ca_bundle) {
+            let g = guard
+                .filter(|g| g.store_ids.contains(&s.id))
+                .map(|g| &g.guard);
+            match build_store(i, s, &opener, extra_ca_bundle, g) {
                 Ok(store) => {
                     if stores.insert(s.id.clone(), store).is_some() {
                         failed.push(StoreFailure {
@@ -154,8 +164,10 @@ impl StoreRegistry {
         let mut reg = Self {
             stores,
             default_store: cfg.default_store.clone(),
+            fell_back_from: None,
         };
         if reg.check_default().is_err() {
+            reg.fell_back_from = Some(cfg.default_store.clone());
             reg.default_store = "inline".into();
         }
         (reg, failed)
@@ -193,6 +205,11 @@ impl StoreRegistry {
     pub fn default_store(&self) -> Arc<dyn SecretStore> {
         // Invariant upheld by `check_default`.
         self.stores[&self.default_store].clone()
+    }
+
+    /// The configured default store that failed to start, when the default fell back to `inline`.
+    pub fn fell_back_from(&self) -> Option<&str> {
+        self.fell_back_from.as_deref()
     }
 
     /// The id of the default store.

@@ -113,12 +113,16 @@ fn build_client(
     ca_file: Option<&str>,
     ca_pem: Option<&str>,
     extra_ca_bundle: Option<&str>,
+    guard: Option<&crate::DialGuard>,
 ) -> Result<reqwest::Client> {
     let mut b = reqwest::Client::builder()
         .use_rustls_tls()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(30));
+    if let Some(g) = guard {
+        b = b.dns_resolver(g.resolver());
+    }
     if let Some(f) = ca_file {
         // An explicit bundle replaces the default roots for this store.
         b = b.tls_built_in_root_certs(false);
@@ -156,7 +160,7 @@ impl VaultStore {
     /// Build from validated settings. Reads the credential environment variables and the CA
     /// files; any problem refuses startup naming the key (never a value).
     pub fn new(settings: VaultSettings, extra_ca_bundle: Option<&str>) -> Result<Self> {
-        Self::new_with(settings, extra_ca_bundle, None)
+        Self::new_with(settings, extra_ca_bundle, None, None)
     }
 
     /// Like [`Self::new`]; `inline` opens credentials the dashboard sealed in the inline store
@@ -165,6 +169,7 @@ impl VaultStore {
         settings: VaultSettings,
         extra_ca_bundle: Option<&str>,
         inline: Option<&crate::InlineStore>,
+        guard: Option<&crate::DialGuard>,
     ) -> Result<Self> {
         let store = settings.id.clone();
         let http = build_client(
@@ -172,6 +177,7 @@ impl VaultStore {
             settings.ca_file.as_deref(),
             settings.ca_pem.as_deref(),
             extra_ca_bundle,
+            guard,
         )?;
         let auth_key = |k: &str| format!("secrets.stores[{store}].auth.{k}");
         let cred = |c: &CredSource, key: &str| -> Result<Secret<String>> {

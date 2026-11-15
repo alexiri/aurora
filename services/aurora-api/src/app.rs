@@ -213,6 +213,8 @@ impl AppState {
     #[must_use]
     pub fn with_config_source(mut self, source: aurora_config::ConfigSource) -> Self {
         self.settings = Arc::new(domains::settings::handle::SettingsHandle::new(Some(source)));
+        self.vault
+            .set_allowed_private(self.config.gateway_allowed_private.clone());
         self.install_live_secrets();
         // The merged view (the configuration's stores, nothing stored yet) is the first registry.
         let snap = self.settings.snapshot();
@@ -223,8 +225,8 @@ impl AppState {
             .and_then(|k| k.entries.as_ref())
             .is_some_and(|e| !e.is_empty());
         if configured && let Ok(keyring) = build_keyring(&self.config) {
-            self.vault.rebuild_from(
-                &snap.effective.raw.secrets,
+            self.vault.rebuild_from_effective(
+                &snap.effective,
                 keyring,
                 self.config.tls.extra_ca_bundle.as_deref(),
             );
@@ -247,7 +249,7 @@ impl AppState {
                     != new.effective.keys.get(*k).map(|e| &e.value)
             });
             if differs {
-                vault.rebuild_from(&new.effective.raw.secrets, keyring.clone(), ca.as_deref());
+                vault.rebuild_from_effective(&new.effective, keyring.clone(), ca.as_deref());
             }
         }));
     }
