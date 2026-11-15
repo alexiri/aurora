@@ -515,7 +515,17 @@ async fn model_readiness(
         .clone()
         .unwrap_or_else(|| s.config.hosted.default_harness.clone());
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
-    let r = model::readiness(&s, &mut conn, a.id, a.org_id, a.workspace_id, &harness).await?;
+    let llm = s.llm();
+    let r = model::readiness(
+        &s,
+        &llm,
+        &mut conn,
+        a.id,
+        a.org_id,
+        a.workspace_id,
+        &harness,
+    )
+    .await?;
     drop(conn);
     let default = r.default.as_ref().and_then(|d| {
         let ep = r.keys.get(d.key)?.ep?;
@@ -569,7 +579,8 @@ async fn list_models(
     let eff = crate::domains::secrets::gov::effective_for(&s, a.org_id).await?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let cands = hosted::granted_llm_secrets(&mut conn, a.id, a.org_id, a.workspace_id).await?;
-    let usable = model::usable(&s, &eff, &harness, cands);
+    let llm = s.llm();
+    let usable = model::usable(&s, &llm, &eff, &harness, cands);
     drop(conn);
     let mut items: Vec<ModelOption> = Vec::new();
     for u in usable {
@@ -601,8 +612,7 @@ async fn list_models(
                     .collect::<Vec<_>>()
             }
         };
-        let dialects: Vec<String> = s
-            .llm
+        let dialects: Vec<String> = llm
             .provider_for(u.ep)
             .map(|p| {
                 p.dialects(u.ep)

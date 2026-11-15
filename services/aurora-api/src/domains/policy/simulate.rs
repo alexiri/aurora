@@ -224,7 +224,7 @@ pub async fn run(
     } else {
         format!("{host}:{port}")
     };
-    let is_llm_host = state.llm.is_endpoint_host(&host_port) || gov.is_known_llm_host(&host_port);
+    let is_llm_host = state.llm().is_endpoint_host(&host_port) || gov.is_known_llm_host(&host_port);
     if req.lane == Some(SimLane::Open) {
         return open_lane(
             state,

@@ -402,6 +402,15 @@ impl RawConfig {
         })
     }
 
+    /// Resolve only the `governance` and `[byo]` sections (SET-2: the live readers rebuild the
+    /// instance ceiling from the settings snapshot on a swap without validating the rest).
+    pub fn governance_config(&self) -> Result<Governance> {
+        let mut c = Ctx::default();
+        let g = check_governance(&mut c, self);
+        c.finish()?;
+        g.ok_or_else(|| ConfigErrors(Vec::new()))
+    }
+
     /// Validate only the signing-key and internal-secret rings (`aurora-api keys status`).
     pub fn rings(&self) -> Result<(SecretRing, SecretRing)> {
         let mut c = Ctx::default();

@@ -84,7 +84,7 @@ pub async fn token_max_age_days(
         .and_then(|a| a.get("max_age_days"))
         .and_then(serde_json::Value::as_u64)
         .and_then(|d| u32::try_from(d).ok());
-    Ok(effective_agent_token_max_age(state.gov_instance.agent_token_max_age_days, org_days).0)
+    Ok(effective_agent_token_max_age(state.gov_instance().agent_token_max_age_days, org_days).0)
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -119,7 +119,7 @@ pub fn effective(
     agent: Option<&AgentRow>,
 ) -> EffectiveByo {
     effective_byo(
-        &state.gov_instance.byo,
+        &state.gov_instance().byo,
         &ByoInputs {
             org: org.clone(),
             workspace_posture: ws_posture,
@@ -240,7 +240,15 @@ pub async fn disabled_error(
             level.as_str()
         ),
     )
-    .with_details(json!({ "level": level.as_str(), "manage_url": url })))
+    .with_details(match level {
+        // (SET-2, C-783) The instance level names the setting that decides.
+        ByoLevel::Instance => json!({
+            "level": level.as_str(), "manage_url": url,
+            "instance_setting": { "section": "governance", "key":
+                if state.gov_instance().byo.enabled { "byo.minimum_posture" } else { "byo.enabled" } },
+        }),
+        _ => json!({ "level": level.as_str(), "manage_url": url }),
+    }))
 }
 
 /// Posture check of BYO agent creation / token regeneration (`08 §11.9`): `enabled` needs
@@ -339,7 +347,8 @@ pub fn inherited_list(state: &AppState, org: &OrgByo) -> Option<Vec<Cidr>> {
         // Stored values were validated at write time; an unparsable one matches nothing.
         return Some(aurora_llm::governance::parse_byo_list(&org.source_cidrs).unwrap_or_default());
     }
-    let d = &state.gov_instance.byo.default_source_cidrs;
+    let inst = state.gov_instance();
+    let d = &inst.byo.default_source_cidrs;
     (!d.is_empty()).then(|| d.clone())
 }
 

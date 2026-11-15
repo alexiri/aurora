@@ -3,6 +3,7 @@
 //! validated on the merged view, live on every replica, audited. `GET/PUT /v1/admin/settings/…`.
 pub mod cli;
 pub mod dto;
+pub mod endpoint_test;
 pub mod handle;
 mod routes;
 pub mod rules;

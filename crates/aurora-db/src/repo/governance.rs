@@ -127,3 +127,51 @@ pub async fn clear_agent_models(conn: &mut PgConnection, ids: &[Uuid]) -> Result
     .await?;
     Ok(())
 }
+
+/// Organization ids after `after` in id order (SET-2: the re-evaluation job walks one
+/// organization per step and restarts from the beginning when interrupted).
+pub async fn org_ids_after<'e, E: PgExecutor<'e>>(
+    exec: E,
+    after: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM organizations WHERE ($1::uuid IS NULL OR id > $1) ORDER BY id LIMIT $2",
+    )
+    .bind(after)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// One organization as the instance governance view reads it (metadata and its stored document).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OrgGovRow {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub frozen: bool,
+    pub governance: serde_json::Value,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Organizations, newest first, after the `(created_at, id)` cursor (C-778 list; the preview
+/// reads them in pages too).
+pub async fn orgs_page<'e, E: PgExecutor<'e>>(
+    exec: E,
+    after: Option<(chrono::DateTime<chrono::Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<OrgGovRow>, DbError> {
+    let (t, id) = after.map_or((None, None), |(t, i)| (Some(t), Some(i)));
+    Ok(sqlx::query_as(
+        "SELECT id, slug, name, frozen_at IS NOT NULL AS frozen, governance, created_at \
+         FROM organizations \
+         WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2)) \
+         ORDER BY created_at DESC, id DESC LIMIT $3",
+    )
+    .bind(t)
+    .bind(id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}

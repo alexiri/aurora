@@ -24,6 +24,31 @@ import {
   type SettingValues,
 } from "@/lib/api/settings";
 
+/** What a section page's own control for one setting is given (SET-3: the LLM page's editors). */
+export interface SettingControlCtx {
+  setting: Setting;
+  /** The value being edited: the draft, else the effective value (a dashboard-less key shows its default). */
+  current: unknown;
+  /** Has the form changed this key (a dashboard value is pending or in force)? */
+  hasValue: boolean;
+  /** The setting's own error, and the errors of its entries (`<key>/<id>/<field>`). */
+  error?: string;
+  entryErrors: [string, string][];
+  /** The dashboard entries of a keyed list being edited (Helm entries are `setting.entries`). */
+  own: Record<string, unknown>[];
+  /** Every pending dashboard value of the section (a control that depends on another key reads it here). */
+  values: Record<string, unknown>;
+  setValue: (key: string, v: unknown) => void;
+  resetValue: (key: string) => void;
+}
+
+/** A titled group of a section's settings (`keys: null` = all of them). */
+export interface SettingsGroup {
+  title: string;
+  description?: string;
+  keys: string[] | null;
+}
+
 type SecretMode = "keep" | "replace" | "remove";
 interface SecretDraft {
   mode: SecretMode;
@@ -126,10 +151,16 @@ function needsConfirmation(p: SettingsPreview): boolean {
 export function SettingsSectionForm({
   section,
   onReload,
+  groups,
+  controls,
 }: {
   section: SettingsSection;
   /** Refetch the section (stale revision / locked key). */
   onReload: () => void;
+  /** Split the settings into titled `FormSection`s (a section page's own layout); default: one. */
+  groups?: SettingsGroup[];
+  /** A section page's own control for a key, replacing the generic one (the save pipeline stays shared). */
+  controls?: Record<string, (ctx: SettingControlCtx) => ReactNode>;
 }) {
   const initial = useMemo(() => initialDraft(section), [section]);
   const [draft, setDraft] = useState<Draft>(initial);
@@ -242,23 +273,27 @@ export function SettingsSectionForm({
         </Notice>
       ) : null}
 
-      <FormSection title={section.title} description={section.description}>
-        {section.settings.length === 0 ? (
-          <p className="text-sm text-ink-2">No settings in this section yet.</p>
-        ) : null}
-        {section.settings.map((s) => (
-          <SettingRow
-            key={s.key}
-            setting={s}
-            draft={draft}
-            error={errs[s.key]}
-            entryErrors={Object.entries(errs).filter(([k]) => k.startsWith(`${s.key}/`))}
-            setValue={setValue}
-            resetValue={resetValue}
-            setSecret={setSecret}
-          />
-        ))}
-      </FormSection>
+      {(groups ?? [{ title: section.title, description: section.description, keys: null }]).map((g) => {
+        const shown = g.keys ? section.settings.filter((s) => g.keys?.includes(s.key)) : section.settings;
+        return (
+          <FormSection key={g.title} title={g.title} description={g.description}>
+            {shown.length === 0 ? <p className="text-sm text-ink-2">No settings in this section yet.</p> : null}
+            {shown.map((s) => (
+              <SettingRow
+                key={s.key}
+                setting={s}
+                draft={draft}
+                error={errs[s.key]}
+                entryErrors={Object.entries(errs).filter(([k]) => k.startsWith(`${s.key}/`))}
+                setValue={setValue}
+                resetValue={resetValue}
+                setSecret={setSecret}
+                custom={controls?.[s.key]}
+              />
+            ))}
+          </FormSection>
+        );
+      })}
 
       <FormActions>
         <Button type="submit" disabled={busy || !dirty}>
@@ -295,6 +330,13 @@ export function SettingsSectionForm({
   );
 }
 
+/** LLM keys an organization loses by the change (the `llm.endpoints` change of C-749: usable keys before and after). */
+function keysLost(o: SettingsPreview["affected_orgs"][number]): number {
+  const c = o.changes.find((x) => x.key === "llm.endpoints");
+  const n = (v: unknown) => (typeof v === "object" && v !== null && "usable_keys" in v ? Number((v as { usable_keys: unknown }).usable_keys) : 0);
+  return c ? Math.max(0, n(c.before) - n(c.after)) : 0;
+}
+
 function ConfirmDetails({ preview }: { preview: SettingsPreview }) {
   return (
     <div className="space-y-3 text-sm">
@@ -316,7 +358,20 @@ function ConfirmDetails({ preview }: { preview: SettingsPreview }) {
           <p className="font-medium text-ink">
             Affects {preview.affected_orgs_total} organization{preview.affected_orgs_total === 1 ? "" : "s"}:
           </p>
-          <p className="text-ink-2">{preview.affected_orgs.map((o) => o.name).join(", ")}</p>
+          <ul className="list-disc pl-5 text-ink-2">
+            {preview.affected_orgs.map((o) => {
+              const lost = keysLost(o);
+              return (
+                <li key={o.org_id}>
+                  {o.name}
+                  {lost > 0 ? ` — ${lost} LLM key${lost === 1 ? "" : "s"} stop${lost === 1 ? "s" : ""} working` : ""}
+                </li>
+              );
+            })}
+          </ul>
+          {preview.affected_orgs_total > preview.affected_orgs.length ? (
+            <p className="text-xs text-muted">and {preview.affected_orgs_total - preview.affected_orgs.length} more</p>
+          ) : null}
         </div>
       ) : null}
       {preview.warnings.length > 0 ? (
@@ -338,6 +393,7 @@ function SettingRow({
   setValue,
   resetValue,
   setSecret,
+  custom,
 }: {
   setting: Setting;
   draft: Draft;
@@ -346,9 +402,29 @@ function SettingRow({
   setValue: (key: string, v: unknown) => void;
   resetValue: (key: string) => void;
   setSecret: (key: string, sd: SecretDraft | null) => void;
+  custom?: (ctx: SettingControlCtx) => ReactNode;
 }) {
   const label = labelOf(s.key);
   const cid = settingControlId(s.key);
+
+  if (custom && !s.secret) {
+    const has = s.key in draft.values;
+    return (
+      <>
+        {custom({
+          setting: s,
+          current: has ? draft.values[s.key] : s.entries ? undefined : s.value,
+          hasValue: has,
+          error,
+          entryErrors,
+          own: (draft.values[s.key] as Record<string, unknown>[] | undefined) ?? [],
+          values: draft.values,
+          setValue,
+          resetValue,
+        })}
+      </>
+    );
+  }
 
   if (s.secret) {
     const sd = draft.secrets[s.key];

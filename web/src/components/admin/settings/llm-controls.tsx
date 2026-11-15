@@ -1,0 +1,270 @@
+"use client";
+
+import { useState, type ReactNode } from "react";
+
+import { EndpointDialog, HelmEndpointDialog, PROVIDER_LABEL } from "@/components/admin/settings/llm-endpoint-dialog";
+import type { SettingControlCtx } from "@/components/admin/settings/settings-section-form";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { CheckboxField } from "@/components/ui/form";
+import { ItemList, ListRow } from "@/components/ui/section";
+import { SettingField, settingControlId } from "@/components/ui/setting-field";
+
+export const ENABLED = "llm.enabled_providers";
+export const PREFERENCE = "llm.provider_preference";
+export const ENDPOINTS = "llm.endpoints";
+
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const label = (p: string): string => PROVIDER_LABEL[p] ?? p;
+
+/** The enabled providers now: the pending value, else the effective one. */
+function enabledNow(ctx: SettingControlCtx, effective: unknown): string[] {
+  return strs(ENABLED in ctx.values ? ctx.values[ENABLED] : effective);
+}
+
+/** The order hosted agents pick a provider in: the preference restricted to enabled providers, then the rest. */
+export function orderedPreference(pref: string[], enabled: string[]): string[] {
+  const out = pref.filter((p) => enabled.includes(p));
+  for (const p of enabled) if (!out.includes(p)) out.push(p);
+  return out;
+}
+
+/** The enabled providers as a checkbox group, or the locked value when Helm sets the list (SET-3). */
+export function ProvidersControl({
+  ctx,
+  available,
+  preference,
+}: {
+  ctx: SettingControlCtx;
+  available: string[];
+  /** The preference setting, to keep it consistent when a provider is switched off. */
+  preference: { value: unknown; locked: boolean };
+}) {
+  const s = ctx.setting;
+  const enabled = strs(ctx.current);
+  const cid = settingControlId(s.key);
+  if (s.locked) {
+    return (
+      <SettingField
+        id={s.key}
+        label="Enabled providers"
+        source="helm"
+        helmKey={s.helm_key}
+        lockedValue={enabled.length ? enabled.map(label).join(", ") : "None"}
+      />
+    );
+  }
+  function toggle(p: string, on: boolean) {
+    const next = on ? [...enabled, p] : enabled.filter((x) => x !== p);
+    ctx.setValue(ENABLED, next);
+    // A preference may only name enabled providers: switching one off removes it from the order.
+    if (!on && !preference.locked) {
+      const pref = strs(PREFERENCE in ctx.values ? ctx.values[PREFERENCE] : preference.value);
+      if (pref.includes(p)) ctx.setValue(PREFERENCE, pref.filter((x) => x !== p));
+    }
+  }
+  return (
+    <SettingField
+      id={s.key}
+      label="Enabled providers"
+      hint="Only providers this release can run are listed."
+      source={ctx.hasValue ? "dashboard" : "default"}
+      defaultLabel={strs(s.default).map(label).join(", ")}
+      onReset={() => ctx.resetValue(s.key)}
+      error={ctx.error}
+    >
+      <div id={cid} role="group" aria-label="Enabled providers" className="space-y-2">
+        {available.map((p) => (
+          <CheckboxField key={p} id={`prov-${p}`} label={label(p)} checked={enabled.includes(p)} onChange={(on) => toggle(p, on)} />
+        ))}
+      </div>
+    </SettingField>
+  );
+}
+
+/** The provider preference as a reorderable list (buttons, so the keyboard reaches every move). */
+export function PreferenceControl({ ctx, enabledEffective }: { ctx: SettingControlCtx; enabledEffective: unknown }) {
+  const s = ctx.setting;
+  const order = orderedPreference(strs(ctx.current), enabledNow(ctx, enabledEffective));
+  const cid = settingControlId(s.key);
+  if (s.locked) {
+    return (
+      <SettingField
+        id={s.key}
+        label="Preference order"
+        source="helm"
+        helmKey={s.helm_key}
+        lockedValue={order.length ? order.map((p, i) => `${i + 1}. ${label(p)}`).join(" · ") : "None"}
+      />
+    );
+  }
+  function move(i: number, by: -1 | 1) {
+    const next = [...order];
+    const j = i + by;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j]!, next[i]!];
+    ctx.setValue(PREFERENCE, next);
+  }
+  return (
+    <SettingField
+      id={s.key}
+      label="Preference order"
+      hint="Hosted agents use the first provider in this list that has a usable key."
+      source={ctx.hasValue ? "dashboard" : "default"}
+      defaultLabel={strs(s.default).map(label).join(", ")}
+      onReset={() => ctx.resetValue(s.key)}
+      error={ctx.error}
+    >
+      <ol id={cid} aria-label="Preference order" className="divide-y divide-line rounded-control border border-line">
+        {order.length === 0 ? <li className="p-3 text-sm text-ink-2">No provider is enabled.</li> : null}
+        {order.map((p, i) => (
+          <li key={p} className="flex flex-wrap items-center gap-2 p-2 sm:px-3">
+            <span className="w-6 text-sm text-muted">{i + 1}.</span>
+            <span className="min-w-0 flex-1 text-sm text-ink">{label(p)}</span>
+            <Button type="button" size="sm" variant="outline" aria-label={`Move ${label(p)} up`} disabled={i === 0} onClick={() => move(i, -1)}>
+              Up
+            </Button>
+            <Button type="button" size="sm" variant="outline" aria-label={`Move ${label(p)} down`} disabled={i === order.length - 1} onClick={() => move(i, 1)}>
+              Down
+            </Button>
+          </li>
+        ))}
+      </ol>
+    </SettingField>
+  );
+}
+
+function hostOf(url: unknown): string {
+  return typeof url === "string" ? url : "";
+}
+
+/** The endpoints: Helm entries read-only ("Managed by Helm"), dashboard entries editable and removable. */
+export function EndpointsControl({
+  ctx,
+  available,
+  enabledEffective,
+}: {
+  ctx: SettingControlCtx;
+  available: string[];
+  enabledEffective: unknown;
+}) {
+  const s = ctx.setting;
+  const helm = (s.entries ?? []).filter((e) => e.source === "helm");
+  const own = ctx.own;
+  const helmIds = helm.map((e) => e.id);
+  const enabled = enabledNow(ctx, enabledEffective);
+  const providers = available.filter((p) => enabled.includes(p));
+  const [editing, setEditing] = useState<{ index: number | null } | null>(null);
+  const [viewing, setViewing] = useState<Record<string, unknown> | null>(null);
+  const errorsOf = (id: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const [k, m] of ctx.entryErrors) {
+      const rest = k.startsWith(`${ENDPOINTS}/${id}/`) ? k.slice(`${ENDPOINTS}/${id}/`.length) : null;
+      if (rest) out[rest] = m;
+    }
+    return out;
+  };
+  const idOf = (e: Record<string, unknown>): string => (typeof e.id === "string" ? e.id : "");
+  const editingEntry = editing && editing.index !== null ? own[editing.index]! : null;
+  function save(e: Record<string, unknown>) {
+    const next = [...own];
+    if (editing?.index === null || editing === null) next.push(e);
+    else next[editing.index] = e;
+    ctx.setValue(ENDPOINTS, next);
+    setEditing(null);
+  }
+  const rows: ReactNode[] = [];
+  for (const e of helm) {
+    const v = e.value as Record<string, unknown>;
+    rows.push(
+      <ListRow
+        key={`h-${e.id}`}
+        actions={
+          <Button type="button" size="sm" variant="outline" aria-label={`View ${e.id}`} onClick={() => setViewing(v)}>
+            View
+          </Button>
+        }
+      >
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-ink">{e.id}</span>
+            <Badge>{label(String(v.provider ?? ""))}</Badge>
+            <Badge tone="pending">Managed by Helm</Badge>
+          </div>
+          {hostOf(v.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(v.base_url)}</p> : null}
+        </div>
+      </ListRow>,
+    );
+  }
+  own.forEach((e, i) => {
+    const id = idOf(e);
+    const errs = errorsOf(id);
+    const bad = Object.keys(errs).length > 0;
+    rows.push(
+      <ListRow
+        key={`d-${id}-${i}`}
+        actions={
+          <>
+            <Button type="button" size="sm" variant="outline" aria-label={`Edit ${id}`} onClick={() => setEditing({ index: i })}>
+              Edit
+            </Button>
+            <Button type="button" size="sm" variant="danger" aria-label={`Remove ${id}`} onClick={() => ctx.setValue(ENDPOINTS, own.filter((_, j) => j !== i))}>
+              Remove
+            </Button>
+          </>
+        }
+      >
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-ink">{id}</span>
+            <Badge>{label(String(e.provider ?? ""))}</Badge>
+            <Badge tone="accent">Dashboard</Badge>
+            {bad ? <Badge tone="danger">Needs attention</Badge> : null}
+          </div>
+          {hostOf(e.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(e.base_url)}</p> : null}
+          {bad ? (
+            <ul className="list-disc pl-5 text-xs text-danger-ink">
+              {Object.entries(errs).map(([f, m]) => (
+                <li key={f}>
+                  <code className="font-mono">{f}</code>: {m}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </ListRow>,
+    );
+  });
+  return (
+    <SettingField
+      id={s.key}
+      label="Endpoints"
+      hint="Where agents' LLM requests go. Credentials are never part of an endpoint."
+      source={own.length > 0 ? "dashboard" : "default"}
+      error={ctx.error}
+    >
+      <div id={settingControlId(s.key)} className="space-y-2">
+        <ItemList aria-label="Endpoints">
+          {rows.length === 0 ? <ListRow>No endpoint yet. Add one to let agents use a provider other than the built-in Anthropic API.</ListRow> : rows}
+        </ItemList>
+        <Button type="button" variant="outline" size="sm" disabled={providers.length === 0} onClick={() => setEditing({ index: null })}>
+          Add endpoint…
+        </Button>
+        {providers.length === 0 ? <p className="text-xs text-muted">Enable a provider above first.</p> : null}
+      </div>
+      {editing ? (
+        <EndpointDialog
+          key={editing.index ?? "new"}
+          existing={editingEntry}
+          providers={providers}
+          helmIds={helmIds}
+          otherIds={own.filter((_, j) => j !== editing.index).map(idOf)}
+          errors={editingEntry ? errorsOf(idOf(editingEntry)) : {}}
+          onSave={save}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+      {viewing ? <HelmEndpointDialog entry={viewing} helmKey={s.helm_key} onClose={() => setViewing(null)} /> : null}
+    </SettingField>
+  );
+}
