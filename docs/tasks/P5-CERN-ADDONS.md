@@ -16,7 +16,15 @@ request translation and the proxy hook, unit tests and pipeline ITs against a fa
 A staging copy of the `cern-phonebook` package (`plugins/addons/cern-phonebook/`: `plugin.yaml`,
 `docs/setup.md`, `tests/search.yaml`, monogram icons — **icons flagged for owner review**, see Part
 D) validates and passes `aurora plugin test` with the CLI built from this branch.
-**Design deviations to confirm with the owner:** (1) the policy catalogue is one read tool `search`,
+**Owner, 2026-11-15 (D-277):** the deviations below and the monogram icons are **accepted**; the
+external repo work is **approved** (write and push the content to `aurora-addons-cern`). The signing key
+pair already exists in the root of the local checkout `/home/alex/agent-platform/aurora-addons-cern/`
+(`cern-release.key`, mode 0600, and `cern-release.key.pub`; public key
+`H8ZeIj/CtmFqdOQl4Kfw7JrNEtFIv/R+LgwVksZ7mBc=` → the manifest's `signing_key`). It is excluded from git
+by `.git/info/exclude` and by an uncommitted `.gitignore` that the lane commits. Never print, copy or
+commit the private key. The owner sets up the GitHub `release` environment and the
+`AURORA_CERN_SIGNING_KEY` secret: **do not push a `v*` tag until the owner confirms the secret exists.**
+**Design deviations (accepted, D-277(c)):** (1) the policy catalogue is one read tool `search`,
 the brief's `search_people`/`get_person`/`get_manager_chain`/`search_groups`/`get_group_members` are
 recipes in the package's agent instructions (a gateway tool is exactly one directory operation, so a
 manager chain is one search per hop, ≤ 5; the "cached per turn" resolution is the agent's); (2)

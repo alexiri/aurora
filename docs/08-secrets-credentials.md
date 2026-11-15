@@ -14,6 +14,8 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Dedicated presence credentials | `channel_presences.credentials_ref` | `presence.credentials` |
 | Webhook verification secret | `webhooks.verification.secret_ref` | `webhook.verification` |
 | Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
+| A person's chat-platform token (phase 5, P4-UTOK, D-282, SEC-112; owner = the `user_tokens` row id) | `user_tokens.token_ref` | `user_token` |
+| Per-op copy of a person's token for one `message.post` or `user_token.verify` (phase 5, P4-UTOK, D-282; owner = the op id; discarded at the op's terminal state) | `channel_ops.payload.user_credential_ref` | `channel_op_user_token` |
 | Managed connector secret settings (phase 4, P4-MCON; owner = `connectors.secret_owner`, org = nil UUID) | `connectors.secret_refs` (one per field) | `connector.settings` |
 | Web Push VAPID private key (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the key id, org = nil UUID; always the `inline` store, D-266(b)) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
 | Web Push subscription endpoint and keys (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the subscription id, org = nil UUID; always the `inline` store, D-266(b)) | `push_subscriptions.secret_ref` | `webpush.subscription` |
@@ -702,6 +704,18 @@ Phase 0 has exactly one: model catalogue listing (API → endpoint, with the
 granted key, cached 10 min). Future internal calls (reaction picking, memory
 review) MUST go through a single `PlatformLlm` service that names the
 workspace secret it uses and records usage.
+
+(phase 5, P4-EVAL, D-292, C-869, SEC-115) **`PlatformLlm` gets its first purpose, `eval_judge`.**
+It lives in the API (`domains/llm`, built by P4-EVAL-3), uses the `aurora-llm` request builders
+and the API's own destination guard, and is the only path a judge call takes. Every call checks
+at call time, not only when the key is saved: the secret is `active`; it is **granted to the agent
+that owns the eval run** (a key never used without a grant, `§5`); governance admits its endpoint
+and scope (`§11`); and it is usable by readiness (`Model readiness` above). The judge key is
+named in the agent's eval settings (`agents.eval_judge_secret_id`, `03`). The request carries
+only the question, its criteria and the final answer of that question's own turn (`10 §Evals`);
+output is parsed strictly; a failure is an `error` for that question and there is no fallback
+key, provider or retry elsewhere. Usage is recorded on the eval run (`eval_runs.judge_usage`),
+never on `turns.usage`. A judge call is not a turn and writes no transcript event.
 
 ## 7. Gateway credentials
 

@@ -377,6 +377,9 @@ claim-based and safe to run everywhere.
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) (FIX-111: implemented for terminal `channel_inbox`/`channel_ops` rows (a pending deprovision op survives), settled `channel_cards`, expired `link_requests`, sessions and context credentials past `SESSION_PRUNE_GRACE`, `webhook_deliveries` past `WEBHOOK_DELIVERY_RETENTION` or over `WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`, and `cli_logins` past `SESSION_PRUNE_GRACE` after expiry; used action tokens are pruned by the card fan-out, `email_tokens` are no longer written (OIDC-only sign-in); each statement deletes at most `RETENTION_PRUNE_BATCH` rows) | daily | singleton, `SKIP LOCKED` batches |
 | Runtime daily rollup (phase 5, D-138; **specified, not built**: no job exists and `runtime_daily` is never written) | hourly | singleton |
+| Eval run due-work arm (phase 5, P4-EVAL, D-290, C-865): claims `queued` and `running` `eval_runs` under `lease_until`, resumes at the next unfinished question (same `source_event_id`), re-checks authority and freeze before each question | every 5 s (with `aurora_work`) | claims |
+| Eval schedule fires (phase 5, P4-EVAL, D-293): the schedules engine's due-work arm for `eval_schedules` (`SCHEDULE_FIRE_LEASE`, fire-time authority, `skipped_frozen`, `skipped_busy`) | as the schedules arm | claims |
+| Eval retention (phase 5, P4-EVAL, D-294): delete finished `eval_runs` older than `EVAL_RUN_RETENTION` through the conversation delete path (session purge included) | daily | singleton |
 | Plugin directory scan | startup + 60 s | singleton |
 | Snapshot compile & activate | on package state change | singleton |
 | Peer-task and reach expiry (FIX-111: `approved` reach grants past `expires_at`, set by `expires_in` on the decision, become `expired`) | every 60 s | idempotent |
@@ -751,6 +754,12 @@ standard body.
 
 | Method & path | Auth | Purpose |
 |---|---|---|
+| PATCH `/v1/agents/{agent}` (`narration_cards`) | S/K | (phase 5, P4-NARR, C-846) boolean, default `false`; the agent's other settings' rules apply |
+| GET `/v1/me/user-tokens` | S/K | (phase 5, P4-UTOK, C-853) `{ tokens: UserToken[] }` |
+| POST `/v1/me/user-tokens` | SO | (phase 5, P4-UTOK, C-853) `{ integration_id, token, label? }` → 201 `UserToken`; the token is sealed and verified (`user_token.verify`) before the response; never returned or logged |
+| PATCH `/v1/me/user-tokens/{id}` | SO | (phase 5, P4-UTOK, C-855) `{ label }`; 404 for another person's token |
+| DELETE `/v1/me/user-tokens/{id}` | SO | (phase 5, P4-UTOK, C-855) 204; revokes, discards the sealed value, cancels pending sends (`credential_revoked`); audit `user_token.revoke` (critical) |
+| PUT / DELETE `/v1/me/user-tokens/{id}/agents/{agent}` | SO | (phase 5, P4-UTOK, C-855) grant / remove one agent; idempotent, 204; grant needs `can_use` on the agent |
 | GET `/v1/me/ssh-keys` | S/K | (phase 5, P4-SSH-1, C-790) the caller's keys: `{ keys: [{ id, name, algorithm: "ssh-ed25519", public_key, fingerprint, created_at, last_used_at }] }` |
 | POST `/v1/me/ssh-keys` | SO | (phase 5, P4-SSH-1, C-790) `{ public_key, name? }` → 201 key; `public_key` is one OpenSSH line (`ssh-ed25519 AAAA… [comment]`, ≤ 4 KiB, no options prefix); 422 `ssh_key_invalid` (unparsable, options, a certificate, private key material), 422 `ssh_key_unsupported_type` (anything but `ssh-ed25519`), 409 `ssh_key_exists`, 409 `ssh_key_limit` (`SSH_KEYS_PER_USER`); audit `ssh_key.create` (critical) |
 | PATCH `/v1/me/ssh-keys/{id}` | SO | (phase 5, P4-SSH-1, C-790) `{ name }`; 404 for another person's key |
@@ -767,6 +776,26 @@ standard body.
 use"). Error codes added: `ssh_disabled` (404), `ssh_not_supported` (422), `ssh_key_invalid` (422),
 `ssh_key_unsupported_type` (422), `ssh_key_exists` (409), `ssh_key_limit` (409),
 `ssh_key_not_registered` (422), `ssh_mint_rate_limited` (429), `ssh_session_not_found` (404).
+
+### Evals (phase 5, P4-EVAL, D-289..D-294; C-860..C-874)
+
+Hosted agents only (BYO: 422 `eval_not_supported`). Reads and writes of questions, settings, runs and schedules need `can_use` of the agent's workspace unless the row says otherwise; setting the judge key and deleting a run need `can_own`; no route is an agent tool. Errors use the standard body (`docs/05 §Conventions`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/POST `/v1/agents/{agent}/eval-questions` | S/K | (phase 5, P4-EVAL, C-861) list in position order / create one `EvalQuestion` (422 `invalid`, 422 `eval_question_limit`) |
+| GET/PATCH/DELETE `/v1/eval-questions/{id}` | S/K | (phase 5, P4-EVAL, C-861) `PATCH` bumps `version`; the expected-answer fields follow C-862 |
+| GET/PUT `/v1/agents/{agent}/eval-settings` | S/K | (phase 5, P4-EVAL, C-863) `{ judge: { secret_id, model_id } \| null, regression_notify: bool }`; a judge change needs `can_own`; 422 `eval_judge_not_granted`, `eval_judge_not_usable`, `eval_judge_not_permitted` |
+| GET `/v1/agents/{agent}/eval-fingerprint` | S/K | (phase 5, P4-EVAL, C-866) the configuration fingerprint a run started now would record: `{ fingerprint, fingerprint_hash, question_set_version }` |
+| POST `/v1/agents/{agent}/eval-runs` | S/K | (phase 5, P4-EVAL, C-864) start a run → 202 `EvalRun` (`queued`); 409 `eval_run_active`, 429 `eval_runs_limited`, 423 `frozen`, 422 `eval_no_questions` |
+| GET `/v1/agents/{agent}/eval-runs` | S/K | (phase 5, P4-EVAL, C-864) runs newest first, cursor page (`05` list convention), filters `status`, `trigger` |
+| GET `/v1/eval-runs/{id}` | S/K | (phase 5, P4-EVAL, C-864/C-867) the run with counts, fingerprint, regression and its results (`?results_after=` cursor, ≤ 100 per page) |
+| POST `/v1/eval-runs/{id}/cancel` | S/K | (phase 5, P4-EVAL, C-865) sets `cancel_requested_at`; 409 `eval_run_finished` for a finished run |
+| DELETE `/v1/eval-runs/{id}` | S/K | (phase 5, P4-EVAL, C-864) `can_own`; a running run is refused (409 `eval_run_active`; cancel first); deletes its eval conversations (`10 §Archive, delete`) |
+| GET/POST `/v1/agents/{agent}/eval-schedules` | S/K | (phase 5, P4-EVAL, C-870) list / create (`{ name, cron, timezone, anchor? }`; interval below `EVAL_SCHEDULE_MIN_INTERVAL` → 422 `invalid`; `anchor` `can_own` only) |
+| GET/PATCH/DELETE `/v1/eval-schedules/{id}` | S/K | (phase 5, P4-EVAL, C-870) same authority as the schedules of `10 §Schedules`; audit `eval.schedule.*` |
+
+Phase 5 rows, each answered with the standard error body; the set of routes and their statuses is the one C-860..C-874 define.
 
 ### Conversations and turns
 | Method & path | Auth | Purpose |
