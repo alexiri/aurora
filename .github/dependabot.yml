@@ -25,6 +25,14 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: wasmtime-wasi
         update-types: ["version-update:semver-major"]
+      # The component-model tooling moves with that wasmtime line, not on its own: the registry
+      # validates hook components with wasmparser before wasmtime loads them, and the guests are
+      # built with wit-bindgen. These 0.x crates break their API on every minor (PR #13: wasmparser
+      # 0.261's ComponentExternName), so minors are bumped by hand together with wasmtime.
+      - dependency-name: wasmparser
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: wit-bindgen
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # --- Rust: standalone hook guests of the built-in plugins (own Cargo.lock and [workspace]) ----
   # Each ships inside a signed built-in package (D-77); one PR per hook crate keeps the review small.
@@ -40,6 +48,10 @@ updates:
     groups:
       hooks-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # wit-bindgen moves with the hook host's wasmtime line (see the root workspace entry).
+      - dependency-name: wit-bindgen
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # --- Dashboard: pnpm, web/ ---------------------------------------------------------------------
   # Dependabot reads pnpm-lock.yaml under the `npm` ecosystem.
