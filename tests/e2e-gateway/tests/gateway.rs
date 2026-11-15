@@ -1732,3 +1732,120 @@ async fn s22_vertex_key_is_minted_by_the_gateway_and_never_leaks() {
     );
     st.finish().await;
 }
+
+/// (P4-LLM-3, C-806, C-807, SEC-97, acceptance 4) `azure_openai` with an Entra application through the real binaries: the
+/// API validates by one mint plus `GET /openai/v1/models` with the token, the gateway mints its own token and injects it
+/// as Bearer on the v1 route; the client secret and the tokens are in no log, request-log row or API read; a resource
+/// key on the same endpoint is injected as `api-key`.
+#[tokio::test]
+async fn s23_azure_entra_token_is_minted_by_the_gateway_and_never_leaks() {
+    use aurora_testkit::llm::azure::MockAzure;
+    use aurora_testkit::llm::entra::{MockEntra, TestApp};
+    let app = TestApp {
+        tenant_id: "11111111-2222-3333-4444-555555555555".into(),
+        client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+        client_secret: "e2e-entra-client-secret-value".into(),
+    };
+    let entra = MockEntra::start(&app).await;
+    let azure = MockAzure::start("e2e-azure-resource-key").await;
+    let st = Stack::start(Opts {
+        llm_azure: Some((entra.base().to_owned(), azure.base().to_owned())),
+        ..Opts::default()
+    })
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("azure-agent").await;
+    let (s, v) = api
+        .post(
+            &format!("/v1/orgs/{}/secrets", api.org),
+            json!({"name": "az-entra", "kind": "llm",
+                   "llm": {"endpoint_id": "az", "auth_mode": "azure_entra"}, "value": app.json()}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}\n{}", st.log_tails());
+    api.grant(&agent, v["id"].as_str().unwrap()).await;
+    api.set_policy("block", json!([])).await;
+    assert_eq!(entra.requests(), 1, "the API's validation is one mint");
+    let route = format!("{}/openai/v1/chat/completions", azure.base());
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(&route)
+        .header("authorization", "Bearer agent-own-key")
+        .header("api-key", "agent-own-key")
+        .body(r#"{"model":"gpt-4o"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    assert_eq!(entra.requests(), 2, "the gateway minted its own token");
+    let minted = entra.issued().last().unwrap().clone();
+    let seen = azure.requests();
+    let one = seen
+        .iter()
+        .find(|s| s.path.ends_with("/chat/completions"))
+        .unwrap();
+    assert_eq!(
+        one.header("authorization"),
+        Some(&*format!("Bearer {minted}"))
+    );
+    assert!(one.header("api-key").is_none());
+    // The token is reused, and the v1 management routes stay closed.
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(&route)
+        .body(r#"{"model":"gpt-4o"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(entra.requests(), 2);
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(format!("{}/openai/v1/files", azure.base()))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert!(r.text().await.unwrap().contains("llm_path_not_permitted"));
+    // Neither the client secret nor a token appears in any log, the request log or an API read.
+    let tokens = entra.issued();
+    let mut needles: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    needles.push(&app.client_secret);
+    needles.push("agent-own-key");
+    for log in &st.logs {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        for n in &needles {
+            assert!(!text.contains(n), "{} leaks a secret", log.display());
+        }
+    }
+    let rows: Vec<String> = sqlx::query_scalar("SELECT to_jsonb(r)::text FROM request_log r")
+        .fetch_all(st.pool())
+        .await
+        .unwrap();
+    let rows = rows.join("\n");
+    for n in &needles {
+        assert!(!rows.contains(n), "request_log leaks a secret");
+    }
+    for p in [
+        format!("/v1/orgs/{}/secrets", api.org),
+        format!("/v1/agents/{agent}/container-config"),
+        format!("/v1/agents/{agent}/effective"),
+    ] {
+        let (_, v) = api.get(&p).await;
+        for n in &needles {
+            assert!(!v.to_string().contains(n), "{p} leaks a secret");
+        }
+    }
+    let m = reqwest::get(format!("http://{GW_A_IP}:4103/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        m.lines()
+            .any(|l| l.starts_with("aurora_gateway_llm_mint_total{")
+                && l.contains("mode=\"azure_entra\"")
+                && l.contains("outcome=\"minted\"")),
+        "{m}"
+    );
+    st.finish().await;
+}

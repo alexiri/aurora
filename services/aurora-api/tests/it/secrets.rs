@@ -31,7 +31,13 @@ struct World {
     /// (P4-LLM-2) Google's token endpoint (`llm.dev_upstream_overrides`) and the service-account key it accepts.
     google: aurora_testkit::llm::google_token::MockGoogleToken,
     vkey: aurora_testkit::llm::google_token::TestKey,
+    /// (P4-LLM-3) An Azure OpenAI resource (key `azure-key`) and the Entra authority that knows `azure_app`.
+    azure: aurora_testkit::llm::azure::MockAzure,
+    entra: aurora_testkit::llm::entra::MockEntra,
+    azure_app: aurora_testkit::llm::entra::TestApp,
 }
+
+const AZURE_TENANT: &str = "11111111-2222-3333-4444-555555555555";
 
 fn endpoint(id: &str, base: &str, rule: Option<KeyOrigin>) -> LlmEndpoint {
     LlmEndpoint {
@@ -39,6 +45,22 @@ fn endpoint(id: &str, base: &str, rule: Option<KeyOrigin>) -> LlmEndpoint {
         provider: "litellm".into(),
         base_url: Some(base.into()),
         key_origin: rule,
+        ..LlmEndpoint::default()
+    }
+}
+
+fn azure_endpoint(id: &str, base: &str, tenant: Option<&str>) -> LlmEndpoint {
+    LlmEndpoint {
+        id: id.into(),
+        provider: "azure_openai".into(),
+        base_url: Some(base.into()),
+        models: vec!["gpt-4o".into()],
+        default_model: Some("gpt-4o".into()),
+        key_origin: tenant.map(|t| KeyOrigin {
+            method: "provider_account".into(),
+            allowed_organization_ids: vec![t.into()],
+            ..KeyOrigin::default()
+        }),
         ..LlmEndpoint::default()
     }
 }
@@ -142,6 +164,14 @@ async fn world() -> World {
     );
     let google = aurora_testkit::llm::google_token::MockGoogleToken::start(&vkey).await;
     let gu = google.base().to_owned();
+    let azure_app = aurora_testkit::llm::entra::TestApp {
+        tenant_id: AZURE_TENANT.into(),
+        client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+        client_secret: "entra-client-secret-value".into(),
+    };
+    let entra = aurora_testkit::llm::entra::MockEntra::start(&azure_app).await;
+    let azure = aurora_testkit::llm::azure::MockAzure::start("azure-key").await;
+    let (eu, zu) = (entra.base().to_owned(), azure.base().to_owned());
     let (lu, au, fu) = (litellm.uri(), anthropic.uri(), flaky.uri());
     let ou = openai.uri();
     let h = Harness::with_config(move |c| {
@@ -151,12 +181,16 @@ async fn world() -> World {
             "openai",
             "openai_compatible",
             "vertex",
+            "azure_openai",
         ]
         .map(String::from)
         .to_vec();
         c.llm
             .dev_upstream_overrides
             .insert("https://oauth2.googleapis.com".into(), gu.clone());
+        c.llm
+            .dev_upstream_overrides
+            .insert("https://login.microsoftonline.com".into(), eu.clone());
         c.llm
             .dev_upstream_overrides
             .insert("https://api.openai.com".into(), ou.clone());
@@ -249,6 +283,14 @@ async fn world() -> World {
                 }),
                 ..LlmEndpoint::default()
             },
+            // (P4-LLM-3) Azure: no rule, an allowed tenant, another tenant.
+            azure_endpoint("az", &zu, None),
+            azure_endpoint("az_tenant", &zu, Some(AZURE_TENANT)),
+            azure_endpoint(
+                "az_other",
+                &zu,
+                Some("99999999-2222-3333-4444-555555555555"),
+            ),
             LlmEndpoint {
                 id: "compat".into(),
                 provider: "openai_compatible".into(),
@@ -297,7 +339,8 @@ async fn world() -> World {
         .bind(json!({"llm": {"endpoints": {
             "central": {"key_scopes": ["organization"]},
             "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {},
-            "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}, "vx": {}, "vx_other": {}
+            "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}, "vx": {}, "vx_other": {},
+            "az": {}, "az_tenant": {}, "az_other": {}
         }}}))
         .execute(h.pool())
         .await
@@ -327,6 +370,9 @@ async fn world() -> World {
         _openai: openai,
         google,
         vkey,
+        azure,
+        entra,
+        azure_app,
     }
 }
 
@@ -1588,4 +1634,153 @@ async fn vertex_service_account_keys_are_checked_minted_and_attributed() {
         "{v}"
     );
     assert_eq!(v["error"]["details"]["reason"], "auth_mode_unsupported");
+}
+
+/// (P4-LLM-3, C-801, C-802, C-804, SEC-97, acceptance 3) Azure OpenAI: a resource key is validated by `GET /openai/v1/models`
+/// (`api-key`); an Entra application is shape-checked, minted and its tenant and application become the origin; a
+/// refused application is `mint_rejected`; a `provider_account` rule judges the tenant; an `api_key` under such a rule is
+/// `llm_key_unverifiable`; the providers listing carries the endpoint's admitted modes.
+#[tokio::test]
+async fn azure_keys_and_entra_applications_are_validated_and_attributed() {
+    use aurora_testkit::llm::entra::Behaviour;
+    let w = world().await;
+    let url = w.ws_url();
+    let save = |ep: &str, mode: &str, value: String, name: &str| {
+        json!({"name": name, "kind": "llm",
+               "llm": {"endpoint_id": ep, "auth_mode": mode}, "value": value})
+    };
+    let post = |body: Value| w.call(Method::POST, &url, &w.owner, Some(body));
+    // A resource key.
+    let (s, v) = post(save("az", "api_key", "azure-key".into(), "k1")).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["method"], "endpoint");
+    let seen = w.azure.requests();
+    assert_eq!(seen[0].path, "/openai/v1/models");
+    assert_eq!(seen[0].header("api-key"), Some("azure-key"));
+    assert_eq!(w.entra.requests(), 0);
+    let (s, v) = post(save("az", "api_key", "wrong".into(), "k2")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    // Entra: shape refusals call nothing.
+    let good = w.azure_app.json();
+    let with = |f: &dyn Fn(&mut Value)| {
+        let mut v: Value = serde_json::from_str(&good).unwrap();
+        f(&mut v);
+        v.to_string()
+    };
+    for (name, value, reason) in [
+        (
+            "common",
+            with(&|v| v["tenant_id"] = "common".into()),
+            "tenant_not_specific",
+        ),
+        (
+            "extra",
+            with(&|v| v["authority"] = "https://evil.example".into()),
+            "unknown_field",
+        ),
+        (
+            "missing",
+            with(&|v| {
+                v.as_object_mut().unwrap().remove("client_secret");
+            }),
+            "missing_field",
+        ),
+        ("not-json", "just a string".to_owned(), "missing_field"),
+    ] {
+        let (s, v) = post(save("az", "azure_entra", value, name)).await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("llm_key_invalid")),
+            "{name}: {v}"
+        );
+        assert_eq!(v["error"]["details"]["reason"], reason, "{name}: {v}");
+        no_value(&v, &[&w.azure_app.client_secret]);
+    }
+    assert_eq!(
+        w.entra.requests(),
+        0,
+        "shape refusals make no outbound call"
+    );
+    // A valid application: minted, then models with the token; the tenant and application are the origin.
+    let (s, v) = post(save("az_tenant", "azure_entra", good.clone(), "e1")).await;
+    assert_eq!(s, 201, "{v}");
+    assert!(w.entra.refused().is_empty(), "{:?}", w.entra.refused());
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["method"], "provider_account");
+    assert_eq!(v["origin"]["organization_id"], AZURE_TENANT);
+    assert_eq!(v["origin"]["user_id"], w.azure_app.client_id);
+    assert_eq!(v["llm"]["auth_mode"], "azure_entra");
+    no_value(&v, &[&w.azure_app.client_secret]);
+    let last = w.azure.requests().pop().unwrap();
+    assert!(
+        last.header("authorization")
+            .is_some_and(|a| a.starts_with("Bearer "))
+    );
+    assert!(last.header("api-key").is_none());
+    // Another tenant in the rule.
+    let (s, v) = post(save("az_other", "azure_entra", good.clone(), "e2")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_wrong_organization")),
+        "{v}"
+    );
+    // A resource key cannot report its account.
+    let (s, v) = post(save("az_tenant", "api_key", "azure-key".into(), "k3")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_unverifiable")),
+        "{v}"
+    );
+    // A refused application.
+    w.entra.set_behaviour(Behaviour::InvalidClient);
+    let (s, v) = post(save("az", "azure_entra", good.clone(), "e3")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    assert_eq!(v["error"]["details"]["reason"], "mint_rejected", "{v}");
+    // An unreachable authority is no verdict on the key: saved `pending` without a rule, refused with one (C-801).
+    w.entra.set_behaviour(Behaviour::Unavailable);
+    let (s, v) = post(save("az", "azure_entra", good.clone(), "e4")).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "pending");
+    let (s, v) = post(save("az_tenant", "azure_entra", good, "e5")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_endpoint_unreachable")),
+        "{v}"
+    );
+    // The listing: modes per endpoint (an Entra-only endpoint under `provider_account`).
+    let (s, v) = w
+        .call(Method::GET, "/v1/llm/providers", &w.member, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let azure = v["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "azure_openai")
+        .unwrap();
+    assert_eq!(azure["auth_modes"], json!(["api_key", "azure_entra"]));
+    assert_eq!(
+        azure["auth_mode_details"][1],
+        json!({"id": "azure_entra", "value_shape": "azure_entra", "recommended": false})
+    );
+    let mode_of = |ep: &str| -> Value {
+        v["endpoints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == ep)
+            .unwrap()["auth_modes"]
+            .clone()
+    };
+    assert_eq!(mode_of("az"), json!(["api_key", "azure_entra"]));
+    assert_eq!(mode_of("az_tenant"), json!(["azure_entra"]));
 }

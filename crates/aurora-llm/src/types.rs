@@ -254,6 +254,30 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<Vec<ModelInfo>> {
         self.list_models(ep, key, http).await
     }
+    /// (P4-LLM-3) [`Self::list_models_strict`] for a secret of auth mode `mode` (providers with several value shapes,
+    /// Azure's key and Entra application, override it; the others ignore the mode).
+    async fn list_models_strict_as(
+        &self,
+        ep: &Endpoint,
+        mode: AuthMode,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<Vec<ModelInfo>> {
+        let _ = mode;
+        self.list_models_strict(ep, key, http).await
+    }
+    /// (P4-LLM-3) [`Self::verify_key_origin`] for a secret of auth mode `mode`.
+    async fn verify_key_origin_as(
+        &self,
+        ep: &Endpoint,
+        mode: AuthMode,
+        method: OriginMethod,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<KeyOrigin> {
+        let _ = mode;
+        self.verify_key_origin(ep, method, key, http).await
+    }
     /// (P4-LLM-2) Whether the key is validated by the origin proof itself (Vertex: the mint that proves the project and
     /// e-mail is also the validation), so the API makes one call, not a listing and a proof.
     fn validates_by_origin(&self) -> bool {

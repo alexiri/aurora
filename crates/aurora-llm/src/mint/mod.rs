@@ -2,6 +2,7 @@
 //! builder and a pure response parser. The gateway's `LlmMint` (cache, single-flight, hold) and the API's validation
 //! both run these, so the two see the same request and the same errors. A [`MintError`] never carries the provider's
 //! message, only its error *code*.
+pub mod entra;
 pub mod gcp;
 
 use crate::{AuthMode, Endpoint, KeyOrigin, Overrides};
@@ -90,6 +91,7 @@ pub trait MintSpec: Send + Sync {
 pub fn spec(mode: AuthMode) -> Option<&'static dyn MintSpec> {
     match mode {
         AuthMode::GcpServiceAccount => Some(&gcp::GcpSpec),
+        AuthMode::AzureEntra => Some(&entra::EntraSpec),
         _ => None,
     }
 }

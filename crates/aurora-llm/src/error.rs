@@ -9,6 +9,9 @@ pub enum LlmError {
     Unreachable(String),
     #[error("llm key rejected by provider")]
     InvalidKey,
+    /// (P4-LLM-3, C-801 `mint_rejected`) The token endpoint refused the credential (a minted mode's own proof).
+    #[error("the credential was refused by the token endpoint")]
+    MintRejected,
     #[error("key origin could not be verified: {0}")]
     Unverifiable(String),
     #[error("llm endpoint returned HTTP {0}")]

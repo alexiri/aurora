@@ -239,6 +239,10 @@ struct Opts {
     /// (P4-LLM-2) The endpoint is a `vertex` one (`vertex`, project `proj-1`, `us-east5`) whose Vertex host and Google's
     /// token endpoint are replaced by mocks (`llm.dev_upstream_overrides`); the secret is a generated service-account key.
     vertex: bool,
+    /// (P4-LLM-3) The endpoint is an `azure_openai` one (`azure`, deployment `gpt-4o`) on a mock resource; `Some(true)`:
+    /// the secret is an Entra application (token from the authority mock, `llm.dev_upstream_overrides`), `Some(false)`:
+    /// the resource key.
+    azure: Option<bool>,
 }
 
 /// Byte-exact SSE body the mock streams (acceptance 3: passthrough).
@@ -266,6 +270,7 @@ impl Default for Opts {
             anthropic_paths: vec![],
             openai: false,
             vertex: false,
+            azure: None,
         }
     }
 }
@@ -284,6 +289,17 @@ struct Env {
     secret_ids: Vec<Uuid>,
     /// (P4-LLM-2) The Vertex mocks of an `Opts::vertex` run.
     vertex: Option<VertexRig>,
+    /// (P4-LLM-3) The Azure mocks of an `Opts::azure` run.
+    azure: Option<AzureRig>,
+}
+
+const AZURE_KEY: &str = "azure-resource-key";
+const AZURE_TENANT: &str = "11111111-2222-3333-4444-555555555555";
+
+struct AzureRig {
+    app: aurora_testkit::llm::entra::TestApp,
+    entra: aurora_testkit::llm::entra::MockEntra,
+    upstream: aurora_testkit::llm::azure::MockAzure,
 }
 
 struct VertexRig {
@@ -337,6 +353,27 @@ async fn start(o: Opts) -> Env {
     } else {
         None
     };
+    let azure = if o.azure.is_some() {
+        let app = aurora_testkit::llm::entra::TestApp {
+            tenant_id: AZURE_TENANT.into(),
+            client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+            client_secret: "entra-client-secret-value".into(),
+        };
+        let entra = aurora_testkit::llm::entra::MockEntra::start(&app).await;
+        let upstream = aurora_testkit::llm::azure::MockAzure::start(AZURE_KEY).await;
+        llm_addr = upstream
+            .base()
+            .trim_start_matches("http://")
+            .parse()
+            .unwrap();
+        Some(AzureRig {
+            app,
+            entra,
+            upstream,
+        })
+    } else {
+        None
+    };
     let plain = serve_mock(Arc::new(Counters::default())).await;
     let mem = Arc::new(MemoryStore::new("mem"));
     mem.allow_reference(w.org, "*");
@@ -357,9 +394,13 @@ async fn start(o: Opts) -> Env {
     let mut secret_ids = Vec::new();
     for (i, (key, ws_scoped, origin)) in o.secrets.iter().enumerate() {
         let path = format!("k{i}");
-        match &vertex {
-            Some(v) => mem.preload(&path, None, v.key.json().as_bytes()),
-            None => mem.preload(&path, None, key.as_bytes()),
+        match (&vertex, &azure) {
+            (Some(v), _) => mem.preload(&path, None, v.key.json().as_bytes()),
+            (_, Some(a)) if o.azure == Some(true) => {
+                mem.preload(&path, None, a.app.json().as_bytes())
+            }
+            (_, Some(_)) => mem.preload(&path, None, AZURE_KEY.as_bytes()),
+            _ => mem.preload(&path, None, key.as_bytes()),
         }
         let id = Uuid::now_v7();
         secret_ids.push(id);
@@ -371,6 +412,8 @@ async fn start(o: Opts) -> Env {
             llm_provider: Some(
                 if o.vertex {
                     "vertex"
+                } else if o.azure.is_some() {
+                    "azure_openai"
                 } else if o.openai {
                     "openai"
                 } else if o.litellm.is_some() {
@@ -383,6 +426,8 @@ async fn start(o: Opts) -> Env {
             llm_auth_mode: Some(
                 if o.vertex {
                     "gcp_service_account"
+                } else if o.azure == Some(true) {
+                    "azure_entra"
                 } else {
                     "api_key"
                 }
@@ -391,6 +436,8 @@ async fn start(o: Opts) -> Env {
             llm_endpoint_id: Some(
                 if o.vertex {
                     "vertex"
+                } else if o.azure.is_some() {
+                    "azure"
                 } else if o.openai {
                     "openai"
                 } else if o.litellm.is_some() {
@@ -422,6 +469,27 @@ async fn start(o: Opts) -> Env {
     }
     let src = Arc::new(Src(Mutex::new(rows), Mutex::new(policy)));
     let cfg = match &o.litellm {
+        _ if o.azure.is_some() => {
+            let a = azure.as_ref().unwrap();
+            LlmSection {
+                enabled_providers: vec!["azure_openai".into()],
+                provider_preference: vec![],
+                dev_upstream_overrides: [(
+                    "https://login.microsoftonline.com".to_owned(),
+                    a.entra.base().to_owned(),
+                )]
+                .into(),
+                endpoints: vec![LlmEndpoint {
+                    id: "azure".into(),
+                    provider: "azure_openai".into(),
+                    base_url: Some(a.upstream.base().to_owned()),
+                    models: vec!["gpt-4o".into(), "gpt-4o-mini".into()],
+                    default_model: Some("gpt-4o".into()),
+                    allowed_models: o.instance_models.clone(),
+                    ..Default::default()
+                }],
+            }
+        }
         _ if o.vertex => {
             let v = vertex.as_ref().unwrap();
             LlmSection {
@@ -496,15 +564,17 @@ async fn start(o: Opts) -> Env {
             }],
         },
     };
-    let llm = Arc::new(if o.litellm.is_some() || o.openai || o.vertex {
-        aurora_llm::ProviderRegistry::from_config(&cfg).unwrap()
-    } else {
-        aurora_llm::ProviderRegistry::from_config_with_anthropic_base(
-            &cfg,
-            &format!("http://{llm_addr}"),
-        )
-        .unwrap()
-    });
+    let llm = Arc::new(
+        if o.litellm.is_some() || o.openai || o.vertex || o.azure.is_some() {
+            aurora_llm::ProviderRegistry::from_config(&cfg).unwrap()
+        } else {
+            aurora_llm::ProviderRegistry::from_config_with_anthropic_base(
+                &cfg,
+                &format!("http://{llm_addr}"),
+            )
+            .unwrap()
+        },
+    );
     let gcfg = aurora_config::Governance {
         allowed_key_scopes: vec!["organization".into(), "workspace".into()],
         llm_minimum_posture: o.llm_min,
@@ -597,9 +667,11 @@ async fn start(o: Opts) -> Env {
         log,
         secret_ids,
         vertex,
+        azure,
     }
 }
 
+#[derive(Debug)]
 struct Reply {
     status: u16,
     body: String,
@@ -1479,5 +1551,186 @@ async fn vertex_mint_failures_answer_502_and_forward_nothing() {
         );
         let dump = format!("{rows:?}");
         assert!(!dump.contains("BEGIN") && !dump.contains("ya29"), "{dump}");
+    }
+}
+
+const AZURE_DOC: &str =
+    r#"{"llm": {"posture": "open", "endpoints": {"azure": {"allowed": true}}}}"#;
+
+async fn azure_env(entra: bool, models: &[&str]) -> Env {
+    start(Opts {
+        azure: Some(entra),
+        doc: serde_json::from_str(AZURE_DOC).unwrap(),
+        secrets: vec![("unused", true, None)],
+        instance_models: models.iter().map(|m| (*m).to_owned()).collect(),
+        ..Opts::default()
+    })
+    .await
+}
+
+const AGENT_AUTH: &str =
+    "Authorization: Bearer agent-own\r\nx-api-key: agent-own\r\napi-key: agent-own\r\n";
+
+/// (P4-LLM-3, C-806, C-805, SEC-65, acceptance 2) An `azure_openai` resource key: the gateway sets `api-key` and removes
+/// the agent's `Authorization`, `x-api-key` and `api-key`; SSE passes byte for byte; the deployment-name allow-list
+/// reads body `/model`; the classic `api-version` routes and the v1 management routes are refused before policy and
+/// before the key is opened; the authority is never called.
+#[tokio::test]
+async fn azure_key_is_injected_as_api_key_and_confined_to_the_v1_inference_routes() {
+    let env = azure_env(false, &["gpt-4o"]).await;
+    let rig = env.azure.as_ref().unwrap();
+    let r = request(
+        &env,
+        env.llm,
+        "POST",
+        "/openai/v1/chat/completions",
+        AGENT_AUTH,
+        br#"{"model":"gpt-4o","messages":[]}"#,
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    {
+        let seen = rig.upstream.requests();
+        let one = &seen[0];
+        assert_eq!(one.header("api-key"), Some(AZURE_KEY), "{one:?}");
+        assert!(
+            one.header("authorization").is_none()
+                && one.header("x-api-key").is_none()
+                && one.headers.iter().all(|(_, v)| !v.contains("agent-own")),
+            "{one:?}"
+        );
+    }
+    let r = request(
+        &env,
+        env.llm,
+        "POST",
+        "/openai/v1/responses",
+        "",
+        br#"{"model":"gpt-4o","stream":true}"#,
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.body, aurora_testkit::llm::azure::SSE);
+    // The allow-list holds deployment names.
+    let r = request(
+        &env,
+        env.llm,
+        "POST",
+        "/openai/v1/chat/completions",
+        "",
+        br#"{"model":"gpt-4o-mini"}"#,
+    )
+    .await;
+    assert!(has(&r, "llm_model_not_allowed"), "{}", r.body);
+    // Refused before policy and before the value is opened.
+    env.mem.set_unavailable(true);
+    let before = rig.upstream.requests().len();
+    for (method, path) in [
+        (
+            "POST",
+            "/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21",
+        ),
+        ("POST", "/openai/v1/files"),
+        ("GET", "/openai/v1/files"),
+        ("POST", "/openai/v1/fine_tuning/jobs"),
+        ("DELETE", "/openai/v1/files/file_1"),
+        ("POST", "/openai/v1/images/generations"),
+        ("GET", "/openai/models?api-version=2024-10-21"),
+        ("GET", "/v1/models"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert!(
+            has(&r, "llm_path_not_permitted"),
+            "{method} {path}: {}",
+            r.body
+        );
+    }
+    assert_eq!(rig.upstream.requests().len(), before);
+    assert_eq!(rig.entra.requests(), 0, "a key is never minted");
+}
+
+/// (P4-LLM-3, C-806, C-807, SEC-97, acceptance 2) An Entra application: the gateway mints one token (single flight
+/// across concurrent requests, reused afterwards) and injects it as Bearer; the agent's `api-key` and `Authorization`
+/// are removed; no client secret reaches the upstream.
+#[tokio::test]
+async fn azure_entra_token_is_minted_once_and_injected_as_bearer() {
+    let env = azure_env(true, &[]).await;
+    let rig = env.azure.as_ref().unwrap();
+    let go = || {
+        request(
+            &env,
+            env.llm,
+            "POST",
+            "/openai/v1/chat/completions",
+            AGENT_AUTH,
+            br#"{"model":"gpt-4o"}"#,
+        )
+    };
+    let replies = futures::future::join_all((0..12).map(|_| go())).await;
+    assert!(replies.iter().all(|r| r.status == 200), "{replies:?}");
+    assert_eq!(rig.entra.requests(), 1, "single flight");
+    assert!(rig.entra.refused().is_empty(), "{:?}", rig.entra.refused());
+    let token = &rig.entra.issued()[0];
+    let seen = rig.upstream.requests();
+    assert_eq!(seen.len(), 12);
+    for one in &seen {
+        assert_eq!(
+            one.header("authorization"),
+            Some(format!("Bearer {token}").as_str()),
+            "{one:?}"
+        );
+        assert!(
+            one.header("api-key").is_none()
+                && one.header("x-api-key").is_none()
+                && one.headers.iter().all(|(_, v)| {
+                    !v.contains("agent-own") && !v.contains(&rig.app.client_secret)
+                }),
+            "{one:?}"
+        );
+    }
+}
+
+/// (C-807, SEC-97) A refused Entra application: 502 `credential_unavailable` `llm_mint` `mint_rejected`, request-log
+/// `llm_auth`, nothing forwarded; the client secret and the token are in neither the answer nor the log.
+#[tokio::test]
+async fn azure_entra_mint_failures_answer_502_and_forward_nothing() {
+    use aurora_testkit::llm::entra::Behaviour;
+    for (b, reason, code) in [
+        (Behaviour::InvalidClient, "mint_rejected", "llm_auth"),
+        (
+            Behaviour::Unavailable,
+            "mint_unavailable",
+            "credential_unavailable",
+        ),
+    ] {
+        let env = azure_env(true, &[]).await;
+        let rig = env.azure.as_ref().unwrap();
+        rig.entra.set_behaviour(b);
+        let body = br#"{"model":"gpt-4o"}"#;
+        let path = "/openai/v1/chat/completions";
+        let r = request(&env, env.llm, "POST", path, "", body).await;
+        assert_eq!(r.status, 502, "{}", r.body);
+        assert!(
+            has(&r, "credential_unavailable")
+                && r.body.contains("llm_mint")
+                && r.body.contains(reason),
+            "{}",
+            r.body
+        );
+        assert!(rig.upstream.requests().is_empty(), "nothing is forwarded");
+        for _ in 0..5 {
+            request(&env, env.llm, "POST", path, "", body).await;
+        }
+        assert_eq!(rig.entra.requests(), 1, "held");
+        env.log.flush().await;
+        let rows = env.captured.0.lock().unwrap().clone();
+        assert!(
+            rows.iter()
+                .any(|row| row.error_code.as_deref() == Some(code) && row.status == 502),
+            "{code}: {rows:?}"
+        );
+        let dump = format!("{rows:?}{}", r.body);
+        assert!(!dump.contains(&rig.app.client_secret), "{dump}");
     }
 }
