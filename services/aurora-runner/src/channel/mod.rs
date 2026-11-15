@@ -19,7 +19,7 @@ use aurora_protocol::supervisor::{
     ACK_INTERVAL, MAX_FRAME, MAX_UNACKED_BYTES, PING_INTERVAL, RunnerToSupervisor, SILENCE_TIMEOUT,
     SessionProof,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use tokio::net::TcpListener;

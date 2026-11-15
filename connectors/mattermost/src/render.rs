@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use aurora_channels::{Block, ButtonStyle, Card};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use uuid::Uuid;

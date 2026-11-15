@@ -852,7 +852,7 @@ async fn file_put_and_get_authorization_and_size_cap() {
         (name.as_str(), dir.as_str(), st.as_str(), size, ct.as_str()),
         ("pa_ss.txt", "in", "pending", 5, "text/plain")
     );
-    assert_eq!(sha, format!("{:x}", Sha256::digest(b"hello")));
+    assert_eq!(sha, hex::encode(Sha256::digest(b"hello")));
     // Single-shot: identical bytes again return the same attachment, different bytes are 409.
     let (s, body) = w
         .raw(
