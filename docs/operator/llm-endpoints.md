@@ -7,6 +7,48 @@ and the example in [docs/15 §Governance example](../15-deployment-operations.md
 The API and the gateway both read this configuration. Each endpoint is an instance
 ceiling: organizations and workspaces can narrow it but cannot widen it.
 
+## Admin › Settings › LLM endpoints (dashboard first)
+
+(Phase 5, SET-3, D-236, D-237.) An instance admin sets up providers and endpoints on **Admin › Settings
+› LLM endpoints**; there is no Helm change and no restart. The page has three parts:
+
+- **Enabled providers** and **Preference order** — which providers this instance offers and the order a
+  hosted agent picks a key's provider in. The preference order may only name enabled providers (a list
+  the page writes is refused otherwise).
+- **Endpoints** — one row each. Add or edit an endpoint in the dialog: pick the provider (only providers
+  this release can run are offered), fill the provider's fields, the allowed models, a key-origin rule and
+  extra allowed paths. **Test connection** sends one request to the endpoint's models path from the API,
+  with **no credential** at all, through the same destination guard as every other server-side request:
+  a private address needs `gateway.allowed_private`. Any answer below 500 (a 401 included) means the
+  endpoint is there; a 5xx, a refused destination, DNS, TLS and timeout failures are named.
+- Saving shows what the change does first: how many LLM keys in which organizations would stop being
+  usable (see below), and a warning for a LiteLLM endpoint without a default model.
+
+The API and every gateway apply a save at once: key creation, the model pickers, model readiness and the
+setup wizard in the API; the endpoint table, the reserved LLM hosts and the known LLM hosts list in the
+gateway (a host that becomes an endpoint's host leaves the known list, so a sanctioned-only organization
+uses the endpoint, not a generic secret on that host). Entries are checked by the same rules as startup:
+a key that looks like a credential (`api_key`, `token`, …) is refused by name, a malformed base URL or
+path list is refused with the field named, and an unknown `key_origin.method` gets
+the nearest valid suggestion. With `governance.llm.require_key_origin` on, every endpoint needs a
+`key_origin`.
+
+**Helm still works, and locks what it sets.** An endpoint defined in `config.llm.endpoints` appears on the
+page as **Managed by Helm** and can be read but not edited; endpoints you add on the page sit beside it
+under other ids (an id a Helm endpoint already uses is refused: `entry_id_in_helm`). `enabled_providers`
+and `provider_preference` lock **as whole values** when Helm sets either. To hand a Helm endpoint to the
+dashboard, remove it from the values file: it stays with its last definition and becomes editable at the
+next start.
+
+**Removing or narrowing an endpoint.** Keys that organizations stored on it are kept but stop being
+usable: they show as *not permitted* (the endpoint is gone) or *mismatch* (its verified origin no longer
+complies), the gateway stops injecting them, and agent model overrides the new allow-list no longer
+permits are cleared. Nothing is deleted; adding the endpoint back with the same id makes the keys usable
+again, so re-use an id only for the same service.
+
+Everything below documents the same settings as Helm values, for an install that keeps them in the values
+file.
+
 ## Providers
 
 Phase 0 has two providers (docs/08 §6):

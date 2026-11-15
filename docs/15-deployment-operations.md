@@ -42,8 +42,8 @@ tells the runner what is inside. Helm: `config.hosted.enabled_harnesses` (defaul
 names the runtimes of the sandbox image (D-153).
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
-non-root, contain only their binary, and are built for linux/amd64. arm64 images are deferred
-to phase 5 at the earliest (OPS-022): there is no arm deployment planned.
+non-root, contain only their binary, and are built for linux/amd64. arm64 images are not planned: OPS-022 (multi-arch images) was
+cancelled by the owner on 2026-11-15 (D-318); there is no arm deployment.
 
 ## Configuration
 
@@ -353,19 +353,19 @@ NetworkPolicy and its key is a secret root.
 | `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 5 (D-138, moved from phase 4), RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
 | `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 5 (D-138, moved from phase 4), RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
 | `push.dev_endpoint_overrides` | unset | api | (phase 5, P4-011B, D-267(b), C-837) **tests and development only**: `{ "<allow-listed push host>": "<loopback http URL>" }` sends pushes for that host to the test kit's mock push service (the allow-list check and the VAPID `aud` still use the real origin). Refused at startup unless every target is a loopback URL and `server.external_url` is loopback; never rendered by the chart; not an instance setting (SEC-89) |
-| `blobs.backend` | `postgres` | api | (phase 5 (D-138, moved from phase 4), P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
-| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 5 (D-138, moved from phase 4), P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
-| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 5 (D-138, moved from phase 4), P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
-| `blobs.s3.allow_insecure_http` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
-| `blobs.s3.path_style` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
-| `blobs.s3.prefix` | `aurora/` | api | (phase 5 (D-138, moved from phase 4), P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
-| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 5 (D-138, moved from phase 4), P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
-| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 5 (D-138, moved from phase 4), P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
-| `blobs.s3.sse` | `AES256` | api | (phase 5 (D-138, moved from phase 4), P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
-| `blobs.s3.sse_kms_key_id` | unset | api | (phase 5 (D-138, moved from phase 4), P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
-| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 5 (D-138, moved from phase 4), P4-S3) PEM bundle verifying the endpoint |
-| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
-| `blobs.s3.upload_concurrency` | 16 | api | (phase 5 (D-138, moved from phase 4), P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
+| `blobs.backend` | `postgres` | api | (phase 6 (D-318, moved from phase 5), P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
+| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 6 (D-318, moved from phase 5), P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
+| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 6 (D-318, moved from phase 5), P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
+| `blobs.s3.allow_insecure_http` | `false` | api | (phase 6 (D-318, moved from phase 5), P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
+| `blobs.s3.path_style` | `false` | api | (phase 6 (D-318, moved from phase 5), P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
+| `blobs.s3.prefix` | `aurora/` | api | (phase 6 (D-318, moved from phase 5), P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
+| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 6 (D-318, moved from phase 5), P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
+| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 6 (D-318, moved from phase 5), P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
+| `blobs.s3.sse` | `AES256` | api | (phase 6 (D-318, moved from phase 5), P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
+| `blobs.s3.sse_kms_key_id` | unset | api | (phase 6 (D-318, moved from phase 5), P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
+| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 6 (D-318, moved from phase 5), P4-S3) PEM bundle verifying the endpoint |
+| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 6 (D-318, moved from phase 5), P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
+| `blobs.s3.upload_concurrency` | 16 | api | (phase 6 (D-318, moved from phase 5), P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
 | `retention.request_log_days` | 30 | api | |
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
@@ -567,7 +567,7 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   exists before the job on `helm upgrade`, when default deny is already in
   place); connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
   backend api and gateway also reach the configured Redis peers
-  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 5 (D-138, moved from phase 4), P4-S3)
+  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 6 (D-318, moved from phase 5), P4-S3)
   With the `s3` blob backend the **api** (only) also reaches the configured bucket
   endpoint (`blobs.s3.networkPolicy`).
 - (phase 4, P4-MCON) **Connector host** (`connectorHost.enabled`, default `true`; replicas
@@ -740,7 +740,7 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 
 ## Backups and state
 
-Stateful: Postgres (system of record), (phase 5 (D-138, moved from phase 4), P4-S3) the attachment bucket when
+Stateful: Postgres (system of record), (phase 6 (D-318, moved from phase 5), P4-S3) the attachment bucket when
 `blobs.backend = "s3"` (restore it together with Postgres), per-agent home volumes (PVC snapshots /
 volume backups are the operator's job), the gateway CA Secret, the encryption
 keyring and signing key (phase 2: the signing-key and internal-secret **rings**,
@@ -755,7 +755,7 @@ occupy a slot permanently: size for steady state, not peak. Postgres: modest;
 
 ### Attachment storage (phase 2, RFE-015)
 
-Attachments live in Postgres (`blobs`, `bytea`) by default (phase 5 (D-138, moved from phase 4), P4-S3: or in an
+Attachments live in Postgres (`blobs`, `bytea`) by default (phase 6 (D-318, moved from phase 5), P4-S3: or in an
 S3-compatible bucket with `blobs.backend = "s3"`, *S3-compatible blob store* below), so in
 the default they share the database's disk and backups. Budget for
 `Σ org quotas` (default 10 GiB each) in the worst case, expect real use to be far
@@ -894,7 +894,7 @@ back to `memory` leaves the tables in place (they are pruned, not dropped). A mi
 fleet (some replicas shared, some `memory`) is safe: each counts what it sees, so
 the effective limit is between the configured value and N× until the roll finishes.
 
-## S3-compatible blob store (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63)
+## S3-compatible blob store (phase 6 (D-318, moved from phase 5), P4-S3, D-120, SEC-63)
 
 A second attachment backend beside Postgres, behind the same **BlobStore** trait
 (`put`, `get`, `delete`, `list(prefix)`, `health`; crate `aurora-blobstore`, with the

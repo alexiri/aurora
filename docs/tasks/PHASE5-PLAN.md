@@ -22,15 +22,15 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 |---|---|---|---|
 | `p5-apps` → settings | SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6 (after SET-3 and P4-LLM-1 are merged) → P5-MODELS-3 (needs P5-MODELS-1 merged) | one settings framework and its consumers, in brief order | `aurora-config` settings registry, `domains/settings/**`, Admin › Settings pages, `aurora-secrets` store admin |
 | `p5-agent` | P5-CHAT-4 B ‖ P4-LLM-1 → P4-LLM-2 ‖ P4-LLM-3 → P4-LLM-4 → P4-LLM-5 ‖ P5-MODELS-1 → P5-MODELS-2 (same adapter code) ‖ | finishes the chat chain, then the LLM provider chain (runner harness config + gateway mint) | `components/chat/**` search, `aurora-runner` provider/harness config, gateway `llm/**` |
-| `p5-platform` | P5-CERN-ADDONS external repo ‖ FIX-153 → FIX-154 (owner 2026-11-15: the CERN Phonebook connect dead ends) ‖ FIX-146 A → B/C/D → E ‖ P5-FILES-1 ‖ P5-FILES-2 → P5-FILES-3 → P5-FILES-4 ‖ P4-SSH-1 → P4-SSH-2 ‖ (P5-FILES placed 2026-11-15, owner D-316: before P4-SSH, whose Part B builds on FILES-1's `exec.*` engine; FILES-1 touches `aurora-runner` `stream_listener.rs`/`api.rs`/`channel/**`, disjoint from `p5-agent`'s runner provider/harness config — merge master before starting it) | the addon repo's release, then cross-cutting tracing, then the Files page and SSH (all need `web/package.json`; FILES-3 adds CodeMirror) | `web/package.json` + `pnpm-lock.yaml` (this wave), `/home/alex/agent-platform/aurora-addons-cern`, tracing middleware, `aurora-terminator` |
+| `p5-platform` | P5-CERN-ADDONS external repo ‖ FIX-153 → FIX-154 (owner 2026-11-15: the CERN Phonebook connect dead ends) ‖ FIX-146 A → B/C/D → E ‖ P5-FILES-1 ‖ P5-FILES-2 → P5-FILES-3 → P5-FILES-4 ‖ FIX-156 → FIX-155 (terminal; same supervisor/pty files) ‖ P4-SSH-1 → P4-SSH-2 ‖ (P5-FILES placed 2026-11-15, owner D-316: before P4-SSH, whose Part B builds on FILES-1's `exec.*` engine; FILES-1 touches `aurora-runner` `stream_listener.rs`/`api.rs`/`channel/**`, disjoint from `p5-agent`'s runner provider/harness config — merge master before starting it) | the addon repo's release, then cross-cutting tracing, then the Files page and SSH (all need `web/package.json`; FILES-3 adds CodeMirror) | `web/package.json` + `pnpm-lock.yaml` (this wave), `/home/alex/agent-platform/aurora-addons-cern`, tracing middleware, `aurora-terminator` |
 
 ### Wave 3 queue (placed 2026-11-15; each lane continues after its wave-2 chain, merging master first)
 
 | Lane | Queue after its wave-2 chain | Why here |
 |---|---|---|
 | `p5-apps` | P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → FIX-151 → 6 → 7 ‖ P5-ICS → P5-CALDAV ‖ | the registry, package format and built-in packages are this lane's ground; P5-GUIDE-1 and P5-ICS both change the registry, so they run in one lane, one after the other |
-| `p5-agent` | FIX-150 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3 ‖ | channels and messaging tools (FIX-150, `send_as_me`), then evals, whose judge builds on the LLM chain's providers |
-| `p5-platform` | P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P4-S3 ‖ P5-CALINV ‖ | gateway holds and Web Push next to the SSH and tracing work; the blob store; the mailer-only calendar invite |
+| `p5-agent` | FIX-150 → FIX-158 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3 ‖ | channels and messaging tools (FIX-150, `send_as_me`), then evals, whose judge builds on the LLM chain's providers |
+| `p5-platform` | P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P5-CALINV ‖ | gateway holds and Web Push next to the SSH and tracing work; the mailer-only calendar invite (P4-S3, the blob store, moved to phase 6, D-318) |
 
 **Ordering constraint:** P5-GUIDE-7 must not run beside a lane editing `services/aurora-api/src/domains/tools/` (FIX-150, P4-UTOK and P4-EVAL-2 do), so `p5-apps` holds P5-GUIDE-7 until those three are merged. If one lane finishes much earlier, the coordinator moves the head of another lane's queue to it. **FIX-150** (S–M, `channels/messaging.rs` + `tools/messaging.rs` only, disjoint from the wave-2 hot files) may be inserted at any lane's next batch gate; not concurrent with P4-UTOK/P4-NARR.
 
@@ -38,7 +38,7 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 1. **Spec step 0** for FIX-142, FIX-145, FIX-146 (unblocks wave 1/2 lanes).
 2. **SPEC-SETTINGS** spec batch → SET-1..SET-5 briefs (owner answers its open classification questions).
 3. **P5-CHAT-0** design boards + `docs/14` (owner reviews before P5-CHAT-2).
-4. Specs/briefs for the rows with none, in the owner's order (D-235(c)): **P4-LLM, P4-SSH-1/2, P4-011B** first; then P4-S3, P4-EVAL, P4-NARR, P4-UTOK (P5-SLACK moved to phase 6, D-285).
+4. Specs/briefs for the rows with none, in the owner's order (D-235(c)): **P4-LLM, P4-SSH-1/2, P4-011B** first; then P4-S3, P4-EVAL, P4-NARR, P4-UTOK (P5-SLACK moved to phase 6, D-285; P4-S3, specified, moved to phase 6, D-318).
 
 Done 2026-11-14: specs merged for SPEC-SETTINGS (SET-1..SET-5), P4-SSH (P4-SSH-1/2), P4-LLM (P4-LLM-1..6), P4-011B (P4-011B-1..5); owner answers D-235, D-268. Still to spec: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK; P5-CHAT-0 boards.
 Done 2026-11-14: step 0 of FIX-142 (46bbf084), FIX-145 (f8fb415b), FIX-146 (c8aa4cb5). SPEC-SETTINGS' owner questions answered (D-235(a)/(b)); P5-CERN-ADDONS uses the gateway lane (D-235(d)).

@@ -1572,12 +1572,12 @@ headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
 
-#### `attachments` (S3 blob backend; phase 5, D-138)
+#### `attachments` (S3 blob backend; phase 6, D-318)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 5 (P4-S3, D-138) |
-| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 5 (P4-S3, D-138) |
-| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 5 (P4-S3, D-138) |
+| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 6 (P4-S3, D-318) |
+| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 6 (P4-S3, D-318) |
+| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 6 (P4-S3, D-318) |
 
 `blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
 

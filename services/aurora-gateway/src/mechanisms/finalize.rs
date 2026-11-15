@@ -4,7 +4,7 @@
 use super::Unavailable;
 use super::template::{Dest, Vars, render};
 use aurora_registry::manifest::AwsSigv4;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use http::{HeaderMap, HeaderName, HeaderValue, Method};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use sha2::{Digest, Sha256};

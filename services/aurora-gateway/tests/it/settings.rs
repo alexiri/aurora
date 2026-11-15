@@ -8,7 +8,9 @@ use aurora_gateway::invalidation::Hub;
 use aurora_gateway::settings::{ReloadError, Settings};
 use aurora_testkit::TestDb;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 async fn write(db: &TestDb, section: &str, value: Value) -> i64 {
     let mut conn = db.pool().acquire().await.unwrap();
@@ -62,6 +64,180 @@ async fn notify_swaps_the_snapshot_and_reload_covers_a_missed_notify() {
     assert!(!settings.snapshot().generations.contains_key("scim"));
     tx.send(true).unwrap();
     let _ = task.await;
+}
+
+/// SET-2: a swap of `governance` rebuilds the instance ceiling and the BYO ceiling at once,
+/// without a restart, and drops the cached effective governance (a stale floor would loosen
+/// enforcement). A key the gateway does not read leaves both alone.
+#[tokio::test]
+async fn a_governance_swap_rebuilds_the_instance_and_the_byo_ceiling() {
+    use aurora_gateway::governance::{DbGovSource, Governance, instance_from_config};
+    use aurora_gateway::resolver::DbCredentialResolver;
+    use aurora_llm::governance::LlmPosture;
+    let db = TestDb::new().await;
+    let settings = Settings::new(None);
+    let llm = Arc::new(
+        aurora_llm::ProviderRegistry::from_config(&aurora_config::LlmSection::default()).unwrap(),
+    );
+    let base = aurora_config::RawConfig::default()
+        .governance_config()
+        .unwrap();
+    let gov = Arc::new(Governance::new(
+        instance_from_config(&base, &llm),
+        llm.clone(),
+        Arc::new(DbGovSource(db.pool().clone())),
+    ));
+    let resolver = Arc::new(DbCredentialResolver::new(db.pool().clone()));
+    let policy = Arc::new(aurora_gateway::resolve::Resolver::new(
+        Arc::new(aurora_gateway::resolve::DbSource(db.pool().clone())),
+        llm,
+    ));
+    settings.rebuild_governance_on_change(gov.clone(), resolver.clone(), policy);
+    assert_eq!(gov.instance().llm_minimum_posture, LlmPosture::Open);
+
+    // An organization to cache an effective governance for.
+    let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,$2,'o',$2)")
+        .bind(org)
+        .bind(org.simple().to_string())
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        gov.effective(org).await.unwrap().llm_posture,
+        LlmPosture::Open
+    );
+
+    write(
+        &db,
+        "governance",
+        json!({"governance.llm.minimum_posture": "sanctioned_only", "byo.enabled": false}),
+    )
+    .await;
+    let changed = settings.reload(db.pool()).await.unwrap();
+    assert_eq!(changed, vec!["governance".to_string()]);
+    assert_eq!(
+        gov.instance().llm_minimum_posture,
+        LlmPosture::SanctionedOnly
+    );
+    assert!(!resolver.byo().enabled, "byo.enabled is live");
+    // The cached `open` is gone: the next read is computed from the new floor.
+    assert_eq!(
+        gov.effective(org).await.unwrap().llm_posture,
+        LlmPosture::SanctionedOnly
+    );
+    // Back again.
+    write(&db, "governance", json!({})).await;
+    settings.reload(db.pool()).await.unwrap();
+    assert_eq!(gov.instance().llm_minimum_posture, LlmPosture::Open);
+    assert!(resolver.byo().enabled);
+}
+
+/// SET-3: a swap of `llm` rebuilds the endpoint table of the policy resolver and of the
+/// governance step, the reserved LLM hosts and the instance's endpoints and known LLM hosts
+/// (built-in − endpoint hosts), drops the cached effective governance — and a removal undoes it.
+#[tokio::test]
+async fn an_llm_swap_rebuilds_the_endpoint_table_and_the_known_hosts() {
+    use aurora_gateway::governance::{DbGovSource, Governance, instance_from_config};
+    use aurora_gateway::resolver::DbCredentialResolver;
+    let db = TestDb::new().await;
+    let settings = Settings::new(None);
+    let llm = Arc::new(
+        aurora_llm::ProviderRegistry::from_config(&aurora_config::LlmSection::default()).unwrap(),
+    );
+    let base = aurora_config::RawConfig::default()
+        .governance_config()
+        .unwrap();
+    let gov = Arc::new(Governance::new(
+        instance_from_config(&base, &llm),
+        llm.clone(),
+        Arc::new(DbGovSource(db.pool().clone())),
+    ));
+    let resolver = Arc::new(DbCredentialResolver::new(db.pool().clone()));
+    let policy = Arc::new(aurora_gateway::resolve::Resolver::new(
+        Arc::new(aurora_gateway::resolve::DbSource(db.pool().clone())),
+        llm,
+    ));
+    settings.rebuild_governance_on_change(gov.clone(), resolver, policy.clone());
+    let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,$2,'o',$2)")
+        .bind(org)
+        .bind(org.simple().to_string())
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert!(
+        !gov.effective(org)
+            .await
+            .unwrap()
+            .endpoints
+            .contains_key("team"),
+        "no `team` endpoint yet (and the effective view is cached now)"
+    );
+    assert!(
+        gov.instance()
+            .known_llm_hosts
+            .iter()
+            .any(|h| h == "api.openai.com")
+    );
+    assert!(!policy.llm().is_endpoint_host("litellm.team.example"));
+
+    write(
+        &db,
+        "llm",
+        json!({
+            "llm.enabled_providers": ["litellm", "anthropic", "openai_compatible"],
+            "llm.endpoints": [
+                {"id": "team", "provider": "litellm", "base_url": "https://litellm.team.example"},
+                {"id": "oa", "provider": "openai_compatible", "base_url": "https://api.openai.com"},
+            ],
+        }),
+    )
+    .await;
+    let changed = settings.reload(db.pool()).await.unwrap();
+    assert_eq!(changed, vec!["llm".to_string()]);
+    for table in [policy.llm(), gov.registry()] {
+        assert!(table.endpoint("team").is_some(), "endpoint table rebuilt");
+        assert!(
+            table.is_endpoint_host("litellm.team.example"),
+            "host reserved"
+        );
+    }
+    assert!(gov.instance().endpoints.iter().any(|e| e.id == "team"));
+    assert!(
+        !gov.instance()
+            .known_llm_hosts
+            .iter()
+            .any(|h| h == "api.openai.com"),
+        "an endpoint host leaves the known list"
+    );
+    assert!(
+        gov.effective(org)
+            .await
+            .unwrap()
+            .endpoints
+            .contains_key("team"),
+        "the cached effective governance did not survive the swap"
+    );
+
+    // Removed again: the table, the reservation and the known list return to the start.
+    write(&db, "llm", json!({})).await;
+    settings.reload(db.pool()).await.unwrap();
+    assert!(policy.llm().endpoint("team").is_none());
+    assert!(!gov.registry().is_endpoint_host("litellm.team.example"));
+    assert!(
+        gov.instance()
+            .known_llm_hosts
+            .iter()
+            .any(|h| h == "api.openai.com")
+    );
+    assert!(
+        !gov.effective(org)
+            .await
+            .unwrap()
+            .endpoints
+            .contains_key("team")
+    );
 }
 
 #[tokio::test]

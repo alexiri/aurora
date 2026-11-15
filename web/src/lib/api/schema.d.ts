@@ -952,6 +952,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/settings/governance/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where organizations stand against the instance governance ceiling (C-778): effective postures
+         *     and the settings where an organization is stricter than the floor or clamped by it.
+         */
+        get: operations["adminListGovernanceOrgs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/settings/import": {
         parameters: {
             query?: never;
@@ -966,6 +986,26 @@ export interface paths {
          *     transaction (C-776).
          */
         post: operations["adminImportSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/settings/llm/endpoint-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe an LLM endpoint without a credential (C-779): one GET of its models path through the
+         *     destination guard, 10 s. Nothing is saved; no re-authentication (nothing changes).
+         */
+        post: operations["adminTestLlmEndpoint"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4996,14 +5036,14 @@ export interface components {
          *     the groups bound to the workspace and everyone who has access through a group or an org role.
          */
         AccessList: {
-            derived_members?: null | components["schemas"]["Page_DerivedMemberView"];
+            derived_members?: components["schemas"]["Page_DerivedMemberView"] | null;
             group_bindings?: components["schemas"]["GroupAccessBinding"][] | null;
             items: components["schemas"]["AccessBinding"][];
             next_cursor?: string | null;
         };
         /** @description Why a person has access: informational only (`04 §Groups`). */
         AccessSourceView: {
-            group?: null | components["schemas"]["GroupName"];
+            group?: components["schemas"]["GroupName"] | null;
             /** @description `direct` | `idp_claim` | `group` | `org_role` | `org_role_via_group`. */
             kind: string;
             /** @description The `idp:<provider>:<value>` source, for `idp_claim`. */
@@ -5027,7 +5067,7 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             decided_at?: string | null;
-            decided_by?: null | components["schemas"]["ActionApprovalDecider"];
+            decided_by?: components["schemas"]["ActionApprovalDecider"] | null;
             error?: string | null;
             /** Format: date-time */
             executed_at?: string | null;
@@ -5152,7 +5192,7 @@ export interface components {
             agent_count: number;
             /** Format: date-time */
             created_at: string;
-            frozen?: null | components["schemas"]["Frozen"];
+            frozen?: components["schemas"]["Frozen"] | null;
             /** Format: uuid */
             id: string;
             /**
@@ -5195,7 +5235,7 @@ export interface components {
              *     banner or the operator docs. `None`-absent on responses serialised before this field.
              */
             ownerless_orgs?: components["schemas"]["OwnerlessOrg"][];
-            previews?: null | components["schemas"]["OverviewPreviews"];
+            previews?: components["schemas"]["OverviewPreviews"] | null;
         };
         /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
         AdminStorage: {
@@ -5228,7 +5268,7 @@ export interface components {
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
             disabled_at?: string | null;
-            idp_roles?: null | components["schemas"]["IdpRoles"];
+            idp_roles?: components["schemas"]["IdpRoles"] | null;
             /**
              * @description (phase 4, P4-IDP-1, C-512) The IdP role value that gives the instance-admin flag, or
              *     `null` when it is manual. A claim-derived flag cannot be changed here (409 `managed_by_idp`).
@@ -5265,14 +5305,14 @@ export interface components {
             /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
             avatar_url?: string | null;
             brief: string;
-            byo?: null | components["schemas"]["ByoView"];
+            byo?: components["schemas"]["ByoView"] | null;
             /** Format: date-time */
             created_at: string;
             /** @description (phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen. */
             effective_frozen: boolean;
             /** @description `low` | `medium` | `high` | `max`. */
             effort?: string | null;
-            frozen?: null | components["schemas"]["Frozen"];
+            frozen?: components["schemas"]["Frozen"] | null;
             handle: string;
             harness?: string | null;
             /** Format: uuid */
@@ -5436,17 +5476,17 @@ export interface components {
             available: boolean;
             category?: string | null;
             connect: components["schemas"]["ConnectMethod"][];
-            connect_note?: null | components["schemas"]["ConnectNote"];
+            connect_note?: components["schemas"]["ConnectNote"] | null;
             /** Format: int64 */
             connection_count: number;
             /** @description (FIX-154, C-895) as on `AppSummary`. */
             credential_free: boolean;
             credentials: components["schemas"]["CredentialInfo"][];
             description: string;
-            family?: null | components["schemas"]["AppFamily"];
+            family?: components["schemas"]["AppFamily"] | null;
             has_dark_icon: boolean;
             hosts: components["schemas"]["HostInfo"][];
-            instances?: null | components["schemas"]["AppInstances"];
+            instances?: components["schemas"]["AppInstances"] | null;
             label_hint?: string | null;
             metadata: string[];
             name: string;
@@ -5489,7 +5529,7 @@ export interface components {
             connections: number;
             /** Format: date-time */
             created_at: string;
-            created_by?: null | components["schemas"]["ConnectedBy"];
+            created_by?: components["schemas"]["ConnectedBy"] | null;
             host: string;
             /** Format: uuid */
             id: string;
@@ -5552,7 +5592,7 @@ export interface components {
              */
             credential_free: boolean;
             description: string;
-            family?: null | components["schemas"]["AppFamily"];
+            family?: components["schemas"]["AppFamily"] | null;
             has_dark_icon: boolean;
             name: string;
             package_id: string;
@@ -5564,9 +5604,9 @@ export interface components {
             serves_library: boolean;
         };
         Approval: {
-            agent?: null | components["schemas"]["ApprovalAgent"];
+            agent?: components["schemas"]["ApprovalAgent"] | null;
             app_id?: string | null;
-            batch?: null | components["schemas"]["ApprovalBatch"];
+            batch?: components["schemas"]["ApprovalBatch"] | null;
             /** Format: uuid */
             connection_id?: string | null;
             /**
@@ -5582,7 +5622,7 @@ export interface components {
             deadline: string;
             /** Format: date-time */
             decided_at?: string | null;
-            decided_by?: null | components["schemas"]["ApprovalDecider"];
+            decided_by?: components["schemas"]["ApprovalDecider"] | null;
             /** @description `dashboard` | `api` | `channel` */
             decided_via?: string | null;
             host: string;
@@ -5626,14 +5666,14 @@ export interface components {
             approval: components["schemas"]["Approval"];
             /** @description `created` | `decided` | `expired` | `abandoned` */
             event: string;
-            notice?: null | components["schemas"]["ApprovalNotice"];
+            notice?: components["schemas"]["ApprovalNotice"] | null;
         };
         /**
          * @description (phase 2, RFE-011a) The sanitized facts of a new approval: `{ id, workspace, agent, title,
          *     kind, expires_at }`. No summary fields, no request body, no decision link.
          */
         ApprovalNotice: {
-            agent?: null | components["schemas"]["ApprovalAgent"];
+            agent?: components["schemas"]["ApprovalAgent"] | null;
             /** Format: date-time */
             expires_at: string;
             /** Format: uuid */
@@ -5831,7 +5871,7 @@ export interface components {
             require_context: boolean;
             /** @description The agent's own source list (`null` = inherit). */
             source_cidrs?: string[] | null;
-            token?: null | components["schemas"]["TokenView"];
+            token?: components["schemas"]["TokenView"] | null;
         };
         ChannelIntegration: {
             /**
@@ -5846,7 +5886,7 @@ export interface components {
             id: string;
             /** Format: uuid */
             org_id: string;
-            shared_bot?: null | components["schemas"]["SharedBotInfo"];
+            shared_bot?: components["schemas"]["SharedBotInfo"] | null;
             status: components["schemas"]["IntegrationStatus"];
             status_reason?: string | null;
             tenant_label: string;
@@ -6006,16 +6046,16 @@ export interface components {
              *     unknown (rows older than the column of an app with several methods).
              */
             connect_method?: string | null;
-            connected_by?: null | components["schemas"]["ConnectedBy"];
+            connected_by?: components["schemas"]["ConnectedBy"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             credentials_expires_at?: string | null;
-            database?: null | components["schemas"]["DatabaseRef"];
+            database?: components["schemas"]["DatabaseRef"] | null;
             /** Format: uuid */
             id: string;
             injecting: components["schemas"]["Injecting"][];
-            instance?: null | components["schemas"]["InstanceRef"];
+            instance?: components["schemas"]["InstanceRef"] | null;
             label: string;
             /** Format: date-time */
             last_used_at?: string | null;
@@ -6221,7 +6261,7 @@ export interface components {
             source_cidrs?: string[] | null;
         };
         ContainerConfig: {
-            byo?: null | components["schemas"]["ContainerByo"];
+            byo?: components["schemas"]["ContainerByo"] | null;
             ca_path: string;
             ca_pem: string;
             env: {
@@ -6264,7 +6304,7 @@ export interface components {
             ttl_secs?: number | null;
         };
         Conversation: {
-            active_turn?: null | components["schemas"]["Turn"];
+            active_turn?: components["schemas"]["Turn"] | null;
             /** Format: uuid */
             agent_id: string;
             /** @description The streak reached `APP_TURN_CAP`: further bot/agent turns are refused. */
@@ -6281,7 +6321,7 @@ export interface components {
             archived_at?: string | null;
             /** Format: date-time */
             created_at: string;
-            direct_user?: null | components["schemas"]["DirectUser"];
+            direct_user?: components["schemas"]["DirectUser"] | null;
             /** Format: uuid */
             direct_user_id?: string | null;
             external_ref: string;
@@ -6345,7 +6385,7 @@ export interface components {
         CreateBindingRequest: {
             /** Format: uuid */
             integration_id: string;
-            listen?: null | components["schemas"]["Listen"];
+            listen?: components["schemas"]["Listen"] | null;
             space_ref: string;
         };
         CreateConnectorRequest: {
@@ -6464,13 +6504,13 @@ export interface components {
         };
         CreateSecretRequest: {
             host_pattern?: string | null;
-            injection?: null | components["schemas"]["InjectionRecipe"];
+            injection?: components["schemas"]["InjectionRecipe"] | null;
             /** @description `generic` | `llm`. */
             kind: string;
-            llm?: null | components["schemas"]["LlmSpec"];
+            llm?: components["schemas"]["LlmSpec"] | null;
             name: string;
             path_pattern?: string | null;
-            reference?: null | components["schemas"]["SecretReference"];
+            reference?: components["schemas"]["SecretReference"] | null;
             /** @description Managed value (exactly one of `value` / `reference`). */
             value?: string | null;
         };
@@ -6495,7 +6535,7 @@ export interface components {
             /** @description Single line, at most 500 characters. Required unless `from_library` is given. */
             description?: string | null;
             enabled?: boolean | null;
-            from_library?: null | components["schemas"]["FromLibrary"];
+            from_library?: components["schemas"]["FromLibrary"] | null;
             /**
              * @description Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved.
              *     Required unless `from_library` is given.
@@ -6523,7 +6563,7 @@ export interface components {
             anchor?: string | null;
             instructions: string;
             name: string;
-            verification?: null | components["schemas"]["VerificationInput"];
+            verification?: components["schemas"]["VerificationInput"] | null;
         };
         CreateWorkspaceRequest: {
             memory_language?: string | null;
@@ -6537,7 +6577,7 @@ export interface components {
         };
         CreatedAgent: {
             agent: components["schemas"]["Agent"];
-            container_config?: null | components["schemas"]["ContainerConfig"];
+            container_config?: components["schemas"]["ContainerConfig"] | null;
             /**
              * Format: date-time
              * @description (phase 3, RFE-013) When the token expires; `null` = never (no maximum age applies) and
@@ -6630,12 +6670,12 @@ export interface components {
         };
         DraftRequest: {
             default_action: components["schemas"]["DefaultAction"];
-            open_lane_posture?: null | components["schemas"]["OpenLanePosture"];
+            open_lane_posture?: components["schemas"]["OpenLanePosture"] | null;
             /** Format: int64 */
             revision: number;
             rules: components["schemas"]["RuleInput"][];
             uncredentialed_allowlist?: components["schemas"]["AllowlistEntry"][] | null;
-            uncredentialed_default?: null | components["schemas"]["UncredentialedDefault"];
+            uncredentialed_default?: components["schemas"]["UncredentialedDefault"] | null;
         };
         Effective: {
             credentials: components["schemas"]["EffectiveCredential"][];
@@ -6698,7 +6738,7 @@ export interface components {
             display_name: string;
             id: string;
             key_scopes: components["schemas"]["Sourced_Vec_String"];
-            origin_rule?: null | components["schemas"]["OriginRule"];
+            origin_rule?: components["schemas"]["OriginRule"] | null;
             permitted: components["schemas"]["Sourced_bool"];
             provider: string;
         };
@@ -6752,6 +6792,27 @@ export interface components {
          * @enum {string}
          */
         EgressPosture: "open" | "credentialed_only";
+        /** @description Request body (C-779). */
+        EndpointTestRequest: {
+            /** @description One endpoint entry, as in `llm.endpoints` (TOML shape as JSON). */
+            endpoint: Record<string, never>;
+        };
+        /** @description What the probe found. */
+        EndpointTestResult: {
+            /**
+             * @description `destination_refused`, `dns`, `timeout`, `connect`, `tls`, `unexpected_status` or
+             *     `unreachable`.
+             */
+            error_code?: string | null;
+            /** @description Model ids, only when the endpoint answers a 2xx OpenAI-style list without a key. */
+            models?: string[] | null;
+            reachable: boolean;
+            /**
+             * Format: int32
+             * @description The HTTP status of the answer.
+             */
+            status?: number | null;
+        };
         ErrorBody: {
             /** @description snake_case machine code. */
             code: string;
@@ -6813,7 +6874,7 @@ export interface components {
             options?: components["schemas"]["SelectOption"][] | null;
             placeholder?: string | null;
             required: boolean;
-            show_when?: null | components["schemas"]["ShowWhen"];
+            show_when?: components["schemas"]["ShowWhen"] | null;
             /** @description `credentials` | `metadata` | `tenant_host`. */
             store: string;
             /** @description `text` | `secret` | `select` | `file` | `json_file`. */
@@ -6830,7 +6891,7 @@ export interface components {
              *     org flag; a workspace: workspace ∨ org flag).
              */
             effective_frozen: boolean;
-            frozen?: null | components["schemas"]["Frozen"];
+            frozen?: components["schemas"]["Frozen"] | null;
             /**
              * @description What a `freeze` call did: `frozen` (it was not frozen), `escalated` (it was frozen by a
              *     lower authority; the record now carries the caller's authority, reason and identity) or
@@ -6913,7 +6974,7 @@ export interface components {
             name: string;
             /** Format: uuid */
             org_id: string;
-            org_role?: null | components["schemas"]["GroupOrgRole"];
+            org_role?: components["schemas"]["GroupOrgRole"] | null;
             /** Format: int64 */
             revision: number;
             source: components["schemas"]["GroupSource"];
@@ -6991,7 +7052,7 @@ export interface components {
         };
         HostClaimConflict: {
             claims: components["schemas"]["HostClaimMember"][];
-            decision?: null | components["schemas"]["HostClaimDecision"];
+            decision?: components["schemas"]["HostClaimDecision"] | null;
             fingerprint: string;
             group_key: string;
         };
@@ -6999,7 +7060,7 @@ export interface components {
             items: components["schemas"]["HostClaimConflict"][];
         };
         HostClaimDecision: {
-            decided_by?: null | components["schemas"]["PluginUserRef"];
+            decided_by?: components["schemas"]["PluginUserRef"] | null;
             stale: boolean;
             winner_app_id: string;
             winner_package_id: string;
@@ -7074,7 +7135,7 @@ export interface components {
         };
         IdentityMapping: {
             instance_admin: boolean;
-            org?: null | components["schemas"]["IdpOrgGrant"];
+            org?: components["schemas"]["IdpOrgGrant"] | null;
             value: string;
             workspaces: components["schemas"]["IdpWorkspaceGrant"][];
         };
@@ -7092,7 +7153,7 @@ export interface components {
         /** @description What one claim value granted (a `role_mappings[]` entry that matched). */
         IdpGrant: {
             instance_admin: boolean;
-            org?: null | components["schemas"]["IdpOrgGrant"];
+            org?: components["schemas"]["IdpOrgGrant"] | null;
             value: string;
             workspaces: components["schemas"]["IdpWorkspaceGrant"][];
         };
@@ -7228,7 +7289,7 @@ export interface components {
             allowed_models: string[];
             display_name: string;
             id: string;
-            key_origin?: null | components["schemas"]["OriginRule"];
+            key_origin?: components["schemas"]["OriginRule"] | null;
             provider: string;
         };
         InstanceGovernance: {
@@ -7277,6 +7338,11 @@ export interface components {
             id: string;
             label: string;
         };
+        /** @description Names an instance setting (`section` + registry `key`), so the dashboard can link it. */
+        InstanceSetting: {
+            key: string;
+            section: string;
+        };
         /** @enum {string} */
         IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
         /** @description An invitation. The token is never part of any response. */
@@ -7290,7 +7356,7 @@ export interface components {
             expires_at: string;
             /** Format: uuid */
             id: string;
-            invited_by?: null | components["schemas"]["InviterRef"];
+            invited_by?: components["schemas"]["InviterRef"] | null;
             /** Format: uuid */
             org_id: string;
             role: components["schemas"]["InvitedRole"];
@@ -7435,7 +7501,7 @@ export interface components {
             content_sha256: string;
             /** Format: date-time */
             created_at: string;
-            diff?: null | components["schemas"]["LibraryDiff"];
+            diff?: components["schemas"]["LibraryDiff"] | null;
             /** Format: uuid */
             id: string;
             /** @description `changed` | `removed` | `invalid`. */
@@ -7543,7 +7609,7 @@ export interface components {
             default_org_id?: string | null;
             /** @description (phase 4, P4-GRP-1) The caller's groups (active memberships only). */
             groups: components["schemas"]["MeGroup"][];
-            idp_roles?: null | components["schemas"]["IdpRoles"];
+            idp_roles?: components["schemas"]["IdpRoles"] | null;
             memberships: components["schemas"]["MeMembership"][];
             user: components["schemas"]["User"];
         };
@@ -7561,7 +7627,7 @@ export interface components {
             name: string;
         };
         MeMembership: {
-            effective_role?: null | components["schemas"]["OrgRole"];
+            effective_role?: components["schemas"]["OrgRole"] | null;
             org: components["schemas"]["OrgSummary"];
             role: components["schemas"]["OrgRole"];
             /** @description Where the effective role comes from: `direct`, or `group` with the group. */
@@ -7583,7 +7649,7 @@ export interface components {
             welcome_seen: boolean;
         };
         MeRoleSource: {
-            group?: null | components["schemas"]["MeGroupRef"];
+            group?: components["schemas"]["MeGroupRef"] | null;
             /** @description `direct` | `group`. */
             kind: string;
         };
@@ -7602,7 +7668,7 @@ export interface components {
         Member: {
             /** Format: date-time */
             created_at: string;
-            directory?: null | components["schemas"]["MemberDirectory"];
+            directory?: components["schemas"]["MemberDirectory"] | null;
             display_name: string;
             email: string;
             /**
@@ -7676,8 +7742,8 @@ export interface components {
         };
         /** @description Exactly one of `turn` / `followup` is non-null (C-25). */
         MessageAccepted: {
-            followup?: null | components["schemas"]["Followup"];
-            turn?: null | components["schemas"]["Turn"];
+            followup?: components["schemas"]["Followup"] | null;
+            turn?: components["schemas"]["Turn"] | null;
         };
         /** @description A migration job, or the report of a dry run (C-747). */
         MigrationView: {
@@ -7709,7 +7775,7 @@ export interface components {
             items: components["schemas"]["ModelOption"][];
         };
         ModelReadiness: {
-            default?: null | components["schemas"]["DefaultModel"];
+            default?: components["schemas"]["DefaultModel"] | null;
             harness: string;
             /** @description In the order the dispatcher considers them. */
             keys: components["schemas"]["KeyReadiness"][];
@@ -7834,7 +7900,7 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             external_id: string;
-            frozen?: null | components["schemas"]["Frozen"];
+            frozen?: components["schemas"]["Frozen"] | null;
             /** Format: uuid */
             id: string;
             my_role: components["schemas"]["OrgRole"];
@@ -7859,7 +7925,7 @@ export interface components {
         /** @description `organizations.governance.byo` (no column: `governance` is `jsonb`). */
         OrgByo: {
             /** @default null */
-            posture: null | components["schemas"]["ByoPosture"];
+            posture: components["schemas"]["ByoPosture"] | null;
             /** @default false */
             require_context_credentials: boolean;
             /**
@@ -7871,7 +7937,10 @@ export interface components {
         OrgEgress: {
             /** @default [] */
             allowlist: components["schemas"]["OrgAllowEntry"][];
-            /** @default enabled */
+            /**
+             * @description (RFE-003) org open-lane posture; never looser than the instance minimum.
+             * @default enabled
+             */
             open_lane: components["schemas"]["OpenLanePosture"];
             /** @default open */
             posture: components["schemas"]["EgressPosture"];
@@ -7900,9 +7969,15 @@ export interface components {
         };
         /** @description Normalized organization governance document (`organizations.governance`). */
         OrgGovernance: {
-            /** @default {} */
+            /**
+             * @description (RFE-013) BYO agent-token maximum age; omitted from the stored document when empty.
+             * @default {}
+             */
             agent_tokens: components["schemas"]["OrgAgentTokens"];
-            /** @default {} */
+            /**
+             * @description (RFE-025) BYO posture, default source list and require-context default.
+             * @default {}
+             */
             byo: components["schemas"]["OrgByo"];
             /**
              * @default {
@@ -7970,6 +8045,20 @@ export interface components {
              *     `org.previews.update` (security-critical).
              */
             previews_enabled?: boolean | null;
+        };
+        /** @description One row of `GET /v1/admin/settings/governance/orgs` (C-778). */
+        OrgStandingRow: {
+            byo_posture: string;
+            clamped: string[];
+            egress_posture: string;
+            frozen: boolean;
+            llm_posture: string;
+            name: string;
+            open_lane: string;
+            /** Format: uuid */
+            org_id: string;
+            slug: string;
+            stricter: string[];
         };
         /** @description `GET /orgs/{org}/storage` (API_CONTRACTS C-171). */
         OrgStorage: {
@@ -8073,7 +8162,7 @@ export interface components {
                 created_at: string;
                 /** Format: date-time */
                 decided_at?: string | null;
-                decided_by?: null | components["schemas"]["ActionApprovalDecider"];
+                decided_by?: components["schemas"]["ActionApprovalDecider"] | null;
                 error?: string | null;
                 /** Format: date-time */
                 executed_at?: string | null;
@@ -8098,7 +8187,7 @@ export interface components {
                 agent_count: number;
                 /** Format: date-time */
                 created_at: string;
-                frozen?: null | components["schemas"]["Frozen"];
+                frozen?: components["schemas"]["Frozen"] | null;
                 /** Format: uuid */
                 id: string;
                 /**
@@ -8119,7 +8208,7 @@ export interface components {
             items: (components["schemas"]["User"] & {
                 /** Format: date-time */
                 disabled_at?: string | null;
-                idp_roles?: null | components["schemas"]["IdpRoles"];
+                idp_roles?: components["schemas"]["IdpRoles"] | null;
                 /**
                  * @description (phase 4, P4-IDP-1, C-512) The IdP role value that gives the instance-admin flag, or
                  *     `null` when it is manual. A claim-derived flag cannot be changed here (409 `managed_by_idp`).
@@ -8149,14 +8238,14 @@ export interface components {
                 /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
                 avatar_url?: string | null;
                 brief: string;
-                byo?: null | components["schemas"]["ByoView"];
+                byo?: components["schemas"]["ByoView"] | null;
                 /** Format: date-time */
                 created_at: string;
                 /** @description (phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen. */
                 effective_frozen: boolean;
                 /** @description `low` | `medium` | `high` | `max`. */
                 effort?: string | null;
-                frozen?: null | components["schemas"]["Frozen"];
+                frozen?: components["schemas"]["Frozen"] | null;
                 handle: string;
                 harness?: string | null;
                 /** Format: uuid */
@@ -8243,7 +8332,7 @@ export interface components {
                 connections: number;
                 /** Format: date-time */
                 created_at: string;
-                created_by?: null | components["schemas"]["ConnectedBy"];
+                created_by?: components["schemas"]["ConnectedBy"] | null;
                 host: string;
                 /** Format: uuid */
                 id: string;
@@ -8266,9 +8355,9 @@ export interface components {
         };
         Page_Approval: {
             items: {
-                agent?: null | components["schemas"]["ApprovalAgent"];
+                agent?: components["schemas"]["ApprovalAgent"] | null;
                 app_id?: string | null;
-                batch?: null | components["schemas"]["ApprovalBatch"];
+                batch?: components["schemas"]["ApprovalBatch"] | null;
                 /** Format: uuid */
                 connection_id?: string | null;
                 /**
@@ -8284,7 +8373,7 @@ export interface components {
                 deadline: string;
                 /** Format: date-time */
                 decided_at?: string | null;
-                decided_by?: null | components["schemas"]["ApprovalDecider"];
+                decided_by?: components["schemas"]["ApprovalDecider"] | null;
                 /** @description `dashboard` | `api` | `channel` */
                 decided_via?: string | null;
                 host: string;
@@ -8351,7 +8440,7 @@ export interface components {
                 id: string;
                 /** Format: uuid */
                 org_id: string;
-                shared_bot?: null | components["schemas"]["SharedBotInfo"];
+                shared_bot?: components["schemas"]["SharedBotInfo"] | null;
                 status: components["schemas"]["IntegrationStatus"];
                 status_reason?: string | null;
                 tenant_label: string;
@@ -8375,16 +8464,16 @@ export interface components {
                  *     unknown (rows older than the column of an app with several methods).
                  */
                 connect_method?: string | null;
-                connected_by?: null | components["schemas"]["ConnectedBy"];
+                connected_by?: components["schemas"]["ConnectedBy"] | null;
                 /** Format: date-time */
                 created_at: string;
                 /** Format: date-time */
                 credentials_expires_at?: string | null;
-                database?: null | components["schemas"]["DatabaseRef"];
+                database?: components["schemas"]["DatabaseRef"] | null;
                 /** Format: uuid */
                 id: string;
                 injecting: components["schemas"]["Injecting"][];
-                instance?: null | components["schemas"]["InstanceRef"];
+                instance?: components["schemas"]["InstanceRef"] | null;
                 label: string;
                 /** Format: date-time */
                 last_used_at?: string | null;
@@ -8414,7 +8503,7 @@ export interface components {
         };
         Page_Conversation: {
             items: {
-                active_turn?: null | components["schemas"]["Turn"];
+                active_turn?: components["schemas"]["Turn"] | null;
                 /** Format: uuid */
                 agent_id: string;
                 /** @description The streak reached `APP_TURN_CAP`: further bot/agent turns are refused. */
@@ -8431,7 +8520,7 @@ export interface components {
                 archived_at?: string | null;
                 /** Format: date-time */
                 created_at: string;
-                direct_user?: null | components["schemas"]["DirectUser"];
+                direct_user?: components["schemas"]["DirectUser"] | null;
                 /** Format: uuid */
                 direct_user_id?: string | null;
                 external_ref: string;
@@ -8472,7 +8561,7 @@ export interface components {
                 name: string;
                 /** Format: uuid */
                 org_id: string;
-                org_role?: null | components["schemas"]["GroupOrgRole"];
+                org_role?: components["schemas"]["GroupOrgRole"] | null;
                 /** Format: int64 */
                 revision: number;
                 source: components["schemas"]["GroupSource"];
@@ -8524,7 +8613,7 @@ export interface components {
                 expires_at: string;
                 /** Format: uuid */
                 id: string;
-                invited_by?: null | components["schemas"]["InviterRef"];
+                invited_by?: components["schemas"]["InviterRef"] | null;
                 /** Format: uuid */
                 org_id: string;
                 role: components["schemas"]["InvitedRole"];
@@ -8537,7 +8626,7 @@ export interface components {
             items: {
                 /** Format: date-time */
                 created_at: string;
-                directory?: null | components["schemas"]["MemberDirectory"];
+                directory?: components["schemas"]["MemberDirectory"] | null;
                 display_name: string;
                 email: string;
                 /**
@@ -8624,13 +8713,29 @@ export interface components {
                 /** Format: date-time */
                 created_at: string;
                 external_id: string;
-                frozen?: null | components["schemas"]["Frozen"];
+                frozen?: components["schemas"]["Frozen"] | null;
                 /** Format: uuid */
                 id: string;
                 my_role: components["schemas"]["OrgRole"];
                 name: string;
                 settings: components["schemas"]["OrgSettings"];
                 slug: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_OrgStandingRow: {
+            items: {
+                byo_posture: string;
+                clamped: string[];
+                egress_posture: string;
+                frozen: boolean;
+                llm_posture: string;
+                name: string;
+                open_lane: string;
+                /** Format: uuid */
+                org_id: string;
+                slug: string;
+                stricter: string[];
             }[];
             next_cursor?: string | null;
         };
@@ -8660,7 +8765,7 @@ export interface components {
                  */
                 origin_conversation_id?: string | null;
                 report?: string | null;
-                requester?: null | components["schemas"]["PeerTaskRequester"];
+                requester?: components["schemas"]["PeerTaskRequester"] | null;
                 /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
                 status: string;
                 /** Format: uuid */
@@ -8676,7 +8781,7 @@ export interface components {
             items: {
                 /** Format: date-time */
                 approved_at?: string | null;
-                approved_by?: null | components["schemas"]["PluginUserRef"];
+                approved_by?: components["schemas"]["PluginUserRef"] | null;
                 apps: components["schemas"]["PluginAppRef"][];
                 /** Format: int32 */
                 contract: number;
@@ -8686,7 +8791,7 @@ export interface components {
                 host_claims: components["schemas"]["PluginHostClaim"][];
                 /** Format: uuid */
                 id: string;
-                impact?: null | components["schemas"]["PluginImpact"];
+                impact?: components["schemas"]["PluginImpact"] | null;
                 package_id: string;
                 permissions: components["schemas"]["PluginPermissions"];
                 publisher: string;
@@ -8725,7 +8830,7 @@ export interface components {
                 open_lane_posture: components["schemas"]["OpenLanePosture"];
                 /** Format: date-time */
                 published_at?: string | null;
-                published_by?: null | components["schemas"]["CreatedBy"];
+                published_by?: components["schemas"]["CreatedBy"] | null;
                 /** Format: int64 */
                 rule_count: number;
                 status: components["schemas"]["GenerationStatus"];
@@ -8742,7 +8847,7 @@ export interface components {
                 created_at: string;
                 /** Format: date-time */
                 decided_at?: string | null;
-                decided_by?: null | components["schemas"]["UserRef"];
+                decided_by?: components["schemas"]["UserRef"] | null;
                 /** Format: date-time */
                 expires_at?: string | null;
                 /** Format: uuid */
@@ -8818,7 +8923,7 @@ export interface components {
                 conversation_hidden: boolean;
                 /** Format: date-time */
                 created_at: string;
-                created_by?: null | components["schemas"]["ScheduleCreator"];
+                created_by?: components["schemas"]["ScheduleCreator"] | null;
                 /** @description 5-field cron expression. */
                 cron: string;
                 /** @description `user` | `authorization` | `failures` when disabled. */
@@ -8872,7 +8977,7 @@ export interface components {
             items: {
                 /** Format: date-time */
                 created_at: string;
-                created_by?: null | components["schemas"]["CreatedBy"];
+                created_by?: components["schemas"]["CreatedBy"] | null;
                 host_pattern: string;
                 /** Format: uuid */
                 id: string;
@@ -8881,15 +8986,15 @@ export interface components {
                 kind: string;
                 /** Format: date-time */
                 last_used_at?: string | null;
-                llm?: null | components["schemas"]["SecretLlm"];
+                llm?: components["schemas"]["SecretLlm"] | null;
                 name: string;
                 /** Format: uuid */
                 org_id: string;
-                origin?: null | components["schemas"]["StoredOrigin"];
+                origin?: components["schemas"]["StoredOrigin"] | null;
                 path_pattern?: string | null;
                 /** Format: uuid */
                 proposed_by_agent_id?: string | null;
-                reference?: null | components["schemas"]["SecretReference"];
+                reference?: components["schemas"]["SecretReference"] | null;
                 /** @description `organization` | `workspace`. */
                 scope: string;
                 /** @description `active` | `proposed` | `rejected`. */
@@ -8928,7 +9033,7 @@ export interface components {
                 overridden_in?: components["schemas"]["OverriddenAgent"][] | null;
                 /** @description `agent` | `workspace` | `organization` (kept for compatibility, D-107). */
                 scope: string;
-                source?: null | components["schemas"]["SkillSource"];
+                source?: components["schemas"]["SkillSource"] | null;
                 /** @description `agent` | `workspace` | `org`. */
                 tier: string;
                 /** @description Body plus files, in characters (binary counted as base64 length). */
@@ -8943,7 +9048,7 @@ export interface components {
         Page_SkillLibrary: {
             items: {
                 app_id?: string | null;
-                connection?: null | components["schemas"]["ConnectionRef"];
+                connection?: components["schemas"]["ConnectionRef"] | null;
                 /** Format: date-time */
                 created_at?: string | null;
                 /** Format: uuid */
@@ -8959,7 +9064,7 @@ export interface components {
                 pending_updates?: number | null;
                 ref?: string | null;
                 repo?: string | null;
-                skill_counts?: null | components["schemas"]["SkillCounts"];
+                skill_counts?: components["schemas"]["SkillCounts"] | null;
                 /** @description `active` | `paused` | `error` | `over_budget`. */
                 status: string;
             }[];
@@ -9003,7 +9108,7 @@ export interface components {
                 anchor: string;
                 /** Format: date-time */
                 created_at: string;
-                created_by?: null | components["schemas"]["WebhookCreator"];
+                created_by?: components["schemas"]["WebhookCreator"] | null;
                 /** @description `user` | `authorization` | `failures` when disabled. */
                 disabled_reason?: string | null;
                 enabled: boolean;
@@ -9048,8 +9153,8 @@ export interface components {
                 byo_posture?: string | null;
                 /** Format: date-time */
                 created_at: string;
-                effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
-                frozen?: null | components["schemas"]["Frozen"];
+                effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
+                frozen?: components["schemas"]["Frozen"] | null;
                 /** Format: uuid */
                 id: string;
                 memory_language: string;
@@ -9088,7 +9193,7 @@ export interface components {
         };
         PatchBindingRequest: {
             followups_need_mention?: boolean | null;
-            listen?: null | components["schemas"]["Listen"];
+            listen?: components["schemas"]["Listen"] | null;
         };
         PatchConnectionRequest: {
             /** @description (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it. */
@@ -9132,7 +9237,7 @@ export interface components {
             config?: Record<string, never> | null;
             /** @description Replaces the credentials (re-validated). Write-only. */
             credentials?: Record<string, never> | null;
-            status?: null | components["schemas"]["SettableStatus"];
+            status?: components["schemas"]["SettableStatus"] | null;
         };
         PatchMeRequest: {
             /** @description (phase 2, RFE-011a) Opt in or out of approval e-mails. */
@@ -9152,8 +9257,8 @@ export interface components {
              *     transaction as the suspension.
              */
             reassign_to?: string | null;
-            role?: null | components["schemas"]["OrgRole"];
-            status?: null | components["schemas"]["MemberStatus"];
+            role?: components["schemas"]["OrgRole"] | null;
+            status?: components["schemas"]["MemberStatus"] | null;
         };
         PatchOAuthClientRequest: {
             enabled?: boolean | null;
@@ -9171,7 +9276,7 @@ export interface components {
         };
         PatchOrgRequest: {
             name?: string | null;
-            settings?: null | components["schemas"]["OrgSettingsPatch"];
+            settings?: components["schemas"]["OrgSettingsPatch"] | null;
             slug?: string | null;
         };
         PatchPreviewShareRequest: {
@@ -9182,7 +9287,7 @@ export interface components {
         };
         PatchSecretRequest: {
             host_pattern?: string | null;
-            injection?: null | components["schemas"]["InjectionRecipe"];
+            injection?: components["schemas"]["InjectionRecipe"] | null;
             name?: string | null;
             path_pattern?: string | null;
         };
@@ -9231,7 +9336,7 @@ export interface components {
              */
             origin_conversation_id?: string | null;
             report?: string | null;
-            requester?: null | components["schemas"]["PeerTaskRequester"];
+            requester?: components["schemas"]["PeerTaskRequester"] | null;
             /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
             status: string;
             /** Format: uuid */
@@ -9262,7 +9367,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             kind: string;
-            library?: null | components["schemas"]["PendingUpdateLibrary"];
+            library?: components["schemas"]["PendingUpdateLibrary"] | null;
             skill: components["schemas"]["PendingLibrarySkill"];
         };
         PendingLibraryUpdates: {
@@ -9320,7 +9425,7 @@ export interface components {
             enabled: boolean;
             /** @description `{variable}` text with `|` between fallbacks; default `{sub}|{email_local}`. */
             name_template?: string | null;
-            role?: null | components["schemas"]["PersonalRole"];
+            role?: components["schemas"]["PersonalRole"] | null;
         };
         PersonalWorkspaceView: {
             enabled: boolean;
@@ -9354,7 +9459,7 @@ export interface components {
         };
         /** @description `GET /v1/admin/placement` and the `PUT` response (C-520). */
         PlacementView: {
-            default_org?: null | components["schemas"]["OrgRef"];
+            default_org?: components["schemas"]["OrgRef"] | null;
             default_org_role: components["schemas"]["DefaultOrgRole"];
             mode: components["schemas"]["PlacementMode"];
             personal_orgs: components["schemas"]["PersonalOrgs"];
@@ -9450,7 +9555,7 @@ export interface components {
         PluginPackage: {
             /** Format: date-time */
             approved_at?: string | null;
-            approved_by?: null | components["schemas"]["PluginUserRef"];
+            approved_by?: components["schemas"]["PluginUserRef"] | null;
             apps: components["schemas"]["PluginAppRef"][];
             /** Format: int32 */
             contract: number;
@@ -9460,7 +9565,7 @@ export interface components {
             host_claims: components["schemas"]["PluginHostClaim"][];
             /** Format: uuid */
             id: string;
-            impact?: null | components["schemas"]["PluginImpact"];
+            impact?: components["schemas"]["PluginImpact"] | null;
             package_id: string;
             permissions: components["schemas"]["PluginPermissions"];
             publisher: string;
@@ -9533,7 +9638,7 @@ export interface components {
             open_lane_posture: components["schemas"]["OpenLanePosture"];
             /** Format: date-time */
             published_at?: string | null;
-            published_by?: null | components["schemas"]["CreatedBy"];
+            published_by?: components["schemas"]["CreatedBy"] | null;
             rules: components["schemas"]["PolicyRule"][];
             status: components["schemas"]["GenerationStatus"];
             uncredentialed_allowlist: components["schemas"]["AllowlistEntry"][];
@@ -9553,7 +9658,7 @@ export interface components {
             open_lane_posture: components["schemas"]["OpenLanePosture"];
             /** Format: date-time */
             published_at?: string | null;
-            published_by?: null | components["schemas"]["CreatedBy"];
+            published_by?: components["schemas"]["CreatedBy"] | null;
             /** Format: int64 */
             rule_count: number;
             status: components["schemas"]["GenerationStatus"];
@@ -9577,7 +9682,7 @@ export interface components {
             name: string;
             /** Format: int32 */
             priority: number;
-            rate_limit?: null | components["schemas"]["RateLimit"];
+            rate_limit?: components["schemas"]["RateLimit"] | null;
             require_approval: boolean;
             targets: components["schemas"]["Target"][];
         };
@@ -9664,7 +9769,7 @@ export interface components {
             label: string;
             /** Format: date-time */
             last_accessed_at?: string | null;
-            last_start?: null | components["schemas"]["PreviewLastStart"];
+            last_start?: components["schemas"]["PreviewLastStart"] | null;
             /** Format: int32 */
             port: number;
             start_command?: string | null;
@@ -9796,9 +9901,9 @@ export interface components {
              * @description `shared_org`: an existing organization (exactly one of this and `create_default_org`).
              */
             default_org_id?: string | null;
-            default_org_role?: null | components["schemas"]["DefaultOrgRole"];
+            default_org_role?: components["schemas"]["DefaultOrgRole"] | null;
             mode: components["schemas"]["PlacementMode"];
-            personal_workspace?: null | components["schemas"]["PersonalWorkspaceInput"];
+            personal_workspace?: components["schemas"]["PersonalWorkspaceInput"] | null;
             shared_workspaces?: components["schemas"]["SharedWorkspaceInput"][];
             starter_grants?: components["schemas"]["StarterGrantInput"][];
         };
@@ -9867,7 +9972,7 @@ export interface components {
              *     and then needs a new approval; without it a grant does not expire.
              */
             expires_in?: number | null;
-            listen?: null | components["schemas"]["Listen"];
+            listen?: components["schemas"]["Listen"] | null;
             /** Format: int64 */
             revision: number;
         };
@@ -9878,7 +9983,7 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             decided_at?: string | null;
-            decided_by?: null | components["schemas"]["UserRef"];
+            decided_by?: components["schemas"]["UserRef"] | null;
             /** Format: date-time */
             expires_at?: string | null;
             /** Format: uuid */
@@ -10024,7 +10129,7 @@ export interface components {
         };
         ResolveResponse: {
             org: components["schemas"]["OrgSummary"];
-            workspace?: null | components["schemas"]["ResolvedWorkspace"];
+            workspace?: components["schemas"]["ResolvedWorkspace"] | null;
         };
         ResolvedWorkspace: {
             /** Format: uuid */
@@ -10107,7 +10212,7 @@ export interface components {
             /** Format: uuid */
             logical_id?: string | null;
             name: string;
-            rate_limit?: null | components["schemas"]["RateLimit"];
+            rate_limit?: components["schemas"]["RateLimit"] | null;
             require_approval?: boolean;
             targets?: components["schemas"]["Target"][];
         };
@@ -10242,7 +10347,7 @@ export interface components {
             retryable: boolean;
             /** Format: uuid */
             runner_id?: string | null;
-            start_attempt?: null | components["schemas"]["SandboxStartAttempt"];
+            start_attempt?: components["schemas"]["SandboxStartAttempt"] | null;
             /**
              * @description (FIX-029, C-611) The boot's start log (phases, the failure verdict, retry notes), newest
              *     first. Reset by every new boot.
@@ -10269,7 +10374,7 @@ export interface components {
             conversation_hidden: boolean;
             /** Format: date-time */
             created_at: string;
-            created_by?: null | components["schemas"]["ScheduleCreator"];
+            created_by?: components["schemas"]["ScheduleCreator"] | null;
             /** @description 5-field cron expression. */
             cron: string;
             /** @description `user` | `authorization` | `failures` when disabled. */
@@ -10395,7 +10500,7 @@ export interface components {
         ScopeSel: "workspace" | "organization" | "any";
         ScopeTrace: {
             considered: components["schemas"]["TraceEntry"][];
-            verdict?: null | components["schemas"]["SimVerdict"];
+            verdict?: components["schemas"]["SimVerdict"] | null;
         };
         SearchAgent: {
             /** Format: uuid */
@@ -10438,7 +10543,7 @@ export interface components {
         Secret: {
             /** Format: date-time */
             created_at: string;
-            created_by?: null | components["schemas"]["CreatedBy"];
+            created_by?: components["schemas"]["CreatedBy"] | null;
             host_pattern: string;
             /** Format: uuid */
             id: string;
@@ -10447,15 +10552,15 @@ export interface components {
             kind: string;
             /** Format: date-time */
             last_used_at?: string | null;
-            llm?: null | components["schemas"]["SecretLlm"];
+            llm?: components["schemas"]["SecretLlm"] | null;
             name: string;
             /** Format: uuid */
             org_id: string;
-            origin?: null | components["schemas"]["StoredOrigin"];
+            origin?: components["schemas"]["StoredOrigin"] | null;
             path_pattern?: string | null;
             /** Format: uuid */
             proposed_by_agent_id?: string | null;
-            reference?: null | components["schemas"]["SecretReference"];
+            reference?: components["schemas"]["SecretReference"] | null;
             /** @description `organization` | `workspace`. */
             scope: string;
             /** @description `active` | `proposed` | `rejected`. */
@@ -10539,7 +10644,7 @@ export interface components {
         };
         SendMessage: {
             attachment_ids?: string[];
-            reply_to?: null | components["schemas"]["ReplyToRef"];
+            reply_to?: components["schemas"]["ReplyToRef"] | null;
             /** @description May be empty or absent when `attachment_ids` is non-empty (C-726). */
             text?: string;
         };
@@ -10563,7 +10668,7 @@ export interface components {
             revision: number;
         };
         SetValueRequest: {
-            reference?: null | components["schemas"]["SecretReference"];
+            reference?: components["schemas"]["SecretReference"] | null;
             value?: string | null;
         };
         /** @enum {string} */
@@ -10579,7 +10684,7 @@ export interface components {
             list?: string | null;
             locked: boolean;
             schema: components["schemas"]["SettingSchema"];
-            secret?: null | components["schemas"]["SecretState"];
+            secret?: components["schemas"]["SecretState"] | null;
             /** @description `helm`, `dashboard` or `default`. */
             source: string;
             /** @description The effective value; `null` for a secret key (see `secret`). */
@@ -10667,7 +10772,7 @@ export interface components {
             placement_saved: boolean;
             /** @description In order: `roles`, `placement`, `llm`, `runners`, `optional`. ("Try it" is the client's.) */
             steps: components["schemas"]["SetupStep"][];
-            you?: null | components["schemas"]["SetupYou"];
+            you?: components["schemas"]["SetupYou"] | null;
         };
         SetupStep: {
             checks: components["schemas"]["SetupCheck"][];
@@ -10687,7 +10792,7 @@ export interface components {
         };
         ShadowedSkill: {
             enabled: boolean;
-            shadowed_by?: null | components["schemas"]["TierRef"];
+            shadowed_by?: components["schemas"]["TierRef"] | null;
             skill: components["schemas"]["Skill"];
             tier: string;
         };
@@ -10735,7 +10840,7 @@ export interface components {
             agent_id: string;
             /** @description Request body (UTF-8 text) for body conditions. */
             body?: string | null;
-            lane?: null | components["schemas"]["SimLane"];
+            lane?: components["schemas"]["SimLane"] | null;
             method: string;
             /**
              * Format: uuid
@@ -10756,10 +10861,10 @@ export interface components {
             approval_timeout_secs?: number | null;
             candidates: components["schemas"]["SimCandidate"][];
             guidance_code?: string | null;
-            reason?: null | components["schemas"]["SimReason"];
+            reason?: components["schemas"]["SimReason"] | null;
             trace: components["schemas"]["SimTrace"];
             verdict: components["schemas"]["SimVerdict"];
-            winning_credential?: null | components["schemas"]["WinningCredential"];
+            winning_credential?: components["schemas"]["WinningCredential"] | null;
         };
         Skill: {
             /** Format: uuid */
@@ -10783,7 +10888,7 @@ export interface components {
             overridden_in?: components["schemas"]["OverriddenAgent"][] | null;
             /** @description `agent` | `workspace` | `organization` (kept for compatibility, D-107). */
             scope: string;
-            source?: null | components["schemas"]["SkillSource"];
+            source?: components["schemas"]["SkillSource"] | null;
             /** @description `agent` | `workspace` | `org`. */
             tier: string;
             /** @description Body plus files, in characters (binary counted as base64 length). */
@@ -10813,7 +10918,7 @@ export interface components {
          */
         SkillLibrary: {
             app_id?: string | null;
-            connection?: null | components["schemas"]["ConnectionRef"];
+            connection?: components["schemas"]["ConnectionRef"] | null;
             /** Format: date-time */
             created_at?: string | null;
             /** Format: uuid */
@@ -10829,7 +10934,7 @@ export interface components {
             pending_updates?: number | null;
             ref?: string | null;
             repo?: string | null;
-            skill_counts?: null | components["schemas"]["SkillCounts"];
+            skill_counts?: components["schemas"]["SkillCounts"] | null;
             /** @description `active` | `paused` | `error` | `over_budget`. */
             status: string;
         };
@@ -10837,12 +10942,12 @@ export interface components {
             commit_sha: string;
             /** @description The library link is gone (detach or library deletion). */
             detached: boolean;
-            library?: null | components["schemas"]["LibraryRef"];
+            library?: components["schemas"]["LibraryRef"] | null;
             /** Format: date-time */
             pinned_at?: string | null;
             /** Format: uuid */
             pinned_by?: string | null;
-            update?: null | components["schemas"]["LibraryUpdateView"];
+            update?: components["schemas"]["LibraryUpdateView"] | null;
         };
         /**
          * @description Provenance of a skill added from a git skill library (`10 §Git skill library`). Repository
@@ -10867,26 +10972,31 @@ export interface components {
             update_pending: boolean;
         };
         Sourced_Option_Vec_String: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: null | string[];
         };
         Sourced_Option_u32: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: null | number;
         };
         Sourced_String: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: string;
         };
         Sourced_Vec_String: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: string[];
         };
         Sourced_bool: {
+            instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
             source: string;
             value: boolean;
@@ -10895,7 +11005,7 @@ export interface components {
             active: boolean;
             /** Format: uuid */
             agent_id: string;
-            bound_by?: null | components["schemas"]["UserRef"];
+            bound_by?: components["schemas"]["UserRef"] | null;
             /** Format: date-time */
             created_at: string;
             followups_need_mention: boolean;
@@ -11071,7 +11181,7 @@ export interface components {
             /** @enum {string} */
             type: "secret";
         } | {
-            kind?: null | components["schemas"]["SecretKindSel"];
+            kind?: components["schemas"]["SecretKindSel"] | null;
             scope: components["schemas"]["ScopeSel"];
             /** @enum {string} */
             type: "secrets";
@@ -11197,7 +11307,7 @@ export interface components {
             /** @description `queued` | `dispatched` | `running` | `done` | `failed` | `aborted` */
             status: string;
             text: string;
-            usage?: null | components["schemas"]["Usage"];
+            usage?: components["schemas"]["Usage"] | null;
         };
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
@@ -11229,7 +11339,7 @@ export interface components {
             enabled?: boolean | null;
             instructions?: string | null;
             name?: string | null;
-            verification?: null | components["schemas"]["VerificationInput"];
+            verification?: components["schemas"]["VerificationInput"] | null;
         };
         /** @description `multipart/form-data` body of the upload route. */
         UploadAttachmentRequest: {
@@ -11323,7 +11433,7 @@ export interface components {
             anchor: string;
             /** Format: date-time */
             created_at: string;
-            created_by?: null | components["schemas"]["WebhookCreator"];
+            created_by?: components["schemas"]["WebhookCreator"] | null;
             /** @description `user` | `authorization` | `failures` when disabled. */
             disabled_reason?: string | null;
             enabled: boolean;
@@ -11378,8 +11488,8 @@ export interface components {
             byo_posture?: string | null;
             /** Format: date-time */
             created_at: string;
-            effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
-            frozen?: null | components["schemas"]["Frozen"];
+            effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
+            frozen?: components["schemas"]["Frozen"] | null;
             /** Format: uuid */
             id: string;
             memory_language: string;
@@ -15451,6 +15561,64 @@ export interface operations {
             };
         };
     };
+    adminListGovernanceOrgs: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_OrgStandingRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminImportSettings: {
         parameters: {
             query?: never;
@@ -15531,6 +15699,71 @@ export interface operations {
                 };
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminTestLlmEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointTestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointTestResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

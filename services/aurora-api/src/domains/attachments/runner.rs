@@ -135,7 +135,7 @@ pub async fn upload(
         hasher.update(&chunk);
         buf.extend_from_slice(&chunk);
     }
-    let sha256 = format!("{:x}", hasher.finalize());
+    let sha256 = hex::encode(hasher.finalize());
     let filename = sanitize_filename(&meta.filename);
     let caption = meta
         .caption

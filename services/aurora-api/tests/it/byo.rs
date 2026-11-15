@@ -290,7 +290,9 @@ async fn org_document_validation_and_effective_view() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["byo"]["posture"],
-        json!({"value": "owners_only", "source": "instance"})
+        // (SET-2, C-783) an instance-sourced value names its setting.
+        json!({"value": "owners_only", "source": "instance",
+            "instance_setting": {"section": "governance", "key": "byo.minimum_posture"}})
     );
     assert_eq!(
         v["byo"]["source_cidrs"],

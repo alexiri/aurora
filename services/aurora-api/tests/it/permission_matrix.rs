@@ -478,11 +478,18 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/settings", G::Inst, true),
     r("GET", "/v1/admin/settings/export", G::Inst, true),
     r("POST", "/v1/admin/settings/import", G::Inst, true),
+    r("GET", "/v1/admin/settings/governance/orgs", G::Inst, true),
     r("GET", "/v1/admin/settings/{section}", G::Inst, true),
     r("PUT", "/v1/admin/settings/{section}", G::Inst, true),
     r(
         "POST",
         "/v1/admin/settings/{section}/preview",
+        G::Inst,
+        true,
+    ),
+    r(
+        "POST",
+        "/v1/admin/settings/llm/endpoint-test",
         G::Inst,
         true,
     ),

@@ -59,6 +59,23 @@ pub struct Settings {
     snap: ArcSwap<Snapshot>,
     failed: std::sync::atomic::AtomicU64,
     secrets_target: std::sync::OnceLock<SecretsTarget>,
+    /// Live readers run after a swap with the old and the new merged view, before the caches
+    /// are flushed (`reload_and_flush`), so a flush never recomputes from the old ceiling.
+    hooks: std::sync::Mutex<Vec<SwapHook>>,
+}
+
+/// A live reader of the merged view (SET-2: the instance governance; SET-3: the LLM registry).
+pub type SwapHook = Arc<dyn Fn(&Effective, &Effective) + Send + Sync>;
+
+/// Did any key of `section` (its dotted prefixes) change between two merged views?
+pub fn section_changed(old: &Effective, new: &Effective, prefixes: &[&str]) -> bool {
+    let keys = || {
+        old.keys
+            .keys()
+            .chain(new.keys.keys())
+            .filter(|k| prefixes.iter().any(|p| k.starts_with(p)))
+    };
+    keys().any(|k| old.keys.get(k).map(|e| &e.value) != new.keys.get(k).map(|e| &e.value))
 }
 
 const KEYS_OF_SECRETS: [&str; 2] = ["secrets.stores", "secrets.default_store"];
@@ -87,7 +104,59 @@ impl Settings {
             }),
             failed: std::sync::atomic::AtomicU64::new(0),
             secrets_target: std::sync::OnceLock::new(),
+            hooks: std::sync::Mutex::new(Vec::new()),
         })
+    }
+
+    /// Register a live reader; it runs after every swap.
+    pub fn on_swap(&self, hook: SwapHook) {
+        self.hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(hook);
+    }
+
+    /// Rebuild the live LLM readers whenever a `governance.*`, `byo.*` or `llm.*` key changes
+    /// (SET-2, SET-3): the provider table (endpoints, reserved LLM hosts, the secrets' recipes) of
+    /// the policy resolver and of the governance step, the instance ceiling that carries the
+    /// endpoints and the known LLM hosts (built-in + `known_llm_hosts_extra` − endpoint hosts, from
+    /// the merged configuration) and the BYO ceiling. All of it is replaced before the caches are
+    /// flushed as `all` (`reload_and_flush`), and nothing is replaced when any part does not
+    /// resolve (the previous state stays in force and the failure is logged).
+    pub fn rebuild_governance_on_change(
+        &self,
+        governance: Arc<crate::governance::Governance>,
+        resolver: Arc<crate::resolver::DbCredentialResolver>,
+        policy: Arc<crate::resolve::Resolver>,
+    ) {
+        self.on_swap(Arc::new(move |old, new| {
+            let llm_changed = section_changed(old, new, &["llm."]);
+            if !llm_changed && !section_changed(old, new, &["governance.", "byo."]) {
+                return;
+            }
+            let registry = if llm_changed {
+                match aurora_llm::ProviderRegistry::from_config(&new.raw.llm) {
+                    Ok(r) => Arc::new(r),
+                    Err(e) => {
+                        tracing::error!(error = %e, "llm settings did not resolve; keeping the previous endpoint table");
+                        return;
+                    }
+                }
+            } else {
+                governance.registry()
+            };
+            match new.raw.governance_config() {
+                Ok(g) => {
+                    resolver.set_byo(aurora_llm::governance::ByoInstance::from_config(&g.byo));
+                    policy.set_llm(registry.clone());
+                    let instance = crate::governance::instance_from_config(&g, &registry);
+                    governance.set_registry_and_instance(registry, instance);
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "governance settings did not resolve; keeping the previous instance ceiling");
+                }
+            }
+        }));
     }
 
     pub fn snapshot(&self) -> Arc<Snapshot> {
@@ -172,6 +241,14 @@ impl Settings {
         if secrets_changed && let Some(t) = self.secrets_target.get() {
             t.vault
                 .rebuild_from_effective(&effective, t.keyring.clone(), t.extra_ca.as_deref());
+        }
+        let hooks: Vec<SwapHook> = self
+            .hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for h in &hooks {
+            h(&before.effective, &effective);
         }
         self.snap.store(Arc::new(Snapshot {
             generations,

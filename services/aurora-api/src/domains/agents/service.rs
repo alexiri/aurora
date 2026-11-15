@@ -54,8 +54,8 @@ fn brief_ok(b: &str) -> Result<(), ApiError> {
 /// The provider of the configured endpoint named by an explicit model choice: an explicit model
 /// is stamped with provider + endpoint, or the dispatcher cannot honour it (08 §Model selection).
 /// An endpoint not in the configuration stamps nothing (the override is then not usable).
-fn provider_of<'a>(state: &'a AppState, endpoint: Option<&str>) -> Option<&'a str> {
-    state.llm.endpoint(endpoint?).map(|e| e.provider.as_str())
+fn provider_of(state: &AppState, endpoint: Option<&str>) -> Option<String> {
+    state.llm().endpoint(endpoint?).map(|e| e.provider.clone())
 }
 
 fn effort_ok(e: &str) -> Result<(), ApiError> {
@@ -263,6 +263,7 @@ pub async fn create(
             cand
         }
     };
+    let model_provider = provider_of(state, req.model_endpoint_id.as_deref());
     let row = agents::insert(
         &mut *tx,
         &NewAgent {
@@ -273,7 +274,7 @@ pub async fn create(
             name: &name,
             kind: &req.kind,
             harness: harness.as_deref(),
-            model_provider: provider_of(state, req.model_endpoint_id.as_deref()),
+            model_provider: model_provider.as_deref(),
             model_endpoint_id: req.model_endpoint_id.as_deref(),
             model_id: req.model_id.as_deref(),
             effort: req.effort.as_deref(),
@@ -448,6 +449,7 @@ pub async fn patch(
             "The agent's harness cannot change while a turn is running.",
         ));
     }
+    let model_provider = provider_of(state, req.model_endpoint_id.as_deref());
     let updated = agents::update(
         &mut *tx,
         id,
@@ -455,7 +457,7 @@ pub async fn patch(
             name: name.as_deref(),
             brief: req.brief.as_deref(),
             harness: req.harness.as_deref(),
-            model_provider: provider_of(state, req.model_endpoint_id.as_deref()),
+            model_provider: model_provider.as_deref(),
             model_endpoint_id: req.model_endpoint_id.as_deref(),
             model_id: req.model_id.as_deref(),
             effort: req.effort.as_deref(),

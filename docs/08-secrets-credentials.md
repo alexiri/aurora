@@ -191,7 +191,7 @@ value on the connect path, never per request.
 `AURORA_SIGNING_KEY` (32 bytes, base64) is the root for derived keys:
 `HKDF-SHA256(root, info = "aurora:<purpose>:v1")`.
 
-(phase 5 (D-138, moved from phase 4), P4-S3) **Blob-store credentials** are not Aurora secrets and are not in
+(phase 6 (D-318, moved from phase 5), P4-S3) **Blob-store credentials** are not Aurora secrets and are not in
 the `secrets` table or any SecretStore: the S3 backend (`15 §S3-compatible blob
 store`) uses the workload's provider chain (preferred) or environment variables named
 by the configuration (`blobs.s3.credentials.*_env`), filled from a Kubernetes Secret.

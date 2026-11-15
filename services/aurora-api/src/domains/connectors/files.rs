@@ -119,7 +119,7 @@ async fn put_file(
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok()),
     );
-    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let sha = hex::encode(Sha256::digest(&bytes));
 
     // Org storage quota (RFE-015): cheap check before the bytes are written; `store_once`
     // decides under the org's counter lock. The inbox marks the file `failed` /

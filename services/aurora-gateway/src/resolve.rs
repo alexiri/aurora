@@ -401,7 +401,7 @@ struct Cache {
 
 pub struct Resolver {
     source: Arc<dyn PolicySource>,
-    llm: Arc<ProviderRegistry>,
+    llm: arc_swap::ArcSwap<ProviderRegistry>,
     ttl: Duration,
     cache: Arc<ResolveCache>,
     governance: Option<Arc<crate::governance::Governance>>,
@@ -462,7 +462,7 @@ impl Resolver {
     ) -> Self {
         Self {
             source,
-            llm,
+            llm: arc_swap::ArcSwap::new(llm),
             ttl,
             cache: Arc::new(ResolveCache::default()),
             governance: None,
@@ -495,8 +495,14 @@ impl Resolver {
         self.cache.clone()
     }
 
-    pub fn llm(&self) -> &ProviderRegistry {
-        &self.llm
+    /// The provider table now in force (replaced live by SET-3's `llm` settings reload).
+    pub fn llm(&self) -> Arc<ProviderRegistry> {
+        self.llm.load_full()
+    }
+
+    /// Replace the provider table (SET-3). The caller flushes the caches afterwards (`all`).
+    pub fn set_llm(&self, llm: Arc<ProviderRegistry>) {
+        self.llm.store(llm);
     }
 
     /// (phase 2, P2-DBL-1) The database connection `id` as seen by `identity`: the connection
@@ -653,7 +659,8 @@ impl Resolver {
             Some(g) => Some(g.effective(k.org).await.map_err(fail)?),
             None => None,
         };
-        let is_llm_host = self.llm.is_endpoint_host(&host_port)
+        let llm = self.llm.load_full();
+        let is_llm_host = llm.is_endpoint_host(&host_port)
             || gov
                 .as_ref()
                 .is_some_and(|g| g.is_known_llm_host(&host_port));
@@ -667,7 +674,7 @@ impl Resolver {
             if !pat.matches(&k.host, k.port) {
                 continue;
             }
-            match to_candidate(r, k.org, &self.llm) {
+            match to_candidate(r, k.org, &llm) {
                 Ok(c) => cands.push(Arc::new(c)),
                 Err(e) => tracing::warn!(error = %e, "skipping unusable secret"),
             }
