@@ -180,9 +180,9 @@ export function HelmEndpointDialog({ entry, helmKey, onClose }: { entry: Entry; 
           </Notice>
           <dl className="space-y-2 text-sm">
             {rows.map(([k, v]) => (
-              <div key={k} className="grid gap-1 sm:grid-cols-[10rem_1fr]">
-                <dt className="font-medium text-ink">{k}</dt>
-                <dd className="min-w-0 break-words font-mono text-xs text-ink-2">
+              <div key={k} className="flex flex-col gap-1 sm:flex-row sm:gap-3">
+                <dt className="font-medium text-ink sm:w-40 sm:shrink-0">{k}</dt>
+                <dd className="min-w-0 flex-1 break-words font-mono text-xs text-ink-2">
                   {typeof v === "string" ? v : JSON.stringify(v)}
                 </dd>
               </div>
