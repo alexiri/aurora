@@ -1237,7 +1237,7 @@ async fn a_private_ca_in_the_extra_bundle_is_trusted_by_the_probe() {
     let leaf_key = KeyPair::generate().unwrap();
     let leaf = CertificateParams::new(vec!["127.0.0.1".to_owned()])
         .unwrap()
-        .signed_by(&leaf_key, &ca, &ca_key)
+        .signed_by(&leaf_key, &rcgen::Issuer::from_params(&ca_params, &ca_key))
         .unwrap();
     let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
         leaf_key.serialize_der(),
@@ -1297,7 +1297,7 @@ async fn a_private_ca_in_the_extra_bundle_is_trusted_by_the_probe() {
 async fn an_untrusted_certificate_is_a_tls_failure() {
     let ck = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_owned()]).unwrap();
     let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
-        ck.key_pair.serialize_der(),
+        ck.signing_key.serialize_der(),
     ));
     let cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::aws_lc_rs::default_provider(),
