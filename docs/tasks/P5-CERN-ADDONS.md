@@ -223,3 +223,24 @@ fixtures for unknown `search_id` and oversized responses.
 - Non-goals: contract status / nationality attributes (owner), write operations of any kind,
   Mattermost/channel presence, indoor turn-by-turn navigation, cached local copies of directory
   data.
+
+## Completion report (lane `p5-platform`, 2026-11-15)
+
+External repo `alexiri/aurora-addons-cern` `main` = `bd843505`; releases v0.1.0 (cern-phonebook 0.1.0,
+cern-maps 0.1.0) and v0.1.1 (cern-maps 0.1.1, `block_untooled`; tag pushed by the coordinator, asset
+sha256/size verified against the manifest). Aurora side: commits `90c3ab62`, `e482384c`, merged as
+`f65efdfe` (master `ac25df4e` already included, `git merge master` was a no-op).
+
+- **Kind e2e** (`AURORA_E2E_CLUSTER=aurora-e2e-platform AURORA_E2E_CERN_ADDONS=1
+  AURORA_E2E_EXTRA_CA_FILE=<CERN Root CA 2 PEM> scripts/e2e/kind.sh --fresh`): 7 passed, 0 failed,
+  k6 skipped (previews off); **k7 ok** incl. the uncatalogued-ArcGIS-path block (`k8s.rs` "uncatalogued
+  ArcGIS path was served" assertion). The root CA was fetched from `cafiles.cern.ch` (DER) and converted
+  to PEM.
+- **Batch gate**: `cargo nextest run -p aurora-gateway -p aurora-supervisor -p aurora-registry
+  -p aurora-cli` 681/681 passed; `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  clean; `bash scripts/guards/run-all.sh` all passed; `extract-schema.py --check` up to date;
+  `cargo test -p aurora-api --test it openapi_matches_checked_in` 1 passed; `FRONTDOOR=1
+  scripts/e2e/gateway.sh` exit 0 (all ok); `AURORA_TEST_PODMAN=1 scripts/e2e/hosted.sh`: 16 passed,
+  1 failed (s13 zsh Tab completion timeout, load ~13 during the run), s13 re-run alone **passed**
+  (flake under load, terminal code untouched by this task); s12/s13b/s8d skipped (full image not set).
+  Without `AURORA_TEST_PODMAN=1` hosted.sh prints "skipped" and exits 0, so it must be set.
