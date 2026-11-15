@@ -1144,6 +1144,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/grants/apps/{app}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Give an agent a credential-free app in one step (`can_own`): reuses the workspace's active
+         *     connection of the app or creates it, then grants it like `grantConnection`.
+         */
+        put: operations["grantApp"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/grants/connections/{conn}": {
         parameters: {
             query?: never;
@@ -5179,6 +5199,8 @@ export interface components {
             connect_note?: null | components["schemas"]["ConnectNote"];
             /** Format: int64 */
             connection_count: number;
+            /** @description (FIX-154, C-895) as on `AppSummary`. */
+            credential_free: boolean;
             credentials: components["schemas"]["CredentialInfo"][];
             description: string;
             family?: null | components["schemas"]["AppFamily"];
@@ -5283,6 +5305,12 @@ export interface components {
             category?: string | null;
             /** Format: int64 */
             connection_count: number;
+            /**
+             * @description (FIX-154, D-306(c), C-895) Nothing to sign in to or enter (no credentials, token,
+             *     instances or database; every connect method is a `fields` method with no fields): an agent
+             *     is given access in one step. Derived from the installed manifest, not stored.
+             */
+            credential_free: boolean;
             description: string;
             family?: null | components["schemas"]["AppFamily"];
             has_dark_icon: boolean;
@@ -6602,6 +6630,14 @@ export interface components {
         };
         /** @enum {string} */
         GrantMode: "full" | "custom";
+        /** @description (FIX-154, C-896) Answer of `PUT /agents/{agent}/grants/apps/{app}`. */
+        GrantedApp: {
+            /** @description The workspace's connection of the app (reused or created by this call). */
+            connection: components["schemas"]["Connection"];
+            /** @description `true` when this call created the connection. */
+            created: boolean;
+            grant: components["schemas"]["ConnectionGrant"];
+        };
         GrantsResponse: {
             connections: components["schemas"]["ConnectionGrant"][];
             /** @description (phase 4, P4-GRANTS, C-413) conversions by an app update still standing on these grants. */
@@ -15740,6 +15776,80 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    grantApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutConnectionGrant"];
+            };
+        };
+        responses: {
+            /** @description Connection (reused or created) and grant */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantedApp"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden, or app_unavailable */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Agent not found, or app_not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description app_not_credential_free, or grant_invalid */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -107,7 +107,7 @@ function AgentChecklist({
   );
 }
 
-function WorkspaceAgents({
+export function WorkspaceAgents({
   wsId,
   name,
   register,
