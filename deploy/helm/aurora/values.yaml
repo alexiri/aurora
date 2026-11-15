@@ -158,10 +158,14 @@ config:
     internal_bind: 0.0.0.0
   runner:
     ops_bind: 0.0.0.0
-  hosted:
-    enabled: true
   telemetry:
     log_level: info
+  # Instance settings (phase 5, SET-1, D-237(c)): a key listed in deploy/helm/aurora/movable-keys.txt
+  # is edited in the dashboard (Admin › Settings) and its default lives in the application. Setting
+  # it here LOCKS it: the dashboard shows it read-only and the API refuses to change it. The chart
+  # renders none of them unless you set them, so they stay commented out (documented default in the
+  # comment). Removing a key later hands it to the dashboard with the value it had.
+  # hosted: {enabled: true}          # Admin › Agents & sandboxes (SET-5)
   # auth: {signup_mode: invite_only}
   # oidc / llm endpoints / secret stores: add sections here (see docs/15 reference).
   # plugins.dir is rendered from `plugins.dir` below; do not set it here.

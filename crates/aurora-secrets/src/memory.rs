@@ -31,6 +31,7 @@ pub struct MemoryStore {
     id: String,
     unavailable: AtomicBool,
     counter: AtomicU64,
+    health_calls: AtomicU64,
     inner: Mutex<Inner>,
 }
 
@@ -47,6 +48,7 @@ impl MemoryStore {
             id: id.into(),
             unavailable: AtomicBool::new(false),
             counter: AtomicU64::new(0),
+            health_calls: AtomicU64::new(0),
             inner: Mutex::new(Inner::default()),
         }
     }
@@ -59,6 +61,12 @@ impl MemoryStore {
 
     pub fn set_unavailable(&self, unavailable: bool) {
         self.unavailable.store(unavailable, Ordering::SeqCst);
+    }
+
+    /// How many health probes this store has answered (the cached status page probes once per
+    /// interval, FIX-124).
+    pub fn health_calls(&self) -> u64 {
+        self.health_calls.load(Ordering::SeqCst)
     }
 
     /// Preload an externally-written value (version "1").
@@ -205,6 +213,7 @@ impl SecretStore for MemoryStore {
     }
 
     async fn health(&self) -> StoreHealth {
+        self.health_calls.fetch_add(1, Ordering::SeqCst);
         if self.unavailable.load(Ordering::SeqCst) {
             StoreHealth::Unavailable
         } else {

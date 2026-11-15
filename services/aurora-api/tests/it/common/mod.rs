@@ -92,9 +92,55 @@ pub fn config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> aurora_conf
     cfg
 }
 
+/// The test configuration as a [`aurora_config::ConfigSource`] (presence tracked), with `extra`
+/// TOML appended: what a Helm-rendered `aurora.toml` would add (SET-1 locks).
+pub fn config_source(extra: &str) -> aurora_config::ConfigSource {
+    let k = base64::engine::general_purpose::STANDARD.encode([b'a'; 32]);
+    let env: std::collections::BTreeMap<String, String> = [
+        (
+            "AURORA_DATABASE_URL",
+            "postgres://x:x@127.0.0.1:1/x".to_owned(),
+        ),
+        ("AURORA_ENCRYPTION_KEYS", format!("k1:{k}")),
+        ("AURORA_ENCRYPTION_ACTIVE_KEY", "k1".to_owned()),
+        ("AURORA_SIGNING_KEY", k.clone()),
+        ("AURORA_INTERNAL_SECRET", k.clone()),
+        ("AURORA_RUNNER_SESSION_KEY", k),
+        ("AURORA_RUNNER_TOKEN", "aur_devtoken".to_owned()),
+        ("AURORA_CONNECTOR_TOKEN", "aun_devtoken".to_owned()),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_owned(), b))
+    .collect();
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/aurora.test.toml"
+    );
+    let text = format!("{}\n{extra}\n", std::fs::read_to_string(path).unwrap());
+    aurora_config::ConfigSource::from_toml(&text, env).unwrap()
+}
+
 impl Harness {
     pub async fn new() -> Self {
         Self::with_config(|_| {}).await
+    }
+
+    /// Attach a configuration source (`extra` TOML on top of the test fixture) so instance
+    /// settings see which keys the deployment sets (SET-1).
+    #[must_use]
+    pub fn with_helm(mut self, extra: &str) -> Self {
+        self.state = self.state.clone().with_config_source(config_source(extra));
+        self.app = test_router(self.state.clone());
+        self
+    }
+
+    /// Stamp `sessions.reauth_at = now()` (the mock sign-in does no re-authentication).
+    pub async fn reauth(&self, session: Uuid) {
+        sqlx::query("UPDATE sessions SET reauth_at = now() WHERE id = $1")
+            .bind(session)
+            .execute(self.pool())
+            .await
+            .unwrap();
     }
 
     pub async fn with_config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> Self {

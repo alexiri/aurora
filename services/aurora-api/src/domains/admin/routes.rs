@@ -18,6 +18,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_users))
         .routes(routes!(patch_user))
         .routes(routes!(identity))
+        .merge(super::secret_stores::router())
 }
 
 /// List all users (instance administrators).

@@ -9,6 +9,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# The `settings_test` section of the instance-settings registry (SET-1): enabled by the api's and
+# gateway's tests, never in a release build.
+test-registry = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

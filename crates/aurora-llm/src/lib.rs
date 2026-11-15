@@ -5,25 +5,37 @@
 #![forbid(unsafe_code)]
 
 mod anthropic;
+mod classify;
 mod endpoint;
 mod error;
 pub mod governance;
 mod litellm;
+pub mod mint;
 mod model;
+mod openai;
+mod openai_compatible;
 pub mod origin;
+mod overrides;
+pub mod paths;
 mod registry;
 mod types;
+mod vertex;
 
 pub use anthropic::{ANTHROPIC_BASE_URL, AnthropicProvider};
+pub use classify::{LlmErrorClass, classify};
 pub use endpoint::Endpoint;
 pub use error::{LlmError, Result};
 pub use litellm::LitellmProvider;
 pub use model::{inference_path_permitted, model_from_request};
-pub use registry::{ProviderRegistry, governed_hosts};
+pub use openai::{OPENAI_BASE_URL, OpenaiProvider};
+pub use openai_compatible::OpenaiCompatibleProvider;
+pub use overrides::Overrides;
+pub use registry::{ProviderRegistry, endpoint_auth_modes, governed_hosts, recommended_auth_mode};
 pub use types::{
     AuthMode, Dialect, EndpointKind, InjectionHeader, KeyOrigin, KeyOriginRule, LlmInjection,
     LlmProvider, ModelInfo, ModelRef, OriginMethod,
 };
+pub use vertex::VertexProvider;
 
 pub(crate) mod http_util {
     use crate::LlmError;

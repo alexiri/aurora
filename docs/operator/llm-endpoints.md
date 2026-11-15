@@ -16,6 +16,18 @@ Phase 0 has two providers (docs/08 §6):
 | `litellm` | Declared by you, `provider = "litellm"` and a `base_url` (for example a central LiteLLM proxy). | Auth is a LiteLLM virtual key. Default dialects: `openai_chat`, `openai_responses`, `anthropic_messages`. |
 | `anthropic` | Fixed `https://api.anthropic.com`. | Enabled by default. An implicit endpoint `id = "anthropic"` exists when no `anthropic` endpoint is declared. Declare one only to attach a key-origin rule or an allow-list. |
 
+(Phase 5, P4-LLM-1, D-260) Two more key-only providers are available. Add the id to `llm.enabled_providers`
+to use them; the default stays as below.
+
+| Provider | Endpoint | Notes |
+|----------|----------|-------|
+| `openai` | Fixed `https://api.openai.com`. | Auth is an OpenAI API key (`Authorization: Bearer`). Optional `organization` and `project` entry keys are set as `OpenAI-Organization` / `OpenAI-Project` and removed from the agent's request. Key origin `provider_account` reads the `openai-organization` / `openai-project` response headers. Dialects `openai_chat`, `openai_responses`. |
+| `openai_compatible` | Declared by you: `provider = "openai_compatible"`, `base_url` (https, or plain http for a Helm entry; an optional path prefix is kept). | Any OpenAI-style server. Optional `auth_header` (default `Authorization` with `Bearer`), `models_path` (default `/v1/models`) and `dialects` (default `["openai_chat"]`; `anthropic_messages` makes the endpoint usable by Claude Code). Key origin: `endpoint` only. |
+
+Both providers (and `anthropic`, since phase 5) forward **inference paths only**; see "Inference paths only" below.
+An entry key that looks like a credential (`api_key`, `token`, `client_secret`, ...) stops startup. A malformed
+`organization`, `project`, `auth_header` or `models_path` stops startup with `value_invalid`.
+
 `llm.enabled_providers` defaults to `["litellm", "anthropic"]`. An endpoint whose
 `provider` is not enabled stops startup with
 `endpoint `<id>`: provider `<name>` is unknown or not enabled` (`crates/aurora-llm/src/registry.rs`).
@@ -31,15 +43,17 @@ Each entry of `[[llm.endpoints]]` accepts:
 | Key | Meaning |
 |-----|---------|
 | `id` | Unique endpoint id. Duplicate ids stop startup. |
-| `provider` | `litellm` or `anthropic` (enabled). |
+| `provider` | `litellm`, `anthropic`, `openai` or `openai_compatible` (enabled). |
 | `display_name` | Shown in the dashboard. |
-| `base_url` | Required for `litellm`. Validated as an origin. |
+| `base_url` | Required for `litellm` and `openai_compatible`. Validated as an origin (`openai_compatible` may keep a path prefix). |
+| `organization`, `project` | `openai` only: set as `OpenAI-Organization` / `OpenAI-Project` on every request. |
+| `auth_header`, `models_path` | `openai_compatible` only: the key's header (default `Authorization` with `Bearer`) and the model listing path (default `/v1/models`). |
 | `dialects` | Empty means the provider default. Known values: `anthropic_messages`, `openai_chat`, `openai_responses`. |
 | `default_model` | The model a hosted agent uses when it has none of its own. **Recommended for every `litellm` endpoint** (a model id the endpoint serves, for example a Claude model for the `claude-code` harness); see [No default model](#no-default-model). |
 | `models` | Optional static fallback list when the model list endpoint is not available. |
 | `allowed_models` | Instance-wide model allow-list. Empty means any model. |
 | `key_origin` | Key-origin rule (below). |
-| `allowed_paths` | `litellm` endpoints: extra paths the key may be used on, see [Inference paths only](#inference-paths-only). Up to 32 absolute paths; a trailing `/*` admits a subtree. |
+| `allowed_paths` | `litellm`, `anthropic`, `openai` and `openai_compatible` endpoints: extra paths the key may be used on, see [Inference paths only](#inference-paths-only). Up to 32 absolute paths; a trailing `/*` admits a subtree. |
 
 Unknown keys are rejected (`deny_unknown_fields`), so a misspelled key stops startup and names the key.
 

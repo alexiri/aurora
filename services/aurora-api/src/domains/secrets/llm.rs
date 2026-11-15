@@ -1,7 +1,7 @@
 //! LLM key validation and origin verification at save (08 §6, §11.3).
 use aurora_core::{ApiError, Secret};
 use aurora_llm::governance::{EffectiveEndpoint, OriginStatus, StoredOrigin};
-use aurora_llm::{Endpoint, KeyOrigin, LlmError, LlmProvider, origin};
+use aurora_llm::{Endpoint, KeyOrigin, LlmError, LlmProvider, OriginMethod, origin};
 use chrono::Utc;
 use http::StatusCode;
 
@@ -55,8 +55,24 @@ pub async fn check_key(
 ) -> Result<StoredOrigin, KeyFail> {
     let rule = eff.origin_rule.as_ref();
     let default_method = rule.map_or("endpoint", |r| r.method.as_str());
+    // (P4-LLM-2) A provider whose origin proof is the validation (Vertex: the mint) is called once, here.
+    let prefetched = if provider.validates_by_origin() {
+        Some(
+            provider
+                .verify_key_origin(ep, OriginMethod::ProviderAccount, key, http)
+                .await,
+        )
+    } else {
+        None
+    };
     // (FIX-105, CRED-6) The strict call: an endpoint that did not answer is not a verified key.
-    match provider.list_models_strict(ep, key, http).await {
+    let listed = match &prefetched {
+        Some(Ok(_)) => Ok(Vec::new()),
+        Some(Err(LlmError::InvalidKey)) => Err(LlmError::InvalidKey),
+        Some(Err(_)) => Err(LlmError::Unreachable("origin proof unavailable".into())),
+        None => provider.list_models_strict(ep, key, http).await,
+    };
+    match listed {
         Ok(_) => {}
         Err(LlmError::InvalidKey) => return Err(KeyFail::InvalidKey),
         Err(_) if rule.is_none() => {
@@ -72,7 +88,11 @@ pub async fn check_key(
     let Some(rule) = rule else {
         return Ok(origin_of(OriginStatus::Verified, "endpoint", None, version));
     };
-    match provider.verify_key_origin(ep, rule.method, key, http).await {
+    let proof = match prefetched {
+        Some(r) if rule.method == OriginMethod::ProviderAccount => r,
+        _ => provider.verify_key_origin(ep, rule.method, key, http).await,
+    };
+    match proof {
         Ok(ko) if origin::requires_team(&ko, rule) => {
             let mut o = origin_of(
                 OriginStatus::Unverifiable,

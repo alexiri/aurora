@@ -199,6 +199,16 @@ pub struct PutConnectionGrant {
     pub ask_timeout_secs: Option<i64>,
 }
 
+/// (FIX-154, C-896) Answer of `PUT /agents/{agent}/grants/apps/{app}`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GrantedApp {
+    /// The workspace's connection of the app (reused or created by this call).
+    pub connection: crate::domains::connections::dto::Connection,
+    pub grant: ConnectionGrant,
+    /// `true` when this call created the connection.
+    pub created: bool,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ConnectionGrantList {
     pub items: Vec<ConnectionGrantView>,

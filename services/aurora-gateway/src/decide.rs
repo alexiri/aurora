@@ -11,6 +11,7 @@ use crate::db::{DbAuthorizer, DbEndpoint, DbOpenError, DbOpened, DbVerdict};
 use crate::governance::{BackstopInfo, Governance};
 use crate::hold::{HoldOutcome, HoldRequest, Holds};
 use crate::inject::{self, Target};
+use crate::links::Links;
 use crate::mechanisms;
 use crate::pipeline::{
     OpenLaneDecision, Outcome, PipelineRequest, PostHook, PreparedRequest, RequestHandler, Retry,
@@ -64,6 +65,9 @@ pub struct PolicyHandler {
     /// (FIX-104, D-180) `gateway.insecure_loopback_injection`, tests only: package host claims
     /// are injected over any scheme and port when the destination is a loopback address.
     insecure_loopback_injection: bool,
+    /// (P4-LLM-2, C-807) Mints the credential of the minted LLM modes; `None` refuses them (502
+    /// `credential_unavailable`, `kind: llm_mint`).
+    llm_mint: Option<Arc<crate::llm_mint::LlmMint>>,
 }
 
 pub struct PolicyHandlerParts {
@@ -152,15 +156,104 @@ struct Hook {
     create_secret_url: String,
     manage_url: String,
     connect_url: String,
+    /// (FIX-153, C-893) The requesting agent's Access tab.
+    access_url: String,
+    /// (FIX-153, C-892) The matched app's id and display name, for LDAP refusals.
+    app: Option<AppRef>,
     /// Step 14 origin backstop for an injected LLM key.
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
     /// Injected values placed in the URL (FIX-104).
     echo: Vec<Vec<u8>>,
+    /// (P4-LLM-1, C-808) `(provider, endpoint id)` of an injected LLM key: the response is classified for the
+    /// request log and `aurora_gateway_llm_upstream_total`.
+    llm: Option<(String, String)>,
+}
+
+impl Hook {
+    /// (FIX-154, C-897) The matched app `app_id` is credential-free.
+    fn credential_free(&self, app_id: &str) -> bool {
+        matches!(&self.app, Some((id, _, true)) if id == app_id)
+    }
+
+    /// The `app_not_connected` refusal (C-893, C-897): a credential-free app leads with the
+    /// agent's Access tab, any other with the connect link.
+    fn not_connected(
+        status: StatusCode,
+        app_id: &str,
+        free: bool,
+        connect_url: &str,
+        access_url: &str,
+    ) -> ApiError {
+        let msg = if free {
+            format!(
+                "{app_id} is not connected in this workspace. A workspace owner can give this agent access on its Access tab: {access_url}"
+            )
+        } else {
+            format!(
+                "{app_id} is not connected in this workspace. Connect it at {connect_url}, then give this agent access"
+            )
+        };
+        ApiError::new(status, "app_not_connected", msg).with_details(json!({
+            "app_id": app_id, "connect_url": connect_url, "access_url": access_url
+        }))
+    }
 }
 
 impl PostHook for Hook {
     fn echo_needles(&self) -> Vec<Vec<u8>> {
         self.echo.clone()
+    }
+
+    fn ldap_refusal(&self) -> Option<ApiError> {
+        let name = |id: &str| match &self.app {
+            Some((aid, n, _)) if aid == id => n.clone(),
+            _ => id.to_owned(),
+        };
+        let err = match &self.fallback {
+            Fallback::Ungranted(kind, app_id) if kind == "connection" => {
+                let n = name(app_id);
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "ldap_no_connection",
+                    format!(
+                        "This agent has not been given access to {n}. A workspace owner can give it on the agent's Access tab: {}",
+                        self.access_url
+                    ),
+                )
+                .with_details(json!({
+                    "app_id": app_id, "app_name": n, "reason": "not_granted",
+                    "access_url": self.access_url
+                }))
+            }
+            Fallback::NotConnected(app_id) => {
+                let n = name(app_id);
+                // (FIX-154, C-897) Nothing to sign in to: the fix is the agent's Access tab.
+                let msg = if self.credential_free(app_id) {
+                    format!(
+                        "{n} is not connected in this workspace. A workspace owner can give this agent access on its Access tab: {}",
+                        self.access_url
+                    )
+                } else {
+                    format!(
+                        "{n} is not connected in this workspace. A workspace owner can connect it at {} and give this agent access.",
+                        self.connect_url
+                    )
+                };
+                ApiError::new(StatusCode::FORBIDDEN, "ldap_no_connection", msg).with_details(
+                    json!({
+                        "app_id": app_id, "app_name": n, "reason": "not_connected",
+                        "connect_url": self.connect_url, "access_url": self.access_url
+                    }),
+                )
+            }
+            _ => ApiError::new(
+                StatusCode::FORBIDDEN,
+                "ldap_no_connection",
+                "No installed directory app serves this host.",
+            )
+            .with_details(json!({ "reason": "no_app" })),
+        };
+        Some(err)
     }
 
     fn on_response(
@@ -182,6 +275,33 @@ impl PostHook for Hook {
                 .record(ctx.row(r.status().as_u16(), Some(status.as_u16()), code.as_deref()));
             return Some(r);
         }
+        // (P4-LLM-1, C-808) Classify an injected LLM request's answer by status (and Bedrock's error-type header):
+        // the request log's `error_code` and the upstream metric. Never reads a body, never alters the answer.
+        if let Some((provider, endpoint)) = &self.llm
+            && ctx.injected > 0
+        {
+            let class = if status.is_success() {
+                "ok"
+            } else {
+                let error_type = (provider == "bedrock")
+                    .then(|| {
+                        headers
+                            .get("x-amzn-errortype")
+                            .and_then(|v| v.to_str().ok())
+                    })
+                    .flatten();
+                let c = aurora_llm::classify(provider, status.as_u16(), error_type);
+                code = c.error_code().map(str::to_owned);
+                c.as_str()
+            };
+            metrics::counter!(
+                "aurora_gateway_llm_upstream_total",
+                "provider" => provider.clone(),
+                "endpoint" => endpoint.clone(),
+                "class" => class
+            )
+            .increment(1);
+        }
         let challenge = self.passthrough_challenge
             && status.as_u16() == 401
             && headers
@@ -194,12 +314,13 @@ impl PostHook for Hook {
                     status,
                     "access_restricted",
                     format!(
-                        "The upstream rejected the request. This workspace holds a credential for {} that this agent has not been granted. Ask a workspace admin to grant it: {}",
-                        ctx.host, self.manage_url
+                        "The upstream rejected the request. This workspace holds a credential for {} that this agent has not been granted. Ask a workspace owner to give this agent access: {}",
+                        ctx.host, self.access_url
                     ),
                 )
                 .with_details(json!({
-                    "kind": kind, "provider": provider, "manage_url": self.manage_url
+                    "kind": kind, "provider": provider, "manage_url": self.manage_url,
+                    "access_url": self.access_url
                 })),
                 Fallback::Disabled(app_id) => ApiError::new(
                     status,
@@ -213,15 +334,13 @@ impl PostHook for Hook {
                     "kind": "connection", "provider": app_id, "reason": "disabled",
                     "manage_url": self.manage_url
                 })),
-                Fallback::NotConnected(app_id) => ApiError::new(
+                Fallback::NotConnected(app_id) => Hook::not_connected(
                     status,
-                    "app_not_connected",
-                    format!(
-                        "{app_id} is not connected in this workspace. Connect it at {}",
-                        self.connect_url
-                    ),
-                )
-                .with_details(json!({ "app_id": app_id, "connect_url": self.connect_url })),
+                    app_id,
+                    matches!(&self.app, Some((id, _, true)) if id == app_id),
+                    &self.connect_url,
+                    &self.access_url,
+                ),
                 Fallback::PathUnserved => ApiError::new(
                     status,
                     "app_path_unserved",
@@ -267,6 +386,20 @@ enum Fallback {
     NotConnected(String),
     PathUnserved,
     NotFound,
+}
+
+/// The matched app (for refusals that name it): id, display name and whether it is
+/// credential-free (FIX-154, C-895), so its refusals lead with the Access tab.
+type AppRef = (String, String, bool);
+
+fn app_label(m: Option<&apps::AppMatch<'_>>) -> Option<AppRef> {
+    m.map(|m| {
+        (
+            m.app.app_id.clone(),
+            m.app.about.name.clone(),
+            aurora_registry::credential_free::entry_is_credential_free(m.app),
+        )
+    })
 }
 
 fn facts_identity(i: &Ident) -> RequestIdentity {
@@ -337,7 +470,51 @@ impl PolicyHandler {
             condition_body_limit: CONDITION_BODY_BUFFER,
             health: None,
             insecure_loopback_injection: false,
+            llm_mint: None,
         }
+    }
+
+    /// (P4-LLM-2) The LLM credential mint service.
+    #[must_use]
+    pub fn with_llm_mint(mut self, m: Arc<crate::llm_mint::LlmMint>) -> Self {
+        self.llm_mint = Some(m);
+        self
+    }
+
+    /// (P4-LLM-2, C-806, C-807) The minted credential a secret's recipe needs (`None` for plain keys): produced by the
+    /// mint service from the secret's own value, never taken from the request.
+    async fn llm_token(
+        &self,
+        c: &SecretCand,
+        value: &[u8],
+    ) -> Result<Option<Arc<aurora_core::Secret<String>>>, aurora_llm::mint::MintError> {
+        use aurora_llm::{AuthMode, InjectionHeader};
+        let crate::resolve::Injection::Llm(l) = &c.injection else {
+            return Ok(None);
+        };
+        let mode = match l.header {
+            InjectionHeader::GcpToken => AuthMode::GcpServiceAccount,
+            InjectionHeader::EntraToken => AuthMode::AzureEntra,
+            _ => return Ok(None),
+        };
+        let unavailable = aurora_llm::mint::MintError::unavailable;
+        let mint = self.llm_mint.as_ref().ok_or_else(unavailable)?;
+        let ep = c
+            .llm_endpoint
+            .as_deref()
+            .and_then(|id| self.resolver.llm().endpoint(id))
+            .ok_or_else(unavailable)?;
+        mint.token(&crate::llm_mint::MintRequest {
+            secret_id: c.id,
+            version: c.version,
+            org_id: c.org_id,
+            workspace_id: c.workspace_id,
+            endpoint: ep,
+            mode,
+            value,
+        })
+        .await
+        .map(Some)
     }
 
     /// (FIX-104, D-180) `gateway.insecure_loopback_injection`: tests and development only.
@@ -395,6 +572,11 @@ impl PolicyHandler {
             "{}/o/{}/w/{}/{tail}",
             self.external_url, rv.org_slug, rv.ws_slug
         )
+    }
+
+    /// (FIX-153, C-891) The dashboard link builder for a resolved workspace.
+    fn links<'a>(&'a self, rv: &'a ResolvedHost) -> Links<'a> {
+        Links::new(&self.external_url, &rv.org_slug, &rv.ws_slug)
     }
 
     fn touch(&self, secret_id: Uuid) {
@@ -913,7 +1095,7 @@ impl PolicyHandler {
                 &body_prefix,
                 truncated,
                 wsec,
-                &self.url(&rv, "secrets"),
+                &self.links(&rv).secrets(),
             )
         {
             ctx.secret_id = wsec.map(|c| c.id);
@@ -1168,11 +1350,7 @@ impl PolicyHandler {
             if conn.reauth_required {
                 return Outcome::Respond(self.refuse(
                     ctx,
-                    &reauth_required(
-                        &conn.app_id,
-                        conn.id,
-                        &self.url(&rv, &format!("apps/{}", conn.app_id)),
-                    ),
+                    &reauth_required(&conn.app_id, conn.id, &self.links(&rv).reconnect(conn.id)),
                     "error",
                 ));
             }
@@ -1295,7 +1473,15 @@ impl PolicyHandler {
                 &new_path,
                 query.as_deref(),
             );
-            let hook = self.hook(&rv, ctx, fb, passthrough, None, echo);
+            let hook = self.hook(
+                &rv,
+                ctx,
+                fb,
+                app_label(app_match.as_ref()),
+                passthrough,
+                None,
+                echo,
+            );
             let retry = match (pre, &self.tokens, &registry) {
                 (Some((h0, q0)), Some(t), Some(l)) => Some(Box::new(StaleRetry {
                     tokens: t.clone(),
@@ -1363,7 +1549,7 @@ impl PolicyHandler {
             let mut backstop = None;
             if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
                 && let Some(info) =
-                    Governance::backstop_info(g, &host_port, c, &self.url(&rv, "secrets"))
+                    Governance::backstop_info(g, &host_port, c, &self.links(&rv).secrets())
             {
                 // Origin preflight: verify unseen key values before injecting.
                 if let Err(err) = gov.preflight(&info, value.expose()).await {
@@ -1372,15 +1558,31 @@ impl PolicyHandler {
                 backstop = Some((gov.clone(), info));
             }
             let mut new_path = path.clone();
-            let r = inject::apply(
-                c,
-                value.expose(),
-                Target {
-                    headers: &mut headers,
-                    path: &mut new_path,
-                    query: &mut query,
-                },
-            );
+            // (P4-LLM-2, C-807) A minted mode injects the token the mint service produced from the value.
+            let minted = match self.llm_token(c, value.expose()).await {
+                Ok(t) => t,
+                Err(e) => {
+                    let err = credential_unavailable("llm_mint")
+                        .with_details(json!({ "kind": "llm_mint", "reason": e.reason() }));
+                    let code = if e.class == aurora_llm::mint::MintClass::Rejected {
+                        "llm_auth"
+                    } else {
+                        "credential_unavailable"
+                    };
+                    ctx.decision = "error";
+                    self.log.record(ctx.row(502, None, Some(code)));
+                    return Outcome::Respond(guidance::response(&err));
+                }
+            };
+            let target = Target {
+                headers: &mut headers,
+                path: &mut new_path,
+                query: &mut query,
+            };
+            let r = match &minted {
+                Some(t) => inject::apply_minted(c, t.expose().as_bytes(), target),
+                None => inject::apply(c, value.expose(), target),
+            };
             if r.is_err() {
                 return Outcome::Respond(self.refuse(
                     ctx,
@@ -1393,7 +1595,19 @@ impl PolicyHandler {
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let echo =
                 inject::url_needles([value.expose().as_slice()], &new_path, query.as_deref());
-            let hook = self.hook(&rv, ctx, fb, false, backstop, echo);
+            let llm = (c.kind == aurora_policy::facts::SecretKind::Llm)
+                .then(|| c.provider.clone().zip(c.llm_endpoint.clone()))
+                .flatten();
+            let mut hook = self.hook(
+                &rv,
+                ctx,
+                fb,
+                app_label(app_match.as_ref()),
+                false,
+                backstop,
+                echo,
+            );
+            hook.llm = llm;
             return Outcome::Forward(PreparedRequest {
                 scheme,
                 host,
@@ -1412,7 +1626,15 @@ impl PolicyHandler {
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
         let passthrough = pass_challenge(app_match.as_ref());
-        let hook = self.hook(&rv, ctx, fb, passthrough, None, Vec::new());
+        let hook = self.hook(
+            &rv,
+            ctx,
+            fb,
+            app_label(app_match.as_ref()),
+            passthrough,
+            None,
+            Vec::new(),
+        );
         Outcome::Forward(PreparedRequest {
             scheme,
             host,
@@ -1440,12 +1662,33 @@ impl RequestHandler for PolicyHandler {
             // only when it won a granted connection of that app (then it carries the approved
             // `ldap` block). Anything else on that host — no connection, no grant, a host of no
             // LDAP app — is never forwarded and never reaches a directory.
-            Outcome::Forward(mut p) if crate::ldap::is_ldap_host(&p.host) && p.ldap.is_none() => {
-                let err = ApiError::new(
-                    StatusCode::FORBIDDEN,
-                    "ldap_no_connection",
-                    "This agent has no granted connection for this directory.",
-                );
+            Outcome::Forward(mut p)
+                if crate::ldap::is_ldap_host(&p.host)
+                    && (p.ldap.is_none() || p.scheme == crate::pipeline::Scheme::Http) =>
+            {
+                // (FIX-153, C-892) Plain HTTP is its own refusal; the others say why and where
+                // to fix it, from the fallback the decision already computed.
+                let err = if p.scheme == crate::pipeline::Scheme::Http {
+                    let url = format!("https://{}/search", p.host);
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "ldap_https_required",
+                        format!("This directory is only served over HTTPS. Use {url}"),
+                    )
+                    .with_details(json!({ "url": url }))
+                } else {
+                    p.hook
+                        .as_ref()
+                        .and_then(|h| h.ldap_refusal())
+                        .unwrap_or_else(|| {
+                            ApiError::new(
+                                StatusCode::FORBIDDEN,
+                                "ldap_no_connection",
+                                "No installed directory app serves this host.",
+                            )
+                            .with_details(json!({ "reason": "no_app" }))
+                        })
+                };
                 if let Some(h) = p.hook.take() {
                     h.on_error(&err);
                 }
@@ -1852,11 +2095,9 @@ impl PolicyHandler {
 
     fn refresh_error(&self, rv: &ResolvedHost, c: &apps::ConnCand, e: RefreshError) -> ApiError {
         match e {
-            RefreshError::Reauth => reauth_required(
-                &c.app_id,
-                c.id,
-                &self.url(rv, &format!("apps/{}", c.app_id)),
-            ),
+            RefreshError::Reauth => {
+                reauth_required(&c.app_id, c.id, &self.links(rv).reconnect(c.id))
+            }
             RefreshError::StoreUnavailable(store_id) => ApiError::unavailable(
                 "secret_store_unavailable",
                 "The secret store is unreachable. Retry shortly.",
@@ -1897,27 +2138,34 @@ impl PolicyHandler {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn hook(
         &self,
         rv: &ResolvedHost,
         ctx: Ctx,
         fallback: Fallback,
+        app: Option<AppRef>,
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
         echo: Vec<Vec<u8>>,
-    ) -> Box<dyn PostHook> {
+    ) -> Box<Hook> {
+        let links = self.links(rv);
         let connect_url = match &ctx.app_id {
-            Some(a) => self.url(rv, &format!("apps/{a}")),
-            None => self.url(rv, "apps"),
+            Some(a) => links.connect(a),
+            None => links.connect_any(),
         };
+        let access_url = links.access(ctx.identity.agent_id);
         Box::new(Hook {
+            llm: None,
             ctx,
             log: self.log.clone(),
             fallback,
             passthrough_challenge,
-            create_secret_url: self.url(rv, "secrets"),
-            manage_url: self.url(rv, "policy"),
+            create_secret_url: links.secrets(),
+            manage_url: links.policy(),
             connect_url,
+            access_url,
+            app,
             backstop,
             echo,
         })

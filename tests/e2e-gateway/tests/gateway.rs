@@ -1512,3 +1512,223 @@ async fn s19_custom_only_activation_is_seen_consistently_by_both_gateways() {
     }
     st.finish().await;
 }
+
+/// (P4-LLM-1, C-812, acceptance 6) `openai` through the real binaries: `llm.dev_upstream_overrides` replaces the fixed
+/// origin `https://api.openai.com` by a loopback mock, for the API's key validation (listing) and for the gateway's host
+/// match and injection; the agent's own credential and `OpenAI-*` headers are replaced.
+#[tokio::test]
+async fn s20_openai_endpoint_reached_through_the_dev_upstream_override() {
+    let oai = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"id": "gpt-x"}]})))
+        .mount(&oai)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&oai)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_json(json!({"error": {"code": "insufficient_quota"}})),
+        )
+        .mount(&oai)
+        .await;
+    let st = Stack::start(Opts {
+        llm_openai_override: Some(format!("http://{}", oai.address())),
+        ..Opts::default()
+    })
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("openai-agent").await;
+    let (s, v) = api
+        .post(
+            &format!("/v1/orgs/{}/secrets", api.org),
+            json!({"name": "oai", "kind": "llm", "llm": {"endpoint_id": "openai"}, "value": LLM_KEY}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}\n{}", st.log_tails());
+    api.grant(&agent, v["id"].as_str().unwrap()).await;
+    api.set_policy("block", json!([])).await;
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(format!("http://{}/v1/chat/completions", oai.address()))
+        .header("authorization", "Bearer agent-own-key")
+        .header("x-api-key", "agent-own-key")
+        .header("api-key", "agent-own-key")
+        .header("openai-organization", "org-agent")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    let got = oai.received_requests().await.unwrap();
+    let listing = got.iter().find(|r| r.url.path() == "/v1/models").unwrap();
+    assert_eq!(
+        hdr(listing, "authorization").as_deref(),
+        Some(&*format!("Bearer {LLM_KEY}")),
+        "the API validated the key by listing at the override target"
+    );
+    let req = got
+        .iter()
+        .find(|r| r.url.path() == "/v1/chat/completions")
+        .unwrap();
+    assert_eq!(
+        hdr(req, "authorization").as_deref(),
+        Some(&*format!("Bearer {LLM_KEY}"))
+    );
+    for h in ["x-api-key", "api-key", "openai-organization"] {
+        assert!(hdr(req, h).is_none(), "agent {h} must be removed");
+    }
+    // C-808: a 429 reaches the client unchanged and is classified by status alone (never by the body).
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(format!("http://{}/v1/responses", oai.address()))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 429, "{}", st.log_tails());
+    assert!(r.text().await.unwrap().contains("insufficient_quota"));
+    let m = reqwest::get(format!("http://{GW_A_IP}:4103/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for class in ["ok", "rate_limited"] {
+        assert!(
+            m.lines()
+                .any(|l| l.starts_with("aurora_gateway_llm_upstream_total{")
+                    && l.contains("provider=\"openai\"")
+                    && l.contains("endpoint=\"openai\"")
+                    && l.contains(&format!("class=\"{class}\""))),
+            "{class}: {m}"
+        );
+    }
+    st.finish().await;
+}
+
+/// (C-812) The override without `gateway.insecure_loopback_injection` is a startup error.
+#[tokio::test]
+async fn s21_dev_upstream_override_without_insecure_loopback_refuses_to_start() {
+    let st = Stack::start(Opts {
+        llm_openai_override: Some("http://127.0.0.1:9".into()),
+        no_insecure_loopback: true,
+        expect_gateway_refusal: true,
+        ..Opts::default()
+    })
+    .await;
+    let log = std::fs::read_to_string(st.dir.join("refused.log")).unwrap();
+    assert!(
+        log.contains("llm.dev_upstream_overrides") && log.contains("insecure_loopback_injection"),
+        "{log}"
+    );
+    st.finish().await;
+}
+
+/// (P4-LLM-2, C-806, C-807, SEC-97, acceptance 5) `vertex` through the real binaries: the API validates the key file by
+/// one mint at the (overridden) token endpoint, the gateway mints its own token and injects it on the Vertex route of the
+/// endpoint's project and location; neither the private key nor a minted token is in any log, the request log or the API
+/// reads, and the mint is counted.
+#[tokio::test]
+async fn s22_vertex_key_is_minted_by_the_gateway_and_never_leaks() {
+    use aurora_testkit::llm::google_token::{MockGoogleToken, TestKey};
+    use aurora_testkit::llm::vertex::MockVertex;
+    let key = TestKey::generate("key-proj", "sa@key-proj.iam.gserviceaccount.com");
+    let google = MockGoogleToken::start(&key).await;
+    let vertex = MockVertex::start().await;
+    let st = Stack::start(Opts {
+        llm_vertex: Some((google.base().to_owned(), vertex.base().to_owned())),
+        ..Opts::default()
+    })
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("vertex-agent").await;
+    let (s, v) = api
+        .post(
+            &format!("/v1/orgs/{}/secrets", api.org),
+            json!({"name": "vx", "kind": "llm",
+                   "llm": {"endpoint_id": "vx", "auth_mode": "gcp_service_account"}, "value": key.json()}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}\n{}", st.log_tails());
+    api.grant(&agent, v["id"].as_str().unwrap()).await;
+    api.set_policy("block", json!([])).await;
+    assert_eq!(google.requests(), 1, "the API's validation is one mint");
+    let route = format!(
+        "{}/v1/projects/inference-proj/locations/us-east5/publishers/anthropic/models/claude-x:rawPredict",
+        vertex.base()
+    );
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(&route)
+        .header("authorization", "Bearer agent-own-key")
+        .header("x-goog-api-key", "agent-own-key")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    assert_eq!(google.requests(), 2, "the gateway minted its own token");
+    let seen = vertex.requests();
+    let minted = google.issued().last().unwrap().clone();
+    assert_eq!(
+        seen[0].header("authorization"),
+        Some(&*format!("Bearer {minted}"))
+    );
+    assert!(seen[0].header("x-goog-api-key").is_none());
+    // Reused on the next request.
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(&route)
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(google.requests(), 2);
+    // Neither the private key nor a token appears in any log, the request log or an API read.
+    let tokens = google.issued();
+    let mut needles: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let pem_body = key.pem().lines().nth(1).unwrap().to_owned();
+    needles.push(&pem_body);
+    needles.push("agent-own-key");
+    for log in &st.logs {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        for n in &needles {
+            assert!(!text.contains(n), "{} leaks a secret", log.display());
+        }
+    }
+    let rows: Vec<String> = sqlx::query_scalar("SELECT to_jsonb(r)::text FROM request_log r")
+        .fetch_all(st.pool())
+        .await
+        .unwrap();
+    let rows = rows.join("\n");
+    for n in &needles {
+        assert!(!rows.contains(n), "request_log leaks a secret");
+    }
+    for p in [
+        format!("/v1/orgs/{}/secrets", api.org),
+        format!("/v1/agents/{agent}/container-config"),
+        format!("/v1/agents/{agent}/effective"),
+    ] {
+        let (_, v) = api.get(&p).await;
+        for n in &needles {
+            assert!(!v.to_string().contains(n), "{p} leaks a secret");
+        }
+    }
+    let m = reqwest::get(format!("http://{GW_A_IP}:4103/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        m.lines()
+            .any(|l| l.starts_with("aurora_gateway_llm_mint_total{")
+                && l.contains("mode=\"gcp_service_account\"")
+                && l.contains("outcome=\"minted\"")),
+        "{m}"
+    );
+    st.finish().await;
+}

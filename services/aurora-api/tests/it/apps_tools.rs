@@ -25,6 +25,12 @@ apps:
       - match: { host: "api.acme.example" }
         inject:
           - bearer: "{credentials.api_token}"
+  - about: { id: free_app, name: Free Directory, description: D, category: dev }
+    connect:
+      - { id: anonymous, kind: fields, fields: [] }
+    hosts:
+      - match: { host: "free.example" }
+        inject: []
 "#;
 
 struct W {
@@ -364,6 +370,43 @@ async fn accept_grants_only_the_proposing_agent() {
         "grant must go to the proposing agent only"
     );
     assert!(!granted.contains(&other));
+}
+
+/// (FIX-154, C-897) A credential-free app links the notice to the requesting agent's Access tab.
+#[tokio::test]
+async fn request_app_connection_for_a_credential_free_app_links_the_access_tab() {
+    let w = world().await;
+    let (org_slug, ws_slug): (String, String) = (
+        sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
+            .bind(w.org)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1")
+            .bind(w.ws)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap(),
+    );
+    let v = w
+        .run(
+            "request_app_connection",
+            json!({"app_id": "free_app", "reason": "look people up"}),
+        )
+        .await;
+    assert_eq!(v["ok"], true, "{v}");
+    let n = w.notices("app_connection_requested").await;
+    assert_eq!(n.len(), 1, "{n:?}");
+    let expected = format!(
+        "{}/o/{org_slug}/w/{ws_slug}/agents/{}?tab=access",
+        w.h.state.config.external_url.trim_end_matches('/'),
+        w.agent
+    );
+    assert_eq!(n[0]["connect_url"], expected);
+    assert_eq!(n[0]["app_id"], "free_app");
+    let text = n[0]["text"].as_str().unwrap();
+    assert!(text.contains("give this agent access"), "{text}");
+    assert!(text.contains(&expected), "{text}");
 }
 
 #[tokio::test]

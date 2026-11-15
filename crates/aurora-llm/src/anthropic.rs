@@ -125,10 +125,11 @@ impl LlmProvider for AnthropicProvider {
         self.base.clone()
     }
     fn injection(&self, _mode: &AuthMode) -> LlmInjection {
-        LlmInjection {
-            header: InjectionHeader::XApiKey,
-            strip_request_headers: vec!["authorization"],
-        }
+        LlmInjection::new(InjectionHeader::XApiKey, &["authorization"])
+    }
+    /// (D-260(c), SEC-65) The inference set: messages, count_tokens, models; plus `allowed_paths`.
+    fn inference_path_permitted(&self, ep: &Endpoint, method: &http::Method, path: &str) -> bool {
+        crate::paths::anthropic_path_permitted(method, path, &ep.allowed_paths)
     }
     async fn list_models(
         &self,

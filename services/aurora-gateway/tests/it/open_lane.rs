@@ -194,6 +194,7 @@ async fn start(o: Opts) -> Env {
     let llm_cfg = LlmSection {
         enabled_providers: vec![],
         provider_preference: vec![],
+        dev_upstream_overrides: Default::default(),
         endpoints: vec![],
     };
     let llm = Arc::new(aurora_llm::ProviderRegistry::from_config(&llm_cfg).unwrap());

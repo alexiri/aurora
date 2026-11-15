@@ -26,6 +26,11 @@ struct World {
     _anthropic: MockServer,
     /// (FIX-105) answers 503 on `/v1/models`.
     _flaky: MockServer,
+    /// (P4-LLM-1) answers as api.openai.com (reached through `llm.dev_upstream_overrides`).
+    _openai: MockServer,
+    /// (P4-LLM-2) Google's token endpoint (`llm.dev_upstream_overrides`) and the service-account key it accepts.
+    google: aurora_testkit::llm::google_token::MockGoogleToken,
+    vkey: aurora_testkit::llm::google_token::TestKey,
 }
 
 fn endpoint(id: &str, base: &str, rule: Option<KeyOrigin>) -> LlmEndpoint {
@@ -111,8 +116,50 @@ async fn world() -> World {
         .mount(&flaky)
         .await;
 
+    // OpenAI: account by key, reported in the response headers of the model list.
+    let openai = MockServer::start().await;
+    for (key, org) in [("sk-oai-good", "org-good"), ("sk-oai-other", "org-bad")] {
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", format!("Bearer {key}").as_str()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("openai-organization", org)
+                    .set_body_json(json!({"data": [{"id": "gpt-5"}]})),
+            )
+            .mount(&openai)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(5)
+        .mount(&openai)
+        .await;
+    let vkey = aurora_testkit::llm::google_token::TestKey::generate(
+        "key-proj",
+        "sa@key-proj.iam.gserviceaccount.com",
+    );
+    let google = aurora_testkit::llm::google_token::MockGoogleToken::start(&vkey).await;
+    let gu = google.base().to_owned();
     let (lu, au, fu) = (litellm.uri(), anthropic.uri(), flaky.uri());
+    let ou = openai.uri();
     let h = Harness::with_config(move |c| {
+        c.llm.enabled_providers = [
+            "litellm",
+            "anthropic",
+            "openai",
+            "openai_compatible",
+            "vertex",
+        ]
+        .map(String::from)
+        .to_vec();
+        c.llm
+            .dev_upstream_overrides
+            .insert("https://oauth2.googleapis.com".into(), gu.clone());
+        c.llm
+            .dev_upstream_overrides
+            .insert("https://api.openai.com".into(), ou.clone());
         c.llm.endpoints = vec![
             endpoint(
                 "central",
@@ -166,6 +213,50 @@ async fn world() -> World {
                 }),
             ),
             LlmEndpoint {
+                id: "oai".into(),
+                provider: "openai".into(),
+                key_origin: Some(KeyOrigin {
+                    method: "provider_account".into(),
+                    allowed_organization_ids: vec!["org-good".into()],
+                    ..KeyOrigin::default()
+                }),
+                ..LlmEndpoint::default()
+            },
+            // (P4-LLM-2) Vertex: the key's project must be `key-proj` (`vx`) / another one (`vx_other`).
+            LlmEndpoint {
+                id: "vx".into(),
+                provider: "vertex".into(),
+                project_id: Some("inference-proj".into()),
+                location: Some("us-east5".into()),
+                models: vec!["claude-x".into()],
+                key_origin: Some(KeyOrigin {
+                    method: "provider_account".into(),
+                    allowed_workspace_ids: vec!["key-proj".into()],
+                    ..KeyOrigin::default()
+                }),
+                ..LlmEndpoint::default()
+            },
+            LlmEndpoint {
+                id: "vx_other".into(),
+                provider: "vertex".into(),
+                project_id: Some("inference-proj".into()),
+                location: Some("global".into()),
+                models: vec!["claude-x".into()],
+                key_origin: Some(KeyOrigin {
+                    method: "provider_account".into(),
+                    allowed_workspace_ids: vec!["another-proj".into()],
+                    ..KeyOrigin::default()
+                }),
+                ..LlmEndpoint::default()
+            },
+            LlmEndpoint {
+                id: "compat".into(),
+                provider: "openai_compatible".into(),
+                base_url: Some(lu.clone()),
+                auth_header: Some("api-key".into()),
+                ..LlmEndpoint::default()
+            },
+            LlmEndpoint {
                 id: "anthropic".into(),
                 provider: "anthropic".into(),
                 key_origin: Some(KeyOrigin {
@@ -206,7 +297,7 @@ async fn world() -> World {
         .bind(json!({"llm": {"endpoints": {
             "central": {"key_scopes": ["organization"]},
             "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {},
-            "flaky": {}, "flaky_rule": {}
+            "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}, "vx": {}, "vx_other": {}
         }}}))
         .execute(h.pool())
         .await
@@ -233,6 +324,9 @@ async fn world() -> World {
         _litellm: litellm,
         _anthropic: anthropic,
         _flaky: flaky,
+        _openai: openai,
+        google,
+        vkey,
     }
 }
 
@@ -975,6 +1069,156 @@ async fn reference_mode_via_memory_store() {
     );
 }
 
+/// (P4-LLM-1, C-801, C-802, C-804) An `openai` key validates through the strict model listing, its account comes from
+/// the `openai-organization` response header and must satisfy the endpoint's `provider_account` rule; a compatible
+/// key validates through `models_path`; a mode the endpoint does not admit is refused; the provider listing reports
+/// modes, shapes and harnesses.
+#[tokio::test]
+async fn openai_and_compatible_keys_validate_and_the_listing_reports_modes() {
+    let w = world().await;
+    let llm = |ep: &str, val: &str, mode: Option<&str>| {
+        let mut l = json!({"endpoint_id": ep});
+        if let Some(m) = mode {
+            l["auth_mode"] = json!(m);
+        }
+        json!({"name": format!("k-{ep}-{}-{}", val.len(), mode.unwrap_or("")), "kind": "llm", "llm": l, "value": val})
+    };
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("oai", "sk-oai-good", None)),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["method"], "provider_account");
+    assert_eq!(v["origin"]["organization_id"], "org-good");
+    assert_eq!(v["host_pattern"], w._openai.address().to_string().as_str());
+    assert_eq!(v["injection"], json!({"kind": "bearer"}));
+    no_value(&v, &["sk-oai-good"]);
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("oai", "sk-oai-other", None)),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_wrong_organization")),
+        "{v}"
+    );
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("oai", "sk-oai-bad", None)),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    // a compatible key (api-key header) validates by listing
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("compat", "sk-compat", None)),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["method"], "endpoint");
+    // modes the endpoint does not admit
+    for (ep, mode) in [
+        ("oai", "aws_sigv4"),
+        ("compat", "azure_entra"),
+        ("oai", "bogus"),
+    ] {
+        let (s, v) = w
+            .call(
+                Method::POST,
+                &w.ws_url(),
+                &w.owner,
+                Some(llm(ep, "sk-oai-good", Some(mode))),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("llm_key_invalid")),
+            "{ep} {mode}: {v}"
+        );
+        assert_eq!(
+            v["error"]["details"]["reason"], "auth_mode_unsupported",
+            "{v}"
+        );
+    }
+
+    let (s, v) = w
+        .call(Method::GET, "/v1/llm/providers", &w.member, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let oa = v["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "openai")
+        .unwrap();
+    assert_eq!(oa["auth_modes"], json!(["api_key"]));
+    assert_eq!(
+        oa["auth_mode_details"],
+        json!([{"id": "api_key", "value_shape": "string", "recommended": true}])
+    );
+    assert_eq!(oa["dialects"], json!(["openai_chat", "openai_responses"]));
+    let ep = |id: &str| {
+        v["endpoints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    let (oai, compat, anthropic) = (ep("oai"), ep("compat"), ep("anthropic"));
+    assert_eq!(oai["auth_modes"], json!(["api_key"]));
+    assert_eq!(oai["recommended_auth_mode"], "api_key");
+    // harnesses whose dialects intersect: codex speaks responses, claude-code messages (D-260(a))
+    assert_eq!(
+        oai["harnesses"],
+        json!(
+            ["codex"]
+                .iter()
+                .filter(|h| w
+                    .h
+                    .state
+                    .config
+                    .hosted
+                    .enabled_harnesses
+                    .iter()
+                    .any(|e| e == *h))
+                .collect::<Vec<_>>()
+        )
+    );
+    assert_eq!(
+        compat["harnesses"],
+        json!([]),
+        "chat-only: no shipped harness"
+    );
+    assert!(
+        anthropic["harnesses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|h| h == "claude-code")
+    );
+}
+
 #[tokio::test]
 async fn providers_listing_with_effective_governance() {
     let w = world().await;
@@ -1238,4 +1482,110 @@ async fn org_secret_provenance_is_for_org_admins_only() {
         .find(|i| i["id"] == id.as_str())
         .unwrap();
     assert!(item["created_by"].is_object(), "{v}");
+}
+
+/// (P4-LLM-2, C-801, C-804, SEC-97, acceptance 4) A `gcp_service_account` key: shape refusals name the C-801 reason and
+/// call nothing; a valid key is verified by one mint and its origin is the key's own project and e-mail; the
+/// `provider_account` rule on another project refuses it; a rejected mint is `llm_key_invalid`.
+#[tokio::test]
+async fn vertex_service_account_keys_are_checked_minted_and_attributed() {
+    use aurora_testkit::llm::google_token::Behaviour;
+    let w = world().await;
+    let save = |ep: &str, value: String, name: &str| {
+        json!({"name": name, "kind": "llm",
+               "llm": {"endpoint_id": ep, "auth_mode": "gcp_service_account"}, "value": value})
+    };
+    let url = w.ws_url();
+    let post = |body: Value| w.call(Method::POST, &url, &w.owner, Some(body));
+    // Shape refusals: nothing is called.
+    let json_with = |f: &dyn Fn(&mut Value)| {
+        let mut v: Value = serde_json::from_str(&w.vkey.json()).unwrap();
+        f(&mut v);
+        v.to_string()
+    };
+    for (name, value, reason) in [
+        (
+            "wrong-uri",
+            w.vkey
+                .json_with("service_account", "https://evil.example/token"),
+            "token_uri_not_google",
+        ),
+        (
+            "not-sa",
+            w.vkey
+                .json_with("authorized_user", "https://oauth2.googleapis.com/token"),
+            "not_service_account",
+        ),
+        (
+            "not-json",
+            "just a string".to_owned(),
+            "not_service_account",
+        ),
+        (
+            "bad-key",
+            json_with(&|v| {
+                v["private_key"] =
+                    "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----".into()
+            }),
+            "missing_field",
+        ),
+        (
+            "extra",
+            json_with(&|v| v["region"] = "us".into()),
+            "unknown_field",
+        ),
+    ] {
+        let (s, v) = post(save("vx", value, name)).await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("llm_key_invalid")),
+            "{name}: {v}"
+        );
+        assert_eq!(v["error"]["details"]["reason"], reason, "{name}: {v}");
+        no_value(&v, &["BEGIN PRIVATE KEY"]);
+    }
+    assert_eq!(
+        w.google.requests(),
+        0,
+        "shape refusals make no outbound call"
+    );
+    // A valid key: one mint, origin from the key.
+    let (s, v) = post(save("vx", w.vkey.json(), "good")).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(w.google.requests(), 1);
+    assert!(w.google.refused().is_empty());
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["workspace_id"], "key-proj");
+    assert_eq!(
+        v["origin"]["user_id"],
+        "sa@key-proj.iam.gserviceaccount.com"
+    );
+    assert_eq!(v["llm"]["auth_mode"], "gcp_service_account");
+    assert_eq!(v["host_pattern"], "us-east5-aiplatform.googleapis.com");
+    no_value(&v, &["BEGIN PRIVATE KEY", "ya29"]);
+    // The provider_account rule with another project.
+    let (s, v) = post(save("vx_other", w.vkey.json(), "other")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_wrong_organization")),
+        "{v}"
+    );
+    // A rejected mint.
+    w.google.set_behaviour(Behaviour::InvalidGrant);
+    let (s, v) = post(save("vx", w.vkey.json(), "rejected")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    // The api_key mode is not admitted on vertex.
+    let (s, v) =
+        post(json!({"name": "ak", "kind": "llm", "llm": {"endpoint_id": "vx"}, "value": "sk-x"}))
+            .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    assert_eq!(v["error"]["details"]["reason"], "auth_mode_unsupported");
 }

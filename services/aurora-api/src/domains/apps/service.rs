@@ -109,6 +109,7 @@ pub async fn summary(state: &AppState, a: &AppEntry, p: &PackageEntry, av: &Avai
             variant_label: f.variant_label.clone(),
             instance_bound: a.instances.is_some(),
         }),
+        credential_free: aurora_registry::credential_free::entry_is_credential_free(a),
     }
 }
 
@@ -314,6 +315,7 @@ pub async fn detail(
         app_restrictions: sm.app_restrictions,
         serves_library: sm.serves_library,
         family: sm.family,
+        credential_free: sm.credential_free,
         api_docs: a.about.api_docs.clone(),
         connect_note: a.about.connect_note.as_ref().map(|n| ConnectNote {
             text: n.text.clone(),

@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -197,6 +199,7 @@ function ConnectionRow({
 }
 
 export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: boolean }) {
+  const { org } = useParams<{ org?: string }>();
   const list = useConnections(scope);
   // The Reconnect dialog (D-272): opened by a row's button or the deep link `?tab=connections&reconnect=<id>`.
   const [reconnecting, setReconnecting] = useUrlDialog("reconnect");
@@ -213,7 +216,25 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
     return (
       <EmptyState
         title="No connections yet"
-        when="You need one when an agent should use that app. Connect it from the Apps tab."
+        when={
+          scope.kind === "organization" && org ? (
+            <>
+              You need one when an agent should use that app.{" "}
+              <Link className="font-medium text-link underline" href={`/o/${org}/apps`}>
+                Connect an app from Apps
+              </Link>
+              .
+            </>
+          ) : (
+            <>
+              You need one when an agent should use that app. Connect it from the{" "}
+              <Link className="font-medium text-link underline" href="?tab=apps">
+                Apps tab
+              </Link>
+              .
+            </>
+          )
+        }
         ask={canOwn ? undefined : "Ask a workspace owner to connect it."}
       >
         A connection links your account in an app, such as GitHub, so an agent can act there.

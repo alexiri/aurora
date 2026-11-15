@@ -33,6 +33,16 @@ pub struct Opts {
     /// `gateway.egress_proxy` (`host:port`): the gateway dials upstreams through this CONNECT
     /// proxy, so tests can serve DNS names that do not resolve (D-74 instance hosts).
     pub egress_proxy: Option<String>,
+    /// (P4-LLM-1, C-812) An `openai` endpoint whose fixed origin `https://api.openai.com` is replaced by this
+    /// loopback target through `llm.dev_upstream_overrides` (the API's key validation and listing use it).
+    pub llm_openai_override: Option<String>,
+    /// (P4-LLM-2) A `vertex` endpoint `vx` (project `inference-proj`, `us-east5`): `(google token base, vertex base)`, both
+    /// loopback targets of `llm.dev_upstream_overrides`.
+    pub llm_vertex: Option<(String, String)>,
+    /// Writes `gateway.insecure_loopback_injection = false` (the config the override must refuse).
+    pub no_insecure_loopback: bool,
+    /// Run the gateway once with this config, expect it to refuse to start (log in `<dir>/refused.log`) and return.
+    pub expect_gateway_refusal: bool,
 }
 
 pub struct Stack {
@@ -117,7 +127,7 @@ log_level = "info"
 [gateway]
 allowed_private = ["127.0.0.1/32", "127.0.0.2/32"]
 # FIX-104 (D-180): the mock upstreams are plain HTTP on random loopback ports.
-insecure_loopback_injection = true
+insecure_loopback_injection = {insecure}
 {egress}ca_dir = "{ca}"
 advertised_proxy_url = "https://{GW_A_IP}:4102"
 hookhost_url = "{hh_url}"
@@ -135,6 +145,7 @@ hookhost_url = "http://127.0.0.1:9"
 api_internal_url = "http://{API_IP}:4111"
 "#,
             ca = dir.join("ca").display(),
+            insecure = !o.no_insecure_loopback,
             egress = o
                 .egress_proxy
                 .as_ref()
@@ -158,6 +169,16 @@ api_internal_url = "http://{API_IP}:4111"
                 "\n[llm]\nenabled_providers = [\"litellm\"]\nprovider_preference = [\"litellm\"]\n\n[[llm.endpoints]]\nid = \"litellm\"\nprovider = \"litellm\"\nbase_url = \"{base}\"\n"
             ));
         }
+        if let Some(t) = &o.llm_openai_override {
+            toml.push_str(&format!(
+                "\n[llm]\nenabled_providers = [\"openai\"]\nprovider_preference = [\"openai\"]\n\n[llm.dev_upstream_overrides]\n\"https://api.openai.com\" = \"{t}\"\n\n[[llm.endpoints]]\nid = \"openai\"\nprovider = \"openai\"\n"
+            ));
+        }
+        if let Some((google, vertex)) = &o.llm_vertex {
+            toml.push_str(&format!(
+                "\n[llm]\nenabled_providers = [\"vertex\"]\nprovider_preference = [\"vertex\"]\n\n[llm.dev_upstream_overrides]\n\"https://oauth2.googleapis.com\" = \"{google}\"\n\"https://us-east5-aiplatform.googleapis.com\" = \"{vertex}\"\n\n[[llm.endpoints]]\nid = \"vx\"\nprovider = \"vertex\"\nproject_id = \"inference-proj\"\nlocation = \"us-east5\"\nmodels = [\"claude-x\"]\ndefault_model = \"claude-x\"\n"
+            ));
+        }
         let mut stack = Stack {
             idp,
             db: Some(db),
@@ -169,6 +190,25 @@ api_internal_url = "http://{API_IP}:4111"
             children: vec![],
             logs: vec![],
         };
+        if o.expect_gateway_refusal {
+            let cfg = stack.dir.join("refused.toml");
+            std::fs::write(&cfg, toml.replace("BIND", GW_A_IP)).unwrap();
+            let out = Command::new(bin("aurora-gateway"))
+                .arg("serve")
+                .env("AURORA_CONFIG", &cfg)
+                .envs(secrets_env(stack.db.as_ref().unwrap().url()))
+                .envs([("AURORA_DATABASE_URL", gw_db_url.clone())])
+                .output()
+                .await
+                .unwrap();
+            assert!(!out.status.success(), "the gateway must refuse to start");
+            std::fs::write(
+                stack.dir.join("refused.log"),
+                [out.stdout, out.stderr].concat(),
+            )
+            .unwrap();
+            return stack;
+        }
         // DEFECT (reported): no production path publishes a registry snapshot before
         // M3 (snapshot compiler), yet the gateway's /readyz stays 503 until one is
         // loaded. Seed the minimal empty snapshot a compiler would emit.

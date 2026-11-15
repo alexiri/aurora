@@ -17,7 +17,12 @@ pub fn harness_dialects(harness: &str) -> &'static [Dialect] {
         // The pinned Codex CLI (0.167.0) dropped `wire_api = "chat"`: a version that drops a
         // dialect removes it here (`12 §Harness selection`, D-153).
         "codex" => &[Dialect::OpenaiResponses],
-        _ => &[Dialect::AnthropicMessages],
+        // (D-260(a)) Claude Code reaches Anthropic, and Bedrock and Vertex through their own dialects.
+        _ => &[
+            Dialect::AnthropicMessages,
+            Dialect::AnthropicBedrock,
+            Dialect::AnthropicVertex,
+        ],
     }
 }
 
@@ -309,7 +314,8 @@ fn keys_of<'a>(
     harness: &str,
     cands: Vec<LlmCandidate>,
 ) -> Vec<KeyState<'a>> {
-    let pref = &state.config.llm.provider_preference;
+    // enabled providers the list does not name are appended (`08 §Phase 4 providers`)
+    let pref = state.config.llm.effective_provider_preference();
     let mut out: Vec<(usize, KeyState<'a>)> = cands
         .into_iter()
         .map(|c| {
@@ -424,13 +430,14 @@ fn choice(
     state: &AppState,
     ep: &Endpoint,
     dialect: Dialect,
+    mode: AuthMode,
     model: String,
     effort: &str,
 ) -> ModelChoice {
     let client_env = state
         .llm
         .provider_for(ep)
-        .map(|p| p.client_env(ep, dialect, &AuthMode::ApiKey))
+        .map(|p| p.client_env(ep, dialect, &mode))
         .unwrap_or_default();
     ModelChoice {
         provider: ep.provider.clone(),
@@ -488,7 +495,18 @@ pub async fn select(
         ));
     }
     Ok(Selection::Chosen {
-        choice: choice(state, ep, dialect, d.model.clone(), &r.effort),
+        choice: choice(
+            state,
+            ep,
+            dialect,
+            k.secret
+                .llm_auth_mode
+                .as_deref()
+                .and_then(AuthMode::parse)
+                .unwrap_or(AuthMode::ApiKey),
+            d.model.clone(),
+            &r.effort,
+        ),
         notices,
     })
 }

@@ -104,7 +104,12 @@ async fn main() -> ExitCode {
             }
         };
     }
-    let cfg: GatewayConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
+    // The configuration with its presence set: instance settings merge over it the same way as in
+    // the API (D-236(b)).
+    let source = aurora_config::ConfigSource::load(cli.config.as_deref(), std::env::vars())
+        .unwrap_or_else(|e| exit_config(e));
+    let cfg: GatewayConfig = source
+        .raw()
         .and_then(|raw| raw.gateway_config())
         .unwrap_or_else(|e| exit_config(e));
     let instance = service::init_telemetry(
@@ -116,7 +121,7 @@ async fn main() -> ExitCode {
     let Command::Serve = cli.command else {
         return ExitCode::FAILURE;
     };
-    let result = serve(cfg).await;
+    let result = serve(cfg, source).await;
     service::telemetry_shutdown();
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -128,7 +133,10 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
+async fn serve(
+    cfg: GatewayConfig,
+    source: aurora_config::ConfigSource,
+) -> Result<(), Box<dyn std::error::Error>> {
     let pool = PgPoolOptions::new()
         .max_connections(cfg.max_connections)
         .acquire_timeout(Duration::from_secs(3))
@@ -182,10 +190,13 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let vault = Arc::new(aurora_secrets::SecretVault::new(
         aurora_secrets::StoreRegistry::from_config_with_tls(
             &cfg.secrets,
-            keyring,
+            keyring.clone(),
             cfg.tls.extra_ca_bundle.as_deref(),
         )?,
     ));
+    vault.set_allowed_private(cfg.gateway.allowed_private.clone());
+    // (FIX-124) Kept for the settings reload: the stores the dashboard defines.
+    let settings_vault = (vault.clone(), keyring, cfg.tls.extra_ca_bundle.clone());
     let governance = Arc::new(
         Governance::new(
             instance_from_config(&cfg.governance, &llm),
@@ -199,7 +210,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let policy_resolver = Arc::new(
         Resolver::with_ttl(
             Arc::new(DbSource(pool.clone())),
-            llm,
+            llm.clone(),
             Duration::from_secs(cfg.gateway.resolve_cache_ttl_secs),
         )
         .with_governance(governance.clone())
@@ -266,23 +277,6 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("gateway.insecure_loopback_injection is for tests only and is refused inside a Kubernetes cluster".into());
     }
-    let handler = Arc::new(
-        PolicyHandler::new(PolicyHandlerParts {
-            resolver: policy_resolver,
-            plaintext: plaintext.clone(),
-            log: reqlog.clone(),
-            external_url: cfg.external_url.clone(),
-            holds: Some(holds.clone()),
-            touch_pool: Some(pool.clone()),
-        })
-        .with_rule_counters(rate)
-        .with_governance(governance)
-        .with_health(health.clone())
-        .with_tokens(tokens.clone())
-        .with_summarizer(summarizer)
-        .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize)
-        .with_insecure_loopback_injection(cfg.gateway.insecure_loopback_injection),
-    );
     if cfg.gateway.insecure_loopback_injection {
         tracing::warn!(
             "gateway.insecure_loopback_injection is on: credentials are injected over plain \
@@ -292,6 +286,17 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let reqlog_task = tokio::spawn(reqlog.clone().run(FLUSH_INTERVAL, rx.clone()));
     let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
+    // (phase 5, SET-1, D-236(f)) The instance-settings snapshot: no consumer yet (SET-2, SET-3,
+    // SET-5 and FIX-124 read it). A gateway whose role has no grant on the table yet (rollout
+    // order) logs and keeps running on its configuration.
+    let settings = aurora_gateway::settings::Settings::new(Some(source));
+    settings.rebuild_vault_on_change(settings_vault.0, settings_vault.1, settings_vault.2);
+    // Loaded before serving so a dashboard-defined store is there for the first request; a
+    // database without the grant yet keeps the configuration's stores (logged by `run`).
+    if let Err(e) = settings.reload(&pool).await {
+        tracing::warn!(error = %e, "stored settings not loaded at start; the reload task retries");
+    }
+    let settings_task = tokio::spawn(settings.clone().run(pool.clone(), hub.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(
         pool.clone(),
         instance_id,
@@ -348,6 +353,40 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         Some(p) => Some(std::fs::read(p)?),
         None => None,
     };
+    // (P4-LLM-2, D-261(e), SEC-97) The LLM credential mint: its own guarded upstream (same destination guard, egress
+    // proxy and extra CAs as agent requests), registered with the invalidation hub.
+    let llm_mint = Arc::new(aurora_gateway::llm_mint::LlmMint::new(
+        Arc::new(aurora_gateway::upstream::Upstream::new(
+            guard.clone(),
+            cfg.gateway
+                .egress_proxy
+                .as_deref()
+                .map(aurora_gateway::upstream::EgressProxy::parse)
+                .transpose()?,
+            extra_ca_pem.as_deref(),
+            aurora_core::limits::LLM_TOKEN_MINT_TIMEOUT,
+        )?),
+        llm.overrides().clone(),
+    ));
+    hub.register(llm_mint.clone());
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver: policy_resolver,
+            plaintext: plaintext.clone(),
+            log: reqlog.clone(),
+            external_url: cfg.external_url.clone(),
+            holds: Some(holds.clone()),
+            touch_pool: Some(pool.clone()),
+        })
+        .with_rule_counters(rate)
+        .with_governance(governance)
+        .with_health(health.clone())
+        .with_tokens(tokens.clone())
+        .with_summarizer(summarizer)
+        .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize)
+        .with_insecure_loopback_injection(cfg.gateway.insecure_loopback_injection)
+        .with_llm_mint(llm_mint),
+    );
     // (phase 4, P4-GSL, D-149) The skill-library fetch route on the internal port: its own guarded
     // client (same destination guard and egress proxy as agent requests), the internal secret.
     let library = Arc::new(aurora_gateway::library_fetch::LibraryFetch {
@@ -463,6 +502,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     holds.abandon_all().await;
     internal_task.await??;
     let _ = hub_task.await;
+    let _ = settings_task.await;
     let _ = snapshot_task.await;
     let _ = instance_task.await;
     let _ = reqlog_task.await;

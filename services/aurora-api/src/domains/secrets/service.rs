@@ -397,10 +397,25 @@ pub async fn create(
             ));
         }
         let mode = spec.auth_mode.as_deref().unwrap_or("api_key");
-        if mode != "api_key" {
+        let lc = llm_ctx(state, scope.org, scope.ws, &spec.endpoint_id, true).await?;
+        // (C-801, C-802) A mode the endpoint does not admit is refused before the value is read. Only `api_key`
+        // has a value handler in this lane; the minted and signed modes arrive with their providers (P4-LLM-2..4)
+        // and are listed by `endpoint_auth_modes` only then.
+        let admitted = aurora_llm::AuthMode::parse(mode)
+            .is_some_and(|m| aurora_llm::endpoint_auth_modes(lc.provider, lc.ep).contains(&m));
+        if !admitted {
+            return Err(ApiError::unprocessable(
+                "llm_key_invalid",
+                "This endpoint does not accept that kind of credential.",
+            )
+            .with_details(
+                serde_json::json!({ "reason": "auth_mode_unsupported", "auth_mode": mode }),
+            ));
+        }
+        // Only `api_key` and the minted `gcp_service_account` have value handlers so far (P4-LLM-3/4 add the others).
+        if !matches!(mode, "api_key" | "gcp_service_account") {
             return Err(bad("/llm/auth_mode", "unsupported auth mode"));
         }
-        let lc = llm_ctx(state, scope.org, scope.ws, &spec.endpoint_id, true).await?;
         host = lc
             .provider
             .hosts(lc.ep)
@@ -413,6 +428,7 @@ pub async fn create(
         let key = plain_of(&st)
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
+        check_value_shape(mode, &key)?;
         let o = llm::check_key(&state.llm_http, lc.provider, lc.ep, &lc.eff, &key, 1)
             .await
             .map_err(llm::KeyFail::into_error)?;
@@ -501,6 +517,14 @@ fn llm_injection(p: &dyn aurora_llm::LlmProvider) -> Value {
         aurora_llm::InjectionHeader::XApiKey => {
             serde_json::json!({"kind": "header", "name": "x-api-key", "format": "{value}"})
         }
+        aurora_llm::InjectionHeader::Header(name) => {
+            serde_json::json!({"kind": "header", "name": name, "format": "{value}"})
+        }
+        // minted or signed recipes (P4-LLM-2..4) are not an injection recipe of the stored row: the gateway builds them
+        aurora_llm::InjectionHeader::AwsSigV4
+        | aurora_llm::InjectionHeader::AwsAssumeRole
+        | aurora_llm::InjectionHeader::GcpToken
+        | aurora_llm::InjectionHeader::EntraToken => serde_json::json!({"kind": "bearer"}),
     }
 }
 
@@ -574,6 +598,23 @@ pub async fn delete(state: &AppState, caller: &Caller, row: &SecretRow) -> Resul
     Ok(())
 }
 
+/// (C-801) The shape of a minted mode's value, checked before any outbound call: 422 `llm_key_invalid` with the C-801
+/// `reason` (and the offending `field`), never a part of the value.
+fn check_value_shape(mode: &str, key: &Plain<String>) -> Result<(), ApiError> {
+    if mode != "gcp_service_account" {
+        return Ok(());
+    }
+    aurora_llm::mint::gcp::parse_value(key.expose().as_bytes())
+        .map(|_| ())
+        .map_err(|e| {
+            ApiError::unprocessable(
+                "llm_key_invalid",
+                "The key file is not a usable service-account key.",
+            )
+            .with_details(serde_json::json!({ "reason": e.reason, "field": e.field }))
+        })
+}
+
 pub async fn set_value(
     state: &AppState,
     caller: &Caller,
@@ -598,6 +639,7 @@ pub async fn set_value(
         let key = plain_of(&staged)
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
+        check_value_shape(row.llm_auth_mode.as_deref().unwrap_or("api_key"), &key)?;
         let o = llm::check_key(
             &state.llm_http,
             lc.provider,

@@ -26,6 +26,20 @@ impl InlineStore {
         &self.keyring
     }
 
+    pub fn keyring_arc(&self) -> Arc<Keyring> {
+        self.keyring.clone()
+    }
+
+    /// Open an inline ref synchronously (building a store at start needs no await).
+    pub fn open_sync(&self, ctx: &SealContext, r: &SecretRef) -> Result<Secret<Vec<u8>>> {
+        let sealed = r
+            .sealed()
+            .ok_or(SecretError::Malformed("not an inline reference"))?;
+        self.keyring
+            .open(&Self::aad(ctx), &sealed)
+            .map_err(|_| SecretError::SecretRefMismatch)
+    }
+
     fn aad(ctx: &SealContext) -> Aad<'static> {
         Aad {
             purpose: ctx.purpose.as_str(),

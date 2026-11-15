@@ -16,6 +16,7 @@ mod hold;
 mod hold_recheck;
 mod library_fetch;
 mod listener_binds;
+mod llm_mint;
 mod open_lane;
 mod outage;
 mod params_matching;
@@ -27,4 +28,5 @@ mod proxy_wire;
 
 mod refresh;
 mod refresh_proxy;
+mod settings;
 mod tunnel_limits;

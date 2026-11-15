@@ -14,6 +14,8 @@ aurora-config = { workspace = true }
 aurora-core = { workspace = true }
 aurora-policy = { workspace = true }
 async-trait = { workspace = true }
+aws-lc-rs = { workspace = true }
+base64 = { workspace = true }
 http = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -25,3 +27,4 @@ utoipa = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 wiremock = { workspace = true }
+aurora-testkit = { workspace = true }

@@ -57,6 +57,15 @@ pub const CONNECTION_CHOICE_MAX: u32 = 20;
 pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 pub const LLM_ORIGIN_RECHECK: Duration = Duration::from_secs(3600);
 pub const LLM_ORIGIN_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+/// (P4-LLM-2, D-261(e)) One mint call (Google token, Entra token, STS session).
+pub const LLM_TOKEN_MINT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A minted credential is reused until this long before it expires ...
+pub const LLM_TOKEN_SKEW: Duration = Duration::from_secs(300);
+/// (the 55-minute cap of the same row is `LLM_TOKEN_MAX_AGE` in the gateway's `llm_mint.rs`)
+/// After a failed mint the same `(secret, version, mode, region)` answers 502 without a new upstream call for this long.
+pub const LLM_TOKEN_MINT_FAILURE_HOLD: Duration = Duration::from_secs(5);
+/// Minted entries per gateway replica (least recently used evicted).
+pub const LLM_MINT_CACHE_MAX: usize = 10_000;
 /// entries per org / workspace.
 pub const EGRESS_ALLOWLIST_MAX: u32 = 500;
 /// (RFE-025) CIDRs per BYO source list (agent / org / instance).
@@ -155,6 +164,24 @@ pub const ADDON_CHECK_CONCURRENCY: usize = 2;
 pub const ADDON_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 /// Backoff until a source is re-checked after a failed poll.
 pub const ADDON_FAILURE_BACKOFF: Duration = Duration::from_secs(3600);
+// Instance settings (phase 5, SET-1, D-236; docs/02 §Limits).
+/// Stored JSON per settings section (413 `settings_too_large`).
+pub const SETTINGS_SECTION_BYTES_MAX: usize = 128 * 1024;
+/// A settings document per import request (413).
+pub const SETTINGS_IMPORT_BYTES_MAX: usize = 512 * 1024;
+/// Backstop poll of the section generations next to `aurora_settings`.
+pub const SETTINGS_RELOAD_POLL: Duration = Duration::from_secs(30);
+/// Longest before/after value kept in an `instance_settings.*` audit row.
+pub const SETTINGS_AUDIT_VALUE_MAX: usize = 1024;
+/// Affected organizations a settings preview lists.
+pub const SETTINGS_PREVIEW_ORGS_MAX: usize = 200;
+// Secret stores in the dashboard (FIX-124).
+/// A store's health and the value counts on Admin › Secret stores are probed at most this often.
+pub const SECRET_STORE_HEALTH_INTERVAL: Duration = Duration::from_secs(30);
+/// Longest a store probe (health, Test connection) may take.
+pub const SECRET_STORE_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// Wait after a dashboard migration's commits before the old values are discarded.
+pub const SECRET_MIGRATION_DISCARD_GRACE: Duration = Duration::from_secs(2);
 pub const ATTACH_IN_FILE_MAX: u64 = 10 * MIB as u64;
 /// per message.
 pub const ATTACH_IN_COUNT: u32 = 10;

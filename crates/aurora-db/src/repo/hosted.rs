@@ -1013,6 +1013,8 @@ pub struct LlmCandidate {
     pub workspace_id: Option<Uuid>,
     pub llm_provider: String,
     pub llm_endpoint_id: String,
+    /// (P4-LLM-1) The key's own auth mode (`api_key`, …); `None` on rows from before the column was used.
+    pub llm_auth_mode: Option<String>,
     pub origin: Option<serde_json::Value>,
     pub value_version: i32,
 }
@@ -1027,7 +1029,7 @@ pub async fn granted_llm_secrets(
 ) -> Result<Vec<LlmCandidate>, DbError> {
     Ok(sqlx::query_as(
         "SELECT s.id, s.name, s.status, s.workspace_id, s.llm_provider, s.llm_endpoint_id,
-                s.origin, s.value_version
+                s.llm_auth_mode, s.origin, s.value_version
          FROM secrets s JOIN grants g ON g.secret_id = s.id AND g.agent_id = $1
          WHERE s.kind = 'llm' AND s.org_id = $2
            AND (s.workspace_id IS NULL OR s.workspace_id = $3)

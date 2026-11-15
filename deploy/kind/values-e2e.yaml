@@ -48,7 +48,6 @@ config:
     # the e2e journeys sign in as this user first and save one (tests/e2e-hosted common).
     instance_admins: ["placement-admin@e2e.test"]
   hosted:
-    enabled: true
     allow_fake_harness: true
     idle_stop_secs: 30     # park/wake scenario
   runner:

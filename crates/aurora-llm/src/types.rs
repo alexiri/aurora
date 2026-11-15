@@ -7,6 +7,10 @@ pub enum Dialect {
     AnthropicMessages,
     OpenaiChat,
     OpenaiResponses,
+    /// (P4-LLM, D-260(a)) Anthropic Messages as Bedrock serves them (`invoke`/`converse` under `/model/{id}/…`).
+    AnthropicBedrock,
+    /// (P4-LLM) Anthropic Messages as Vertex serves them (`rawPredict`).
+    AnthropicVertex,
 }
 
 impl Dialect {
@@ -15,6 +19,8 @@ impl Dialect {
             "anthropic_messages" => Some(Self::AnthropicMessages),
             "openai_chat" => Some(Self::OpenaiChat),
             "openai_responses" => Some(Self::OpenaiResponses),
+            "anthropic_bedrock" => Some(Self::AnthropicBedrock),
+            "anthropic_vertex" => Some(Self::AnthropicVertex),
             _ => None,
         }
     }
@@ -23,19 +29,61 @@ impl Dialect {
             Self::AnthropicMessages => "anthropic_messages",
             Self::OpenaiChat => "openai_chat",
             Self::OpenaiResponses => "openai_responses",
+            Self::AnthropicBedrock => "anthropic_bedrock",
+            Self::AnthropicVertex => "anthropic_vertex",
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How a secret authenticates to its provider (`08 §LLM secrets`, C-801). The value shape of each mode is in C-802.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AuthMode {
     ApiKey,
+    /// Static AWS IAM key (Bedrock).
+    AwsSigv4,
+    /// Source IAM key + role; the gateway assumes the role (D-261(b)).
+    AwsAssumeRole,
+    /// A Google service-account key file (Vertex).
+    GcpServiceAccount,
+    /// An Entra app, client-credentials grant (Azure, D-261(c)).
+    AzureEntra,
+}
+
+impl AuthMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "api_key" => Some(Self::ApiKey),
+            "aws_sigv4" => Some(Self::AwsSigv4),
+            "aws_assume_role" => Some(Self::AwsAssumeRole),
+            "gcp_service_account" => Some(Self::GcpServiceAccount),
+            "azure_entra" => Some(Self::AzureEntra),
+            _ => None,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ApiKey => "api_key",
+            Self::AwsSigv4 => "aws_sigv4",
+            Self::AwsAssumeRole => "aws_assume_role",
+            Self::GcpServiceAccount => "gcp_service_account",
+            Self::AzureEntra => "azure_entra",
+        }
+    }
+    /// The shape of the secret's value (C-802 `value_shape`): `string` for a bare key, else the JSON shape's name.
+    pub fn value_shape(self) -> &'static str {
+        match self {
+            Self::ApiKey => "string",
+            other => other.as_str(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndpointKind {
     Fixed(&'static str),
     Configured,
+    /// (P4-LLM-2) No `base_url` in the entry: the origin follows other keys (Vertex: `location`).
+    Derived,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,13 +164,48 @@ pub enum InjectionHeader {
     Bearer,
     /// `x-api-key: <key>`
     XApiKey,
+    /// `<name>: <key>` for a lowercase header name other than the two above (`api-key`).
+    Header(&'static str),
+    /// (C-806; implemented by P4-LLM-4) SigV4 with the secret's IAM key.
+    AwsSigV4,
+    /// (P4-LLM-4) SigV4 with session credentials minted by assuming the role.
+    AwsAssumeRole,
+    /// (P4-LLM-2) `Authorization: Bearer <Google access token minted from the service account>`.
+    GcpToken,
+    /// (P4-LLM-3) `Authorization: Bearer <Entra token>`.
+    EntraToken,
 }
 
+impl InjectionHeader {
+    /// Recipes that put the secret's value into one header as is. The others need a mint or a signature, which the
+    /// provider lanes add: the gateway refuses them with 502 `credential_unavailable` until then.
+    pub fn is_plain(self) -> bool {
+        matches!(self, Self::Bearer | Self::XApiKey | Self::Header(_))
+    }
+}
+
+/// The recipe of C-806 for one provider and auth mode: which header carries the credential, which agent-supplied
+/// headers are removed first (never merged), and fixed non-secret headers the gateway sets (OpenAI organization).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmInjection {
     pub header: InjectionHeader,
     /// Agent-supplied request headers to remove (lowercase).
     pub strip_request_headers: Vec<&'static str>,
+    /// Agent-supplied request headers removed by prefix (lowercase, e.g. `x-amz-`, `x-goog-`).
+    pub strip_request_prefixes: Vec<&'static str>,
+    /// Non-secret headers the gateway sets from the endpoint entry (after the strip).
+    pub set_headers: Vec<(&'static str, String)>,
+}
+
+impl LlmInjection {
+    pub fn new(header: InjectionHeader, strip: &[&'static str]) -> Self {
+        Self {
+            header,
+            strip_request_headers: strip.to_vec(),
+            strip_request_prefixes: Vec::new(),
+            set_headers: Vec::new(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -140,6 +223,21 @@ pub trait LlmProvider: Send + Sync {
         ep.base_url.clone()
     }
     fn injection(&self, mode: &AuthMode) -> LlmInjection;
+    /// The recipe for one endpoint (C-806): providers whose headers come from the endpoint entry (OpenAI organization,
+    /// the compatible `auth_header`) override this; the rest use [`Self::injection`].
+    fn injection_for(&self, ep: &Endpoint, mode: &AuthMode) -> LlmInjection {
+        let _ = ep;
+        self.injection(mode)
+    }
+    /// (SEC-65) Whether the sanctioned key may be injected into this request (the provider's inference path set plus
+    /// the endpoint's `allowed_paths`). Default: the `litellm` set.
+    fn inference_path_permitted(&self, ep: &Endpoint, method: &Method, path: &str) -> bool {
+        crate::inference_path_permitted(method, path, &ep.allowed_paths)
+    }
+    /// (C-808) The error class of an upstream answer; every provider shares the one table.
+    fn classify_error(&self, status: u16, error_type: Option<&str>) -> crate::LlmErrorClass {
+        crate::classify(self.id(), status, error_type)
+    }
     async fn list_models(
         &self,
         ep: &Endpoint,
@@ -155,6 +253,11 @@ pub trait LlmProvider: Send + Sync {
         http: &reqwest::Client,
     ) -> Result<Vec<ModelInfo>> {
         self.list_models(ep, key, http).await
+    }
+    /// (P4-LLM-2) Whether the key is validated by the origin proof itself (Vertex: the mint that proves the project and
+    /// e-mail is also the validation), so the API makes one call, not a listing and a proof.
+    fn validates_by_origin(&self) -> bool {
+        false
     }
     fn default_model(&self, ep: &Endpoint) -> Option<String>;
     /// Placeholder-only environment for a sandboxed client.

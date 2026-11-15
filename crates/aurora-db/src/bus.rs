@@ -29,10 +29,12 @@ pub enum Channel {
     Registry,
     SecretOrigin,
     AuthRevoked,
+    /// (phase 5, SET-1, D-236(f)) `{ section, generation }` after a committed settings write.
+    Settings,
 }
 
 impl Channel {
-    pub const ALL: [Channel; 11] = [
+    pub const ALL: [Channel; 12] = [
         Channel::Conversation,
         Channel::Delta,
         Channel::Work,
@@ -44,6 +46,7 @@ impl Channel {
         Channel::Registry,
         Channel::SecretOrigin,
         Channel::AuthRevoked,
+        Channel::Settings,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -59,6 +62,7 @@ impl Channel {
             Channel::Registry => "aurora_registry",
             Channel::SecretOrigin => "aurora_secret_origin",
             Channel::AuthRevoked => "aurora_auth_revoked",
+            Channel::Settings => "aurora_settings",
         }
     }
 

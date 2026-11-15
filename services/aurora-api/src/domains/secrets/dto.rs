@@ -280,8 +280,20 @@ pub struct ProvidersQuery {
 pub struct LlmProviderInfo {
     pub id: String,
     pub display_name: String,
+    /// The mode ids (kept as a string list for existing clients; `auth_mode_details` carries the C-802 items).
     pub auth_modes: Vec<String>,
+    /// (P4-LLM-1, C-802) Each mode with the shape of its secret value and whether it is the recommended one.
+    pub auth_mode_details: Vec<AuthModeInfo>,
     pub dialects: Vec<String>,
+}
+
+/// (C-802) One auth mode of a provider.
+#[derive(Serialize, ToSchema)]
+pub struct AuthModeInfo {
+    pub id: String,
+    /// `string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`.
+    pub value_shape: String,
+    pub recommended: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -294,6 +306,11 @@ pub struct LlmEndpointInfo {
     pub origin_method: Option<String>,
     pub permitted: Option<bool>,
     pub key_scopes: Option<Vec<String>>,
+    /// (P4-LLM-1, C-802) The modes this endpoint's key-origin rule admits.
+    pub auth_modes: Vec<String>,
+    pub recommended_auth_mode: Option<String>,
+    /// (C-802, D-260(a)) Enabled harnesses whose dialects intersect this endpoint's.
+    pub harnesses: Vec<String>,
 }
 
 #[derive(Serialize, ToSchema)]
