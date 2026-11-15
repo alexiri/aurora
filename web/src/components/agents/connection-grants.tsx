@@ -10,15 +10,17 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
-import { appRestrictions, useApps, useConnections, type Connection } from "@/lib/api/apps";
+import { appRestrictions, useApps, useConnections, type AppSummary, type Connection } from "@/lib/api/apps";
 import { appDisplayName } from "@/lib/api/app-name";
 import { useRemoveAgentConnectionGrant } from "@/lib/api/credential-grants";
 import { useEffective, useGrants } from "@/lib/api/policy";
 import { grantState } from "@/lib/grant-editor";
 
+import { AppGrantEditor } from "./app-grant-editor";
 import { GrantEditor } from "./grant-editor";
 
-const description = "What this agent may do through each connection: no access, full access, or a custom choice per tool.";
+const description =
+  "What this agent may do through each connection: no access, full access, or a custom choice per tool. Apps that need no sign-in can be given directly.";
 
 /** Owners: every connection in the agent's scope with its grant, an editor and removal (`GET/PUT/DELETE …/grants`). */
 export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; wsId: string; orgId: string }) {
@@ -36,6 +38,13 @@ export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; ws
     [wsConns.data, orgConns.data],
   );
   const appNames = useMemo(() => new Map((apps.data?.items ?? []).map((a) => [a.app_id, a])), [apps.data]);
+  // (FIX-154, C-897) Apps that need no sign-in are given directly: listed while the agent's scope has no connection of
+  // them. The grant creates (or reuses) the connection (C-896).
+  const [givingApp, setGivingApp] = useState<AppSummary | null>(null);
+  const freeApps = useMemo(() => {
+    const have = new Set(connections.map((c) => c.app_id));
+    return (apps.data?.items ?? []).filter((a) => a.credential_free && a.available && !have.has(a.app_id));
+  }, [apps.data, connections]);
 
   const section = (children: React.ReactNode) => (
     <Section id="connection-grants" title="Connections" description={description}>
@@ -61,7 +70,7 @@ export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; ws
           agent can use every tool the app has today; tools added later start blocked. Review the choices with Edit.
         </Notice>
       ))}
-      {connections.length === 0 ? (
+      {connections.length === 0 && freeApps.length === 0 ? (
         <EmptyState title="No connections in scope">Connect an app on the Credentials page, then give this agent access here.</EmptyState>
       ) : (
         <ItemList aria-label="Connection grants">
@@ -103,8 +112,28 @@ export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; ws
               </ListRow>
             );
           })}
+          {freeApps.map((a) => (
+            <ListRow
+              key={`free-${a.app_id}`}
+              actions={
+                <Button size="sm" variant="outline" aria-label={`Give access to ${appDisplayName(a)}`} onClick={() => setGivingApp(a)}>
+                  Give access
+                </Button>
+              }
+            >
+              <AppIcon appId={a.app_id} name={appDisplayName(a)} hasDarkIcon={a.has_dark_icon} size={32} />
+              <div className="min-w-0 flex-1 space-y-0.5 text-sm">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="break-words font-medium text-ink">{appDisplayName(a)}</span>
+                  <Badge tone="accent">No sign-in needed</Badge>
+                </div>
+                <p className="text-xs text-ink-2">{a.description}</p>
+              </div>
+            </ListRow>
+          ))}
         </ItemList>
       )}
+      {givingApp ? <AppGrantEditor key={givingApp.app_id} agentId={agentId} wsId={wsId} app={givingApp} onClose={() => setGivingApp(null)} /> : null}
       {editing ? (
         <GrantEditor
           key={editing.id}

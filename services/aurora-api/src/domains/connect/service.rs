@@ -193,6 +193,18 @@ async fn authorize_scope(
     Ok(t)
 }
 
+/// (FIX-154) Whether the org's posture makes `app_id` available to the workspace: the check
+/// [`authorize_scope`] makes for a workspace connection.
+pub async fn available_in_workspace(
+    state: &AppState,
+    org_id: Uuid,
+    workspace_id: Uuid,
+    app_id: &str,
+) -> Result<bool, ApiError> {
+    let (restricted, ids) = gateway::app_availability(&state.pool, org_id, workspace_id).await?;
+    Ok(!restricted || ids.iter().any(|i| i == app_id))
+}
+
 fn redirect_uri(state: &AppState) -> String {
     format!(
         "{}/v1/oauth/callback",
@@ -618,6 +630,22 @@ impl Ctx<'_> {
         n: &NewConnection<'_>,
     ) -> Result<Option<String>, ConnectErr> {
         let mut tx = audit::begin(self.state).await?;
+        let (old, ev) = self.write_in_tx(&mut tx, caller, n, None).await?;
+        audit::commit_critical(tx, &ev).await?;
+        Ok(old)
+    }
+
+    /// [`Self::write`] inside the caller's transaction: returns the replaced credentials ref and
+    /// the critical audit row, which the caller commits with the transaction. `extra` is merged
+    /// into the audit metadata (FIX-154: `via`, `agent_id`).
+    async fn write_in_tx(
+        &self,
+        tx: &mut audit::Tx,
+        caller: &Caller,
+        n: &NewConnection<'_>,
+        extra: Option<Value>,
+    ) -> Result<(Option<String>, AuditEvent), ConnectErr> {
+        let tx = &mut **tx;
         let mut old = None;
         if self.reconnect.is_some() {
             let (r, ver) = repo::credentials_state(&mut *tx, n.id)
@@ -689,11 +717,18 @@ impl Ctx<'_> {
                 "tls_verification": "off",
             }));
         }
+        if let Some(Value::Object(x)) = extra {
+            let mut m = match &ev.metadata {
+                Value::Object(m) => m.clone(),
+                _ => Map::new(),
+            };
+            m.extend(x);
+            ev = ev.metadata(Value::Object(m));
+        }
         if let Some(ws) = n.workspace_id {
             ev = ev.workspace(ws);
         }
-        audit::commit_critical(tx, &ev).await?;
-        Ok(old)
+        Ok((old, ev))
     }
 }
 
@@ -937,6 +972,122 @@ pub async fn start(
             }
         }
     }
+}
+
+/// The sealed (empty) credentials of a connection created inside a transaction that may still
+/// roll back: the caller discards them when it does (FIX-154).
+pub struct SealedCredentials(SealContext, SecretRef);
+
+impl SealedCredentials {
+    pub async fn discard(self, state: &AppState) {
+        discard(state, &self.0, &self.1).await;
+    }
+}
+
+/// (FIX-154, D-306(c), C-896) The workspace's connection of a credential-free app, inside the
+/// caller's transaction: the oldest active one, else a new one through the same creation path as
+/// the `fields` branch of [`start`] (zero-field method, label from `about.label_hint`, else the
+/// app name), audited `connection.create` with `via: "agent_grant"` and the agent. The caller has
+/// already taken the per-(workspace, app) lock and checked the app and the caller.
+///
+/// Returns the row, whether it was created, and — when it was — the sealed credentials to
+/// discard if the transaction does not commit.
+#[allow(clippy::too_many_arguments)]
+pub async fn ensure_credential_free_in_tx(
+    state: &AppState,
+    tx: &mut audit::Tx,
+    caller: &Caller,
+    snap: &Snapshot,
+    app: &AppEntry,
+    pkg: &PackageEntry,
+    org_id: Uuid,
+    workspace_id: Uuid,
+    agent_id: Uuid,
+    events: &mut Vec<AuditEvent>,
+) -> Result<(ConnectionRow, Option<SealedCredentials>), ApiError> {
+    if let Some(row) =
+        repo::oldest_active_in_workspace(&mut **tx, workspace_id, &app.app_id).await?
+    {
+        return Ok((row, None));
+    }
+    let method = app
+        .connect
+        .iter()
+        .find(|c| matches!(c, Connect::Fields(f) if f.fields.is_empty()))
+        .ok_or_else(|| ApiError::internal("Internal error."))?;
+    let ctx = Ctx {
+        state,
+        snap,
+        app,
+        pkg,
+        user: caller.user_id,
+        t: Target {
+            org: org_id,
+            ws: Some(workspace_id),
+        },
+        reconnect: None,
+        instance: None,
+        access: None,
+    };
+    let label = app
+        .about
+        .label_hint
+        .as_deref()
+        .and_then(probe::clean_label)
+        .unwrap_or_else(|| app.about.name.clone());
+    let id = ids::new_id();
+    let sctx = SealContext {
+        purpose: Purpose::ConnectionCredentials,
+        owner_id: id,
+        org_id,
+        workspace_id: Some(workspace_id),
+    };
+    let bytes = serde_json::to_vec(&Map::<String, Value>::new())
+        .map_err(|_| ApiError::internal("Internal error."))?;
+    let sref = state
+        .vault
+        .seal(&sctx, aurora_core::Secret::new(bytes))
+        .await
+        .map_err(secret_err)?;
+    let col = sref.to_column();
+    let n = NewConnection {
+        id,
+        org_id,
+        workspace_id: Some(workspace_id),
+        app_id: &app.app_id,
+        package_id: &pkg.package_id,
+        app_version: &pkg.version,
+        label: &label,
+        credentials_ref: &col,
+        credentials_expires_at: None,
+        scopes: &[],
+        requested_scopes: &[],
+        metadata: &json!({}),
+        tenant_host: None,
+        oauth_client_id: None,
+        connected_by: caller.user_id,
+        instance_id: None,
+        credential_keys: &[],
+        connect_method: Some(method.id()),
+        access: None,
+    };
+    let extra = json!({"via": "agent_grant", "agent_id": agent_id});
+    let ev = match ctx.write_in_tx(tx, caller, &n, Some(extra)).await {
+        Ok((_, ev)) => ev,
+        Err(e) => {
+            discard(state, &sctx, &sref).await;
+            return Err(e.into());
+        }
+    };
+    events.push(ev);
+    let row = match repo::get(&mut **tx, id).await {
+        Ok(Some(r)) => r,
+        _ => {
+            discard(state, &sctx, &sref).await;
+            return Err(ApiError::internal("Internal error."));
+        }
+    };
+    Ok((row, Some(SealedCredentials(sctx, sref))))
 }
 
 fn from_fields(p: Parsed) -> Gathered {

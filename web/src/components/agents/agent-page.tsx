@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
@@ -79,10 +79,19 @@ export function AgentPage() {
   // The page last open in each section, so a section's switcher button returns to it.
   const lastPage = useRef<Partial<Record<SectionId, AgentPageId>>>({});
 
+  // (FIX-153, C-894) The segment may be the agent's id (the gateway's Access-tab link carries one): replace it with
+  // the handle, keeping the query (`?tab=access`). An unknown value is the not-found state below.
+  const byId = agents.data?.items.find((a) => a.id === handle && a.handle !== handle);
+  const byIdHandle = byId?.handle;
+  useEffect(() => {
+    if (byIdHandle) router.replace(`/o/${org}/w/${ws}/agents/${byIdHandle}${window.location.search}`);
+  }, [byIdHandle, org, ws, router]);
+
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (agents.isError) return <ErrorState error={agents.error} onRetry={() => agents.refetch()} />;
   const agent = agents.data?.items.find((a) => a.handle === handle);
+  if (!agent && byId) return <Loading />;
   if (!agent) return <ErrorState error={{ code: "not_found" }} />;
 
   const byo = agent.kind === "byo";

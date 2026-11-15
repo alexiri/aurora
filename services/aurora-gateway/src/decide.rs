@@ -11,6 +11,7 @@ use crate::db::{DbAuthorizer, DbEndpoint, DbOpenError, DbOpened, DbVerdict};
 use crate::governance::{BackstopInfo, Governance};
 use crate::hold::{HoldOutcome, HoldRequest, Holds};
 use crate::inject::{self, Target};
+use crate::links::Links;
 use crate::mechanisms;
 use crate::pipeline::{
     OpenLaneDecision, Outcome, PipelineRequest, PostHook, PreparedRequest, RequestHandler, Retry,
@@ -152,6 +153,10 @@ struct Hook {
     create_secret_url: String,
     manage_url: String,
     connect_url: String,
+    /// (FIX-153, C-893) The requesting agent's Access tab.
+    access_url: String,
+    /// (FIX-153, C-892) The matched app's id and display name, for LDAP refusals.
+    app: Option<AppRef>,
     /// Step 14 origin backstop for an injected LLM key.
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
     /// Injected values placed in the URL (FIX-104).
@@ -161,9 +166,91 @@ struct Hook {
     llm: Option<(String, String)>,
 }
 
+impl Hook {
+    /// (FIX-154, C-897) The matched app `app_id` is credential-free.
+    fn credential_free(&self, app_id: &str) -> bool {
+        matches!(&self.app, Some((id, _, true)) if id == app_id)
+    }
+
+    /// The `app_not_connected` refusal (C-893, C-897): a credential-free app leads with the
+    /// agent's Access tab, any other with the connect link.
+    fn not_connected(
+        status: StatusCode,
+        app_id: &str,
+        free: bool,
+        connect_url: &str,
+        access_url: &str,
+    ) -> ApiError {
+        let msg = if free {
+            format!(
+                "{app_id} is not connected in this workspace. A workspace owner can give this agent access on its Access tab: {access_url}"
+            )
+        } else {
+            format!(
+                "{app_id} is not connected in this workspace. Connect it at {connect_url}, then give this agent access"
+            )
+        };
+        ApiError::new(status, "app_not_connected", msg).with_details(json!({
+            "app_id": app_id, "connect_url": connect_url, "access_url": access_url
+        }))
+    }
+}
+
 impl PostHook for Hook {
     fn echo_needles(&self) -> Vec<Vec<u8>> {
         self.echo.clone()
+    }
+
+    fn ldap_refusal(&self) -> Option<ApiError> {
+        let name = |id: &str| match &self.app {
+            Some((aid, n, _)) if aid == id => n.clone(),
+            _ => id.to_owned(),
+        };
+        let err = match &self.fallback {
+            Fallback::Ungranted(kind, app_id) if kind == "connection" => {
+                let n = name(app_id);
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "ldap_no_connection",
+                    format!(
+                        "This agent has not been given access to {n}. A workspace owner can give it on the agent's Access tab: {}",
+                        self.access_url
+                    ),
+                )
+                .with_details(json!({
+                    "app_id": app_id, "app_name": n, "reason": "not_granted",
+                    "access_url": self.access_url
+                }))
+            }
+            Fallback::NotConnected(app_id) => {
+                let n = name(app_id);
+                // (FIX-154, C-897) Nothing to sign in to: the fix is the agent's Access tab.
+                let msg = if self.credential_free(app_id) {
+                    format!(
+                        "{n} is not connected in this workspace. A workspace owner can give this agent access on its Access tab: {}",
+                        self.access_url
+                    )
+                } else {
+                    format!(
+                        "{n} is not connected in this workspace. A workspace owner can connect it at {} and give this agent access.",
+                        self.connect_url
+                    )
+                };
+                ApiError::new(StatusCode::FORBIDDEN, "ldap_no_connection", msg).with_details(
+                    json!({
+                        "app_id": app_id, "app_name": n, "reason": "not_connected",
+                        "connect_url": self.connect_url, "access_url": self.access_url
+                    }),
+                )
+            }
+            _ => ApiError::new(
+                StatusCode::FORBIDDEN,
+                "ldap_no_connection",
+                "No installed directory app serves this host.",
+            )
+            .with_details(json!({ "reason": "no_app" })),
+        };
+        Some(err)
     }
 
     fn on_response(
@@ -224,12 +311,13 @@ impl PostHook for Hook {
                     status,
                     "access_restricted",
                     format!(
-                        "The upstream rejected the request. This workspace holds a credential for {} that this agent has not been granted. Ask a workspace admin to grant it: {}",
-                        ctx.host, self.manage_url
+                        "The upstream rejected the request. This workspace holds a credential for {} that this agent has not been granted. Ask a workspace owner to give this agent access: {}",
+                        ctx.host, self.access_url
                     ),
                 )
                 .with_details(json!({
-                    "kind": kind, "provider": provider, "manage_url": self.manage_url
+                    "kind": kind, "provider": provider, "manage_url": self.manage_url,
+                    "access_url": self.access_url
                 })),
                 Fallback::Disabled(app_id) => ApiError::new(
                     status,
@@ -243,15 +331,13 @@ impl PostHook for Hook {
                     "kind": "connection", "provider": app_id, "reason": "disabled",
                     "manage_url": self.manage_url
                 })),
-                Fallback::NotConnected(app_id) => ApiError::new(
+                Fallback::NotConnected(app_id) => Hook::not_connected(
                     status,
-                    "app_not_connected",
-                    format!(
-                        "{app_id} is not connected in this workspace. Connect it at {}",
-                        self.connect_url
-                    ),
-                )
-                .with_details(json!({ "app_id": app_id, "connect_url": self.connect_url })),
+                    app_id,
+                    matches!(&self.app, Some((id, _, true)) if id == app_id),
+                    &self.connect_url,
+                    &self.access_url,
+                ),
                 Fallback::PathUnserved => ApiError::new(
                     status,
                     "app_path_unserved",
@@ -297,6 +383,20 @@ enum Fallback {
     NotConnected(String),
     PathUnserved,
     NotFound,
+}
+
+/// The matched app (for refusals that name it): id, display name and whether it is
+/// credential-free (FIX-154, C-895), so its refusals lead with the Access tab.
+type AppRef = (String, String, bool);
+
+fn app_label(m: Option<&apps::AppMatch<'_>>) -> Option<AppRef> {
+    m.map(|m| {
+        (
+            m.app.app_id.clone(),
+            m.app.about.name.clone(),
+            aurora_registry::credential_free::entry_is_credential_free(m.app),
+        )
+    })
 }
 
 fn facts_identity(i: &Ident) -> RequestIdentity {
@@ -425,6 +525,11 @@ impl PolicyHandler {
             "{}/o/{}/w/{}/{tail}",
             self.external_url, rv.org_slug, rv.ws_slug
         )
+    }
+
+    /// (FIX-153, C-891) The dashboard link builder for a resolved workspace.
+    fn links<'a>(&'a self, rv: &'a ResolvedHost) -> Links<'a> {
+        Links::new(&self.external_url, &rv.org_slug, &rv.ws_slug)
     }
 
     fn touch(&self, secret_id: Uuid) {
@@ -943,7 +1048,7 @@ impl PolicyHandler {
                 &body_prefix,
                 truncated,
                 wsec,
-                &self.url(&rv, "secrets"),
+                &self.links(&rv).secrets(),
             )
         {
             ctx.secret_id = wsec.map(|c| c.id);
@@ -1198,11 +1303,7 @@ impl PolicyHandler {
             if conn.reauth_required {
                 return Outcome::Respond(self.refuse(
                     ctx,
-                    &reauth_required(
-                        &conn.app_id,
-                        conn.id,
-                        &self.url(&rv, &format!("apps/{}", conn.app_id)),
-                    ),
+                    &reauth_required(&conn.app_id, conn.id, &self.links(&rv).reconnect(conn.id)),
                     "error",
                 ));
             }
@@ -1325,7 +1426,15 @@ impl PolicyHandler {
                 &new_path,
                 query.as_deref(),
             );
-            let hook = self.hook(&rv, ctx, fb, passthrough, None, echo);
+            let hook = self.hook(
+                &rv,
+                ctx,
+                fb,
+                app_label(app_match.as_ref()),
+                passthrough,
+                None,
+                echo,
+            );
             let retry = match (pre, &self.tokens, &registry) {
                 (Some((h0, q0)), Some(t), Some(l)) => Some(Box::new(StaleRetry {
                     tokens: t.clone(),
@@ -1393,7 +1502,7 @@ impl PolicyHandler {
             let mut backstop = None;
             if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
                 && let Some(info) =
-                    Governance::backstop_info(g, &host_port, c, &self.url(&rv, "secrets"))
+                    Governance::backstop_info(g, &host_port, c, &self.links(&rv).secrets())
             {
                 // Origin preflight: verify unseen key values before injecting.
                 if let Err(err) = gov.preflight(&info, value.expose()).await {
@@ -1426,7 +1535,15 @@ impl PolicyHandler {
             let llm = (c.kind == aurora_policy::facts::SecretKind::Llm)
                 .then(|| c.provider.clone().zip(c.llm_endpoint.clone()))
                 .flatten();
-            let mut hook = self.hook(&rv, ctx, fb, false, backstop, echo);
+            let mut hook = self.hook(
+                &rv,
+                ctx,
+                fb,
+                app_label(app_match.as_ref()),
+                false,
+                backstop,
+                echo,
+            );
             hook.llm = llm;
             return Outcome::Forward(PreparedRequest {
                 scheme,
@@ -1446,7 +1563,15 @@ impl PolicyHandler {
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
         let passthrough = pass_challenge(app_match.as_ref());
-        let hook = self.hook(&rv, ctx, fb, passthrough, None, Vec::new());
+        let hook = self.hook(
+            &rv,
+            ctx,
+            fb,
+            app_label(app_match.as_ref()),
+            passthrough,
+            None,
+            Vec::new(),
+        );
         Outcome::Forward(PreparedRequest {
             scheme,
             host,
@@ -1474,12 +1599,33 @@ impl RequestHandler for PolicyHandler {
             // only when it won a granted connection of that app (then it carries the approved
             // `ldap` block). Anything else on that host — no connection, no grant, a host of no
             // LDAP app — is never forwarded and never reaches a directory.
-            Outcome::Forward(mut p) if crate::ldap::is_ldap_host(&p.host) && p.ldap.is_none() => {
-                let err = ApiError::new(
-                    StatusCode::FORBIDDEN,
-                    "ldap_no_connection",
-                    "This agent has no granted connection for this directory.",
-                );
+            Outcome::Forward(mut p)
+                if crate::ldap::is_ldap_host(&p.host)
+                    && (p.ldap.is_none() || p.scheme == crate::pipeline::Scheme::Http) =>
+            {
+                // (FIX-153, C-892) Plain HTTP is its own refusal; the others say why and where
+                // to fix it, from the fallback the decision already computed.
+                let err = if p.scheme == crate::pipeline::Scheme::Http {
+                    let url = format!("https://{}/search", p.host);
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "ldap_https_required",
+                        format!("This directory is only served over HTTPS. Use {url}"),
+                    )
+                    .with_details(json!({ "url": url }))
+                } else {
+                    p.hook
+                        .as_ref()
+                        .and_then(|h| h.ldap_refusal())
+                        .unwrap_or_else(|| {
+                            ApiError::new(
+                                StatusCode::FORBIDDEN,
+                                "ldap_no_connection",
+                                "No installed directory app serves this host.",
+                            )
+                            .with_details(json!({ "reason": "no_app" }))
+                        })
+                };
                 if let Some(h) = p.hook.take() {
                     h.on_error(&err);
                 }
@@ -1886,11 +2032,9 @@ impl PolicyHandler {
 
     fn refresh_error(&self, rv: &ResolvedHost, c: &apps::ConnCand, e: RefreshError) -> ApiError {
         match e {
-            RefreshError::Reauth => reauth_required(
-                &c.app_id,
-                c.id,
-                &self.url(rv, &format!("apps/{}", c.app_id)),
-            ),
+            RefreshError::Reauth => {
+                reauth_required(&c.app_id, c.id, &self.links(rv).reconnect(c.id))
+            }
             RefreshError::StoreUnavailable(store_id) => ApiError::unavailable(
                 "secret_store_unavailable",
                 "The secret store is unreachable. Retry shortly.",
@@ -1931,28 +2075,34 @@ impl PolicyHandler {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn hook(
         &self,
         rv: &ResolvedHost,
         ctx: Ctx,
         fallback: Fallback,
+        app: Option<AppRef>,
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
         echo: Vec<Vec<u8>>,
     ) -> Box<Hook> {
+        let links = self.links(rv);
         let connect_url = match &ctx.app_id {
-            Some(a) => self.url(rv, &format!("apps/{a}")),
-            None => self.url(rv, "apps"),
+            Some(a) => links.connect(a),
+            None => links.connect_any(),
         };
+        let access_url = links.access(ctx.identity.agent_id);
         Box::new(Hook {
             llm: None,
             ctx,
             log: self.log.clone(),
             fallback,
             passthrough_challenge,
-            create_secret_url: self.url(rv, "secrets"),
-            manage_url: self.url(rv, "policy"),
+            create_secret_url: links.secrets(),
+            manage_url: links.policy(),
             connect_url,
+            access_url,
+            app,
             backstop,
             echo,
         })

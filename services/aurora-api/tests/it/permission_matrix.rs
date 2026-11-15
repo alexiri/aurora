@@ -797,6 +797,12 @@ const ROWS: &[Row] = &[
         false,
     ),
     r(
+        "PUT",
+        "/v1/agents/{agent}/grants/apps/{app}",
+        G::WsOwn,
+        false,
+    ),
+    r(
         "DELETE",
         "/v1/agents/{agent}/grants/connections/{conn}",
         G::WsOwn,
@@ -1318,6 +1324,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         }
         ("POST", "/v1/agents/{agent}/conversations") => json!({"external_ref": "matrix"}),
         ("PUT", "/v1/agents/{agent}/grants/connections/{conn}") => json!({"mode": "full"}),
+        ("PUT", "/v1/agents/{agent}/grants/apps/{app}") => json!({"mode": "full"}),
         ("POST", "/v1/secrets/{id}/grants") => json!({"agent_ids": [Uuid::now_v7()]}),
         ("POST", "/v1/connections/{id}/grants") => {
             json!({"agent_ids": [Uuid::now_v7()], "mode": "full"})

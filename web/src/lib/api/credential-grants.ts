@@ -143,6 +143,26 @@ export function usePutAgentConnectionGrant(agentId: string) {
   });
 }
 
+/**
+ * `PUT /v1/agents/{agent}/grants/apps/{app}` (FIX-154, C-896): give an agent a credential-free app in one step — the
+ * API reuses the workspace's connection of the app or creates it. Refreshes the grants, connections and apps lists.
+ */
+export function grantApp(agentId: string, appId: string, body: PutConnectionGrant) {
+  return unwrap(api.PUT("/v1/agents/{agent}/grants/apps/{app}", { params: { path: { agent: agentId, app: appId } }, body }));
+}
+
+export function useGrantApp(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, body }: { appId: string; body: PutConnectionGrant }) => grantApp(agentId, appId, body),
+    onSuccess: (r) => {
+      invalidateAgentGrant(qc, agentId, r.connection.id);
+      void qc.invalidateQueries({ queryKey: ["connections"] });
+      void qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
 /** `DELETE /v1/agents/{agent}/grants/connections/{conn}`. */
 export function useRemoveAgentConnectionGrant(agentId: string) {
   const qc = useQueryClient();

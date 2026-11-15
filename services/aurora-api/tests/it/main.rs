@@ -44,6 +44,7 @@ mod fix_029;
 mod foundation;
 mod freeze;
 mod governance;
+mod grants_apps;
 mod grants_bulk;
 mod grants_connections;
 mod grants_custom_only;

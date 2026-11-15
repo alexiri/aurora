@@ -18,6 +18,8 @@ import {
   type AppAvailability,
 } from "@/lib/api/apps";
 
+import { OrgAppsList } from "./org-apps-list";
+
 /**
  * The per-app availability list (which apps are available when the org posture is `restricted`). The posture
  * itself lives on Org › Governance (FIX-130): while it is `open` this page only says so and links there. A save
@@ -118,7 +120,13 @@ export function AvailabilityView({ orgId, orgSlug, canEdit }: { orgId: string; o
   if (apps.isError) return <ErrorState error={apps.error} onRetry={() => apps.refetch()} />;
   return (
     <div className="max-w-page-narrow">
-      <PageHeader title="Apps" description="Choose which installed apps can be connected in this organization." />
+      <PageHeader
+        title="Apps"
+        description="The installed apps. Connect one in a workspace, and choose which can be connected in this organization."
+      />
+      <div className="mb-5">
+        <OrgAppsList orgId={orgId} orgSlug={orgSlug} apps={apps.data.items} />
+      </div>
       <AvailabilityEditor orgId={orgId} orgSlug={orgSlug} initial={avail.data} apps={apps.data.items} canEdit={canEdit} />
     </div>
   );

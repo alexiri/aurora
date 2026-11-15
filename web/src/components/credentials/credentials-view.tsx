@@ -20,6 +20,8 @@ import { SecretRow } from "./secret-row";
 
 type Tab = "secrets" | "llm" | "proposals" | "apps" | "connections" | "oauth";
 const TABS: readonly Tab[] = ["secrets", "llm", "proposals", "apps", "connections", "oauth"];
+/** The tab ids the page accepts (the dashboard-links conformance test checks the gateway's links against them). */
+export const CREDENTIAL_TAB_IDS: readonly string[] = TABS;
 
 export function CredentialsView({
   scope,

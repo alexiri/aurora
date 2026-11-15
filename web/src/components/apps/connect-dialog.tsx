@@ -37,7 +37,8 @@ import {
   type FieldValues,
 } from "@/lib/api/apps";
 
-import { GiveAccessPanel } from "@/components/credentials/give-access";
+import { GiveAccessPanel, WorkspaceAgents } from "@/components/credentials/give-access";
+import { grantApp } from "@/lib/api/credential-grants";
 import { ScopeGroups } from "@/components/grants/scope-groups";
 import { Segmented } from "@/components/ui/segmented";
 
@@ -604,6 +605,128 @@ function ConnectedStep({
   );
 }
 
+/**
+ * (FIX-154, C-897) An app with nothing to sign in to: no form. The note, the agents to give access to, and one action.
+ * With agents chosen, each gets `PUT …/grants/apps/{app}` — the first creates the workspace's connection, the others
+ * reuse it. With none, it only connects. A failed grant keeps the connection (harmless, and listed).
+ */
+function CredentialFreeForm({ app, workspaceId, onClose }: { app: AppDetail; workspaceId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const method = app.connect[0];
+  const customOnly = appIsCustomOnly(app);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<{ text: string } | null>(null);
+  const [done, setDone] = useState<{ granted: number } | null>(null);
+  const register = useCallback(
+    (agents: { id: string; name: string }[]) =>
+      setNames((cur) => (agents.every((a) => cur[a.id] === a.name) ? cur : { ...cur, ...Object.fromEntries(agents.map((a) => [a.id, a.name])) })),
+    [],
+  );
+  const toggle = (id: string) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["apps"] });
+    void qc.invalidateQueries({ queryKey: ["connections"] });
+    void qc.invalidateQueries({ queryKey: ["grants"] });
+    void qc.invalidateQueries({ queryKey: ["credential-grants"] });
+  };
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!method) return;
+    setBusy(true);
+    setError(null);
+    let granted = 0;
+    try {
+      if (selected.size === 0) {
+        await connectApp(app.app_id, { scope: "workspace", workspace_id: workspaceId, method_id: method.id });
+      } else {
+        for (const id of selected) {
+          try {
+            await grantApp(id, app.app_id, { mode: "full" });
+            granted += 1;
+          } catch (err) {
+            throw Object.assign(new Error(`Could not give access to ${names[id] ?? "an agent"}: ${errorMessage(err)}`), { grant: true });
+          }
+        }
+      }
+      refresh();
+      setDone({ granted });
+    } catch (err) {
+      refresh();
+      const grantFailed = err instanceof Error && "grant" in err;
+      setError({
+        text: grantFailed
+          ? `${(err as Error).message} ${granted > 0 ? `${granted} agent${granted === 1 ? " was" : "s were"} given access. ` : ""}${app.name} is connected; you can give the others access on each agent's Access tab.`
+          : errorMessage(err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done)
+    return (
+      <div role="status" className="space-y-3 text-sm">
+        <p className="font-medium text-ink">
+          {app.name} is connected
+          {done.granted > 0 ? ` and ${done.granted} agent${done.granted === 1 ? " has" : "s have"} access` : ""}.
+        </p>
+        <Button size="sm" variant="outline" onClick={onClose}>Done</Button>
+      </div>
+    );
+  return (
+    <Form onSubmit={(e) => void submit(e)} aria-label={`Connect ${app.name}`} noValidate>
+      {app.connect_note ? (
+        <Notice>
+          {app.connect_note.text}
+          {app.connect_note.url && safeHref(app.connect_note.url) ? (
+            <>
+              {" "}
+              <a className="break-all text-link underline" target="_blank" rel="noopener noreferrer" href={safeHref(app.connect_note.url)!}>
+                {safeHref(app.connect_note.url)}
+              </a>
+            </>
+          ) : null}
+        </Notice>
+      ) : (
+        <Notice>Nothing to sign in to: connecting {app.name} only needs your go-ahead.</Notice>
+      )}
+      <fieldset className="min-w-0 space-y-2">
+        <legend className="mb-1 text-sm font-semibold text-ink">Give agents access</legend>
+        {customOnly ? (
+          <p className="text-xs text-muted">
+            This app only allows custom access: choose the allowed tools on each agent&apos;s Access tab after connecting.
+          </p>
+        ) : (
+          <WorkspaceAgents
+            wsId={workspaceId}
+            register={register}
+            has={new Set()}
+            selected={selected}
+            toggle={toggle}
+            disabled={busy}
+            idp={`cf-${app.app_id}`}
+          />
+        )}
+      </fieldset>
+      {error ? <Notice tone="danger" role="alert">{error.text}</Notice> : null}
+      <FormActions>
+        <Button type="submit" size="lg" disabled={busy || !method}>
+          {busy ? "Connecting…" : selected.size > 0 ? "Connect and give access" : "Connect"}
+        </Button>
+      </FormActions>
+    </Form>
+  );
+}
+
 /** A reconnect opens on the method the connection was made with; wait for it (a failed load falls back). */
 function ReconnectForm({ app, workspaceId, orgId, reconnect, onClose }: { app: AppDetail; workspaceId: string; orgId: string; reconnect: string; onClose: () => void }) {
   const conns = useConnections({ kind: "workspace", id: workspaceId });
@@ -655,6 +778,7 @@ export function ConnectDialog({
   else if (!d.available) body = <ErrorState error={{ code: "app_unavailable" }} />;
   else if (reconnect && d.connect.length > 1)
     body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} onClose={onClose} />;
+  else if (d.credential_free && !reconnect) body = <CredentialFreeForm key={shownId} app={d} workspaceId={workspaceId} onClose={onClose} />;
   else
     body = (
       <ConnectForm

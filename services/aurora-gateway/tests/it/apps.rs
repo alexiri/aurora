@@ -678,6 +678,29 @@ async fn lost_claim_and_unavailable_and_guidance() {
     assert_eq!(r.status, 403);
     assert_eq!(r.code(), "app_unavailable");
 
+    // (FIX-154, C-897) A credential-free app leads with the agent's Access tab.
+    let mut free = app_json("demo", json!(null), false);
+    free["credentials"] = json!([]);
+    free["metadata"] = json!([]);
+    free["connect"] = json!([{"id": "anonymous", "kind": "fields", "fields": []}]);
+    let snap = snapshot(vec![free], vec![host_json("demo", Some("/api"), json!({}))]);
+    let (env, ..) = start(snap, &[], |_| Rows::default()).await;
+    let r = get(&env, "/api/401", "").await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (401, "app_not_connected"),
+        "{}",
+        r.body
+    );
+    assert!(
+        r.body
+            .contains("give this agent access on its Access tab: ")
+            && r.body.contains("/agents/")
+            && r.body.contains("?tab=access"),
+        "{}",
+        r.body
+    );
+
     // Not connected / path unserved.
     let snap = snapshot(
         vec![app_json("demo", json!(null), false)],
@@ -691,6 +714,14 @@ async fn lost_claim_and_unavailable_and_guidance() {
         "{}",
         r.body
     );
+    // (FIX-153, C-893) an app with a sign-in leads with connecting, then giving the agent access.
+    assert!(
+        r.body
+            .contains("/credentials?tab=apps&connect=demo, then give this agent access"),
+        "{}",
+        r.body
+    );
+    assert!(r.body.contains("access_url"), "{}", r.body);
     let r = get(&env, "/other/401", "").await;
     assert_eq!(
         (r.status, r.code().as_str()),

@@ -4,6 +4,7 @@
 
 pub mod builder;
 pub mod claims;
+pub mod credential_free;
 pub mod diff;
 pub mod digest;
 pub mod index;

@@ -578,6 +578,16 @@ async fn reauth_required_connection_is_refused_with_guidance() {
     assert_eq!(a.status, 403);
     assert_eq!(a.code(), "connection_reauth_required");
     assert!(a.body.contains("connect_url"), "{}", a.body);
+    // (FIX-153, C-891) The reconnect link is a real dashboard route, not `apps/<app>`.
+    let url = a.json()["error"]["details"]["connect_url"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        url.contains("/credentials?tab=connections&reconnect="),
+        "{url}"
+    );
+    assert!(!url.contains("/apps/"), "{url}");
     assert_eq!(r.hits.load(Ordering::SeqCst), 0);
 }
 

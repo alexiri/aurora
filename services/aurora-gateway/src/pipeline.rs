@@ -94,6 +94,11 @@ pub trait PostHook: Send + 'static {
         status: http::StatusCode,
         headers: &HeaderMap,
     ) -> Option<Response<Body>>;
+    /// (FIX-153, C-892) The refusal for a request on an LDAP synthetic host that reached the
+    /// lane without an approved `ldap` block, derived from the decision's fallback.
+    fn ldap_refusal(&self) -> Option<ApiError> {
+        None
+    }
     /// The upstream exchange failed with this refusal.
     fn on_error(self: Box<Self>, err: &ApiError);
 }

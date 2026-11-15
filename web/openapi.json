@@ -6859,6 +6859,116 @@
         ]
       }
     },
+    "/v1/agents/{agent}/grants/apps/{app}": {
+      "put": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Give an agent a credential-free app in one step (`can_own`): reuses the workspace's active\nconnection of the app or creates it, then grants it like `grantConnection`.",
+        "operationId": "grantApp",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutConnectionGrant"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Connection (reused or created) and grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantedApp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden, or app_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found, or app_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "app_not_credential_free, or grant_invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/grants/connections/{conn}": {
       "put": {
         "tags": [
@@ -32371,6 +32481,7 @@
           "has_dark_icon",
           "app_restrictions",
           "serves_library",
+          "credential_free",
           "connect",
           "tools",
           "hosts",
@@ -32426,6 +32537,10 @@
           "connection_count": {
             "type": "integer",
             "format": "int64"
+          },
+          "credential_free": {
+            "type": "boolean",
+            "description": "(FIX-154, C-895) as on `AppSummary`."
           },
           "credentials": {
             "type": "array",
@@ -32722,7 +32837,8 @@
           "connection_count",
           "has_dark_icon",
           "app_restrictions",
-          "serves_library"
+          "serves_library",
+          "credential_free"
         ],
         "properties": {
           "app_id": {
@@ -32744,6 +32860,10 @@
           "connection_count": {
             "type": "integer",
             "format": "int64"
+          },
+          "credential_free": {
+            "type": "boolean",
+            "description": "(FIX-154, D-306(c), C-895) Nothing to sign in to or enter (no credentials, token,\ninstances or database; every connect method is a `fields` method with no fields): an agent\nis given access in one step. Derived from the installed manifest, not stored."
           },
           "description": {
             "type": "string"
@@ -36955,6 +37075,28 @@
           "full",
           "custom"
         ]
+      },
+      "GrantedApp": {
+        "type": "object",
+        "description": "(FIX-154, C-896) Answer of `PUT /agents/{agent}/grants/apps/{app}`.",
+        "required": [
+          "connection",
+          "grant",
+          "created"
+        ],
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/Connection",
+            "description": "The workspace's connection of the app (reused or created by this call)."
+          },
+          "created": {
+            "type": "boolean",
+            "description": "`true` when this call created the connection."
+          },
+          "grant": {
+            "$ref": "#/components/schemas/ConnectionGrant"
+          }
+        }
       },
       "GrantsResponse": {
         "type": "object",
