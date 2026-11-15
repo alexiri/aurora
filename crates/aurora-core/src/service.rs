@@ -126,6 +126,7 @@ pub fn init_telemetry(
         prefix,
     };
     let tracer = crate::telemetry::install(service, otlp_endpoint, sample_ratio);
+    let db_spans = crate::telemetry::DbSpanLayer::new(tracer.clone());
     let otel = tracing_opentelemetry::layer().with_tracer(tracer);
     // Ignore the error: a subscriber may already be installed (tests).
     // The OTel layer sees spans only (never log events, which would become span events and could
@@ -133,6 +134,8 @@ pub fn init_telemetry(
     let spans_only = tracing_subscriber::filter::filter_fn(|m| m.is_span());
     let _ = tracing_subscriber::registry()
         .with(otel.with_filter(spans_only))
+        // Database spans (D-232 (6)): its own filter, so SQL never reaches stdout.
+        .with(db_spans.with_filter(crate::telemetry::DbSpanLayer::filter()))
         .with(
             tracing_subscriber::fmt::layer()
                 // Span fields must be JSON too: the JSON event formatter parses them back and

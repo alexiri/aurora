@@ -367,6 +367,220 @@ pub async fn send(
     result
 }
 
+/// Root span of a background job iteration that claimed work (`job {name}`, D-232 (6)): a new
+/// trace, tagged with its `request_id`, so the iteration's queries become its children. An
+/// iteration that finds nothing must not call this (no span, no trace).
+pub fn job_span(name: &str) -> tracing::Span {
+    let span = tracing::info_span!(
+        parent: None,
+        "job",
+        otel.name = %format!("job {name}"),
+        otel.kind = "internal",
+        job.name = name,
+    );
+    tag_request_id(&span);
+    span
+}
+
+/// Fields of one `sqlx::query` event.
+#[derive(Default)]
+struct DbEvent {
+    summary: String,
+    statement: String,
+    rows_affected: Option<u64>,
+    rows_returned: Option<u64>,
+    elapsed_secs: f64,
+    slow: bool,
+}
+
+impl tracing::field::Visit for DbEvent {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        match field.name() {
+            "summary" => self.summary = value.to_owned(),
+            "db.statement" => self.statement = value.to_owned(),
+            _ => {}
+        }
+    }
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "rows_affected" => self.rows_affected = Some(value),
+            "rows_returned" => self.rows_returned = Some(value),
+            _ => {}
+        }
+    }
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        if let Ok(v) = u64::try_from(value) {
+            self.record_u64(field, v);
+        }
+    }
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        if field.name() == "elapsed_secs" {
+            self.elapsed_secs = value;
+        }
+    }
+    fn record_debug(&mut self, field: &tracing::field::Field, _value: &dyn std::fmt::Debug) {
+        // sqlx adds `slow_threshold` to a statement that exceeded the alert threshold.
+        if field.name() == "slow_threshold" {
+            self.slow = true;
+        }
+    }
+}
+
+/// `(operation, table)` parsed from parameterised SQL: the first keyword and the first table
+/// after `FROM` / `INTO` / `UPDATE` (the operation's own keyword first). Identifiers only.
+pub fn parse_sql_name(sql: &str) -> (String, Option<String>) {
+    let tokens: Vec<&str> = sql.split_whitespace().collect();
+    let Some(first) = tokens.first() else {
+        return ("unknown".to_owned(), None);
+    };
+    let op = first
+        .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_ascii_uppercase();
+    let want: &[&str] = match op.as_str() {
+        "SELECT" | "DELETE" => &["FROM"],
+        "INSERT" => &["INTO"],
+        "UPDATE" => &["UPDATE"],
+        _ => &["FROM", "INTO", "UPDATE"],
+    };
+    let mut table = None;
+    for (i, t) in tokens.iter().enumerate() {
+        if want.iter().any(|w| t.eq_ignore_ascii_case(w)) {
+            let mut j = i + 1;
+            if tokens
+                .get(j)
+                .is_some_and(|n| n.eq_ignore_ascii_case("ONLY"))
+            {
+                j += 1;
+            }
+            if let Some(n) = tokens.get(j) {
+                let name: String = n
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '"'))
+                    .filter(|c| *c != '"')
+                    .collect();
+                if !name.is_empty() {
+                    table = Some(name);
+                }
+            }
+            break;
+        }
+    }
+    (
+        if op.is_empty() {
+            "unknown".to_owned()
+        } else {
+            op
+        },
+        table,
+    )
+}
+
+/// Cap `s` to `max` bytes at a char boundary.
+fn cap(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Turns every `sqlx::query` event into an OTel client span (D-232 (6)): the span ends at the
+/// event time and started `elapsed` before. Its parent is the current span; with no sampled
+/// current span nothing is recorded (listener polls, empty job polls). Install it with a
+/// per-layer filter of `sqlx::query=debug` so SQL never reaches stdout at the operator's level.
+/// The event never carries bind values (sqlx logs the parameterised statement).
+pub struct DbSpanLayer {
+    tracer: SdkTracer,
+}
+
+impl DbSpanLayer {
+    pub fn new(tracer: SdkTracer) -> Self {
+        Self { tracer }
+    }
+
+    /// The per-layer filter: only `sqlx::query` events at debug and above.
+    pub fn filter<S>() -> impl tracing_subscriber::layer::Filter<S> + 'static
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        tracing_subscriber::filter::Targets::new().with_target("sqlx::query", tracing::Level::DEBUG)
+    }
+}
+
+impl<S> tracing_subscriber::Layer<S> for DbSpanLayer
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        use opentelemetry::trace::{Span as _, SpanBuilder, Tracer as _};
+        if event.metadata().target() != "sqlx::query" {
+            return;
+        }
+        // `Span::current()` is unusable inside a layer callback (tracing's re-entrancy guard
+        // hides the dispatcher), but the OTel layer activates the entered span's context.
+        let cx = Context::current();
+        let parent = cx.span().span_context().clone();
+        if !parent.is_valid() || !parent.is_sampled() {
+            return;
+        }
+        let mut e = DbEvent::default();
+        event.record(&mut e);
+        let text = if e.statement.trim().is_empty() {
+            e.summary.trim()
+        } else {
+            e.statement.trim()
+        };
+        let (op, table) = parse_sql_name(text);
+        let name = match &table {
+            Some(t) => format!("{op} {t}"),
+            None => op.clone(),
+        };
+        let end = std::time::SystemTime::now();
+        let start = end
+            .checked_sub(std::time::Duration::from_secs_f64(e.elapsed_secs.max(0.0)))
+            .unwrap_or(end);
+        let mut attrs = vec![
+            KeyValue::new("db.system.name", "postgresql"),
+            KeyValue::new("db.operation.name", op),
+            KeyValue::new(
+                "db.query.text",
+                cap(text, crate::limits::DB_SPAN_STATEMENT_MAX).to_owned(),
+            ),
+        ];
+        if let Some(t) = table {
+            attrs.push(KeyValue::new("db.collection.name", t));
+        }
+        if let Some(n) = e.rows_returned {
+            attrs.push(KeyValue::new(
+                "db.response.returned_rows",
+                i64::try_from(n).unwrap_or(i64::MAX),
+            ));
+        }
+        if let Some(n) = e.rows_affected {
+            attrs.push(KeyValue::new(
+                "aurora.db.rows_affected",
+                i64::try_from(n).unwrap_or(i64::MAX),
+            ));
+        }
+        if e.slow {
+            attrs.push(KeyValue::new("aurora.db.slow", true));
+        }
+        let builder = SpanBuilder::from_name(name)
+            .with_kind(SpanKind::Client)
+            .with_start_time(start)
+            .with_attributes(attrs);
+        let mut span = self.tracer.build_with_context(builder, &cx);
+        span.end_with_timestamp(end);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,6 +606,188 @@ mod tests {
                 "{v}"
             );
         }
+    }
+
+    // ---- database spans (FIX-146 A2) ----
+
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SpanData};
+    use tracing_subscriber::{Layer as _, layer::SubscriberExt as _};
+
+    fn db_harness(ratio: f64) -> (InMemorySpanExporter, tracing::subscriber::DefaultGuard) {
+        let exporter = InMemorySpanExporter::default();
+        let provider = provider_builder("test", ratio)
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let tracer = provider.tracer("t");
+        let sub = tracing_subscriber::registry()
+            .with(
+                tracing_opentelemetry::layer()
+                    .with_tracer(tracer.clone())
+                    .with_filter(tracing_subscriber::filter::filter_fn(|m| m.is_span())),
+            )
+            .with(DbSpanLayer::new(tracer).with_filter(DbSpanLayer::filter()));
+        (exporter, tracing::subscriber::set_default(sub))
+    }
+
+    fn attr<'a>(s: &'a SpanData, key: &str) -> Option<&'a opentelemetry::Value> {
+        s.attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| &kv.value)
+    }
+
+    fn query_event(statement: &str, elapsed: f64) {
+        tracing::debug!(
+            target: "sqlx::query",
+            summary = "SELECT id FROM turns WHERE …",
+            db.statement = statement,
+            rows_affected = 0_u64,
+            rows_returned = 3_u64,
+            elapsed_secs = elapsed,
+        );
+    }
+
+    #[test]
+    fn query_event_becomes_a_child_client_span_ending_at_the_event() {
+        let (exp, _g) = db_harness(1.0);
+        let req = tracing::info_span!("request");
+        let parent = req.context().span().span_context().span_id();
+        req.in_scope(|| {
+            query_event(
+                "\n\nSELECT id FROM turns WHERE conversation_id = $1\n",
+                0.25,
+            )
+        });
+        drop(req);
+        let spans = exp.get_finished_spans().unwrap();
+        let db = spans.iter().find(|s| s.name == "SELECT turns").unwrap();
+        assert_eq!(db.parent_span_id, parent);
+        assert_eq!(db.span_kind, SpanKind::Client);
+        assert_eq!(
+            attr(db, "db.system.name").unwrap().as_str().as_ref(),
+            "postgresql"
+        );
+        assert_eq!(
+            attr(db, "db.operation.name").unwrap().as_str().as_ref(),
+            "SELECT"
+        );
+        assert_eq!(
+            attr(db, "db.collection.name").unwrap().as_str().as_ref(),
+            "turns"
+        );
+        assert_eq!(
+            attr(db, "db.query.text").unwrap().as_str().as_ref(),
+            "SELECT id FROM turns WHERE conversation_id = $1"
+        );
+        assert_eq!(
+            attr(db, "db.response.returned_rows"),
+            Some(&opentelemetry::Value::I64(3))
+        );
+        assert_eq!(
+            attr(db, "aurora.db.rows_affected"),
+            Some(&opentelemetry::Value::I64(0))
+        );
+        assert!(attr(db, "aurora.db.slow").is_none());
+        let took = db.end_time.duration_since(db.start_time).unwrap();
+        assert!(
+            (took.as_secs_f64() - 0.25).abs() < 0.001,
+            "start = end - elapsed, got {took:?}"
+        );
+    }
+
+    #[test]
+    fn slow_statements_are_flagged() {
+        let (exp, _g) = db_harness(1.0);
+        let req = tracing::info_span!("request");
+        req.in_scope(|| {
+            tracing::warn!(
+                target: "sqlx::query",
+                summary = "UPDATE turns SET …",
+                db.statement = "UPDATE turns SET state = $1",
+                rows_affected = 1_u64,
+                rows_returned = 0_u64,
+                elapsed_secs = 2.0_f64,
+                slow_threshold = ?std::time::Duration::from_secs(1),
+                "slow statement: execution time exceeded alert threshold"
+            );
+        });
+        drop(req);
+        let spans = exp.get_finished_spans().unwrap();
+        let db = spans.iter().find(|s| s.name == "UPDATE turns").unwrap();
+        assert_eq!(
+            attr(db, "aurora.db.slow"),
+            Some(&opentelemetry::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn no_span_without_a_sampled_parent() {
+        // No current span at all (a listener poll, an empty job poll).
+        let (exp, g) = db_harness(1.0);
+        query_event("SELECT 1 FROM turns", 0.01);
+        assert!(exp.get_finished_spans().unwrap().is_empty());
+        drop(g);
+        // A current span the sampling rule dropped (ratio 0).
+        let (exp, _g) = db_harness(0.0);
+        let req = tracing::info_span!("request");
+        req.in_scope(|| query_event("SELECT 1 FROM turns", 0.01));
+        drop(req);
+        assert!(exp.get_finished_spans().unwrap().is_empty());
+    }
+
+    #[test]
+    fn statement_is_capped_and_other_targets_are_ignored() {
+        let (exp, _g) = db_harness(1.0);
+        let long = format!("SELECT id FROM turns WHERE a IN ({})", "$1, ".repeat(5000));
+        let req = tracing::info_span!("request");
+        req.in_scope(|| {
+            query_event(&long, 0.01);
+            tracing::debug!(target: "other", summary = "SELECT 1 FROM nope");
+        });
+        drop(req);
+        let spans = exp.get_finished_spans().unwrap();
+        assert!(spans.iter().all(|s| s.name != "SELECT nope"));
+        let db = spans.iter().find(|s| s.name == "SELECT turns").unwrap();
+        let text = attr(db, "db.query.text").unwrap().as_str().to_string();
+        assert_eq!(text.len(), crate::limits::DB_SPAN_STATEMENT_MAX);
+    }
+
+    #[test]
+    fn job_span_is_a_root_with_a_request_id() {
+        let (exp, _g) = db_harness(1.0);
+        let job = job_span("sweep");
+        job.in_scope(|| query_event("DELETE FROM sessions WHERE x < $1", 0.01));
+        drop(job);
+        let spans = exp.get_finished_spans().unwrap();
+        let root = spans.iter().find(|s| s.name == "job sweep").unwrap();
+        assert_eq!(root.parent_span_id, SpanId::INVALID);
+        let db = spans.iter().find(|s| s.name == "DELETE sessions").unwrap();
+        assert_eq!(db.parent_span_id, root.span_context.span_id());
+        assert_eq!(db.span_context.trace_id(), root.span_context.trace_id());
+    }
+
+    #[test]
+    fn sql_names_are_parsed_from_the_statement() {
+        let n = |s: &str| parse_sql_name(s);
+        assert_eq!(
+            n("SELECT a FROM public.turns t WHERE x"),
+            ("SELECT".into(), Some("public.turns".into()))
+        );
+        assert_eq!(
+            n("insert into \"agents\" (a) values ($1)"),
+            ("INSERT".into(), Some("agents".into()))
+        );
+        assert_eq!(
+            n("UPDATE ONLY turns SET a = 1"),
+            ("UPDATE".into(), Some("turns".into()))
+        );
+        assert_eq!(
+            n("DELETE FROM runs"),
+            ("DELETE".into(), Some("runs".into()))
+        );
+        assert_eq!(n("SELECT 1"), ("SELECT".into(), None));
+        assert_eq!(n("BEGIN"), ("BEGIN".into(), None));
+        assert_eq!(n(""), ("unknown".into(), None));
     }
 
     #[test]

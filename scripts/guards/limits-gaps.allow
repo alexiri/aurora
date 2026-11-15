@@ -5,7 +5,6 @@
 # Exception (coordinator): a spec step may add `doc-only` entries for limits it specifies before
 # the code exists, marked with the task that must close them; that task's lane removes them.
 # FIX-146 (spec step 0, 2026-11-14) — Part A2 adds DB_SPAN_STATEMENT_MAX, Part D the TELEMETRY_*:
-DB_SPAN_STATEMENT_MAX doc-only
 TELEMETRY_CLOCK_FUTURE doc-only
 TELEMETRY_CLOCK_PAST doc-only
 TELEMETRY_INGEST_BODY_MAX doc-only
