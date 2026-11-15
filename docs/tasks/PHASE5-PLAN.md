@@ -28,7 +28,7 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 
 | Lane | Queue after its wave-2 chain | Why here |
 |---|---|---|
-| `p5-apps` | P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → 6 → 7 ‖ P5-ICS → P5-CALDAV ‖ | the registry, package format and built-in packages are this lane's ground; P5-GUIDE-1 and P5-ICS both change the registry, so they run in one lane, one after the other |
+| `p5-apps` | P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → FIX-151 → 6 → 7 ‖ P5-ICS → P5-CALDAV ‖ | the registry, package format and built-in packages are this lane's ground; P5-GUIDE-1 and P5-ICS both change the registry, so they run in one lane, one after the other |
 | `p5-agent` | FIX-150 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3 ‖ | channels and messaging tools (FIX-150, `send_as_me`), then evals, whose judge builds on the LLM chain's providers |
 | `p5-platform` | P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P4-S3 ‖ P5-CALINV ‖ | gateway holds and Web Push next to the SSH and tracing work; the blob store; the mailer-only calendar invite |
 
