@@ -3,9 +3,8 @@
 
 use lru::LruCache;
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
-    PKCS_RSA_SHA256, SanType,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PKCS_RSA_SHA256, SanType,
 };
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -102,8 +101,7 @@ struct Leaf {
 }
 
 pub struct Ca {
-    issuer: Certificate,
-    key: KeyPair,
+    issuer: Issuer<'static, KeyPair>,
     cert_pem: String,
     leaves: Mutex<LruCache<String, Leaf>>,
     minted: AtomicU64,
@@ -121,17 +119,25 @@ impl Ca {
         if !key.is_compatible(&PKCS_ECDSA_P256_SHA256) && !key.is_compatible(&PKCS_RSA_SHA256) {
             return Err(CaError::Invalid("CA key must be ECDSA P-256 or RSA".into()));
         }
-        // Fails when the certificate is not a CA.
-        let params = CertificateParams::from_ca_cert_pem(cert_pem)
-            .map_err(|e| CaError::Invalid(format!("not a usable CA certificate: {e}")))?;
-        if !params.key_usages.contains(&KeyUsagePurpose::KeyCertSign) {
+        // rcgen 0.14's `Issuer::from_ca_cert_pem` does not check BasicConstraints, so reject a
+        // certificate that is not a CA here.
+        let not_usable = |e: String| CaError::Invalid(format!("not a usable CA certificate: {e}"));
+        let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes())
+            .map_err(|e| not_usable(e.to_string()))?;
+        let (_, x509) = x509_parser::parse_x509_certificate(&pem.contents)
+            .map_err(|e| not_usable(e.to_string()))?;
+        match x509.basic_constraints() {
+            Ok(Some(bc)) if bc.value.ca => {}
+            _ => return Err(not_usable("basicConstraints is not CA:TRUE".into())),
+        }
+        let issuer =
+            Issuer::from_ca_cert_pem(cert_pem, key).map_err(|e| not_usable(e.to_string()))?;
+        if !issuer.key_usages().contains(&KeyUsagePurpose::KeyCertSign) {
             return Err(CaError::Invalid("CA certificate lacks keyCertSign".into()));
         }
-        let issuer = params.self_signed(&key)?;
         let size = NonZeroUsize::new(LEAF_CACHE_SIZE).unwrap_or(NonZeroUsize::MIN);
         Ok(Self {
             issuer,
-            key,
             cert_pem: cert_pem.to_owned(),
             leaves: Mutex::new(LruCache::new(size)),
             minted: AtomicU64::new(0),
@@ -215,7 +221,7 @@ impl Ca {
         let secs = i64::try_from(validity.as_secs()).unwrap_or(i64::MAX / 2);
         let not_after = now + time::Duration::seconds(secs);
         p.not_after = not_after;
-        let cert = p.signed_by(&key, &self.issuer, &self.key)?;
+        let cert = p.signed_by(&key, &self.issuer)?;
         let chain = vec![CertificateDer::from(cert.der().to_vec())];
         let pk = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
         let signer = rustls::crypto::aws_lc_rs::sign::any_ecdsa_type(&pk)?;
@@ -250,7 +256,7 @@ impl Ca {
         let now = OffsetDateTime::now_utc();
         p.not_before = now - time::Duration::hours(1);
         p.not_after = now + time::Duration::days(7);
-        let cert = p.signed_by(&key, &self.issuer, &self.key)?;
+        let cert = p.signed_by(&key, &self.issuer)?;
         let chain = vec![CertificateDer::from(cert.der().to_vec())];
         let pk = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
         let mut cfg = ServerConfig::builder_with_provider(Arc::new(

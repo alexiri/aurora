@@ -379,7 +379,9 @@ mod tests {
         let key = KeyPair::generate().unwrap();
         let mut lp = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
         lp.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        let leaf = lp.signed_by(&key, &ca, &ca_key).unwrap();
+        let leaf = lp
+            .signed_by(&key, &rcgen::Issuer::from_params(&p, &ca_key))
+            .unwrap();
         let chain = vec![CertificateDer::from(leaf.der().to_vec())];
         let pk = rustls::pki_types::PrivateKeyDer::Pkcs8(
             rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()),

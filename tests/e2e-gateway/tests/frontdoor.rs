@@ -76,7 +76,7 @@ async fn echo_upstream() -> (SocketAddr, String, Arc<Mutex<Vec<String>>>) {
             .unwrap();
             (
                 vec![leaf.cert.der().clone()],
-                rustls::pki_types::PrivateKeyDer::try_from(leaf.key_pair.serialize_der())
+                rustls::pki_types::PrivateKeyDer::try_from(leaf.signing_key.serialize_der())
                     .expect("rcgen serializes a PKCS8 key"),
                 leaf.cert.pem(),
             )
