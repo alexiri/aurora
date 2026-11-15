@@ -14,7 +14,7 @@ pub enum LlmErrorClass {
 }
 
 impl LlmErrorClass {
-    /// The metric label (`gateway_llm_upstream_total{class}`).
+    /// The metric label (`aurora_gateway_llm_upstream_total{class}`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Auth => "auth",

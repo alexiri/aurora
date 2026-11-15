@@ -157,7 +157,7 @@ struct Hook {
     /// Injected values placed in the URL (FIX-104).
     echo: Vec<Vec<u8>>,
     /// (P4-LLM-1, C-808) `(provider, endpoint id)` of an injected LLM key: the response is classified for the
-    /// request log and `gateway_llm_upstream_total`.
+    /// request log and `aurora_gateway_llm_upstream_total`.
     llm: Option<(String, String)>,
 }
 
@@ -205,7 +205,7 @@ impl PostHook for Hook {
                 c.as_str()
             };
             metrics::counter!(
-                "gateway_llm_upstream_total",
+                "aurora_gateway_llm_upstream_total",
                 "provider" => provider.clone(),
                 "endpoint" => endpoint.clone(),
                 "class" => class
