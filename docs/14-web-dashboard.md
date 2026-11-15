@@ -398,7 +398,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     rail's About part; a BYO agent (no rail) keeps them in the header. A frozen
     agent's banner stays full width under the header.
   - **Sections**, in this order: **Chat** (hosted only) · **Behaviour**
-    (Instructions, Memory, Skills) · **Triggers** (Schedules, Webhooks, Channels,
+    (Instructions, Memory, Skills, Evals) · **Triggers** (Schedules, Webhooks, Channels,
     Peers) · **Computer** (Computer, Terminal, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
     **Access**. Pages keep today's availability rules (Terminal and Previews only
     where enabled; BYO has only Instructions, Computer: Connect and Access); a
@@ -413,6 +413,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     per reply that lists the steps the agent takes, updated as they run and removed when the answer
     arrives. Chat platforms that can edit messages only. In shared channels the card shows step names,
     not details." The dashboard's own chat is unchanged. Shared primitives only.
+  - (phase 5, P4-EVAL, D-289, C-873) **Evals** is a page of the Behaviour section (`?tab=evals`), hosted agents only (no tab for BYO agents or a caller without `can_use`). It has three parts, in this order, all with shared primitives only (`DataTable`, `Dialog`, `ConfirmDialog`, `Field`, `Badge`, `Meter`, `Notice`, `Tabs`, `Card`, `Section`; add a missing primitive to `web/src/components/ui`, never a one-off style): **Questions** (a `DataTable` of position, question, expected-answer kind and a short expected summary; add and edit in a `Dialog` with the kind selector, a character counter at `EVAL_QUESTION_CHARS`, the number and tolerance for `numeric`, the text for `text`, the criteria for `judged`; the 100-question cap is explained, not hidden; on a phone the table becomes a stacked list with the same fields); **Judge** (the granted LLM keys the caller may see and a model field, saved by `can_own` only, with the other callers' control disabled and explained; every refusal of C-872 is an inline `Notice`); **Runs** (a list of status `Badge`, `Meter` for progress, pass rate, trigger and starter; "Start run" disabled with its reason while a run is active or the daily cap is reached; a run page with the results table (outcome `Badge`, question, the answer excerpt for `can_use` viewers, the reason in words, refused writes as a count), the regression `Notice` (C-871, counts only) and the fingerprint diff against the previous run as a two-column table of changed fields with truncated hashes and a copy action). Eval schedules are a `DataTable` with a dialog for the cron field and a plain-language preview, and "Run now" starts a run. Copy is plain English without emoji: the help text for the `ANSWER:` line and for refused writes says what the agent is told. Both themes; 390 px with no horizontal scroll; results and expected answers are never kept in `localStorage`, the URL or a cache outside the query cache (an unsent question draft may use `sessionStorage`).
   - **Chat panel**, from 768 px: conversation list (232 px) · thread · status
     rail, in one card; the page still does not scroll at 1280×800 (the list,
     transcript and rail scroll inside). The conversation list keeps its filter,
