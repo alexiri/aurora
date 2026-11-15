@@ -19,7 +19,6 @@ struct Admin {
 async fn admin(h: &Harness, email: &str) -> Admin {
     let user = h.user(email, true).await;
     let (session, tok) = h.good_session(user).await;
-    h.reauth(session).await;
     Admin {
         cookie: cookie(&tok),
         session,
@@ -398,47 +397,34 @@ async fn concurrent_puts_on_one_generation_make_one_conflict() {
 }
 
 #[tokio::test]
-async fn writes_need_an_instance_admin_session_and_a_recent_reauthentication() {
+async fn writes_need_an_instance_admin_session_and_no_reauthentication() {
     let h = Harness::new().await;
     let a = admin(&h, "root@x.io").await;
-    // 412 without a re-authentication within 600 s.
-    let user = h.user("stale@x.io", true).await;
-    let (_, tok) = h.good_session(user).await;
+    // FIX-157 (D-317): the admin session never re-authenticated; the write succeeds, and the
+    // critical audit row is still written (SEC-90).
     let (s, e) = put(
         &h,
-        &Admin {
-            cookie: cookie(&tok),
-            session: Uuid::nil(),
-            user,
-        },
+        &a,
         "settings_test",
         0,
         json!({ "settings_test.limit": 3 }),
     )
     .await;
-    assert_eq!(
-        (s, e["error"]["code"].as_str()),
-        (412, Some("reauth_required")),
-        "{e}"
-    );
-    sqlx::query("UPDATE sessions SET reauth_at = now() - interval '11 minutes' WHERE user_id = $1")
-        .bind(user)
-        .execute(h.pool())
-        .await
-        .unwrap();
-    let (s, _) = put(
-        &h,
-        &Admin {
-            cookie: cookie(&tok),
-            session: Uuid::nil(),
-            user,
-        },
-        "settings_test",
-        0,
-        json!({}),
+    assert_eq!(s, 200, "{e}");
+    let reauth_stamped: bool =
+        sqlx::query_scalar("SELECT reauth_at IS NOT NULL FROM sessions WHERE id = $1")
+            .bind(a.session)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+    assert!(!reauth_stamped);
+    let critical: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'instance_settings.update' AND critical",
     )
-    .await;
-    assert_eq!(s, 412);
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(critical, 1);
     // Org owner, plain user, API key: 403.
     let owner = h.user("owner@x.io", false).await;
     let org = h.org().await;
@@ -473,6 +459,32 @@ async fn writes_need_an_instance_admin_session_and_a_recent_reauthentication() {
         )
         .await;
     assert!(s == 403 || s == 401, "{s}");
+    // An API key may not write (or import) either: session only.
+    for (m, uri, body) in [
+        (
+            Method::PUT,
+            "/v1/admin/settings/settings_test",
+            json!({ "generation": 1, "values": {} }),
+        ),
+        (
+            Method::POST,
+            "/v1/admin/settings/import",
+            json!({ "document": "{}", "format": "json", "dry_run": false }),
+        ),
+    ] {
+        let (s, _, _) = h
+            .send(
+                m,
+                uri,
+                &[
+                    ("authorization", &format!("Bearer {key}")),
+                    ("origin", ORIGIN),
+                ],
+                Some(body),
+            )
+            .await;
+        assert!(s == 403 || s == 401, "{uri}: {s}");
+    }
     let _ = a.session;
 }
 

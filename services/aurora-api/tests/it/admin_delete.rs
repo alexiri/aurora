@@ -34,37 +34,17 @@ async fn memory_harness() -> (Harness, std::sync::Arc<aurora_secrets::MemoryStor
 struct E {
     h: Harness,
     mem: std::sync::Arc<aurora_secrets::MemoryStore>,
-    ia: Uuid,
-    /// Session token of the instance admin (re-authenticated just now).
+    /// Session token of the instance admin. FIX-157 (D-317): never re-authenticated; no
+    /// operation asks for it.
     ia_tok: String,
-    ia_sid: Uuid,
 }
 
 impl E {
     async fn new() -> E {
         let (h, mem) = memory_harness().await;
         let ia = h.user("ia@x.io", true).await;
-        let (ia_sid, ia_tok) = h.good_session(ia).await;
-        let e = E {
-            h,
-            mem,
-            ia,
-            ia_tok,
-            ia_sid,
-        };
-        e.reauth(e.ia_sid, 5).await;
-        e
-    }
-
-    async fn reauth(&self, sid: Uuid, ago_secs: i64) {
-        sqlx::query(
-            "UPDATE sessions SET reauth_at = now() - make_interval(secs => $2) WHERE id = $1",
-        )
-        .bind(sid)
-        .bind(ago_secs as f64)
-        .execute(self.h.pool())
-        .await
-        .unwrap();
+        let (_, ia_tok) = h.good_session(ia).await;
+        E { h, mem, ia_tok }
     }
 
     async fn call(&self, tok: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
@@ -96,8 +76,7 @@ impl E {
         let org = self.h.org().await;
         let owner = self.h.user(&format!("owner-{tag}@x.io"), false).await;
         self.h.member(org, owner, "owner", "active").await;
-        let (osid, tok) = self.h.good_session(owner).await;
-        self.reauth(osid, 5).await;
+        let (_, tok) = self.h.good_session(owner).await;
         let ws = self.h.workspace(org).await;
         for h in ["a1", "a2"] {
             sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
@@ -379,7 +358,7 @@ async fn admin_org_routes_refuse_org_roles_and_api_keys() {
 }
 
 #[tokio::test]
-async fn admin_deletes_need_reauth_and_the_slug_and_delete_nothing_otherwise() {
+async fn admin_deletes_need_the_slug_not_a_reauth_and_delete_nothing_otherwise() {
     let e = E::new().await;
     let (org, ws, _, slug, ws_slug) = e.org_fixture("c").await;
     let org_uri = format!("/v1/admin/orgs/{org}");
@@ -405,27 +384,8 @@ async fn admin_deletes_need_reauth_and_the_slug_and_delete_nothing_otherwise() {
             && e.mem.managed_count() == 2
     };
 
-    // Never re-authenticated, then stale: 412 and nothing happens (right slug or not).
-    sqlx::query("UPDATE sessions SET reauth_at = NULL WHERE id = $1")
-        .bind(e.ia_sid)
-        .execute(e.h.pool())
-        .await
-        .unwrap();
-    for stale in [None, Some(660)] {
-        if let Some(a) = stale {
-            e.reauth(e.ia_sid, a).await;
-        }
-        for (uri, confirm) in [(&org_uri, &slug), (&ws_uri, &ws_slug)] {
-            let (s, v) = e
-                .ia(Method::DELETE, uri, Some(json!({"confirm": confirm})))
-                .await;
-            assert_eq!((s, code(&v)), (412, "reauth_required"), "{uri}");
-        }
-    }
-    assert!(intact().await);
-
-    // Fresh re-authentication, wrong slug: 400.
-    e.reauth(e.ia_sid, 5).await;
+    // The admin session never re-authenticated (FIX-157, D-317): the typed slug alone gates.
+    // Wrong slug: 400.
     for uri in [&org_uri, &ws_uri] {
         let (s, v) = e
             .ia(Method::DELETE, uri, Some(json!({"confirm": "nope"})))
@@ -454,19 +414,26 @@ async fn admin_deletes_need_reauth_and_the_slug_and_delete_nothing_otherwise() {
             .await;
         assert_eq!(s, 404, "{uri}");
     }
-    // Re-authentication is per session: another admin session without it is refused.
-    let (other_sid, other_tok) = e.h.good_session(e.ia).await;
-    let (s, v) = e
-        .call(
-            &other_tok,
-            Method::DELETE,
-            &org_uri,
-            Some(json!({"confirm": slug})),
-        )
-        .await;
-    assert_eq!((s, code(&v)), (412, "reauth_required"));
-    let _ = other_sid;
     assert!(intact().await);
+
+    // The correct slug deletes on the first request, no re-authentication (D-317).
+    let (s, v) = e
+        .ia(Method::DELETE, &ws_uri, Some(json!({"confirm": ws_slug})))
+        .await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(
+        e.n("SELECT count(*) FROM workspaces WHERE id=$1", ws).await,
+        0
+    );
+    let (s, v) = e
+        .ia(Method::DELETE, &org_uri, Some(json!({"confirm": slug})))
+        .await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(
+        e.n("SELECT count(*) FROM organizations WHERE id=$1", org)
+            .await,
+        0
+    );
 }
 
 /// The owner and the admin path leave the same post-state on equivalent fixtures; an admin
@@ -575,8 +542,7 @@ async fn admin_workspace_delete_matches_the_owner_path_and_audits() {
             .fetch_one(e.h.pool())
             .await
             .unwrap();
-        let (sid, tok) = e.h.good_session(owner).await;
-        e.reauth(sid, 5).await;
+        let (_, tok) = e.h.good_session(owner).await;
         tok
     };
     let other_slug: String = sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1")

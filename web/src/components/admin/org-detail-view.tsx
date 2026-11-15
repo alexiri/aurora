@@ -7,7 +7,6 @@ import { AdminDeleteDialog } from "@/components/admin/admin-delete-dialog";
 import { OrgDeleteConsequences } from "@/components/admin/orgs-view";
 import { fmtDate } from "@/components/account/key-table";
 import { ErrorState, Loading } from "@/components/states";
-import { ReauthErrorNotice } from "@/components/auth/reauth-error-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -19,7 +18,7 @@ import { useAdminDeleteOrg, useAdminDeleteWorkspace, useAdminOrg, useAdminOrgWor
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function WorkspaceRow({ ws, orgId, onDeleted }: { ws: AdminOrgWorkspace; orgId: string; onDeleted: (msg: string) => void }) {
+function WorkspaceRow({ ws, onDeleted }: { ws: AdminOrgWorkspace; onDeleted: (msg: string) => void }) {
   const [open, setOpen] = useState(false);
   const del = useAdminDeleteWorkspace();
   return (
@@ -39,7 +38,6 @@ function WorkspaceRow({ ws, orgId, onDeleted }: { ws: AdminOrgWorkspace; orgId: 
           title={`Delete ${ws.name}?`}
           noun="workspace"
           slug={ws.slug}
-          returnTo={`/admin/orgs/${orgId}`}
           consequences={
             <p>
               Deletes the workspace <strong className="text-ink">{ws.name}</strong> with its {plural(ws.agent_count, "agent")}.
@@ -90,7 +88,6 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
           </Button>
         }
       />
-      <ReauthErrorNotice />
       {done ? (
         <Notice tone="accent" role="status" data-testid="admin-orgs-done">
           {done}
@@ -122,7 +119,7 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
                 </thead>
                 <tbody>
                   {workspaces.data.items.map((w) => (
-                    <WorkspaceRow key={w.id} ws={w} orgId={orgId} onDeleted={setDone} />
+                    <WorkspaceRow key={w.id} ws={w} onDeleted={setDone} />
                   ))}
                 </tbody>
               </DataTable>
@@ -136,7 +133,6 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
         title={`Delete ${o.name}?`}
         noun="organization"
         slug={o.slug}
-        returnTo={`/admin/orgs/${orgId}`}
         consequences={<OrgDeleteConsequences org={o} />}
         run={(confirm) => del.mutateAsync({ orgId, confirm })}
         onDone={() => router.push("/admin/orgs")}

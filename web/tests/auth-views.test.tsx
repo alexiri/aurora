@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -189,35 +189,35 @@ describe("JoinView", () => {
 });
 
 describe("DeleteView", () => {
-  it("shows the reauth_error notice only when the param is present (FIX-152)", async () => {
+  it("mentions no sign-in-again step and shows no reauth_error notice (FIX-157)", async () => {
     mockFetch({ "GET /v1/instance": () => json(200, instance) });
     search = "reauth_error=reauth_stale";
     wrap(<DeleteView />);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/did not confirm a fresh sign-in.*reauth_stale/);
-    cleanup();
-    search = "reauth_error=whatever";
-    wrap(<DeleteView />);
-    expect((await screen.findByRole("alert")).textContent).toBe("Re-authentication failed. Please try again.");
-    cleanup();
-    search = "";
-    wrap(<DeleteView />);
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/sign in again/i)).toBeNull();
+    expect(screen.queryByRole("link", { name: /Sign in again/i })).toBeNull();
   });
 
-  it("412 reauth_required offers re-authentication through the provider", async () => {
+  it("deletes on the first click, with no re-authentication", async () => {
+    const onDeleted = vi.fn();
     mockFetch({
       "GET /v1/instance": () => json(200, instance),
-      "DELETE /v1/me": () =>
-        json(412, { error: { code: "reauth_required", message: "x" } }),
+      "DELETE /v1/me": () => new Response(null, { status: 204 }),
     });
-    wrap(<DeleteView />);
+    wrap(<DeleteView onDeleted={onDeleted} />);
     expect(screen.queryByLabelText("Password")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Delete my account" }));
-    const link = await screen.findByRole("link", { name: /Sign in again with Google/ });
-    expect(link).toHaveAttribute(
-      "href",
-      "/v1/auth/oidc/g/start?return_to=%2Faccount%2Fdelete&reauth=1",
-    );
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("link", { name: /Sign in again/i })).toBeNull();
+  });
+
+  it("409 last_owner is explained", async () => {
+    mockFetch({
+      "DELETE /v1/me": () => json(409, { error: { code: "last_owner", message: "x" } }),
+    });
+    wrap(<DeleteView />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete my account" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/last owner/);
   });
 });
 

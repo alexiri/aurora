@@ -232,15 +232,13 @@ describe("Generic settings section form (SET-1)", () => {
     await waitFor(() => expect(puts).toHaveBeenCalledTimes(1));
   });
 
-  it("handles 409 stale_revision, 412 reauth_required and 422 field errors", async () => {
+  it("handles 409 stale_revision and 422 field errors, with no re-authentication step (FIX-157)", async () => {
     let n = 0;
     mockFetch({
       "GET /v1/admin/settings/settings_test": () => json(200, section()),
-      "GET /v1/instance": () => json(200, { oidc_providers: [{ id: "corp", display_name: "Corp SSO" }] }),
       "POST /v1/admin/settings/settings_test/preview": () => {
         n += 1;
         if (n === 1) return json(409, { error: { code: "stale_revision", message: "stale", details: { current_generation: 9 } } });
-        if (n === 2) return json(412, { error: { code: "reauth_required", message: "reauth" } });
         return json(422, { error: { code: "settings_invalid", message: "bad", details: { fields: [{ path: "/t.count", code: "invalid_value", message: "must be between 1 and 100" }, { path: "/other.key", code: "x", message: "needs t.flag" }] } } });
       },
     });
@@ -252,10 +250,8 @@ describe("Generic settings section form (SET-1)", () => {
     // The typed value is kept until Reload.
     expect((document.getElementById("t.flag-c") as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText(/sign in again with your provider/)).toBeTruthy();
-    expect((await screen.findByRole("link", { name: /Corp SSO/ })).getAttribute("href")).toContain("reauth=1");
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("must be between 1 and 100")).toBeTruthy();
     expect(screen.getByText(/needs t\.flag/)).toBeTruthy();
+    expect(screen.queryByText(/sign in again/i)).toBeNull();
   });
 });

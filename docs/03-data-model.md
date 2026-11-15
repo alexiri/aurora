@@ -74,7 +74,7 @@ External identities linked to a user (OIDC).
 | last_seen_at | timestamptz not null | churn column; updated at most once per minute |
 | expires_at | timestamptz not null | absolute expiry |
 | revoked_at | timestamptz null | |
-| reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min (phase 1, RFE-004) |
+| reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needed it within 10 min (phase 1, RFE-004); (phase 5, FIX-157, D-317) no operation reads it any more, the flow still stamps it |
 
 ### `organizations`
 | Column | Type | Notes |

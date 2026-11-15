@@ -2,7 +2,6 @@ use super::dto::*;
 use super::service::{self, Freezer, Target, workspace_authority};
 use crate::app::AppState;
 use crate::audit::{AuditActor, AuditEvent, Outcome};
-use crate::domains::me::service::REAUTH_WINDOW_SECS;
 use crate::domains::tenancy::dto::ConfirmRequest;
 use crate::domains::tenancy::service as tenancy;
 use crate::http::auth::{Caller, InstanceAdmin, Principal, require_own};
@@ -12,7 +11,7 @@ use crate::http::pagination::{Page, Pagination};
 use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::freeze::{self as repo, Effective, Scope};
-use aurora_db::repo::{agents, sessions, workspaces};
+use aurora_db::repo::{agents, workspaces};
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::json;
@@ -357,34 +356,23 @@ async fn admin_list_org_workspaces(
     }))
 }
 
-fn reauth_required() -> ApiError {
-    ApiError::new(
-        StatusCode::PRECONDITION_FAILED,
-        "reauth_required",
-        "Re-authenticate with your sign-in provider to delete.",
-    )
-}
-
-/// The session's last OIDC authentication is within the shared window ([`REAUTH_WINDOW_SECS`]).
-async fn require_recent_reauth(s: &AppState, c: &InstanceAdmin) -> Result<(), ApiError> {
-    let Principal::Session { id } = c.principal else {
+/// The admin deletes are session only: an API key or agent token is refused (FIX-157, D-317:
+/// no OIDC re-authentication is required any more).
+fn require_session(c: &InstanceAdmin) -> Result<(), ApiError> {
+    let Principal::Session { .. } = c.principal else {
         return Err(ApiError::forbidden("Session required."));
     };
-    let age = sessions::reauth_age_secs(&s.pool, id).await?;
-    if !age.is_some_and(|a| (0.0..=REAUTH_WINDOW_SECS).contains(&a)) {
-        return Err(reauth_required());
-    }
     Ok(())
 }
 
-/// Delete any organization with everything in it (instance administrators; recent re-auth,
+/// Delete any organization with everything in it (instance administrators; session only,
 /// typed slug). Runs the owner delete's services; allowed while frozen; shows no content.
 #[utoipa::path(delete, path = "/admin/orgs/{org}", operation_id = "adminDeleteOrg", tag = "admin",
     params(("org" = Uuid, Path, description = "Organization id")),
     request_body = ConfirmRequest,
     responses((status = 204, description = "Deleted"), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 412, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+        (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn admin_delete_org(
     c: InstanceAdmin,
@@ -393,7 +381,7 @@ async fn admin_delete_org(
     Json(req): Json<ConfirmRequest>,
 ) -> Result<StatusCode, ApiError> {
     let row = admin_org_row(&s, org).await?;
-    require_recent_reauth(&s, &c).await?;
+    require_session(&c)?;
     if req.confirm != row.slug {
         return Err(tenancy::confirmation_mismatch());
     }
@@ -412,14 +400,14 @@ async fn admin_delete_org(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the
+/// Delete any workspace (instance administrators; session only, typed slug). Runs the
 /// owner delete's services; shows no content.
 #[utoipa::path(delete, path = "/admin/workspaces/{ws}", operation_id = "adminDeleteWorkspace", tag = "admin",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     request_body = ConfirmRequest,
     responses((status = 204, description = "Deleted"), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 412, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+        (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn admin_delete_workspace(
     c: InstanceAdmin,
@@ -433,7 +421,7 @@ async fn admin_delete_workspace(
             .await?
             .ok_or_else(|| ApiError::not_found("Workspace not found."))?
     };
-    require_recent_reauth(&s, &c).await?;
+    require_session(&c)?;
     if req.confirm != slug {
         return Err(tenancy::confirmation_mismatch());
     }

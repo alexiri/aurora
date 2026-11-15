@@ -2,13 +2,11 @@
 
 import { useState } from "react";
 
-import { ReauthPrompt } from "@/components/admin/settings/reauth-prompt";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
-import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import { useImportSettings, type ImportResult } from "@/lib/api/settings";
 
@@ -20,7 +18,7 @@ function show(v: unknown): string {
 /**
  * Import… (C-776): paste or choose a YAML/JSON document, check it (a dry run shows each section's
  * diff, the keys ignored because Helm sets them to the same value, and errors), then Apply — enabled
- * only without errors; a 412 runs the re-authentication step.
+ * only without errors. No re-authentication step (phase 5, FIX-157, D-317).
  */
 export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [text, setText] = useState("");
@@ -30,7 +28,6 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [done, setDone] = useState(false);
   const imp = useImportSettings();
   const format = text.trimStart().startsWith("{") ? "json" : "yaml";
-  const code = error instanceof ApiError ? error.code : null;
 
   async function check() {
     setError(null);
@@ -103,8 +100,7 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             </label>
           </div>
 
-          {error && code === "reauth_required" ? <ReauthPrompt returnTo="/admin/settings" onRetry={() => void apply()} /> : null}
-          {error && code !== "reauth_required" ? (
+          {error ? (
             <Notice tone="danger" role="alert">
               {errorMessage(error)}
             </Notice>

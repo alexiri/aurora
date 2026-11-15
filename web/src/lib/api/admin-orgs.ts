@@ -34,7 +34,7 @@ function useRefreshAdmin() {
   return () => qc.invalidateQueries({ queryKey: ["admin"] });
 }
 
-/** `DELETE /v1/admin/orgs/{org}` with the typed slug; 412 `reauth_required` surfaces as the mutation error. */
+/** `DELETE /v1/admin/orgs/{org}` with the typed slug (no re-authentication, FIX-157, D-317); an API error surfaces as the mutation error. */
 export function useAdminDeleteOrg() {
   const refresh = useRefreshAdmin();
   return useMutation({

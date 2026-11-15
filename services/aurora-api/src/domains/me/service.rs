@@ -4,12 +4,8 @@ use crate::domains::tenancy::dto::{OrgSummary, parse_org_role, parse_status, par
 use crate::domains::tenancy::service::WorkspaceDeletion;
 use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
-use aurora_db::repo::{account, notify_auth_revoked, sessions, users};
-use http::StatusCode;
+use aurora_db::repo::{account, notify_auth_revoked, users};
 use uuid::Uuid;
-
-/// Max age of the session's last OIDC re-authentication for account deletion (docs/04 §OIDC).
-pub const REAUTH_WINDOW_SECS: f64 = 600.0;
 
 pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
     let user = users::find_by_id(&state.pool, user_id)
@@ -123,30 +119,16 @@ pub async fn patch_me(
     load_me(state, user_id).await
 }
 
-fn reauth_required() -> ApiError {
-    ApiError::new(
-        StatusCode::PRECONDITION_FAILED,
-        "reauth_required",
-        "Re-authenticate with your sign-in provider to delete the account.",
-    )
-}
-
-/// Delete the caller's account (phase 1, RFE-004): needs an OIDC re-authentication of this
-/// session within [`REAUTH_WINDOW_SECS`] (412 `reauth_required` otherwise; the dashboard starts
-/// `GET /v1/auth/oidc/{provider}/start?reauth=1`).
+/// Delete the caller's account (phase 1, RFE-004). The route admits sessions only; no OIDC
+/// re-authentication is required (phase 5, FIX-157, D-317).
 pub async fn delete_me(
     state: &AppState,
     user_id: Uuid,
-    session_id: Uuid,
     ev: &crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
     users::find_by_id(&state.pool, user_id)
         .await?
         .ok_or_else(|| ApiError::unauthenticated("Authentication required."))?;
-    let age = sessions::reauth_age_secs(&state.pool, session_id).await?;
-    if !age.is_some_and(|a| (0.0..=REAUTH_WINDOW_SECS).contains(&a)) {
-        return Err(reauth_required());
-    }
     // (FIX-097, docs/04 §Deletion semantics) A personal workspace nobody else is bound to goes
     // with its person; seal each deletion's deprovision copies before the transaction.
     let personal_hint: Vec<Uuid> =
