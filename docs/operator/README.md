@@ -114,12 +114,20 @@ OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolve
 - **7. OpenTelemetry export.** When `telemetry.otlp_endpoint` is set, every service exports
   traces over OTLP/HTTP protobuf (rustls; a base URL gets `/v1/traces` appended) and propagates
   W3C `traceparent` on its calls to the hook host. Without the key nothing is installed.
-  **(phase 5, FIX-146, D-232; not yet implemented)** This changes: every service will always
-  install the propagator and a tracer provider, so every log line inside a request carries
-  `request_id` (the trace id, also returned as `x-request-id`) and `kubectl logs … | grep <id>`
-  follows a request across services without any collector; the key only adds the exporter.
-  `telemetry.sample_ratio` (default 1.0) sets the sampled fraction, and in Kubernetes the
-  collector must be listed in `networkPolicy.telemetryTo` or the default-deny policies block it.
+  **(phase 5, FIX-146, D-232)** Every service always installs the propagator and a tracer
+  provider, so every log line inside a request carries `request_id` (the trace id, also
+  returned as `x-request-id`) and `kubectl logs … | grep <id>` follows a request across
+  services without any collector; the key only adds the exporter. `telemetry.sample_ratio`
+  (default 1.0) sets the sampled fraction. In Kubernetes the collector must be listed in
+  `networkPolicy.telemetryTo` (raw NetworkPolicy `to` entries, rendered into the egress of the
+  api, gateway, hookhost, runner, relay, connector host and connector pods) or the default-deny
+  policies block it; `NOTES.txt` warns when an endpoint is set and `telemetryTo` is empty. With
+  an endpoint set the chart also gives the dashboard `AURORA_TRACING_SAMPLE_RATIO`, which turns
+  its browser tracing on. Any OTLP/HTTP backend works: Jaeger (v2 takes OTLP on 4318), Grafana
+  Tempo, or an OpenTelemetry Collector in front of either, e.g.
+  `config.telemetry.otlp_endpoint: http://tempo.observability:4318` with
+  `networkPolicy.telemetryTo: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}}]`.
+  The kind dev stack does this for you: `just kind-up --tracing` ([install-kind-dev.md](install-kind-dev.md)).
   See [`15 §Observability`](../15-deployment-operations.md#observability).
 - **8. Parsed but unused keys.** `gateway.condition_body_bytes` sets the body prefix buffered
   for policy conditions (never below the 16 KiB approval peek), `gateway.resolve_cache_ttl_secs`

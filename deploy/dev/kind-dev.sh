@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # OPS-017: the one containerized dev/test setup: a kind cluster + the Helm chart (replaces podman compose).
 #
-#   deploy/dev/kind-dev.sh up [--llm-mock] [--connector-fake] [--no-sandbox]   cluster + ingress + images + helm release
+#   deploy/dev/kind-dev.sh up [--llm-mock] [--connector-fake] [--no-sandbox] [--tracing]   cluster + ingress + images + helm release
+#                                          --tracing: Jaeger (dev, in-memory) + deploy/kind/values-tracing.yaml; UI via port-forward svc/jaeger 16686
 #   deploy/dev/kind-dev.sh dev [api|gateway|hookhost|runner|connector-host|connector-fake|dev-idp|web|sandbox ...]
 #                                          rebuild changed service images, load them, restart those Deployments
 #   deploy/dev/kind-dev.sh bootstrap-admin <email>   pre-provision the first instance admin (binds at their first sign-in)
@@ -170,10 +171,10 @@ ensure_cluster() {
 }
 
 cmd_up() {
-  local mock=0 fake=0 sandbox=1
+  local mock=0 fake=0 sandbox=1 tracing=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --llm-mock) mock=1 ;; --connector-fake) fake=1 ;; --no-sandbox) sandbox=0 ;;
+      --llm-mock) mock=1 ;; --connector-fake) fake=1 ;; --no-sandbox) sandbox=0 ;; --tracing) tracing=1 ;;
       *) die "unknown argument: $1" ;;
     esac; shift
   done
@@ -198,6 +199,12 @@ cmd_up() {
       --dry-run=client -o yaml | k apply -f - >/dev/null || die "litellm configmap failed"
     k apply -f deploy/dev/llm-mock/llm-mock.yaml >/dev/null || die "llm-mock apply failed"
   fi
+  if [ "$tracing" = 1 ]; then
+    # FIX-146 Part C: Jaeger all-in-one (in-memory, dev only) beside the release; the values open the egress to it.
+    vals+=(-f deploy/kind/values-tracing.yaml)
+    k apply -f - >/dev/null <<<"{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"name\":\"$NS\"}}"
+    k apply -f deploy/dev/jaeger/jaeger.yaml >/dev/null || die "jaeger apply failed"
+  fi
   log "helm upgrade --install $RELEASE (${vals[*]})"
   helm --kube-context "$CTX" upgrade --install "$RELEASE" deploy/helm/aurora -n "$NS" --create-namespace \
     "${vals[@]}" --set "externalUrl=http://localhost:$PORT" --wait --timeout 8m >&2 || die "helm install failed (kubectl --context $CTX -n $NS get pods)"
@@ -217,6 +224,10 @@ cmd_up() {
   done
   log "Aurora is up: http://localhost:$PORT  (sign in with 'Development sign-in' and pick a user; kubectl --context $CTX -n $NS ...)"
   log "first instance admin: deploy/dev/kind-dev.sh bootstrap-admin you@example.com  (then sign in with that e-mail)"
+  if [ "$tracing" = 1 ]; then
+    k -n "$NS" rollout status deploy/jaeger --timeout=240s >/dev/null || die "jaeger not ready"
+    log "tracing on (every request exported to Jaeger): kubectl --context $CTX -n $NS port-forward svc/jaeger 16686   then open http://localhost:16686"
+  fi
   [ "$mock" = 1 ] && log "LLM endpoint litellm-mock, key sk-aurora-mock-dev; hosted agents run the real claude-code harness (runner.image $SANDBOX_LLM_IMAGE)"
   return 0
 }

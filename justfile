@@ -25,7 +25,7 @@ dev: migrate
 
 # --- containerized dev stack: kind + Helm (OPS-017; docs/operator/install-kind-dev.md) ---
 
-# Create the kind cluster `aurora-dev`, build + load the images, helm install. Flags: --llm-mock --connector-fake --no-sandbox. One URL: http://localhost:4000.
+# Create the kind cluster `aurora-dev`, build + load the images, helm install. Flags: --llm-mock --connector-fake --no-sandbox --tracing (dev Jaeger: `kubectl -n aurora port-forward svc/jaeger 16686`). One URL: http://localhost:4000.
 kind-up *flags:
     bash deploy/dev/kind-dev.sh up {{flags}}
 
