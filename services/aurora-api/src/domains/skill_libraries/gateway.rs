@@ -5,6 +5,7 @@
 //! and calls the fake git host).
 
 use async_trait::async_trait;
+use aurora_core::telemetry::InternalRequest;
 use aurora_registry::library::Step;
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -133,9 +134,8 @@ impl LibraryGateway for HttpGateway {
             .post(format!("{}/internal/v1/library-fetch", self.base))
             .bearer_auth(&self.bearer)
             .header(aurora_core::limits::KEY_ID_HEADER, &self.key_id)
-            .headers(aurora_core::telemetry::headers())
             .json(&body)
-            .send()
+            .send_internal("aurora-gateway")
             .await
             .map_err(|_| GatewayError::Upstream("the gateway is unreachable"))?;
         let status = resp.status();

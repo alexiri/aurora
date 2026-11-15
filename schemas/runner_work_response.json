@@ -707,6 +707,13 @@
         "sandbox_id": {
           "format": "uuid",
           "type": "string"
+        },
+        "trace_context": {
+          "description": "(FIX-146, C-732 (3)) W3C traceparent `00-<32 hex>-<16 hex>-<2 hex>` of the turn this item\nconcerns, read from `turns.trace_context`; absent when none. The runner treats an absent\nor malformed value as none; its spans for the item are children of it.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

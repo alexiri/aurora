@@ -270,8 +270,43 @@ impl Proxy {
         }
     }
 
+    /// One `gateway {host}` span per proxied request (FIX-146, D-232 (8)): a child of the turn's
+    /// trace context carried by the credential (copied at mint, never from the sandbox), else its
+    /// own trace. Decision, app, tool, rule, connection and status are recorded by
+    /// `RequestLog::record`. The sandbox's own `traceparent` is neither adopted nor stripped, and
+    /// no Aurora `traceparent` is injected upstream. No model or token attributes: the gateway
+    /// does not parse them today.
+    async fn process(&self, t: &Target, req: Request<Incoming>) -> Response<Body> {
+        let span = tracing::info_span!(
+            "gateway",
+            otel.name = %format!("gateway {}", t.host),
+            otel.kind = "server",
+            server.address = %t.host,
+            http.request.method = %req.method(),
+            aurora.agent_id = %t.identity.agent_id,
+            aurora.conversation_id = tracing::field::Empty,
+            aurora.turn_id = tracing::field::Empty,
+            aurora.app_id = tracing::field::Empty,
+            aurora.tool = tracing::field::Empty,
+            aurora.decision = tracing::field::Empty,
+            aurora.rule_id = tracing::field::Empty,
+            aurora.connection_id = tracing::field::Empty,
+            http.response.status_code = tracing::field::Empty,
+        );
+        if let Some(c) = t.identity.conversation_id {
+            span.record("aurora.conversation_id", tracing::field::display(c));
+        }
+        if let Some(turn) = t.identity.turn_id {
+            span.record("aurora.turn_id", tracing::field::display(turn));
+        }
+        if !aurora_core::telemetry::adopt_turn_context(&span, t.identity.trace_context.as_deref()) {
+            aurora_core::telemetry::tag_request_id(&span);
+        }
+        tracing::Instrument::instrument(self.process_request(t, req), span).await
+    }
+
     /// Pipeline steps 1-3, handler, forwarding (step 13).
-    async fn process(&self, t: &Target, mut req: Request<Incoming>) -> Response<Body> {
+    async fn process_request(&self, t: &Target, mut req: Request<Incoming>) -> Response<Body> {
         let upgrade_fut =
             hygiene::requested_upgrade(req.headers()).map(|_| hyper::upgrade::on(&mut req));
         let (parts, body) = req.into_parts();

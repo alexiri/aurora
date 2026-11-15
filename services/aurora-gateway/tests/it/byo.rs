@@ -40,6 +40,7 @@ fn identity(token_kind: CredentialKind, byo: Option<ByoAdmission>) -> RequestIde
         org_id: Uuid::now_v7(),
         conversation_id: None,
         turn_id: None,
+        trace_context: None,
         context_label: None,
         speaker_user_id: None,
         speaker_group_ids: Vec::new(),

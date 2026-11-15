@@ -100,6 +100,7 @@ fn stop_item(c: sandboxes::StopClaim) -> Option<WorkItem> {
         item_id: Uuid::now_v7(),
         sandbox_id: c.sandbox_id,
         boot_id,
+        trace_context: None,
         body: WorkItemBody::SandboxStop(SandboxStop {
             reason,
             grace_secs: STOP_GRACE_SECS,
@@ -299,11 +300,14 @@ async fn mint_start(
         resources,
         labels,
     );
+    // (FIX-146, D-232 (7)) A start triggered by a queued turn carries that turn's trace context.
+    let trace_context = aurora_db::repo::turns::queued_trace_context(&mut *tx, c.agent_id).await?;
     Ok((
         WorkItem {
             item_id: Uuid::now_v7(),
             sandbox_id: c.sandbox_id,
             boot_id,
+            trace_context,
             body: WorkItemBody::SandboxStart(SandboxStart {
                 spec,
                 start_timeout_secs: Some(runner_start_bound_secs(

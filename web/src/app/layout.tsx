@@ -8,6 +8,7 @@ import { RateLimitNotice } from "@/components/rate-limit-notice";
 import { isPreference, THEME_COOKIE, THEME_SCRIPT } from "@/components/theme/theme";
 import { ThemeSync } from "@/components/theme/theme-switch";
 import { VersionBanner } from "@/components/version-banner";
+import { parseRatio } from "@/lib/telemetry";
 import { Providers } from "./providers";
 
 // Self-hosted variable fonts (I-40): same-origin, no font CDN, CSP unchanged.
@@ -43,6 +44,8 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const stored = (await cookies()).get(THEME_COOKIE)?.value;
   // Explicit Light/Dark is rendered server-side; System is resolved by the head script (I-41).
   const theme = isPreference(stored) && stored !== "system" ? stored : undefined;
+  // (FIX-146, D-232 (i)) The chart renders this only when an OTLP endpoint is set; absent or invalid: no tracing code loads.
+  const tracingRatio = parseRatio(process.env.AURORA_TRACING_SAMPLE_RATIO);
   return (
     <html
       lang="en"
@@ -56,7 +59,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
-        <Providers>
+        <Providers tracingRatio={tracingRatio}>
           <ThemeSync />
           <VersionBanner />
           {children}

@@ -271,6 +271,23 @@ fn plugins_builtin_dir_default_override_and_empty() {
     assert!(raw.api_config().unwrap_err().has_key("plugins.builtin_dir"));
 }
 
+// FIX-146 (C-732 (5)): `telemetry.sample_ratio` defaults to 1.0; outside 0.0..=1.0 is refused.
+#[test]
+fn telemetry_sample_ratio_default_and_range() {
+    let raw = load_with(BASE, &[]).unwrap();
+    assert_eq!(raw.telemetry.sample_ratio, 1.0);
+    for ok in ["0.0", "0.25", "1.0"] {
+        let t = format!("{BASE}[telemetry]\nsample_ratio = {ok}\n");
+        let cfg = load_with(&t, &[]).unwrap().api_config().unwrap();
+        assert_eq!(cfg.telemetry.sample_ratio, ok.parse::<f64>().unwrap());
+    }
+    for bad in ["-0.1", "1.5", "nan"] {
+        let t = format!("{BASE}[telemetry]\nsample_ratio = {bad}\n");
+        let err = load_with(&t, &[]).unwrap().api_config().unwrap_err();
+        assert!(err.has_key("telemetry.sample_ratio"), "{bad}");
+    }
+}
+
 // FIX-015 (RFE-016): `[events]` defaults, a valid window, both out-of-range ends, unknown bus id.
 #[test]
 fn events_delta_bus_and_coalesce_window() {

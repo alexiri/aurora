@@ -48,6 +48,7 @@ pub mod secrets;
 pub mod settings;
 pub mod skill_libraries;
 pub mod skills;
+pub mod telemetry;
 pub mod tenancy;
 pub mod terminal;
 pub mod tools;

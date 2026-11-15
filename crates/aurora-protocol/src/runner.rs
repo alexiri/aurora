@@ -830,6 +830,11 @@ pub struct WorkItem {
     pub item_id: Uuid,
     pub sandbox_id: Uuid,
     pub boot_id: Uuid,
+    /// (FIX-146, C-732 (3)) W3C traceparent `00-<32 hex>-<16 hex>-<2 hex>` of the turn this item
+    /// concerns, read from `turns.trace_context`; absent when none. The runner treats an absent
+    /// or malformed value as none; its spans for the item are children of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_context: Option<String>,
     #[serde(flatten)]
     pub body: WorkItemBody,
 }

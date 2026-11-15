@@ -621,6 +621,7 @@ impl DbCredentialResolver {
                 org_id: row.org_id,
                 conversation_id: row.conversation_id,
                 turn_id: row.turn_id,
+                trace_context: row.trace_context,
                 context_label: row.context_label,
                 speaker_user_id,
                 speaker_group_ids,

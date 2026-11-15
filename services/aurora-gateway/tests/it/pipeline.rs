@@ -92,6 +92,7 @@ impl CredentialResolver for Static {
             org_id: w.org,
             conversation_id: None,
             turn_id: None,
+            trace_context: None,
             context_label: (token == BYO_CONTEXT).then(|| "aurora run: make test".to_owned()),
             speaker_user_id: speaker,
             speaker_group_ids: Vec::new(),

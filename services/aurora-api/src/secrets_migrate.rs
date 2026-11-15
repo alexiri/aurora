@@ -255,7 +255,7 @@ pub async fn run(pool: &PgPool, vault: &SecretVault, opts: &Options) -> Result<S
     // One real run at a time, whoever starts it (the CLI or the dashboard job, on any replica):
     // a transaction-scoped advisory lock held for the whole run, released when it ends or the
     // process dies. A dry run writes nothing and takes no lock.
-    let _lock = if opts.dry_run {
+    let lock = if opts.dry_run {
         None
     } else {
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
@@ -265,11 +265,19 @@ pub async fn run(pool: &PgPool, vault: &SecretVault, opts: &Options) -> Result<S
             .await
             .map_err(|e| e.to_string())?;
         if !got {
+            // Not ours: nothing to hold. End the transaction before returning.
+            let _ = tx.rollback().await;
             return Err("another secrets migration is running".into());
         }
         Some(tx)
     };
-    run_unlocked(pool, vault, opts).await
+    let out = run_unlocked(pool, vault, opts).await;
+    if let Some(tx) = lock {
+        // Release the lock now, not whenever the pool gets round to the rollback a dropped
+        // transaction only queues: a run that ends must not exclude the next one.
+        let _ = tx.rollback().await;
+    }
+    out
 }
 
 /// [`run`] without the migration lock: for a caller that holds it, and for the tests of the
