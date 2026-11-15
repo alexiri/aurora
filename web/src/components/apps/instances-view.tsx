@@ -296,7 +296,10 @@ function InstanceRow({
       </Td>
       {showOrg ? <Td className="text-ink-2">{inst.org_id ? (inst.org_name ?? inst.org_slug ?? inst.org_id) : "—"}</Td> : null}
       <Td>
-        <Badge tone={inst.org_id ? "neutral" : "accent"}>{inst.org_id ? "Organization" : "Instance-wide"}</Badge>
+        {/* (FIX-134, D-243) A package's preset instance (a vendor's region host): the package's own, read-only. */}
+        <Badge tone={inst.builtin || !inst.org_id ? "accent" : "neutral"}>
+          {inst.builtin ? "Built in" : inst.org_id ? "Organization" : "Instance-wide"}
+        </Badge>
       </Td>
       <Td>
         <Badge tone={active ? "accent" : "pending"}>{active ? "Active" : "Disabled"}</Badge>
@@ -330,7 +333,7 @@ function InstanceRow({
             </ConfirmDialog>
           </>
         ) : null}
-        {canManage ? (
+        {canManage && !inst.builtin ? (
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               size="sm"

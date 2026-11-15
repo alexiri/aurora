@@ -207,6 +207,20 @@ fn reserved_claims(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violatio
                 format!("`{d}` overlaps a reserved host"),
             ));
         }
+        for (j, p) in a
+            .instances
+            .iter()
+            .flat_map(|x| x.presets.iter())
+            .enumerate()
+        {
+            if HostPattern::parse(&p.host).is_ok_and(|h| is_reserved(&h, ctx)) {
+                out.push(Violation::new(
+                    "reserved_host",
+                    format!("/apps/{i}/instances/presets/{j}/host"),
+                    format!("`{}` overlaps a reserved host", p.host),
+                ));
+            }
+        }
         for (j, h) in a.hosts.iter().enumerate() {
             let mut claims = vec![(
                 h.matcher.host.as_str(),

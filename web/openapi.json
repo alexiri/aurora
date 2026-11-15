@@ -30780,7 +30780,8 @@
           "status",
           "created_at",
           "updated_at",
-          "connections"
+          "connections",
+          "builtin"
         ],
         "properties": {
           "app_id": {
@@ -30796,6 +30797,10 @@
           "base_url": {
             "type": "string",
             "description": "`https://<host><base_path>`: how the registration is named everywhere."
+          },
+          "builtin": {
+            "type": "boolean",
+            "description": "(C-742, D-243) A preset instance the app's package ships (a vendor's region host): built\nin, read-only, and offered to everyone."
           },
           "connections": {
             "type": "integer",
@@ -39216,7 +39221,8 @@
                 "status",
                 "created_at",
                 "updated_at",
-                "connections"
+                "connections",
+                "builtin"
               ],
               "properties": {
                 "app_id": {
@@ -39232,6 +39238,10 @@
                 "base_url": {
                   "type": "string",
                   "description": "`https://<host><base_path>`: how the registration is named everywhere."
+                },
+                "builtin": {
+                  "type": "boolean",
+                  "description": "(C-742, D-243) A preset instance the app's package ships (a vendor's region host): built\nin, read-only, and offered to everyone."
                 },
                 "connections": {
                   "type": "integer",

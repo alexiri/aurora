@@ -9,6 +9,7 @@ use crate::common::*;
 use crate::plugins_lifecycle::{Admin, setup};
 use aurora_api::domains::plugins::supersede;
 use aurora_registry::Manifest;
+use http::Method;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -489,4 +490,254 @@ async fn an_auto_activated_aws_keys_takes_over_the_aws_role_connections() {
         package_status(&h, "aws-role").await,
         vec![("disabled".into(), Some("superseded_by_aws-keys".into()))]
     );
+}
+
+/// FIX-134 (D-243): one Sentry app. `sentry` 1.0.2 has four apps; 2.0.0 is one app with two preset
+/// instances. Activating it seeds the presets, moves the region apps' connections to the matching
+/// preset instance and the self-hosted app's to the same registration, keeps ids and grants, and
+/// retires no package (the old apps live in the package itself). Rerunning is a no-op; a preset
+/// instance cannot be renamed, disabled, promoted or deleted.
+#[tokio::test]
+async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let load = |p: &str| {
+        std::fs::read_to_string(format!("{root}/{p}"))
+            .unwrap()
+            .replace("publisher: aurora", "publisher: acme")
+    };
+    let previous = load("../../crates/aurora-registry/tests/fixtures/previous/sentry-1.0.2.yaml");
+    let shipped = load("../../plugins/builtin/sentry/plugin.yaml");
+    let h = Harness::new().await;
+    let a: Admin<'_> = setup(&h).await;
+    let v1 = a.upload(&previous).await;
+    let (st, b) = a.act(&v1["id"], "approve").await;
+    assert_eq!(st, 200, "{b}");
+
+    let org = h.org().await;
+    let ws = h.workspace(org).await;
+    let p = h.pool();
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'a','A','byo','medium','')")
+        .bind(agent).bind(org).bind(ws).execute(p).await.unwrap();
+    let key = &["access_token"][..];
+    let sentry = |app: &'static str| (app, "sentry", "1.0.2");
+    let c_default = conn(
+        p,
+        org,
+        None,
+        sentry("sentry"),
+        "active",
+        None,
+        Some("token"),
+        key,
+    )
+    .await;
+    let c_us = conn(
+        p,
+        org,
+        Some(ws),
+        sentry("sentry-us"),
+        "active",
+        None,
+        Some("token"),
+        key,
+    )
+    .await;
+    let c_de = conn(
+        p,
+        org,
+        None,
+        sentry("sentry-de"),
+        "active",
+        None,
+        Some("token"),
+        key,
+    )
+    .await;
+    let inst = instance(p, org, "sentry", "sentry-self-hosted", "sentry.example.com").await;
+    let c_self = conn(
+        p,
+        org,
+        None,
+        sentry("sentry-self-hosted"),
+        "reauth_required",
+        Some(inst),
+        Some("token"),
+        key,
+    )
+    .await;
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools) VALUES ($1,$2,$3,$4,'custom','{get_issue,list_issues}','{update_issue}')")
+        .bind(Uuid::now_v7()).bind(ws).bind(agent).bind(c_us).execute(p).await.unwrap();
+
+    let v2 = a.upload(&shipped).await;
+    assert_eq!(v2["version"], "2.0.0", "{v2}");
+    if v2["status"] == "pending_approval" {
+        let (st, b) = a.act(&v2["id"], "approve").await;
+        assert_eq!(st, 200, "{b}");
+    }
+    assert_eq!(a.status(&v2["id"]).await["status"], "active");
+    assert_eq!(a.status(&v1["id"]).await["status"], "superseded");
+
+    let preset = |host: &'static str| {
+        let pool = p.clone();
+        async move {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM app_instances WHERE builtin AND app_id = 'sentry' AND host = $1 AND org_id IS NULL AND status = 'active'",
+            )
+            .bind(host)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let us = preset("us.sentry.io").await;
+    let de = preset("de.sentry.io").await;
+    let labels: Vec<String> =
+        sqlx::query_scalar("SELECT label FROM app_instances WHERE builtin ORDER BY host")
+            .fetch_all(p)
+            .await
+            .unwrap();
+    assert_eq!(labels, ["EU region (DE)", "US region"]);
+
+    let tail = |r: &Row| {
+        (
+            r.0.clone(),
+            r.1.clone(),
+            r.2.clone(),
+            r.3.clone(),
+            r.4.clone(),
+            r.6,
+        )
+    };
+    let moved = |inst| {
+        (
+            "sentry".to_owned(),
+            "sentry".to_owned(),
+            "2.0.0".to_owned(),
+            Some("token".to_owned()),
+            "active".to_owned(),
+            inst,
+        )
+    };
+    // The sentry.io connection is untouched (it keeps the version it was made with); the region ones are bound to
+    // their preset; the self-hosted one keeps its registration and its status.
+    let mut untouched = moved(None);
+    untouched.2 = "1.0.2".to_owned();
+    assert_eq!(tail(&row(&h, c_default).await), untouched);
+    assert_eq!(tail(&row(&h, c_us).await), moved(Some(us)));
+    assert_eq!(tail(&row(&h, c_de).await), moved(Some(de)));
+    let r = row(&h, c_self).await;
+    assert_eq!(
+        (r.0.as_str(), r.4.as_str(), r.6),
+        ("sentry", "reauth_required", Some(inst))
+    );
+    let (iapp, ipkg, ibuiltin): (String, String, bool) =
+        sqlx::query_as("SELECT app_id, package_id, builtin FROM app_instances WHERE id = $1")
+            .bind(inst)
+            .fetch_one(p)
+            .await
+            .unwrap();
+    assert_eq!(
+        (iapp.as_str(), ipkg.as_str(), ibuiltin),
+        ("sentry", "sentry", false)
+    );
+    // The grant is the same row on the same connection with the same tools.
+    let grant: (String, Vec<String>, Vec<String>) =
+        sqlx::query_as("SELECT mode, allow_tools, ask_tools FROM grants WHERE connection_id = $1")
+            .bind(c_us)
+            .fetch_one(p)
+            .await
+            .unwrap();
+    assert_eq!(
+        grant,
+        (
+            "custom".into(),
+            vec!["get_issue".into(), "list_issues".into()],
+            vec!["update_issue".into()]
+        )
+    );
+    // No old app is left anywhere and the package itself was not retired.
+    let left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app_connections WHERE app_id IN ('sentry-us','sentry-de','sentry-self-hosted')",
+    ).fetch_one(p).await.unwrap();
+    assert_eq!(left, 0);
+    assert_eq!(
+        package_status(&h, "sentry").await,
+        vec![("superseded".into(), None), ("active".into(), None)]
+    );
+    let audit: Value = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'plugin.supersede' ORDER BY created_at DESC LIMIT 1",
+    ).fetch_one(p).await.unwrap();
+    assert_eq!(audit["result"]["connections_moved"], 3);
+    assert_eq!(
+        audit["result"]["by_app"],
+        json!({"sentry-us": 1, "sentry-de": 1, "sentry-self-hosted": 1})
+    );
+    assert_eq!(audit["result"]["retired_packages"], json!({}));
+
+    // Rerunning the step is a no-op (the presets are refreshed, not duplicated).
+    let stored: Value = sqlx::query_scalar(
+        "SELECT manifest FROM plugin_packages WHERE package_id = 'sentry' AND version = '2.0.0'",
+    )
+    .fetch_one(p)
+    .await
+    .unwrap();
+    let manifest: Manifest = serde_json::from_value(stored).unwrap();
+    let mut tx = p.begin().await.unwrap();
+    let again = supersede::apply(&mut tx, &manifest, "2.0.0").await.unwrap();
+    tx.commit().await.unwrap();
+    assert!(again.is_empty(), "{again:?}");
+    assert_eq!(again.presets, 2);
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_instances WHERE builtin")
+        .fetch_one(p)
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+    assert_eq!(tail(&row(&h, c_us).await), moved(Some(us)));
+
+    // A preset instance is read-only to everyone.
+    let (st, v) = a
+        .json(
+            Method::PATCH,
+            &format!("/v1/app-instances/{us}"),
+            Some(json!({"label": "x"})),
+        )
+        .await;
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (409, Some("instance_builtin")),
+        "{v}"
+    );
+    let (st, v) = a
+        .json(Method::DELETE, &format!("/v1/app-instances/{us}"), None)
+        .await;
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (409, Some("instance_builtin")),
+        "{v}"
+    );
+    let (st, v) = a
+        .json(
+            Method::POST,
+            &format!("/v1/admin/app-instances/{us}/promote"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (409, Some("instance_builtin")),
+        "{v}"
+    );
+    // ... and the admin list shows it as built in.
+    let (st, v) = a
+        .json(Method::GET, "/v1/admin/app-instances?app_id=sentry", None)
+        .await;
+    assert_eq!(st, 200, "{v}");
+    let built: Vec<bool> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["builtin"].as_bool().unwrap())
+        .collect();
+    assert_eq!(built.iter().filter(|b| **b).count(), 2, "{v}");
 }

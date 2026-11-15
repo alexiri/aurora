@@ -391,6 +391,40 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 "default_host must be a plain lower-case DNS name",
             );
         }
+        // (FIX-134, D-243) Preset instances are static claims like `default_host`: plain DNS
+        // names inside a registrable domain, distinct from it and from each other.
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        seen.extend(ins.default_host.as_deref());
+        for (i, p) in ins.presets.iter().enumerate() {
+            let at = format!("/instances/presets/{i}");
+            if !plain_dns_name(&p.host) {
+                cx.v(
+                    "instance_preset_invalid",
+                    &format!("{at}/host"),
+                    "a preset host must be a plain lower-case DNS name",
+                );
+            } else if psl::domain(p.host.as_bytes()).is_none() {
+                cx.v(
+                    "instance_preset_not_registrable",
+                    &format!("{at}/host"),
+                    "a preset host must lie inside a registrable domain, not be a public suffix",
+                );
+            }
+            if !seen.insert(p.host.as_str()) {
+                cx.v(
+                    "instance_preset_duplicate",
+                    &format!("{at}/host"),
+                    "a preset host repeats default_host or another preset",
+                );
+            }
+            if p.label.trim().is_empty() {
+                cx.v(
+                    "instance_preset_label_empty",
+                    &format!("{at}/label"),
+                    "a preset needs a label",
+                );
+            }
+        }
         if let Some(p) = &ins.probe
             && (!p.path.starts_with('/')
                 || p.path.contains(['{', '}', '#'])

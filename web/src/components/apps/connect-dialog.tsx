@@ -73,6 +73,8 @@ function ConnectForm({
   const instances = useAppInstances(instanceBound ? { kind: "organization", id: orgId } : undefined);
   const [instanceId, setInstanceId] = useState("");
   const choices = (instances.data?.items ?? []).filter((i) => i.app_id === app.app_id && i.status === "active");
+  const builtinChoices = choices.filter((i) => i.builtin);
+  const registeredChoices = choices.filter((i) => !i.builtin);
   const defaultHost = app.instances?.default_host ?? null;
   const [methodId, setMethodId] = useState(first?.id ?? "");
   const method: ConnectMethod | undefined = app.connect.find((m) => m.id === methodId);
@@ -326,7 +328,9 @@ function ConnectForm({
           hint={
             choices.length === 0 && !defaultHost
               ? "No self-hosted server is registered yet. Ask an organization admin to register one (Self-hosted apps)."
-              : "Credentials are only sent to the host you choose here."
+              : builtinChoices.length > 0
+                ? "Credentials are only sent to the host you choose here, so pick the one your organization lives on. A self-hosted server must be registered first (Self-hosted apps)."
+                : "Credentials are only sent to the host you choose here."
           }
         >
           <select
@@ -339,9 +343,19 @@ function ConnectForm({
             }}
           >
             {defaultHost ? <option value="">{`${defaultHost} (default)`}</option> : <option value="">Select…</option>}
-            {choices.map((i) => (
-              <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>
+            {/* (FIX-134, D-243) The package's own preset instances (a vendor's regions), then servers an admin registered. */}
+            {builtinChoices.map((i) => (
+              <option key={i.id} value={i.id}>{`${i.label} (${i.host})`}</option>
             ))}
+            {registeredChoices.length > 0 && builtinChoices.length > 0 ? (
+              <optgroup label="Registered servers">
+                {registeredChoices.map((i) => (
+                  <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>
+                ))}
+              </optgroup>
+            ) : (
+              registeredChoices.map((i) => <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>)
+            )}
           </select>
         </Field>
       ) : null}

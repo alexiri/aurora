@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_host};
+use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_hosts};
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
     Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Library,
@@ -370,7 +370,8 @@ pub fn compile(
                         .push(host_entry(&app_id, INSTANCE_HOST, r, false));
                 }
                 // An `{instance}` rule is also an ordinary static claim on `default_host`.
-                if let Some(h) = static_host(a, r) {
+                // (FIX-134, D-243) So is each preset instance's host.
+                for h in static_hosts(a, r) {
                     snap.hosts.push(host_entry(
                         &app_id,
                         h,

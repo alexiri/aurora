@@ -40,6 +40,34 @@ fn github_2_1_0_replaces_2_0_0_without_widening() {
     check("github", "2.0.0", "2.1.0");
 }
 
+/// FIX-134 (D-243): `sentry` 1.0.2 had four apps (sentry.io, US, DE, self-hosted); 2.0.0 is one
+/// app with two preset instances. Dropping apps is a major version, but it widens nothing (the
+/// hosts were all claimed by 1.0.2 already), and the shipped version takes over every old app.
+#[test]
+fn sentry_2_0_0_replaces_1_0_2_without_widening_and_takes_over_the_old_apps() {
+    let old = read("tests/fixtures/previous/sentry-1.0.2.yaml");
+    let new = read("../../plugins/builtin/sentry/plugin.yaml");
+    assert_eq!(old.package.version, "1.0.2");
+    assert_eq!(new.package.version, "2.0.0");
+    assert!(is_major_upgrade(&old.package.version, &new.package.version));
+    let w = widens(&old, &new);
+    assert!(w.is_empty(), "sentry 1.0.2 -> 2.0.0 widens: {w:?}");
+    let old_ids: Vec<&str> = old.apps.iter().map(|a| a.about.id.as_str()).collect();
+    assert_eq!(
+        old_ids,
+        ["sentry", "sentry-us", "sentry-de", "sentry-self-hosted"]
+    );
+    assert_eq!(new.apps.len(), 1);
+    // Every old app but `sentry` itself is taken over by an entry the shipped version satisfies.
+    let took: Vec<&str> = aurora_registry::upgrade::supersedes(&new)
+        .iter()
+        .map(|s| s.old_app)
+        .collect();
+    assert_eq!(took, ["sentry-us", "sentry-de", "sentry-self-hosted"]);
+    // The old manifest satisfies none of them (no presets, no instances on `sentry`).
+    assert!(aurora_registry::upgrade::supersedes(&old).is_empty());
+}
+
 #[test]
 fn indico_1_2_0_replaces_1_1_1_without_widening() {
     check("indico", "1.1.1", "1.2.0");

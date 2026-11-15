@@ -131,8 +131,23 @@ pub struct Instances {
     pub label: String,
     /// The SaaS host, compiled as an ordinary static claim.
     pub default_host: Option<String>,
+    /// (FIX-134, D-243) Hosts the package ships as ready-made instances next to `default_host`
+    /// (a vendor's region hosts): static claims signed with the package, offered in the connect
+    /// window with no registration. Each is served like a registered instance.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<InstancePreset>,
     /// Optional reachability check run at registration.
     pub probe: Option<InstanceProbe>,
+}
+
+/// One preset instance of an `instances` block (FIX-134, D-243).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstancePreset {
+    /// A plain lower-case DNS name inside a registrable domain, distinct from `default_host`.
+    pub host: String,
+    /// Shown in the connect picker ("US region").
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

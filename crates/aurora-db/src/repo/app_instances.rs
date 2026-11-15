@@ -25,10 +25,12 @@ pub struct InstanceRow {
     pub connections: i64,
     pub org_name: Option<String>,
     pub org_slug: Option<String>,
+    /// (FIX-134, D-243) A package's preset instance: read-only to everyone.
+    pub builtin: bool,
 }
 
 const SELECT: &str = "SELECT i.id, i.org_id, i.package_id, i.app_id, i.host, i.base_path, i.label, i.status, \
-    i.created_by, u.display_name AS created_by_name, i.created_at, i.updated_at, \
+    i.builtin, i.created_by, u.display_name AS created_by_name, i.created_at, i.updated_at, \
     (SELECT count(*) FROM app_connections c WHERE c.instance_id = i.id) AS connections, \
     o.name AS org_name, o.slug AS org_slug \
     FROM app_instances i LEFT JOIN users u ON u.id = i.created_by \
@@ -103,6 +105,78 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewInstance<'_>) -> Resu
     .execute(exec)
     .await?;
     Ok(())
+}
+
+/// (FIX-134, D-243) Seed or refresh the preset instance `host` of `app_id` (instance-wide,
+/// `builtin`), active. Idempotent: an existing row for the same app and host (also one a person
+/// registered instance-wide earlier) becomes the preset, keeping its id and connections.
+/// Returns the row id.
+pub async fn seed_preset(
+    conn: &mut PgConnection,
+    package_id: &str,
+    app_id: &str,
+    host: &str,
+    label: &str,
+) -> Result<Uuid, DbError> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO app_instances (id, org_id, package_id, app_id, host, base_path, label, builtin) \
+         VALUES ($1, NULL, $2, $3, $4, NULL, $5, true) \
+         ON CONFLICT ON CONSTRAINT app_instances_scope_uq DO UPDATE SET \
+            package_id = EXCLUDED.package_id, label = EXCLUDED.label, builtin = true, \
+            status = 'active', updated_at = now() \
+         RETURNING id",
+    )
+    .bind(Uuid::now_v7())
+    .bind(package_id)
+    .bind(app_id)
+    .bind(host)
+    .bind(label)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// (FIX-134, D-243) The preset rows of `app_id` whose host the activated version no longer
+/// declares: deleted when nothing uses them, else disabled. Returns how many rows changed.
+pub async fn retire_presets(
+    conn: &mut PgConnection,
+    app_id: &str,
+    keep_hosts: &[String],
+) -> Result<u64, DbError> {
+    let deleted = sqlx::query(
+        "DELETE FROM app_instances i WHERE i.builtin AND i.app_id = $1 AND NOT (i.host = ANY($2)) \
+         AND NOT EXISTS (SELECT 1 FROM app_connections c WHERE c.instance_id = i.id) \
+         AND NOT EXISTS (SELECT 1 FROM app_oauth_clients o WHERE o.instance_id = i.id)",
+    )
+    .bind(app_id)
+    .bind(keep_hosts)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    let disabled = sqlx::query(
+        "UPDATE app_instances SET status = 'disabled', updated_at = now() \
+         WHERE builtin AND app_id = $1 AND NOT (host = ANY($2)) AND status <> 'disabled'",
+    )
+    .bind(app_id)
+    .bind(keep_hosts)
+    .execute(conn)
+    .await?
+    .rows_affected();
+    Ok(deleted + disabled)
+}
+
+/// The preset instance of `app_id` on `host`.
+pub async fn preset_id<'e, E: PgExecutor<'e>>(
+    exec: E,
+    app_id: &str,
+    host: &str,
+) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM app_instances WHERE builtin AND app_id = $1 AND host = $2",
+    )
+    .bind(app_id)
+    .bind(host)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<InstanceRow>, DbError> {

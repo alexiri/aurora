@@ -565,11 +565,11 @@ pub async fn move_connections(
     new_app: &str,
     new_package: &str,
     new_version: &str,
-    method: &str,
+    method: Option<&str>,
 ) -> Result<Vec<MovedConnection>, DbError> {
     Ok(sqlx::query_as(
         "UPDATE app_connections SET app_id = $2, package_id = $3, app_version = $4,
-            connect_method = $5, updated_at = now()
+            connect_method = COALESCE($5, connect_method), updated_at = now()
          WHERE app_id = $1 RETURNING id, status, credential_keys",
     )
     .bind(old_app)
@@ -579,6 +579,22 @@ pub async fn move_connections(
     .bind(method)
     .fetch_all(conn)
     .await?)
+}
+
+/// (FIX-134, D-243) Point the given connections at an instance (a preset of the new app).
+pub async fn bind_instance(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+    instance_id: Uuid,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_connections SET instance_id = $2, updated_at = now() WHERE id = ANY($1)",
+    )
+    .bind(ids)
+    .bind(instance_id)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 /// Move registered instances of `old_app` to `new_app`. An instance whose organization and host

@@ -4908,6 +4908,11 @@ export interface components {
             /** @description `https://<host><base_path>`: how the registration is named everywhere. */
             base_url: string;
             /**
+             * @description (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+             *     in, read-only, and offered to everyone.
+             */
+            builtin: boolean;
+            /**
              * Format: int64
              * @description Connections bound to this instance.
              */
@@ -7521,6 +7526,11 @@ export interface components {
                 base_path?: string | null;
                 /** @description `https://<host><base_path>`: how the registration is named everywhere. */
                 base_url: string;
+                /**
+                 * @description (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+                 *     in, read-only, and offered to everyone.
+                 */
+                builtin: boolean;
                 /**
                  * Format: int64
                  * @description Connections bound to this instance.
