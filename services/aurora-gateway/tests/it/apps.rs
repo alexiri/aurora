@@ -36,6 +36,10 @@ use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
 
+// (D-251) The LDAP lane's pipeline tests share this file's harness.
+#[path = "ldap_lane.rs"]
+mod ldap_lane;
+
 #[derive(Clone, Copy)]
 struct World {
     org: Uuid,
@@ -248,6 +252,17 @@ async fn start(
     creds: &[(&str, &str)],
     mk: impl FnOnce(&World) -> Rows,
 ) -> (Env, Arc<Src>, Arc<SnapshotStore>) {
+    start_with_ca(snap, creds, mk, None).await
+}
+
+/// [`start`] with an extra CA bundle the gateway trusts for its own upstream TLS (the LDAP lane's
+/// fake directory server presents a certificate of a private CA).
+async fn start_with_ca(
+    snap: Value,
+    creds: &[(&str, &str)],
+    mk: impl FnOnce(&World) -> Rows,
+    extra_ca_pem: Option<String>,
+) -> (Env, Arc<Src>, Arc<SnapshotStore>) {
     let w = World {
         org: Uuid::now_v7(),
         ws: Uuid::now_v7(),
@@ -310,7 +325,7 @@ async fn start(
         handler,
         guard,
         header_timeout: Duration::from_secs(5),
-        extra_ca_pem: None,
+        extra_ca_pem: extra_ca_pem.map(String::into_bytes),
         egress_proxy: None,
     })
     .unwrap();

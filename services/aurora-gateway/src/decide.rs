@@ -1333,6 +1333,11 @@ impl PolicyHandler {
                 hook: Some(hook),
                 response_headers,
                 retry,
+                // (D-251) Only a request that won a granted connection of an LDAP app carries
+                // the block: the lane is a capability the grant confers, not open egress.
+                ldap: crate::ldap::is_ldap_host(&host)
+                    .then(|| m.app.ldap.clone())
+                    .flatten(),
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
@@ -1402,6 +1407,7 @@ impl PolicyHandler {
                 hook: Some(hook),
                 response_headers,
                 retry: None,
+                ldap: None,
             });
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
@@ -1420,6 +1426,7 @@ impl PolicyHandler {
             hook: Some(hook),
             response_headers,
             retry: None,
+            ldap: None,
         })
     }
 }
@@ -1427,7 +1434,25 @@ impl PolicyHandler {
 #[async_trait::async_trait]
 impl RequestHandler for PolicyHandler {
     async fn handle(&self, req: PipelineRequest) -> Outcome {
-        self.handle_with(req, None).await
+        let outcome = self.handle_with(req, None).await;
+        match outcome {
+            // (D-251) A request on an LDAP app's synthetic host is answered by the LDAP lane
+            // only when it won a granted connection of that app (then it carries the approved
+            // `ldap` block). Anything else on that host — no connection, no grant, a host of no
+            // LDAP app — is never forwarded and never reaches a directory.
+            Outcome::Forward(mut p) if crate::ldap::is_ldap_host(&p.host) && p.ldap.is_none() => {
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "ldap_no_connection",
+                    "This agent has no granted connection for this directory.",
+                );
+                if let Some(h) = p.hook.take() {
+                    h.on_error(&err);
+                }
+                Outcome::Respond(guidance::response(&err))
+            }
+            o => o,
+        }
     }
 
     async fn db_open(
@@ -2306,6 +2331,7 @@ impl Retry for StaleRetry {
             hook: None,
             response_headers: HeaderMap::new(),
             retry: None,
+            ldap: None,
         })
     }
 }

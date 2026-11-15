@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use aurora_policy::HostPattern;
 
 use crate::Violation;
-use crate::manifest::{Manifest, UrlOrTemplate};
+use crate::manifest::{Ldap, Manifest, UrlOrTemplate};
 use crate::package::{HOOKS_WASM, Package};
 use crate::signature::{TrustStore, verify};
 
@@ -249,6 +249,10 @@ fn reserved_claims(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violatio
                 ));
             }
             for (host, path) in claims {
+                // (D-251) The one reserved-host exception: an LDAP app's own synthetic host.
+                if a.ldap.is_some() && host.eq_ignore_ascii_case(&Ldap::host_of(&a.about.id)) {
+                    continue;
+                }
                 if HostPattern::parse(host).is_ok_and(|p| is_reserved(&p, ctx)) {
                     out.push(Violation::new(
                         "reserved_host",
