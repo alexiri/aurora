@@ -81,6 +81,12 @@ notes, and run `bash scripts/guards/run-all.sh` plus an image build. This is a k
 - **Paired crates come grouped**: `utoipa` + `utoipa-axum` and `kube` + `kube-*` + `k8s-openapi`
   only work in matching versions, so `dependabot.yml` groups each pair (all update types) and one PR
   moves both (PRs #18, #19 bumped one half and could not build).
+- **RustCrypto crates move as one line**: `sha2`, `hmac`, `md-5` (and `sha1`, `digest`, `hkdf`) share the
+  `digest` major, so `dependabot.yml` groups them (`rustcrypto`); a lone `sha2` 0.11 bump failed to build
+  against `hmac` 0.12 (PR #23). Moving to 0.11/0.13 also drops `LowerHex` on digest output (use
+  `hex::encode`) and needs `hmac::KeyInit` for `new_from_slice`.
+- **`kube` 5 needs Rust 1.95**: the kube group's bump (PR #22) raised the workspace `rust-version` from 1.88
+  (I-21) to 1.95; CI and `rust-toolchain.toml` use stable, so only the declared MSRV changed.
 - **Docker dependency names drop the registry**: Dependabot reports `ghcr.io/berriai/litellm` as
   `berriai/litellm`, so an `ignore` entry lists both spellings (PR #3 slipped past the first one).
 
