@@ -1995,7 +1995,8 @@ export interface paths {
         };
         /**
          * Complete OIDC sign-in: sets the session cookie and redirects to `return_to`, or to
-         *     `/auth/login?error=<code>`.
+         *     `/auth/login?error=<code>`. A failed re-authentication (the flow state opened and the flow was
+         *     a re-authentication) redirects back to the flow's `return_to` with `reauth_error=<code>`.
          */
         get: operations["oidcCallback"];
         put?: never;
@@ -5491,6 +5492,13 @@ export interface components {
             /** Format: uuid */
             workspace_id?: string | null;
         };
+        /** @description (C-802) One auth mode of a provider. */
+        AuthModeInfo: {
+            id: string;
+            recommended: boolean;
+            /** @description `string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`. */
+            value_shape: string;
+        };
         BatchDecided: {
             /** Format: int32 */
             decided: number;
@@ -7195,14 +7203,19 @@ export interface components {
         /** @enum {string} */
         Listen: "mentions" | "all";
         LlmEndpointInfo: {
+            /** @description (P4-LLM-1, C-802) The modes this endpoint's key-origin rule admits. */
+            auth_modes: string[];
             base_url: string;
             dialects: string[];
             display_name: string;
+            /** @description (C-802, D-260(a)) Enabled harnesses whose dialects intersect this endpoint's. */
+            harnesses: string[];
             id: string;
             key_scopes?: string[] | null;
             origin_method?: string | null;
             permitted?: boolean | null;
             provider: string;
+            recommended_auth_mode?: string | null;
         };
         /**
          * @description LLM posture, ordered by strictness (`open` < `sanctioned_only`).
@@ -7210,6 +7223,9 @@ export interface components {
          */
         LlmPosture: "open" | "sanctioned_only";
         LlmProviderInfo: {
+            /** @description (P4-LLM-1, C-802) Each mode with the shape of its secret value and whether it is the recommended one. */
+            auth_mode_details: components["schemas"]["AuthModeInfo"][];
+            /** @description The mode ids (kept as a string list for existing clients; `auth_mode_details` carries the C-802 items). */
             auth_modes: string[];
             dialects: string[];
             display_name: string;
@@ -19175,7 +19191,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to `return_to` or `/auth/login?error=<code>` */
+            /** @description Redirect to `return_to` (on a failed re-authentication, with `reauth_error=<code>` appended) or `/auth/login?error=<code>` */
             302: {
                 headers: {
                     [name: string]: unknown;

@@ -360,6 +360,25 @@ pub struct LlmSection {
     pub enabled_providers: Vec<String>,
     pub provider_preference: Vec<String>,
     pub endpoints: Vec<LlmEndpoint>,
+    /// (C-812, D-260(e)) **Tests and development only; the Helm chart never renders it; not an instance setting.**
+    /// `{ "<origin>": "<loopback URL>" }`: replaces the fixed origin of a provider (`https://api.openai.com`,
+    /// `https://api.anthropic.com`) so a real binary can be run against a mock. Accepted only with every target
+    /// loopback and `gateway.insecure_loopback_injection = true`; refused inside Kubernetes.
+    pub dev_upstream_overrides: BTreeMap<String, String>,
+}
+
+impl LlmSection {
+    /// (P4-LLM, `08 §Phase 4 providers`) `provider_preference` with every enabled provider it does not name appended,
+    /// in `enabled_providers` order, so a newly enabled provider is never unreachable by an omission.
+    pub fn effective_provider_preference(&self) -> Vec<String> {
+        let mut out = self.provider_preference.clone();
+        for p in &self.enabled_providers {
+            if !out.contains(p) {
+                out.push(p.clone());
+            }
+        }
+        out
+    }
 }
 impl Default for LlmSection {
     fn default() -> Self {
@@ -367,6 +386,7 @@ impl Default for LlmSection {
             enabled_providers: strs(&["litellm", "anthropic"]),
             provider_preference: strs(&["litellm", "anthropic"]),
             endpoints: vec![],
+            dev_upstream_overrides: BTreeMap::new(),
         }
     }
 }
@@ -388,6 +408,17 @@ pub struct LlmEndpoint {
     /// (D-177, FIX-105) `litellm` / `openai_compatible`: paths beyond the inference set that the
     /// sanctioned key may be injected on. Absolute; a trailing `/*` admits the subtree.
     pub allowed_paths: Vec<String>,
+    /// (P4-LLM, C-800) `openai`: `OpenAI-Organization` / `OpenAI-Project` the gateway sets.
+    pub organization: Option<String>,
+    pub project: Option<String>,
+    /// `openai_compatible`: the header carrying the key (`authorization`, `api-key`, `x-api-key`) and the
+    /// model listing path.
+    pub auth_header: Option<String>,
+    pub models_path: Option<String>,
+    /// `bedrock`: `region`. `vertex`: `project_id`, `location`.
+    pub region: Option<String>,
+    pub project_id: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

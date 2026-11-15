@@ -372,6 +372,7 @@ pub(crate) fn no_llm() -> LlmSection {
     LlmSection {
         enabled_providers: vec![],
         provider_preference: vec![],
+        dev_upstream_overrides: Default::default(),
         endpoints: vec![],
     }
 }

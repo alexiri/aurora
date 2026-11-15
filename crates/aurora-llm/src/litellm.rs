@@ -69,10 +69,7 @@ impl LlmProvider for LitellmProvider {
         host_of(&ep.base_url).into_iter().collect()
     }
     fn injection(&self, _mode: &AuthMode) -> LlmInjection {
-        LlmInjection {
-            header: InjectionHeader::Bearer,
-            strip_request_headers: vec!["x-api-key"],
-        }
+        LlmInjection::new(InjectionHeader::Bearer, &["x-api-key"])
     }
     async fn list_models(
         &self,
@@ -115,7 +112,11 @@ impl LlmProvider for LitellmProvider {
                 ("ANTHROPIC_BASE_URL".into(), base.into()),
                 ("ANTHROPIC_API_KEY".into(), PLACEHOLDER.into()),
             ],
-            Dialect::OpenaiChat | Dialect::OpenaiResponses => vec![
+            // (a LiteLLM endpoint never declares the cloud dialects, config refuses them; OpenAI form is the fallback)
+            Dialect::OpenaiChat
+            | Dialect::OpenaiResponses
+            | Dialect::AnthropicBedrock
+            | Dialect::AnthropicVertex => vec![
                 ("OPENAI_BASE_URL".into(), format!("{base}/v1")),
                 ("OPENAI_API_KEY".into(), PLACEHOLDER.into()),
             ],

@@ -377,13 +377,39 @@ async fn list_llm_providers(
                     }
                 }
             }
-            None => providers.push(LlmProviderInfo {
-                id: p.id().to_owned(),
-                display_name: p.display_name().to_owned(),
-                auth_modes: vec!["api_key".to_owned()],
-                dialects: dialects.clone(),
-            }),
+            None => {
+                let recommended = aurora_llm::recommended_auth_mode(p.as_ref());
+                providers.push(LlmProviderInfo {
+                    id: p.id().to_owned(),
+                    display_name: p.display_name().to_owned(),
+                    auth_modes: p
+                        .auth_modes()
+                        .iter()
+                        .map(|m| m.as_str().to_owned())
+                        .collect(),
+                    auth_mode_details: p
+                        .auth_modes()
+                        .iter()
+                        .map(|m| AuthModeInfo {
+                            id: m.as_str().to_owned(),
+                            value_shape: m.value_shape().to_owned(),
+                            recommended: Some(*m) == recommended,
+                        })
+                        .collect(),
+                    dialects: dialects.clone(),
+                });
+            }
         }
+        let modes = aurora_llm::endpoint_auth_modes(p.as_ref(), ep);
+        let ep_dialects = p.dialects(ep);
+        let harnesses: Vec<String> = state
+            .config
+            .hosted
+            .enabled_harnesses
+            .iter()
+            .filter(|h| crate::domains::hosted::model::first_shared(h, &ep_dialects).is_some())
+            .cloned()
+            .collect();
         let e = eff.as_ref().and_then(|e| e.endpoints.get(&ep.id));
         let rule = e.map_or(ep.key_origin.as_ref(), |e| e.origin_rule.as_ref());
         endpoints.push(LlmEndpointInfo {
@@ -397,6 +423,12 @@ async fn list_llm_providers(
             key_scopes: eff
                 .as_ref()
                 .map(|_| e.map(|e| e.key_scopes.clone()).unwrap_or_default()),
+            recommended_auth_mode: aurora_llm::recommended_auth_mode(p.as_ref())
+                .filter(|m| modes.contains(m))
+                .or_else(|| modes.first().copied())
+                .map(|m| m.as_str().to_owned()),
+            auth_modes: modes.iter().map(|m| m.as_str().to_owned()).collect(),
+            harnesses,
         });
     }
     Ok(Json(LlmProviders {

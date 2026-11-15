@@ -15,6 +15,13 @@ updates:
     labels: [dependencies, rust]
     commit-message: { prefix: "deps(cargo)" }
     groups:
+      # Crates that only work as a pair arrive in one PR (a dependency goes to the first group that
+      # matches): utoipa-axum is built for one utoipa major (PR #18), kube for one k8s-openapi
+      # release (PR #19).
+      utoipa:
+        patterns: [utoipa, utoipa-axum]
+      kube:
+        patterns: [kube, kube-*, k8s-openapi]
       cargo-minor-patch:
         update-types: [minor, patch]
     ignore:

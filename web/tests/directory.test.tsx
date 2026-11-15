@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OrgDirectoryView } from "@/components/org/directory-view";
 import { MemberRow } from "@/components/org/members-view";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
+let search = "";
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(search),
+}));
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), {
@@ -116,6 +120,22 @@ describe("Directory sync page", () => {
     expect(screen.getByText(/invalidValue/)).toBeInTheDocument();
     // The expiring token carries the banner badge.
     expect(screen.getByText("expiring")).toBeInTheDocument();
+  });
+
+  it("shows the reauth_error notice only when the param is present (FIX-152)", async () => {
+    stub({ [`GET /v1/orgs/${ORG}/scim`]: () => json(200, settings()) });
+    search = "reauth_error=reauth_stale";
+    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner={false} />);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/did not confirm a fresh sign-in.*reauth_stale/);
+    cleanup();
+    search = "reauth_error=nope";
+    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner={false} />);
+    expect((await screen.findByRole("alert")).textContent).toBe("Re-authentication failed. Please try again.");
+    cleanup();
+    search = "";
+    wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner={false} />);
+    await screen.findByText(/Only organization owners/);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("a non-owner sees the note and no settings", async () => {

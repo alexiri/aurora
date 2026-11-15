@@ -1512,3 +1512,118 @@ async fn s19_custom_only_activation_is_seen_consistently_by_both_gateways() {
     }
     st.finish().await;
 }
+
+/// (P4-LLM-1, C-812, acceptance 6) `openai` through the real binaries: `llm.dev_upstream_overrides` replaces the fixed
+/// origin `https://api.openai.com` by a loopback mock, for the API's key validation (listing) and for the gateway's host
+/// match and injection; the agent's own credential and `OpenAI-*` headers are replaced.
+#[tokio::test]
+async fn s20_openai_endpoint_reached_through_the_dev_upstream_override() {
+    let oai = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"id": "gpt-x"}]})))
+        .mount(&oai)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&oai)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_json(json!({"error": {"code": "insufficient_quota"}})),
+        )
+        .mount(&oai)
+        .await;
+    let st = Stack::start(Opts {
+        llm_openai_override: Some(format!("http://{}", oai.address())),
+        ..Opts::default()
+    })
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("openai-agent").await;
+    let (s, v) = api
+        .post(
+            &format!("/v1/orgs/{}/secrets", api.org),
+            json!({"name": "oai", "kind": "llm", "llm": {"endpoint_id": "openai"}, "value": LLM_KEY}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}\n{}", st.log_tails());
+    api.grant(&agent, v["id"].as_str().unwrap()).await;
+    api.set_policy("block", json!([])).await;
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(format!("http://{}/v1/chat/completions", oai.address()))
+        .header("authorization", "Bearer agent-own-key")
+        .header("x-api-key", "agent-own-key")
+        .header("api-key", "agent-own-key")
+        .header("openai-organization", "org-agent")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    let got = oai.received_requests().await.unwrap();
+    let listing = got.iter().find(|r| r.url.path() == "/v1/models").unwrap();
+    assert_eq!(
+        hdr(listing, "authorization").as_deref(),
+        Some(&*format!("Bearer {LLM_KEY}")),
+        "the API validated the key by listing at the override target"
+    );
+    let req = got
+        .iter()
+        .find(|r| r.url.path() == "/v1/chat/completions")
+        .unwrap();
+    assert_eq!(
+        hdr(req, "authorization").as_deref(),
+        Some(&*format!("Bearer {LLM_KEY}"))
+    );
+    for h in ["x-api-key", "api-key", "openai-organization"] {
+        assert!(hdr(req, h).is_none(), "agent {h} must be removed");
+    }
+    // C-808: a 429 reaches the client unchanged and is classified by status alone (never by the body).
+    let r = via_proxy(&st.gw_a, &token, &st.ca_pem)
+        .post(format!("http://{}/v1/responses", oai.address()))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 429, "{}", st.log_tails());
+    assert!(r.text().await.unwrap().contains("insufficient_quota"));
+    let m = reqwest::get(format!("http://{GW_A_IP}:4103/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for class in ["ok", "rate_limited"] {
+        assert!(
+            m.lines()
+                .any(|l| l.starts_with("aurora_gateway_llm_upstream_total{")
+                    && l.contains("provider=\"openai\"")
+                    && l.contains("endpoint=\"openai\"")
+                    && l.contains(&format!("class=\"{class}\""))),
+            "{class}: {m}"
+        );
+    }
+    st.finish().await;
+}
+
+/// (C-812) The override without `gateway.insecure_loopback_injection` is a startup error.
+#[tokio::test]
+async fn s21_dev_upstream_override_without_insecure_loopback_refuses_to_start() {
+    let st = Stack::start(Opts {
+        llm_openai_override: Some("http://127.0.0.1:9".into()),
+        no_insecure_loopback: true,
+        expect_gateway_refusal: true,
+        ..Opts::default()
+    })
+    .await;
+    let log = std::fs::read_to_string(st.dir.join("refused.log")).unwrap();
+    assert!(
+        log.contains("llm.dev_upstream_overrides") && log.contains("insecure_loopback_injection"),
+        "{log}"
+    );
+    st.finish().await;
+}

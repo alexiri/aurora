@@ -78,6 +78,9 @@ notes, and run `bash scripts/guards/run-all.sh` plus an image build. This is a k
   entries; seen with PRs #8 + #9: `toml_datetime` listed twice). After merging more than one cargo PR
   in a row, run `cargo metadata --locked` on master. Better: merge one, then `@dependabot rebase` the
   next before merging it.
+- **Paired crates come grouped**: `utoipa` + `utoipa-axum` and `kube` + `kube-*` + `k8s-openapi`
+  only work in matching versions, so `dependabot.yml` groups each pair (all update types) and one PR
+  moves both (PRs #18, #19 bumped one half and could not build).
 - **Docker dependency names drop the registry**: Dependabot reports `ghcr.io/berriai/litellm` as
   `berriai/litellm`, so an `ignore` entry lists both spellings (PR #3 slipped past the first one).
 

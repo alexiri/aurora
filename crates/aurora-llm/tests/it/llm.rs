@@ -30,6 +30,13 @@ fn ep(provider: &str, base: &str) -> Endpoint {
         allowed_models: vec![],
         key_origin: None,
         allowed_paths: vec![],
+        organization: None,
+        project: None,
+        auth_header: None,
+        models_path: None,
+        region: None,
+        project_id: None,
+        location: None,
     }
 }
 
@@ -456,6 +463,7 @@ fn section(eps: Vec<LlmEndpoint>, enabled: &[&str]) -> LlmSection {
         enabled_providers: enabled.iter().map(|s| s.to_string()).collect(),
         provider_preference: vec![],
         endpoints: eps,
+        ..LlmSection::default()
     }
 }
 

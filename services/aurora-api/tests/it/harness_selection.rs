@@ -144,7 +144,14 @@ async fn harnesses_route_lists_the_enabled_ones_with_availability() {
     let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["claude-code", "codex"], "fake is not listed: {v}");
     assert_eq!(items[0]["available"], true);
-    assert_eq!(items[0]["dialects"], json!(["anthropic_messages"]));
+    assert_eq!(
+        items[0]["dialects"],
+        json!([
+            "anthropic_messages",
+            "anthropic_bedrock",
+            "anthropic_vertex"
+        ])
+    );
     assert_eq!(items[1]["available"], false, "no replica offers codex");
     assert_eq!(items[1]["dialects"], json!(["openai_responses"]));
     assert_eq!(items[1]["display_name"], "OpenAI Codex");
