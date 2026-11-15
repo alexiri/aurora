@@ -415,6 +415,12 @@ integration) are claimable by any live replica of the connector.
   `text_input`).
 - All text in cards is produced by the core (platform voice) or wrapped as
   sanitized data (summaries, names).
+- (phase 5, P4-NARR, D-279, D-280, C-847) **Narration** = `{ kind: "narration",
+  turn_id, status, steps, earlier }`: a platform-authored card, never an agent
+  message body. Every step `name`/`detail` is untrusted data
+  (`markdown_as_data`, pings defused per D-271, bare URLs per D-270), built only
+  from durable `tool.started`/`tool.finished` events (SEC-111); a connector
+  renders it as one editable post (§5.12) and drops it where it cannot edit.
 
 ### 4.4 Action tokens
 
