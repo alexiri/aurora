@@ -696,6 +696,125 @@ open_vocab! {
     }
 }
 
+// ------------------------------------------------ exec frames (W20 leg 2, P5-FILES-1, D-316)
+
+open_vocab! {
+    /// What an exec runs (`16 §W20` leg 2, `12 §SSH channels`). P5-FILES-1 implements `sftp`
+    /// only; the others are answered `exec.refused { unsupported }` until P4-SSH-2.
+    pub enum ExecMode {
+        Shell = "shell",
+        Exec = "exec",
+        Sftp = "sftp",
+    }
+}
+
+/// The PTY a `tty` exec runs under.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecTty {
+    pub term: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// The runner asks its supervisor to start an exec (`16 §W20` leg 2). Outside the seq/ack
+/// lineage (`seq: 0`); the `pty_id` space is shared with `pty.open`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecOpen {
+    pub pty_id: u32,
+    pub window: u32,
+    pub mode: ExecMode,
+    /// `exec` mode only (≤ 8 KiB, no NUL); never logged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tty: Option<ExecTty>,
+    /// Only `LANG` and `LC_*` names are ever honoured.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+/// The supervisor accepted an exec; `window` is its own credit window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecOpened {
+    pub pty_id: u32,
+    pub window: u32,
+}
+
+/// The supervisor refused an exec.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecRefused {
+    pub pty_id: u32,
+    pub reason: ExecRefuseReason,
+}
+
+open_vocab! {
+    /// Why a supervisor refused an exec (`16 §W20`).
+    pub enum ExecRefuseReason {
+        Disabled = "disabled",
+        Limit = "limit",
+        Unsupported = "unsupported",
+        Error = "error",
+    }
+}
+
+/// The client sent EOF: close the child's stdin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecEof {
+    pub pty_id: u32,
+}
+
+/// The child ended (`status` or `signal`, the signal's name without `SIG`); exactly one,
+/// before `pty.close { reason: "eof" }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecExit {
+    pub pty_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+}
+
+/// `SSH_EXEC_COMMAND_MAX` (`16 §W20`): the longest `exec` command.
+pub const EXEC_COMMAND_MAX: usize = 8 * 1024;
+
+impl Validate for ExecOpen {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if self.window == 0 {
+            return Err(ValidationError::Invalid {
+                field: "window",
+                reason: "must be greater than zero",
+            });
+        }
+        if let Some(c) = &self.command {
+            check_bytes("command", c, EXEC_COMMAND_MAX)?;
+        }
+        if let Some(t) = &self.tty {
+            check_chars("tty.term", &t.term, 64)?;
+            if t.cols == 0 || t.rows == 0 {
+                return Err(ValidationError::Invalid {
+                    field: "tty.cols/rows",
+                    reason: "must be greater than zero",
+                });
+            }
+        }
+        check_max("env", self.env.len(), 16)?;
+        for (k, v) in &self.env {
+            check_chars("env name", k, 64)?;
+            check_bytes("env value", v, 256)?;
+        }
+        Ok(())
+    }
+}
+
+impl Validate for ExecExit {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(s) = &self.signal {
+            check_chars("signal", s, 32)?;
+        }
+        Ok(())
+    }
+}
+
 impl Validate for PtyOpen {
     fn validate(&self) -> Result<(), ValidationError> {
         if self.window == 0 {

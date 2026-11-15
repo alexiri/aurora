@@ -1,6 +1,7 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
 mod boot_proxy;
 mod common;
+mod exec_sftp;
 mod home;
 mod inbound;
 mod pgrelay;

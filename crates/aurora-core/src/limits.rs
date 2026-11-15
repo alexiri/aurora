@@ -400,6 +400,12 @@ pub const TERMINAL_STREAM_WINDOW: usize = 128 * KIB;
 pub const TERMINALS_PER_SANDBOX: u32 = 2;
 pub const TERMINALS_PER_AGENT: u32 = 4;
 pub const TERMINALS_PER_USER: u32 = 2;
+/// (phase 5, P5-FILES-1, D-316) concurrent `exec.*` children per sandbox at the supervisor
+/// (`SSH_CHANNELS_PER_SANDBOX` 8 + `FILE_SESSIONS_PER_SANDBOX` 4; the per-kind caps are the
+/// runner's), separate from `TERMINALS_PER_SANDBOX`.
+pub const EXECS_PER_SANDBOX: u32 = 12;
+/// (phase 5, P5-FILES-1) live `auf_` files legs per sandbox at the runner (close 4409).
+pub const FILE_SESSIONS_PER_SANDBOX: u32 = 4;
 /// idle timeout of an open terminal session (a WebSocket ping counts).
 pub const TERMINAL_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// total life of one terminal session.
@@ -478,6 +484,8 @@ mod tests {
         assert_eq!(TERMINALS_PER_SANDBOX, 2);
         assert_eq!(TERMINALS_PER_AGENT, 4);
         assert_eq!(TERMINALS_PER_USER, 2);
+        assert_eq!(EXECS_PER_SANDBOX, 12);
+        assert_eq!(FILE_SESSIONS_PER_SANDBOX, 4);
         assert_eq!(TERMINAL_IDLE_TIMEOUT, Duration::from_secs(600));
         assert_eq!(TERMINAL_MAX_LIFETIME, Duration::from_secs(14_400));
         assert_eq!(TERMINAL_AWAKE_GRACE, Duration::from_secs(120));

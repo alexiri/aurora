@@ -208,7 +208,7 @@ enum Cmd {
 }
 
 /// Report from a PTY task to the pump.
-enum TaskMsg {
+pub(crate) enum TaskMsg {
     /// The task ended: forward `pty.close` and free the id.
     Finished {
         id: u32,
@@ -216,6 +216,9 @@ enum TaskMsg {
         bytes_in: u64,
         bytes_out: u64,
     },
+    /// (P5-FILES-1) An exec ended: `exec.exit` (when the child's status was seen), then
+    /// `pty.close`, and free the id.
+    ExecFinished(crate::exec::ExecDone),
 }
 
 struct Live {
@@ -246,6 +249,8 @@ pub struct PtyEngine {
     /// The terminal wrappers' `harness.env` (`None`: tests, no file).
     harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
     live: HashMap<u32, Live>,
+    /// (P5-FILES-1, `16 §W20` leg 2) the `exec.*` children: one `pty_id` space with `live`.
+    execs: crate::exec::ExecTable,
     /// Recent unsequenced-frame violations (`16 §W19` on `16 §W18`): four within 60 s close the
     /// channel with 4400; reset with the connection.
     violations: Violations,
@@ -295,6 +300,31 @@ impl PtyEngine {
         shells: ShellPaths,
         harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
     ) -> Arc<PtyHandle> {
+        Self::spawn_with_exec(
+            ends,
+            enabled,
+            uid,
+            cwd,
+            bootstrap,
+            shells,
+            harness_env,
+            crate::exec::SFTP_SERVER.into(),
+        )
+    }
+
+    /// [`Self::spawn_with_harness_env`] with the `sftp-server` binary (tests point it at a
+    /// stand-in; production uses the image's fixed path).
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_with_exec(
+        ends: channel::PtyEnds,
+        enabled: bool,
+        uid: Option<u32>,
+        cwd: std::path::PathBuf,
+        bootstrap: std::path::PathBuf,
+        shells: ShellPaths,
+        harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
+        sftp_server: std::path::PathBuf,
+    ) -> Arc<PtyHandle> {
         let channel::PtyEnds {
             sender,
             inbound,
@@ -316,6 +346,7 @@ impl PtyEngine {
             bootstrap,
             harness_env,
             live: HashMap::new(),
+            execs: crate::exec::ExecTable::new(sftp_server),
             violations: Violations::default(),
             closed: ClosedIds::default(),
         };
@@ -386,6 +417,15 @@ impl PtyEngine {
                             self.send_close(id, reason, bytes_in, bytes_out).await;
                         }
                     }
+                    Some(TaskMsg::ExecFinished(d)) => {
+                        if self.execs.finished(d.id) {
+                            self.closed.insert(d.id);
+                            if let Some(exit) = d.exit {
+                                self.send_frame(SupervisorToRunner::ExecExit(exit)).await;
+                            }
+                            self.send_close(d.id, d.reason, d.bytes_in, d.bytes_out).await;
+                        }
+                    }
                     None => return,
                 },
                 _ = self.epoch.changed() => {
@@ -408,6 +448,8 @@ impl PtyEngine {
             M::PtyCredit(c) => {
                 if let Some(l) = self.live.get(&c.pty_id) {
                     l.credit.add(c.bytes as usize);
+                } else {
+                    self.execs.credit(c.pty_id, c.bytes);
                 }
             }
             M::PtyClose(c) => {
@@ -415,8 +457,11 @@ impl PtyEngine {
                 if let Some(l) = self.live.remove(&c.pty_id) {
                     l.abort.abort();
                 }
+                self.execs.remove(c.pty_id);
                 self.closed.insert(c.pty_id);
             }
+            M::ExecOpen(o) => self.on_exec_open(o).await,
+            M::ExecEof(e) => self.execs.eof(e.pty_id),
             M::Other(u) => {
                 tracing::debug!(kind = u.kind.as_str(), "unknown pty frame ignored");
             }
@@ -499,9 +544,60 @@ impl PtyEngine {
         );
     }
 
+    /// `exec.open` (`16 §W20` leg 2): the id must be free in the one id space; the posture and
+    /// limits are [`crate::exec::ExecTable::open`]'s. Answers `exec.opened` / `exec.refused`.
+    async fn on_exec_open(&mut self, o: aurora_protocol::runner::ExecOpen) {
+        use aurora_protocol::runner::{ExecOpened, ExecRefuseReason, ExecRefused};
+        if self.live.contains_key(&o.pty_id) || self.execs.contains(o.pty_id) {
+            self.kill(o.pty_id, PtyCloseReason::Error).await;
+            self.violate().await;
+            return;
+        }
+        let refuse = |reason| {
+            SupervisorToRunner::ExecRefused(ExecRefused {
+                pty_id: o.pty_id,
+                reason,
+            })
+        };
+        if !self.enabled {
+            self.send_frame(refuse(ExecRefuseReason::Disabled)).await;
+            return;
+        }
+        self.closed.remove(o.pty_id);
+        if let Err(reason) = self
+            .execs
+            .open(&o, self.uid, &self.cwd, &self.out, &self.task_tx)
+        {
+            self.send_frame(refuse(reason)).await;
+            return;
+        }
+        // `exec.opened` after the task exists: the runner's first data can only follow it.
+        self.send_frame(SupervisorToRunner::ExecOpened(ExecOpened {
+            pty_id: o.pty_id,
+            window: TERMINAL_STREAM_WINDOW as u32,
+        }))
+        .await;
+    }
+
     /// Data from the runner: over-window or unknown-id is a protocol violation (`16 §W19`);
     /// repeated violations close the channel with 4400.
     async fn on_data(&mut self, pty_id: u32, payload: Vec<u8>) {
+        if self.execs.contains(pty_id) {
+            match self.execs.data(pty_id, payload) {
+                crate::exec::DataOutcome::Queued => {}
+                crate::exec::DataOutcome::Unknown => {}
+                crate::exec::DataOutcome::OverWindow => {
+                    tracing::warn!(pty_id, "exec data beyond the credit window");
+                    self.kill(pty_id, PtyCloseReason::Error).await;
+                    self.violate().await;
+                }
+                crate::exec::DataOutcome::Full => {
+                    tracing::warn!(pty_id, "exec queue full; closing the exec");
+                    self.kill(pty_id, PtyCloseReason::Error).await;
+                }
+            }
+            return;
+        }
         let Some(l) = self.live.get_mut(&pty_id) else {
             if self.closed.contains(pty_id) {
                 // A close race: closed on this connection. Dropped silently.
@@ -549,7 +645,8 @@ impl PtyEngine {
 
     /// Ends every live PTY (connection change or shutdown).
     async fn close_live(&mut self, reason: PtyCloseReason) {
-        let ids: Vec<u32> = self.live.keys().copied().collect();
+        let mut ids: Vec<u32> = self.live.keys().copied().collect();
+        ids.extend(self.execs.ids());
         for id in ids {
             self.kill(id, reason.clone()).await;
         }
@@ -560,6 +657,9 @@ impl PtyEngine {
     async fn kill(&mut self, id: u32, reason: PtyCloseReason) {
         if let Some(l) = self.live.remove(&id) {
             l.abort.abort();
+            self.closed.insert(id);
+            self.send_close(id, reason, 0, 0).await;
+        } else if self.execs.remove(id) {
             self.closed.insert(id);
             self.send_close(id, reason, 0, 0).await;
         }

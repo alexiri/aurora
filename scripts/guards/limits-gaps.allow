@@ -199,7 +199,6 @@ MODEL_ID_MAX doc-only
 MODEL_INFO_MAX doc-only
 USAGE_BY_MODEL_MAX doc-only
 # P5-FILES spec step (2026-11-15, D-316): P5-FILES-1 adds all of these:
-EXECS_PER_SANDBOX doc-only
 FILES_AWAKE_CAP doc-only
 FILES_AWAKE_GRACE doc-only
 FILES_DELETE_MAX doc-only
