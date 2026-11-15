@@ -14,6 +14,9 @@ pub struct CredentialIdentityRow {
     pub org_id: Uuid,
     pub conversation_id: Option<Uuid>,
     pub turn_id: Option<Uuid>,
+    /// `gateway_credentials.trace_context` (FIX-146, D-232 (7)): the turn's W3C traceparent,
+    /// copied at mint (the gateway role has no grant on `turns`).
+    pub trace_context: Option<String>,
     pub context_label: Option<String>,
     /// `gateway_credentials.speaker_user_id` (RFE-005): hosted context credentials only.
     pub speaker_user_id: Option<Uuid>,
@@ -38,7 +41,7 @@ pub struct CredentialIdentityRow {
 }
 
 const IDENTITY_SELECT: &str = "SELECT c.id AS credential_id, c.kind, c.agent_id, a.workspace_id, w.org_id, \
-                c.conversation_id, c.turn_id, c.context_label, c.speaker_user_id, c.capabilities, \
+                c.conversation_id, c.turn_id, c.trace_context, c.context_label, c.speaker_user_id, c.capabilities, \
                 EXTRACT(EPOCH FROM (c.expires_at - now()))::float8 AS expires_in_secs, \
                 a.kind AS agent_kind, o.slug AS org_slug, w.slug AS ws_slug, \
                 w.byo_posture AS ws_byo_posture, o.governance -> 'byo' AS org_byo, \

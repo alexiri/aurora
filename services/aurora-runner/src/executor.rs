@@ -17,6 +17,35 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+/// `work {kind}` span of one work item: a child of `item.trace_context` when it has a valid one,
+/// else its own trace. Names carry the kind only (SEC-88: no ids, no paths).
+fn item_span(item: &WorkItem) -> tracing::Span {
+    let kind = match &item.body {
+        WorkItemBody::SandboxStart(_) => "sandbox.start",
+        WorkItemBody::SandboxStop(_) => "sandbox.stop",
+        WorkItemBody::HomeSync(_) => "home.sync",
+        WorkItemBody::TurnDeliver(_) => "turn.deliver",
+        WorkItemBody::TurnMessage(_) => "turn.message",
+        WorkItemBody::TurnSendNow(_) => "turn.send_now",
+        WorkItemBody::TurnAbort(_) => "turn.abort",
+        WorkItemBody::TurnNotice(_) => "turn.notice",
+        WorkItemBody::SessionRelease(_) => "session.release",
+        WorkItemBody::SessionPurge(_) => "session.purge",
+        WorkItemBody::PreviewStart(_) => "preview.start",
+        _ => "other",
+    };
+    let span = tracing::info_span!(
+        "work_item",
+        otel.name = %format!("work {kind}"),
+        otel.kind = "consumer",
+        work.kind = kind,
+    );
+    if !aurora_core::telemetry::adopt_turn_context(&span, item.trace_context.as_deref()) {
+        aurora_core::telemetry::tag_request_id(&span);
+    }
+    span
+}
+
 use crate::api::ApiClient;
 use crate::backend::{Backend, BackendError, ContainerRef, HoldCallback, StartRequest};
 use crate::hub::{ChannelHub, Frame, HubError};
@@ -323,7 +352,14 @@ impl Executor {
             let id = item.item_id;
             // A panicking step must not wedge the sandbox queue.
             let this = self.clone();
-            let res = tokio::spawn(async move { this.handle(item).await }).await;
+            // (FIX-146, D-232 (7)) The item's span is a child of the turn's trace context the API
+            // read from the database; the sandbox never supplies it.
+            let span = item_span(&item);
+            let res = tokio::spawn(tracing::Instrument::instrument(
+                async move { this.handle(item).await },
+                span,
+            ))
+            .await;
             if res.is_err() {
                 tracing::error!(item_id = %id, "work item handler panicked");
             }

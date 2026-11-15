@@ -400,6 +400,7 @@
       "revoked_at",
       "speaker_user_id",
       "token_hash",
+      "trace_context",
       "turn_id"
     ],
     "gateway_instances": [
@@ -1137,6 +1138,7 @@
       "status",
       "steer_delivered_at",
       "text",
+      "trace_context",
       "usage"
     ],
     "user_identities": [
@@ -1640,6 +1642,7 @@
       "revoked_at": "timestamptz null",
       "speaker_user_id": "uuid null",
       "token_hash": "bytea",
+      "trace_context": "text null",
       "turn_id": "uuid null"
     },
     "gateway_instances": {
@@ -2377,6 +2380,7 @@
       "status": "text",
       "steer_delivered_at": "timestamptz null",
       "text": "text not null",
+      "trace_context": "text null",
       "usage": "jsonb null"
     },
     "user_identities": {

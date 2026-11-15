@@ -102,6 +102,23 @@ impl RequestLog {
 
     pub fn record(&self, mut row: RequestLogRow) {
         row.path = redact_path(&row.path);
+        // (FIX-146, D-232 (8)) The row is the one place the outcome of a proxied request is known:
+        // put the allowlisted facts on the request's `gateway` span (a no-op outside one).
+        let span = tracing::Span::current();
+        span.record("aurora.decision", row.decision);
+        span.record("http.response.status_code", i64::from(row.status));
+        if let Some(a) = &row.app_id {
+            span.record("aurora.app_id", a.as_str());
+        }
+        if let Some(t) = &row.tool_id {
+            span.record("aurora.tool", t.as_str());
+        }
+        if let Some(r) = row.rule_logical_id {
+            span.record("aurora.rule_id", tracing::field::display(r));
+        }
+        if let Some(c) = row.connection_id {
+            span.record("aurora.connection_id", tracing::field::display(c));
+        }
         let Ok(mut b) = self.buf.lock() else { return };
         // The oldest rows go first, one per new row, and are counted.
         if b.len() >= self.cap {

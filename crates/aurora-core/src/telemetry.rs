@@ -308,6 +308,58 @@ pub fn tag_request_id(span: &tracing::Span) -> Option<String> {
     Some(id)
 }
 
+/// The W3C `traceparent` (`00-<32 hex>-<16 hex>-<2 hex>`) of the current span, if it has a valid
+/// context. Stored in `turns.trace_context` (D-232 (7)). Not usable inside a tracing layer callback.
+pub fn current_traceparent() -> Option<String> {
+    let cx = tracing::Span::current().context();
+    let sc = cx.span().span_context().clone();
+    sc.is_valid().then(|| {
+        format!(
+            "00-{:032x}-{:016x}-{:02x}",
+            sc.trace_id(),
+            sc.span_id(),
+            sc.trace_flags().to_u8()
+        )
+    })
+}
+
+/// Parse a stored/transported `traceparent` into a remote span context; `None` when malformed.
+pub fn parse_traceparent(tp: &str) -> Option<SpanContext> {
+    let b = tp.as_bytes();
+    if b.len() != 55 || !tp.starts_with("00-") || b[35] != b'-' || b[52] != b'-' {
+        return None;
+    }
+    let lower_hex = |s: &str| {
+        s.bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    };
+    let (t, p, f) = (&tp[3..35], &tp[36..52], &tp[53..55]);
+    if !(lower_hex(t) && lower_hex(p) && lower_hex(f)) {
+        return None;
+    }
+    let sc = SpanContext::new(
+        TraceId::from_hex(t).ok()?,
+        opentelemetry::trace::SpanId::from_hex(p).ok()?,
+        TraceFlags::new(u8::from_str_radix(f, 16).ok()?),
+        true,
+        TraceState::default(),
+    );
+    sc.is_valid().then_some(sc)
+}
+
+/// Make the not yet started `span` a child of a stored turn context (`turns.trace_context`,
+/// work-item `trace_context`, `gateway_credentials.trace_context`) and tag its request id.
+/// Returns false (and changes nothing) when `tp` is absent or malformed. The value must come from
+/// the database or a trusted Aurora peer, never from a sandbox (SEC-88).
+pub fn adopt_turn_context(span: &tracing::Span, tp: Option<&str>) -> bool {
+    let Some(sc) = tp.and_then(parse_traceparent) else {
+        return false;
+    };
+    let _ = span.set_parent(Context::new().with_remote_span_context(sc));
+    tag_request_id(span);
+    true
+}
+
 /// `builder.send_internal("aurora-api")`: [`send`] as a method, a drop-in for `.send()` on a call
 /// to another Aurora service.
 pub trait InternalRequest {
@@ -764,6 +816,41 @@ mod tests {
         let db = spans.iter().find(|s| s.name == "DELETE sessions").unwrap();
         assert_eq!(db.parent_span_id, root.span_context.span_id());
         assert_eq!(db.span_context.trace_id(), root.span_context.trace_id());
+    }
+
+    #[test]
+    fn turn_context_is_parsed_strictly_and_parents_a_span() {
+        let tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let sc = parse_traceparent(tp).unwrap();
+        assert_eq!(format!("{:032x}", sc.trace_id()), &tp[3..35]);
+        assert!(sc.is_sampled() && sc.is_remote());
+        for bad in [
+            "",
+            "garbage",
+            "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+            "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+        ] {
+            assert!(parse_traceparent(bad).is_none(), "{bad}");
+        }
+
+        let (exp, _g) = db_harness(1.0);
+        let span = tracing::info_span!("work_item");
+        assert!(adopt_turn_context(&span, Some(tp)));
+        assert!(!adopt_turn_context(&span, Some("nope")));
+        assert!(!adopt_turn_context(&span, None));
+        span.in_scope(|| {
+            // The adopted span is in the turn's trace; its traceparent round-trips.
+            let cur = current_traceparent().unwrap();
+            assert_eq!(&cur[3..35], &tp[3..35]);
+            query_event("SELECT 1 FROM turns", 0.01);
+        });
+        drop(span);
+        let spans = exp.get_finished_spans().unwrap();
+        let w = spans.iter().find(|s| s.name == "work_item").unwrap();
+        assert_eq!(format!("{:032x}", w.span_context.trace_id()), &tp[3..35]);
+        assert_eq!(format!("{:016x}", w.parent_span_id), &tp[36..52]);
     }
 
     #[test]

@@ -260,8 +260,10 @@ pub async fn mint_turn_credential(
     sqlx::query(
         "INSERT INTO gateway_credentials
             (id, kind, token_hash, display_prefix, agent_id, conversation_id, turn_id,
-             context_label, expires_at, speaker_user_id)
-         VALUES ($1,'context',$2,$3,$4,$5,$6,'turn', now() + make_interval(secs => $7), $8)",
+             context_label, expires_at, speaker_user_id, trace_context)
+         VALUES ($1,'context',$2,$3,$4,$5,$6,'turn', now() + make_interval(secs => $7), $8,
+                 -- (FIX-146) the gateway has no grant on `turns`: the turn's context is copied here.
+                 (SELECT trace_context FROM turns WHERE id = $6))",
     )
     .bind(Uuid::now_v7())
     .bind(token_hash)

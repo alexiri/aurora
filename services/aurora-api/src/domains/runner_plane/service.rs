@@ -236,12 +236,30 @@ async fn apply(
         // supervisor.ready, turn.*, steer/send_now, session, process, watch, gate: hosted engine.
         _ => {
             let facts = hosted::sandbox_facts(&mut tx, r.sandbox_id).await?;
-            match facts {
-                Some(f) => crate::domains::hosted::reports::apply(s, &mut tx, replica, &f, r)
+            // (FIX-146, D-232 (7)) A report about a turn is handled in a span that is a child of
+            // the turn's context, read from the database (never from the sandbox or the report).
+            let turn = match &r.body {
+                ReportBody::TurnStarted(t) => Some(t.turn_id),
+                ReportBody::TurnEvents(e) => Some(e.turn_id),
+                ReportBody::TurnProgress(t) => Some(t.turn_id),
+                ReportBody::TurnResult(t) => Some(t.turn_id),
+                _ => None,
+            };
+            let span =
+                tracing::info_span!("report", otel.name = "report turn", otel.kind = "internal");
+            if let Some(turn) = turn {
+                let tp = aurora_db::repo::turns::trace_contexts(&mut *tx, &[turn])
                     .await?
-                    .unwrap_or_else(|| {
-                        result(r.report_id, ReportStatus::Invalid, Some("unsupported"))
-                    }),
+                    .remove(&turn);
+                aurora_core::telemetry::adopt_turn_context(&span, tp.as_deref());
+            }
+            match facts {
+                Some(f) => tracing::Instrument::instrument(
+                    crate::domains::hosted::reports::apply(s, &mut tx, replica, &f, r),
+                    span,
+                )
+                .await?
+                .unwrap_or_else(|| result(r.report_id, ReportStatus::Invalid, Some("unsupported"))),
                 None => result(r.report_id, ReportStatus::Fenced, Some("unknown_sandbox")),
             }
         }

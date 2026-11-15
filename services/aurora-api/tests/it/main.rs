@@ -102,6 +102,7 @@ mod sse_revocation;
 mod tenancy;
 mod terminal;
 mod tools;
+mod turn_trace_context;
 mod webhooks;
 
 #[test]
