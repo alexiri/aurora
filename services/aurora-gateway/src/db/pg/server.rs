@@ -7,7 +7,7 @@ use crate::db::{DbEndpoint, SslMode};
 use crate::guard::{DialError, Guard};
 use crate::upstream::{EgressProxy, dial};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject};
 use rustls::{
@@ -447,7 +447,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     // HMAC accepts keys of any length; the error arm cannot happen.
-    match <HmacSha256 as Mac>::new_from_slice(key) {
+    match <HmacSha256 as KeyInit>::new_from_slice(key) {
         Ok(mut m) => {
             m.update(data);
             m.finalize().into_bytes().to_vec()
