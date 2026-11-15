@@ -473,7 +473,11 @@ impl RawConfig {
             bootstrap_host_tokens(&mut c, &s.bootstrap_connector_host_tokens);
         let (signup_mode, org_creation) =
             check_auth(&mut c, &self.auth, s, external_url.as_deref());
-        check_email(&mut c, &self.email, s.smtp_password.is_some());
+        check_email(
+            &mut c,
+            &self.email,
+            s.smtp_password.is_some() || self.email.smtp_password_sealed.is_some(),
+        );
         check_secret_stores(&mut c, &self.secrets);
         check_llm(
             &mut c,
@@ -2001,8 +2005,18 @@ fn check_auth(
         if p.client_id.is_empty() {
             c.err(k("client_id"), "required");
         }
-        if p.client_secret_env.is_empty() {
-            c.err(k("client_secret_env"), "required");
+        if p.client_secret.is_some() && !p.client_secret_env.is_empty() {
+            c.err(
+                k("client_secret"),
+                "client_secret and client_secret_env are exclusive: set one",
+            );
+        } else if p.client_secret.is_some() {
+            // A secret the dashboard sealed (SET-4): opened by the API when the provider is used.
+        } else if p.client_secret_env.is_empty() {
+            c.err(
+                k("client_secret_env"),
+                "required (or a sealed client_secret)",
+            );
         } else if !s.oidc_client_secrets.contains_key(&p.id) {
             c.err(
                 k("client_secret_env"),

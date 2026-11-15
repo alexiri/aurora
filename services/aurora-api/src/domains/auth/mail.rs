@@ -132,13 +132,21 @@ impl Mailer for SmtpMailer {
 /// SMTP when `email.smtp_url` is set (falling back to log-only with an error log if it is
 /// unusable), else log-only.
 pub fn from_config(cfg: &ApiConfig) -> Arc<dyn Mailer> {
-    if let Some(url) = &cfg.email.smtp_url {
-        let from = cfg.email.from.as_deref().unwrap_or_default();
-        let credentials = cfg
-            .email
-            .smtp_username
-            .clone()
-            .zip(cfg.email.smtp_password.as_ref().map(|p| p.expose().clone()));
+    from_parts(
+        &cfg.email,
+        cfg.email.smtp_password.as_ref().map(|p| p.expose().clone()),
+    )
+}
+
+/// The mailer for e-mail settings and an already resolved SMTP password (SET-4: the password is
+/// the environment's or one the dashboard sealed; the URL never carries it).
+pub fn from_parts(
+    email: &aurora_config::EmailSection,
+    password: Option<String>,
+) -> Arc<dyn Mailer> {
+    if let Some(url) = &email.smtp_url {
+        let from = email.from.as_deref().unwrap_or_default();
+        let credentials = email.smtp_username.clone().zip(password);
         match SmtpMailer::new(url.expose(), from, credentials) {
             Ok(m) => return Arc::new(m),
             Err(e) => {
@@ -147,7 +155,7 @@ pub fn from_config(cfg: &ApiConfig) -> Arc<dyn Mailer> {
         }
     }
     Arc::new(LogMailer {
-        log_links: cfg.email.log_links,
+        log_links: email.log_links,
     })
 }
 

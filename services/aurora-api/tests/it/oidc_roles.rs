@@ -680,35 +680,15 @@ async fn sec78_dashboard_cannot_edit_claim_roles_and_no_route_writes_mappings() 
         .find(|m| m["email"] == E)
         .unwrap();
     assert_eq!(m["idp_value"], "aurora-staff");
-    // Admin › Identity: read-only mapping table; nothing writes it; non-admins are refused.
-    let (st, v) = h.get("/v1/admin/identity", &hdr).await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(v["providers"][0]["role_claim"], "cern_roles");
-    assert_eq!(
-        v["providers"][0]["role_mappings"][0]["value"],
-        "aurora-admins"
-    );
-    assert!(v.to_string().find("secret").is_none());
-    for m in [Method::PUT, Method::POST, Method::PATCH, Method::DELETE] {
-        let (st, _, _) = h
-            .send(
-                m.clone(),
-                "/v1/admin/identity",
-                &hdr,
-                Some(json!({"providers": []})),
-            )
-            .await;
-        assert!(
-            matches!(st, StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED),
-            "{m} -> {st}"
-        );
-    }
+    // SET-4: `GET /v1/admin/identity` is gone (Admin › Sign-in replaces the Identity page).
+    let (st, _) = h.get("/v1/admin/identity", &hdr).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let _ = boss;
     let plain = h.user("plain@example.com", false).await;
     let (_, t2) = h.good_session(plain).await;
     let (st, _) = h
         .get(
-            "/v1/admin/identity",
+            "/v1/admin/settings/sign_in",
             &[("cookie", &format!("aurora_session={t2}"))],
         )
         .await;
