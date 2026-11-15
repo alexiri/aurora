@@ -94,6 +94,7 @@ pub struct HarnessCapabilities {
     pub dialects: Vec<Dialect>,   // LLM API dialects it can speak (08)
     pub skills_dir: Option<RelPath>,       // home-relative, e.g. ".claude/skills"
     pub instruction_files: Vec<RelPath>,   // e.g. ["CLAUDE.md", "AGENTS.md"]
+    pub model_roles: Vec<ModelRole>,       // (phase 5, P5-MODELS-1, D-303) roles it can map: large/medium/small; [] = none
 }
 
 #[async_trait]
@@ -192,6 +193,31 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   extended thinking, `max` = the largest thinking budget the CLI accepts).
 - The adapter holds a starting session's first turn until the harness has
   listed MCP tools, so a stale on-disk tool cache is never used.
+- (phase 5, P5-MODELS-1, D-302, D-303, C-877) **Models.** `ANTHROPIC_MODEL` is the **default** model
+  (`08 §Model selection`). The adapter declares `model_roles = [large, medium, small]` and maps
+  `ModelChoice` as follows:
+  - `roles.large` → `ANTHROPIC_DEFAULT_OPUS_MODEL`, `roles.medium` → `ANTHROPIC_DEFAULT_SONNET_MODEL`,
+    `roles.small` → `ANTHROPIC_DEFAULT_HAIKU_MODEL`. An unset role sets nothing. The CLI's other aliases
+    (`fable`) stay unmapped.
+  - `subagent_role` → `CLAUDE_CODE_SUBAGENT_MODEL=<alias of the role>` (`opus`/`sonnet`/`haiku`). It is
+    never `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`, so a subagent definition's own `model:` still wins.
+  - `model_meta` → for each role whose model has `capabilities`, the CLI's per-alias capabilities
+    variable (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL_SUPPORTED_CAPABILITIES`, comma-joined). The default model's
+    `context_window` → the CLI's context-window override (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). If the
+    pinned version accepts a per-alias override, each role's `context_window` is mapped to it as well.
+
+  The exact variable names are pinned next to the CLI version, like the `client_env` names (C-809). The
+  live conformance suite verifies that a subagent with `model: haiku` and the CLI's background requests
+  reach `roles.small` (seen in `request_log.llm_model`). Every value is re-checked against
+  `MODEL_ID_PATTERN` (or as an integer, or the capability vocabulary) before it enters the environment
+  (SEC-122). The adapter never writes `.claude/agents/`: subagent definitions are the agent's (D-302(d)).
+- (phase 5, P5-MODELS-2, D-304, C-879) **Usage.** `Done { usage }` is built from the result's
+  per-model report (`modelUsage`; the key is pinned with the CLI version). Each entry becomes a
+  `by_model` entry (`inputTokens` → `input_tokens`, `outputTokens` → `output_tokens`,
+  `cacheReadInputTokens` → `cache_read_tokens`, `cacheCreationInputTokens` → `cache_write_tokens`), and
+  the totals are their sum. The result's top-level `usage` covers the main loop only, and is used only
+  when the per-model report is absent. `costUSD` and `total_cost_usd` are dropped. Streaming `Usage`
+  events stay main-loop progress counters. The terminal `Done` is authoritative.
 
 ### Harness selection and adapter contract (phase 4, P4-HAR, D-122, SEC-66)
 
@@ -316,6 +342,11 @@ specified here is the contract.
 - **Not supported:** ChatGPT-subscription sign-in (the host `chatgpt.com` stays a known
   LLM host, refused under `sanctioned_only`), Codex cloud/remote features, IDE/app-server
   modes, its own MCP-server catalogue beyond Aurora's bridge.
+- (phase 5, P5-MODELS, D-303, D-304) **Models.** `model_roles = []`: `roles`, `subagent_role` and
+  `model_meta` are received and ignored, and the dashboard says "Not used by Codex". A later pinned
+  version that can choose a model per task declares roles in its own spec change. The rendered `model` is
+  the default. Usage reports one `by_model` entry, for the default model, unless the pinned version
+  reports per-model token counts.
 
 ### Adapter `fake`
 

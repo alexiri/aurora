@@ -445,6 +445,40 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Governance matrix** re-run over the new endpoints: `sanctioned_only` with and without a key, endpoint not permitted, scope not permitted, origin mismatch/unverifiable, model allow-list; plugin claim of an endpoint host refused; an S3 request under Default Rule `block` still blocked while the Bedrock endpoint works.
 - **Classification** table tests (`classify` for every documented provider error, shared by gateway and adapters), request-log `error_code` and `aurora_gateway_llm_upstream_total`; the gateway never changes an upstream status or body.
 - **Usage**: a turn on each provider records `provider`, `endpoint_id`, `model` from the `ModelChoice` (a harness claiming another provider is ignored); `GET …/usage` aggregates by provider.
+
+### Model roles and usage per model (phase 5, P5-MODELS, D-302..D-304, SEC-122, SEC-123)
+
+- **Selection** (`api/it/model_roles.rs`, P5-MODELS-1):
+  - resolution order (agent stamped role, then endpoint role, then unset);
+  - an agent role on another endpoint, or no longer allowed, is dropped with one notice and never re-pointed, while the other roles stay;
+  - an endpoint role outside an org's allow-list gives `role_not_allowed` and is not sent;
+  - `role_unset` appears on non-`anthropic` endpoints only;
+  - `subagent_role` is omitted with `subagent_role_unset` when its role resolves to nothing on a non-`anthropic` endpoint;
+  - readiness (C-878) equals the dispatcher's choice;
+  - the eval fingerprint includes `model_roles` and `subagent_model`;
+  - PATCH errors `model_id_invalid`, `llm_model_not_allowed` and `model_role_endpoint_mismatch`;
+  - config and settings refusals use `value_invalid`.
+- **Adapter** (golden tests, P5-MODELS-1):
+  - the `claude-code` environment for each role combination (alias variables, `CLAUDE_CODE_SUBAGENT_MODEL`, capabilities, context window; no `_FORCE`);
+  - `codex` ignores roles;
+  - the `harness.env` section with roles (SEC-122);
+  - the supervisor refuses a pattern-violating id with `harness_failed`.
+- **Live conformance** (env-gated, LiteLLM endpoint serving two models, P5-MODELS-1):
+  - a subagent with `model: haiku` and the CLI's background requests reach `roles.small` (checked with `request_log.llm_model`);
+  - the main loop uses the default;
+  - with `subagent_model = small` and no definition, the general-purpose subagent uses `small`.
+- **Usage** (P5-MODELS-2):
+  - parsing the `claude-code` result's per-model report;
+  - the totals equal the sum of `by_model`, and a fixture with a subagent proves the main-loop-only `usage` is no longer used;
+  - the fallback to `usage` when no per-model report is present;
+  - the trust rule (an allowed, role or default model is kept; a foreign model is folded with `unverified_models`; more than `USAGE_BY_MODEL_MAX` entries are folded);
+  - with no allow-list, a pattern-valid id is kept;
+  - `costUSD` is dropped;
+  - old turns without `by_model` aggregate under `model`.
+- **Gateway** (P5-MODELS-2):
+  - `request_log.llm_model` is set for injected LLM requests with and without an allow-list (body, Bedrock path and Vertex path forms);
+  - null for `Unknown`, with no refusal when no allow-list applies;
+  - no first-byte delay beyond the existing prefix read (the streaming passthrough test re-runs).
 - **Sandbox isolation** (e2e-hosted with mock endpoints): a Bedrock and a Vertex turn through claude-code with the "skip auth" environment; seeded AWS secret and service-account private key found nowhere in the sandbox, transcripts, logs, request log or metrics; `client_env` contains no key-looking value.
 - **Live suites** (`AURORA_TEST_LIVE_OPENAI=1`, `…_AZURE`, `…_BEDROCK`, `…_VERTEX`, `…_COMPAT`; not in CI): one real model call and listing per provider through a real gateway, used to pin the header, error-type and client-variable details the spec leaves to "pinned in the provider".
 - **Default unchanged**: with the default `enabled_providers` the registry, `/v1/llm/providers` and every phase-0 provider test are untouched.

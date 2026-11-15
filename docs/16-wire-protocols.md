@@ -98,7 +98,11 @@ It is never forwarded to the supervisor or the sandbox. Additive: an older runne
 | `preview.start` | (phase 4, P4-PRV-1, D-145) `{ share_id }` — ask the supervisor to start the share's command on demand (`11 §Port previews`); the runner forwards `preview.start { port }` on the supervisor channel and the supervisor resolves the command from its own share list |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
-client_env: [[k,v]] }`. (phase 5 (D-138, moved from phase 4), P4-LLM) `provider` and `dialect` are open
+client_env: [[k,v]] }`. (phase 5, P5-MODELS-1, D-303, C-877) Optional additions: `roles: { large?, medium?,
+small? }` (resolved model ids on the same endpoint), `subagent_role?: "large" | "medium" | "small"`,
+`model_meta?: [{ model, context_window?, capabilities? }]`. If they are absent, the behaviour is as before.
+A supervisor re-checks every id against `MODEL_ID_PATTERN` and refuses the turn with `harness_failed` on a
+mismatch (SEC-122). `model` is the harness's default, not its only model (`08 §Model selection`). (phase 5 (D-138, moved from phase 4), P4-LLM) `provider` and `dialect` are open
 vocabularies: `provider` gains `openai`, `azure_openai`, `bedrock`, `vertex`,
 `openai_compatible`; `dialect` gains `anthropic_bedrock` and `anthropic_vertex`
 (`openai_chat` and `openai_responses` already exist). A supervisor that does not know
@@ -124,7 +128,7 @@ are dropped.
 | `turn.started` | `{ turn_id }` | `running` |
 | `turn.events` | `{ turn_id, events: [{ n, event: HarnessEventWire }] }` | events with `n ≤ turns.last_event_n` are duplicates; durable ones persisted with seq; ephemeral ones NOTIFY'd |
 | `turn.progress` | `{ turn_id }` | `last_progress_at` |
-| `turn.result` | `{ turn_id, status: "done"|"failed"|"aborted", error_code?, error_message?, usage? }` | terminal state, context credential expiry, mirror, follow-up promotion |
+| `turn.result` | `{ turn_id, status: "done"|"failed"|"aborted", error_code?, error_message?, usage? }`. (phase 5, P5-MODELS-2, C-879) `usage` may carry `by_model` | terminal state, context credential expiry, mirror, follow-up promotion |
 | `steer.result` | `{ followup_id, outcome: "delivered"|"missed"|"refused" }` | `joining` bookkeeping |
 | `send_now.result` | `{ turn_id, outcome: "moved"|"nothing_running"|"unsupported" }` | event |
 | `session` | `{ conversation_id, session_ref, epoch }` | `harness_session_ref` (ignored if epoch is stale or the boot was restarted) |

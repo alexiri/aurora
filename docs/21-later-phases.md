@@ -266,6 +266,32 @@ projection`, `§Platform tools`; `16 §W5`; `03` (`plugin_blobs`); `05` (plugin 
 this phase: a code-execution runtime, executable recipes, generated client libraries, MCP-server
 apps (shape recorded in D-172), effective-policy access in `tools.md`, digest-skipping in the
 home sync, guides for BYO agents.
+
+### The harness chooses models (phase 5, P5-MODELS, owner 2026-11-15, D-302..D-304) — specified
+
+Owner: "does it really need to limit Claude's options to only that model/provider?"
+
+- **The default model.** The agent's model becomes the **default** the harness starts with. The
+  harness, its subagents and its background requests may use any model governance allows **on the same
+  endpoint**. The allow-list (`08 §11.5`) stays the only model control, and agents get no allow-list of
+  their own.
+- **Model roles.** Three harness-neutral roles (`large`/`medium`/`small`) map Claude Code's
+  `opus`/`sonnet`/`haiku` aliases to concrete models. They are set on the endpoint, or on the agent
+  stamped with its endpoint.
+- **Subagent default.** A subagent default lets cheap subagents gather while the default model writes
+  the answer.
+- **Model details.** Model details describe models the CLI does not recognise.
+- **Usage per model.** Usage is recorded per model, with a trust rule against the allow-list. This
+  fixes `claude-code` counting only main-loop tokens. `request_log.llm_model` records each request's
+  model.
+- **Fallback across providers.** It stays with the LiteLLM router, as an operator recipe. No
+  Aurora-native model chain is built. Subagent definitions remain the agent's files.
+
+Briefs P5-MODELS-1 (Rust), -2 (Rust), -3 (Next.js and recipe), after P4-LLM-5. Owning sections:
+`08 §Model selection`, `§Model roles`, `§Model readiness`, `§11.5`; `10 §Agents`, `§Agent
+instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§Adapter claude-code`,
+`§Adapter codex`; `16`; `03`; `05`; `15`; `14`; `02 §Limits`; `17` (SEC-122, SEC-123); `18`;
+`API_CONTRACTS` C-875..C-884.
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 - **Nested organizations — proposed (`docs/tasks/P6-ORGTREE.md`).** `organizations.parent_org_id`
@@ -290,17 +316,8 @@ home sync, guides for BYO agents.
   background starts before touching interactive chat, switchable live from Admin › Limits and from the
   CLI. Admin/Org/My usage views and abuse signals (report-only). **Abuse control only, not billing, plans or
   budgets (owner, D-276(b))**. Open questions Q-P6-LIM-1, 3..8, 10.
-- **The harness chooses models — proposed (`docs/tasks/P6-MODELS.md`, owner 2026-11-15).** The agent's
-  model becomes the **default** the harness starts with. The harness (its subagents, its background
-  requests) may use any model governance allows **on the same endpoint**, and the allow-list (`08 §11.5`)
-  stays the only model control. Three harness-neutral **model roles** (`large`/`medium`/`small`, from the
-  agent or the endpoint configuration) map Claude Code's `opus`/`sonnet`/`haiku` aliases to concrete
-  models. A **subagent default** lets cheap subagents gather and the default model write the answer.
-  Optional model metadata covers ids the CLI does not know. `ModelChoice.roles` is added, and usage is
-  recorded **per model** with a trust rule against the allow-list; this also fixes `claude-code` leaving
-  out subagent tokens today. `request_log.llm_model` is added. Falling back across providers stays with
-  the LiteLLM router (a recipe); an Aurora-native model chain is later and only on demand. Open questions
-  Q-P6-MOD-1..7.
+- *(The P6-MODELS proposal moved to phase 5 by the owner, D-302(f); see §The harness chooses models
+  above.)*
 
 ## Other later items
 
