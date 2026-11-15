@@ -441,7 +441,9 @@ attribute it names on the app's list; `attributes` ⊆ the list (default: the wh
 an escaped comma is not a separator); `limit` is clamped to `max_entries`.
 
 **Directory conversation** (`client.rs`): guarded dial (or the egress proxy) to `server:port`, TLS
-with the certificate verified for `server` (system roots plus the gateway's extra CA bundle), an
+with the certificate verified for `server` (system roots plus the gateway's extra CA bundle; `xldap.cern.ch`'s
+certificate is issued by CERN Root Certification Authority 2, which is in no public store, so a deployment that
+uses `cern-phonebook` adds that root to `tls.extra_ca_bundle`, D-252), an
 anonymous simple bind (LDAPv3), one `SearchRequest` (derefAliases never, sizeLimit `max_entries+1`,
 timeLimit 10 s, attributes = the request's), an unbind. Only those three PDUs can be encoded — the
 client has no code for add, modify, delete, modifyDN, compare, extended operations or controls.

@@ -669,11 +669,15 @@ impl Resolver {
             (Vec::new(), HashSet::new(), HashSet::new(), false);
         let mut host_apps: Vec<String> = Vec::new();
         let mut instances: Vec<InstanceHostRow> = Vec::new();
-        // Governed LLM hosts never serve app connections (SEC-37).
-        if let Some(l) = registry
-            .as_ref()
-            .filter(|l| !is_llm_host && !l.is_reserved(&k.host, k.port))
-        {
+        // Governed LLM hosts never serve app connections (SEC-37). Reserved hosts (the platform's
+        // `*.aurora.internal` namespace, the instance's own host) never do either, except the LDAP
+        // lane's synthetic hosts (D-251): they live in that namespace by design, and the lane is
+        // a capability of a granted connection, so the connection must resolve there. (Whatever
+        // else the lane's host might carry, only an app that declares an `ldap` block can claim it:
+        // the manifest linter's synthetic-host exception, `09 §3`.)
+        if let Some(l) = registry.as_ref().filter(|l| {
+            !is_llm_host && (!l.is_reserved(&k.host, k.port) || crate::ldap::is_ldap_host(&k.host))
+        }) {
             let entries = l.entries_for_host(&k.host, k.port);
             // Registered app instances (D-74): exact host match only. A static claim of another
             // app on the same host shadows the instance (fail closed: nothing is injected for it).
