@@ -104,7 +104,12 @@ async fn main() -> ExitCode {
             }
         };
     }
-    let cfg: GatewayConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
+    // The configuration with its presence set: instance settings merge over it the same way as in
+    // the API (D-236(b)).
+    let source = aurora_config::ConfigSource::load(cli.config.as_deref(), std::env::vars())
+        .unwrap_or_else(|e| exit_config(e));
+    let cfg: GatewayConfig = source
+        .raw()
         .and_then(|raw| raw.gateway_config())
         .unwrap_or_else(|e| exit_config(e));
     let instance = service::init_telemetry(
@@ -116,7 +121,7 @@ async fn main() -> ExitCode {
     let Command::Serve = cli.command else {
         return ExitCode::FAILURE;
     };
-    let result = serve(cfg).await;
+    let result = serve(cfg, source).await;
     service::telemetry_shutdown();
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -128,7 +133,10 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
+async fn serve(
+    cfg: GatewayConfig,
+    source: aurora_config::ConfigSource,
+) -> Result<(), Box<dyn std::error::Error>> {
     let pool = PgPoolOptions::new()
         .max_connections(cfg.max_connections)
         .acquire_timeout(Duration::from_secs(3))
@@ -292,6 +300,11 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let reqlog_task = tokio::spawn(reqlog.clone().run(FLUSH_INTERVAL, rx.clone()));
     let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
+    // (phase 5, SET-1, D-236(f)) The instance-settings snapshot: no consumer yet (SET-2, SET-3,
+    // SET-5 and FIX-124 read it). A gateway whose role has no grant on the table yet (rollout
+    // order) logs and keeps running on its configuration.
+    let settings = aurora_gateway::settings::Settings::new(Some(source));
+    let settings_task = tokio::spawn(settings.clone().run(pool.clone(), hub.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(
         pool.clone(),
         instance_id,
@@ -463,6 +476,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     holds.abandon_all().await;
     internal_task.await??;
     let _ = hub_task.await;
+    let _ = settings_task.await;
     let _ = snapshot_task.await;
     let _ = instance_task.await;
     let _ = reqlog_task.await;

@@ -55,6 +55,50 @@ enum Command {
         #[command(subcommand)]
         command: SecretsCommand,
     },
+    /// Instance settings (`docs/operator/upgrades.md` §Break-glass): works with invalid stored
+    /// settings. Exit 0 done, 2 refused (validation), 3 locked key, 4 database unreachable.
+    Settings {
+        #[command(subcommand)]
+        command: SettingsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SettingsCommand {
+    /// Effective values and their sources (secrets as set/unset).
+    Show {
+        section: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove dashboard values: a section, one key (`--key`) or one keyed-list entry (`--entry`).
+    Reset {
+        section: String,
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        entry: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Write the dashboard values (no secrets) as YAML or JSON to stdout.
+    Export {
+        #[arg(long, default_value = "yaml")]
+        format: String,
+        /// Comma-separated section ids.
+        #[arg(long)]
+        sections: Option<String>,
+    },
+    /// Apply a settings document (one transaction).
+    Import {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        /// `replace` (default) or `merge`.
+        #[arg(long, default_value = "replace")]
+        mode: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -135,9 +179,16 @@ async fn main() -> ExitCode {
     if let Command::Keys { command } = &cli.command {
         return keys_command(&cli, command);
     }
-    let cfg: ApiConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
+    // The configuration with its presence set (which keys the deployment sets: D-236(b)).
+    let source = aurora_config::ConfigSource::load(cli.config.as_deref(), std::env::vars())
+        .unwrap_or_else(|e| exit_config(e));
+    let cfg: ApiConfig = source
+        .raw()
         .and_then(|raw| raw.api_config())
         .unwrap_or_else(|e| exit_config(e));
+    if let Command::Settings { command } = &cli.command {
+        return settings_command(cfg, source, command).await;
+    }
     let instance = service::init_telemetry(
         SERVICE,
         &cfg.telemetry.log_level,
@@ -145,7 +196,7 @@ async fn main() -> ExitCode {
     );
     tracing::info!(instance_id = %instance, "starting");
     let result = match cli.command {
-        Command::Serve => serve(cfg).await,
+        Command::Serve => serve(cfg, source).await,
         Command::Migrate => migrate(cfg).await,
         Command::BootstrapAdmin { email } => bootstrap_admin(cfg, &email).await,
         Command::Admin {
@@ -163,7 +214,7 @@ async fn main() -> ExitCode {
         Command::Secrets {
             command: SecretsCommand::Rekey { purpose, dry_run },
         } => secrets_rekey(cfg, purpose, dry_run).await,
-        Command::Openapi { .. } | Command::Keys { .. } => Ok(()),
+        Command::Openapi { .. } | Command::Keys { .. } | Command::Settings { .. } => Ok(()),
     };
     service::telemetry_shutdown();
     match result {
@@ -256,7 +307,82 @@ async fn revoke_admin(cfg: ApiConfig, email: &str) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
+/// `aurora-api settings …` (C-784): through the settings service with source `cli`. It never
+/// loads the stored settings strictly, so it starts when they are invalid.
+async fn settings_command(
+    cfg: ApiConfig,
+    source: aurora_config::ConfigSource,
+    command: &SettingsCommand,
+) -> ExitCode {
+    use aurora_api::domains::settings::cli;
+    let pool = match aurora_db::connect(cfg.database_url.expose(), 4).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: database unreachable: {e}");
+            return ExitCode::from(4);
+        }
+    };
+    let state = match aurora_api::app::AppState::try_new(pool, cfg) {
+        Ok(s) => s.with_config_source(source),
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let result = match command {
+        SettingsCommand::Show { section, json } => {
+            cli::show(&state, section.as_deref(), *json).await
+        }
+        SettingsCommand::Reset {
+            section,
+            key,
+            entry,
+            dry_run,
+        } => cli::reset(&state, section, key.as_deref(), entry.as_deref(), *dry_run).await,
+        SettingsCommand::Export { format, sections } => {
+            let only: Option<Vec<String>> = sections.as_deref().map(|s| {
+                s.split(',')
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty())
+                    .collect()
+            });
+            cli::export(&state, format, only.as_deref())
+        }
+        SettingsCommand::Import {
+            file,
+            dry_run,
+            mode,
+        } => match std::fs::read_to_string(file) {
+            Ok(text) => {
+                let format = if file.extension().is_some_and(|e| e == "json") {
+                    "json"
+                } else {
+                    "yaml"
+                };
+                cli::import(&state, &text, format, mode == "merge", *dry_run).await
+            }
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", file.display());
+                return ExitCode::from(2);
+            }
+        },
+    };
+    match result {
+        Ok(out) => {
+            print!("{out}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {}", cli::render_error(&e));
+            ExitCode::from(cli::exit_code(&e))
+        }
+    }
+}
+
+async fn serve(
+    cfg: ApiConfig,
+    source: aurora_config::ConfigSource,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Lazy pool: the process starts without the DB and `/readyz` reports 503.
     let pool = PgPoolOptions::new()
         .max_connections(cfg.max_connections)
@@ -284,7 +410,13 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     for w in aurora_config::llm_endpoint_warnings(&cfg.llm) {
         tracing::warn!("{w}");
     }
-    let state = aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?;
+    let state =
+        aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?.with_config_source(source);
+    // (phase 5, SET-1, D-236) Mirror the configuration's locked keys, load the stored settings
+    // and keep them live. Invalid stored settings stop the start naming the section, the key and
+    // the reset command (D-238(c)); an unreachable database only delays the first load.
+    aurora_api::domains::settings::handle::start(&state.settings, &pool).await?;
+    state.settings.spawn_reload(pool.clone(), "api");
     // (FIX-083) IdP-linked groups of a provider that no longer syncs them (provider ids only).
     aurora_api::domains::groups::sync::warn_orphaned_providers(&pool, &cfg.auth.oidc_providers)
         .await;

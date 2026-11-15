@@ -82,6 +82,9 @@ pub struct AppState {
     pub card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests>,
     /// (phase 4, P4-GSL) git skill library: the gateway client and the browse cache.
     pub library: Arc<crate::domains::skill_libraries::LibraryEnv>,
+    /// (phase 5, SET-1, D-236) Instance settings: the deployment configuration's presence and the
+    /// snapshot every replica serves from. Nothing reads it yet except the Admin › Settings routes.
+    pub settings: Arc<domains::settings::handle::SettingsHandle>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
     /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
@@ -190,6 +193,7 @@ impl AppState {
             connect,
             card_requests,
             library,
+            settings: Arc::new(domains::settings::handle::SettingsHandle::new(None)),
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
             stream_recheck: crate::http::auth::STREAM_RECHECK,
         })
@@ -199,6 +203,14 @@ impl AppState {
     #[allow(clippy::expect_used)]
     pub fn new(pool: PgPool, config: ApiConfig) -> Self {
         Self::try_new(pool, config).expect("valid secrets/llm configuration")
+    }
+
+    /// Attach the deployment configuration the settings framework locks against (D-236(b)).
+    /// `main` always calls this; states built without it (tests, tools) lock nothing.
+    #[must_use]
+    pub fn with_config_source(mut self, source: aurora_config::ConfigSource) -> Self {
+        self.settings = Arc::new(domains::settings::handle::SettingsHandle::new(Some(source)));
+        self
     }
 
     /// Replace the shared counters (tests: a shared in-process store, fault injection).
@@ -299,6 +311,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::admin::router())
         .merge(domains::onboarding::router())
         .merge(domains::placement::router())
+        .merge(domains::settings::router())
         .merge(domains::previews::router())
         .merge(domains::terminal::router())
         .merge(domains::relay::router())

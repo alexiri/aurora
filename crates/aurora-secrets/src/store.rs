@@ -18,10 +18,13 @@ pub enum Purpose {
     /// (P4-MCON, D-128) Secret and generated settings of a managed connector; owner =
     /// `connectors.secret_owner`, org = nil UUID.
     ConnectorSettings,
+    /// (phase 5, SET-1, D-236(g)) A secret field of an instance setting (OIDC client secret,
+    /// SMTP password, …): always the inline store; owner = the field's own uuid, org = nil UUID.
+    InstanceSetting,
 }
 
 impl Purpose {
-    pub const ALL: [Purpose; 8] = [
+    pub const ALL: [Purpose; 9] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
         Purpose::OauthClientSecret,
@@ -30,6 +33,7 @@ impl Purpose {
         Purpose::WebhookVerification,
         Purpose::ChannelOpDeprovision,
         Purpose::ConnectorSettings,
+        Purpose::InstanceSetting,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -42,6 +46,7 @@ impl Purpose {
             Self::WebhookVerification => "webhook.verification",
             Self::ChannelOpDeprovision => "channel_op.deprovision",
             Self::ConnectorSettings => "connector.settings",
+            Self::InstanceSetting => "instance_setting",
         }
     }
 }

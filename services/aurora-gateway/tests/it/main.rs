@@ -27,4 +27,5 @@ mod proxy_wire;
 
 mod refresh;
 mod refresh_proxy;
+mod settings;
 mod tunnel_limits;

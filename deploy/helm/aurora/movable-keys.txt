@@ -1,0 +1,4 @@
+# Movable instance-setting keys (SET-1, D-237(c)): one dotted key per line, sorted. A unit test in
+# aurora-config keeps this equal to the settings registry; scripts/guards/settings-chart.sh fails
+# when the rendered aurora.toml contains one of these keys (the chart renders a movable key only
+# when the operator set it). Each section brief (SET-2..SET-5, FIX-124) adds its keys here.

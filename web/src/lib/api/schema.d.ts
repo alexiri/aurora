@@ -786,6 +786,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The settings sections and the keys the deployment configuration locks (C-771). */
+        get: operations["adminListSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/settings/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The dashboard values as a YAML or JSON document, without secrets (C-775). */
+        get: operations["adminExportSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/settings/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a settings document: a dry run shows the diff, applying writes every section in one
+         *     transaction (C-776).
+         */
+        post: operations["adminImportSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/settings/{section}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One section: every setting's effective value, source and lock (C-772). */
+        get: operations["adminGetSettingsSection"];
+        /**
+         * Replace a section's dashboard values (C-773): compare-and-set on `generation`, re-authentication
+         *     within 600 s, audited with a before/after diff.
+         */
+        put: operations["adminPutSettingsSection"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/settings/{section}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a PUT would change, which values loosen and which organizations are affected (C-774).
+         *     Writes nothing and needs no re-authentication.
+         */
+        post: operations["adminPreviewSettingsSection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/setup": {
         parameters: {
             query?: never;
@@ -5001,6 +5096,18 @@ export interface components {
             personal: boolean;
             slug: string;
         };
+        AffectedChange: {
+            after: Record<string, never>;
+            before: Record<string, never>;
+            key: string;
+        };
+        AffectedOrg: {
+            changes: components["schemas"]["AffectedChange"][];
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            slug: string;
+        };
         Agent: {
             /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
             avatar_url?: string | null;
@@ -6329,6 +6436,14 @@ export interface components {
         };
         /** @enum {string} */
         DefaultOrgRole: "member" | "admin";
+        DiffItem: {
+            after: Record<string, never>;
+            after_source: string;
+            before: Record<string, never>;
+            before_source: string;
+            entry_id?: string | null;
+            key: string;
+        };
         /** @description The person a `direct` conversation belongs to (phase 1, RFE-009). */
         DirectUser: {
             display_name: string;
@@ -6843,6 +6958,37 @@ export interface components {
             webhooks_disabled: number;
             workspace: components["schemas"]["WorkspaceRef"];
         };
+        ImportError: {
+            code: string;
+            details?: Record<string, never> | null;
+            message: string;
+            section: string;
+        };
+        /** @description `POST /v1/admin/settings/import` (C-776). */
+        ImportRequest: {
+            document: string;
+            dry_run: boolean;
+            /** @description `yaml` or `json`. */
+            format: string;
+            /** @description Required to apply: the generation of every section the document touches. */
+            generations?: Record<string, never> | null;
+            /** @description `replace` (default) or `merge`. */
+            mode?: string | null;
+        };
+        /** @description The dry-run result, or the applied sections of an import. */
+        ImportResult: {
+            applied: boolean;
+            errors: components["schemas"]["ImportError"][];
+            sections: components["schemas"]["ImportSection"][];
+        };
+        ImportSection: {
+            diff: components["schemas"]["DiffItem"][];
+            /** Format: int64 */
+            generation: number;
+            loosening: components["schemas"]["LooseningItem"][];
+            section: string;
+            warnings: components["schemas"]["SettingWarning"][];
+        };
         Injecting: {
             host: string;
             lost_to_app_id?: string | null;
@@ -7187,6 +7333,17 @@ export interface components {
             /** @description Defaults to `api_key`. */
             auth_mode?: string | null;
             endpoint_id: string;
+        };
+        LockedKey: {
+            entry_id?: string | null;
+            helm_key: string;
+            key: string;
+            section: string;
+        };
+        LooseningItem: {
+            entry_id?: string | null;
+            key: string;
+            reason: string;
         };
         Me: {
             /** @description (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`). */
@@ -9439,6 +9596,16 @@ export interface components {
              */
             conversations_days?: number | null;
         };
+        /** @description `PUT` and `POST …/preview` body (C-773, C-774). */
+        PutSection: {
+            /**
+             * Format: int64
+             * @description The generation the form was loaded at (compare-and-set).
+             */
+            generation: number;
+            /** @description The section's dashboard values by dotted key; absent keys return to their default. */
+            values: Record<string, never>;
+        };
         PutSettings: {
             email_domains?: string[] | null;
             enabled?: boolean | null;
@@ -10082,6 +10249,13 @@ export interface components {
             path: string;
             store_id: string;
         };
+        SecretState: {
+            /** @description The environment variable that supplies the secret (locks the field). */
+            from_env?: string | null;
+            set: boolean;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
         SecretStoreInfo: {
             capabilities: components["schemas"]["StoreCaps"];
             id: string;
@@ -10089,6 +10263,22 @@ export interface components {
         };
         SecretStores: {
             items: components["schemas"]["SecretStoreInfo"][];
+        };
+        SectionSummary: {
+            description: string;
+            /** Format: int64 */
+            generation: number;
+            /** Format: int64 */
+            keys_dashboard: number;
+            /** Format: int64 */
+            keys_locked: number;
+            /** Format: int64 */
+            keys_total: number;
+            section: string;
+            title: string;
+            /** Format: date-time */
+            updated_at?: string | null;
+            updated_by_label?: string | null;
         };
         SelectOption: {
             label: string;
@@ -10126,6 +10316,82 @@ export interface components {
         };
         /** @enum {string} */
         SettableStatus: "active" | "disabled";
+        Setting: {
+            default: Record<string, never>;
+            entries?: components["schemas"]["SettingEntry"][] | null;
+            helm_key: string;
+            /** @description The field that identifies a keyed-list entry (`id`, or `class`); additive to C-772 (C-745). */
+            id_field?: string | null;
+            key: string;
+            /** @description `whole` or `keyed`. */
+            list?: string | null;
+            locked: boolean;
+            schema: components["schemas"]["SettingSchema"];
+            secret?: null | components["schemas"]["SecretState"];
+            /** @description `helm`, `dashboard` or `default`. */
+            source: string;
+            /** @description The effective value; `null` for a secret key (see `secret`). */
+            value: Record<string, never>;
+        };
+        SettingEntry: {
+            id: string;
+            locked: boolean;
+            /** @description `helm` or `dashboard`. */
+            source: string;
+            value: Record<string, never>;
+            /** @description Section-specific warnings about this entry (C-813), e.g. `needs_allowed_private`. */
+            warnings?: string[] | null;
+        };
+        /** @description The value type of a setting, so a generic form can render it (additive to C-772, C-745). */
+        SettingSchema: {
+            /** @description The element type of a list (`kind` of its items). */
+            item_kind?: string | null;
+            /** @description `bool`, `int`, `duration_secs`, `string`, `enum`, `list`, `object`. */
+            kind: string;
+            /** Format: int64 */
+            max?: number | null;
+            /** Format: int64 */
+            max_len?: number | null;
+            /** Format: int64 */
+            min?: number | null;
+            options?: string[] | null;
+        };
+        SettingWarning: {
+            code: string;
+            key?: string | null;
+            message: string;
+        };
+        /** @description `GET /v1/admin/settings` (C-771). */
+        SettingsIndex: {
+            /** @description Every key (and keyed-list entry) the deployment configuration sets: the page's banner. */
+            locked: components["schemas"]["LockedKey"][];
+            sections: components["schemas"]["SectionSummary"][];
+        };
+        /** @description `POST /v1/admin/settings/{section}/preview` (C-774). */
+        SettingsPreview: {
+            affected_orgs: components["schemas"]["AffectedOrg"][];
+            /** Format: int64 */
+            affected_orgs_total: number;
+            diff: components["schemas"]["DiffItem"][];
+            /** Format: int64 */
+            generation: number;
+            loosening: components["schemas"]["LooseningItem"][];
+            warnings: components["schemas"]["SettingWarning"][];
+        };
+        /** @description `GET`/`PUT /v1/admin/settings/{section}` (C-772, C-773). */
+        SettingsSection: {
+            description: string;
+            /** @description Section-specific read-only data (C-778..C-782). */
+            extra?: Record<string, never> | null;
+            /** Format: int64 */
+            generation: number;
+            section: string;
+            settings: components["schemas"]["Setting"][];
+            title: string;
+            /** Format: date-time */
+            updated_at?: string | null;
+            updated_by_label?: string | null;
+        };
         SetupCheck: {
             /** @description The Helm value that changes it, for config-only things. */
             helm?: string | null;
@@ -14202,6 +14468,471 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsIndex"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminExportSettings: {
+        parameters: {
+            query?: {
+                /** @description `yaml` (default) or `json`. */
+                format?: string | null;
+                /** @description Comma-separated section ids; default all. */
+                sections?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminImportSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetSettingsSection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Section id */
+                section: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsSection"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPutSettingsSection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Section id */
+                section: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutSection"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsSection"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPreviewSettingsSection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Section id */
+                section: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutSection"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsPreview"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

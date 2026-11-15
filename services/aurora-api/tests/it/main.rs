@@ -93,6 +93,7 @@ mod scim_scope;
 mod scim_settings_put;
 mod secrets;
 mod secrets_migrate;
+mod settings;
 mod skill_library;
 mod skills;
 mod sse_revocation;

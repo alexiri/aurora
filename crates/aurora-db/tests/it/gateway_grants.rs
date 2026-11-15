@@ -77,6 +77,7 @@ async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
         "groups",
         "group_members",
         "group_workspace_access",
+        "instance_settings",
     ] {
         assert_eq!(
             code(&mut c, &format!("SELECT * FROM {t} WHERE false")).await,

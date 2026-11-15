@@ -94,6 +94,9 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
         "groups",
         "group_members",
         "group_workspace_access",
+        // (phase 5, SET-1, D-236) The gateway reads the settings sections it applies; it never
+        // writes them and the table holds no plaintext secret.
+        "instance_settings",
     ];
     for t in SELECT_TABLES {
         stmts.push(format!("GRANT SELECT ON {s}.{t} TO {r}"));

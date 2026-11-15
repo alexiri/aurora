@@ -11,6 +11,7 @@ mod error;
 mod load;
 mod raw;
 mod redacted;
+mod settings;
 mod urlcheck;
 mod validate;
 mod vault_store;
@@ -24,4 +25,9 @@ pub use error::{ConfigError, ConfigErrors, Result};
 pub use load::{CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH, load};
 pub use raw::*;
 pub use redacted::Redacted;
+pub use settings::{
+    ConfigSource, Effective, EffectiveKey, EntryView, ListKind, Loosening, NOT_SETTINGS, Registry,
+    SECTION_IDS, SectionDef, SettingDef, SettingType, Source, Stored, TEST_SECTION, TEST_SECTION_B,
+    registry, sections,
+};
 pub use validate::*;

@@ -69,6 +69,7 @@ uuid = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
+aurora-config = { workspace = true, features = ["test-registry"] }
 aurora-secrets = { workspace = true, features = ["memory-store"] }
 aurora-testkit = { workspace = true }
 async-trait = { workspace = true }

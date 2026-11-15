@@ -1365,8 +1365,10 @@ retries once. On success the list refreshes and a status notice names what was
 deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
 No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
 
-(phase 5, SPEC-SETTINGS, D-236..D-238, C-770..C-784; not built yet: SET-1 the shell, SET-2..SET-5
-and FIX-124 the sections) **Settings** (`/admin/settings`): the instance settings of `15 §Instance
+(phase 5, SPEC-SETTINGS, D-236..D-238, C-770..C-784; SET-1 built the shell — the index, Export,
+Import…, the `SettingField` primitive and the generic `SettingsSectionForm`, which renders any
+section from its C-772 `schema` (C-745) until SET-2..SET-5 and FIX-124 add their own editors)
+**Settings** (`/admin/settings`): the instance settings of `15 §Instance
 settings`, one page per section, grouped under **Settings** in the admin navigation: Governance,
 LLM endpoints, Sign-in, Email, Secret stores (FIX-124, `/admin/secret-stores`), Agents & sandboxes,
 Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limits

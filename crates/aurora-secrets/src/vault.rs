@@ -36,6 +36,21 @@ impl SecretVault {
         self.registry.default_store().put(ctx, &plaintext).await
     }
 
+    /// Write a new value into the **inline** store whatever the default store is (phase 5,
+    /// SET-1, D-236(g), D-266(b)): instance-level secrets (sign-in, mail, push) must neither
+    /// depend on an external store nor fan out to one.
+    pub async fn seal_inline(
+        &self,
+        ctx: &SealContext,
+        plaintext: Secret<Vec<u8>>,
+    ) -> Result<SecretRef> {
+        self.registry
+            .get("inline")
+            .ok_or(SecretError::StoreNotConfigured)?
+            .put(ctx, &plaintext)
+            .await
+    }
+
     pub async fn open(&self, ctx: &SealContext, r: &SecretRef) -> Result<Secret<Vec<u8>>> {
         self.store_for(r)?.get(ctx, r).await
     }

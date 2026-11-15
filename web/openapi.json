@@ -4700,6 +4700,639 @@
         ]
       }
     },
+    "/v1/admin/settings": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The settings sections and the keys the deployment configuration locks (C-771).",
+        "operationId": "adminListSettings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsIndex"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/settings/export": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The dashboard values as a YAML or JSON document, without secrets (C-775).",
+        "operationId": "adminExportSettings",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`yaml` (default) or `json`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "sections",
+            "in": "query",
+            "description": "Comma-separated section ids; default all.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The settings document",
+            "content": {
+              "application/yaml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/settings/import": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Import a settings document: a dry run shows the diff, applying writes every section in one\ntransaction (C-776).",
+        "operationId": "adminImportSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/settings/{section}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "One section: every setting's effective value, source and lock (C-772).",
+        "operationId": "adminGetSettingsSection",
+        "parameters": [
+          {
+            "name": "section",
+            "in": "path",
+            "description": "Section id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSection"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Replace a section's dashboard values (C-773): compare-and-set on `generation`, re-authentication\nwithin 600 s, audited with a before/after diff.",
+        "operationId": "adminPutSettingsSection",
+        "parameters": [
+          {
+            "name": "section",
+            "in": "path",
+            "description": "Section id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutSection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/settings/{section}/preview": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "What a PUT would change, which values loosen and which organizations are affected (C-774).\nWrites nothing and needs no re-authentication.",
+        "operationId": "adminPreviewSettingsSection",
+        "parameters": [
+          {
+            "name": "section",
+            "in": "path",
+            "description": "Section id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutSection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/setup": {
       "get": {
         "tags": [
@@ -31844,6 +32477,52 @@
           }
         }
       },
+      "AffectedChange": {
+        "type": "object",
+        "required": [
+          "key",
+          "before",
+          "after"
+        ],
+        "properties": {
+          "after": {
+            "type": "object"
+          },
+          "before": {
+            "type": "object"
+          },
+          "key": {
+            "type": "string"
+          }
+        }
+      },
+      "AffectedOrg": {
+        "type": "object",
+        "required": [
+          "org_id",
+          "slug",
+          "name",
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AffectedChange"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "Agent": {
         "type": "object",
         "required": [
@@ -36130,6 +36809,39 @@
           "admin"
         ]
       },
+      "DiffItem": {
+        "type": "object",
+        "required": [
+          "key",
+          "before",
+          "after",
+          "before_source",
+          "after_source"
+        ],
+        "properties": {
+          "after": {
+            "type": "object"
+          },
+          "after_source": {
+            "type": "string"
+          },
+          "before": {
+            "type": "object"
+          },
+          "before_source": {
+            "type": "string"
+          },
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string"
+          }
+        }
+      },
       "DirectUser": {
         "type": "object",
         "description": "The person a `direct` conversation belongs to (phase 1, RFE-009).",
@@ -37797,6 +38509,129 @@
           }
         }
       },
+      "ImportError": {
+        "type": "object",
+        "required": [
+          "section",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "section": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportRequest": {
+        "type": "object",
+        "description": "`POST /v1/admin/settings/import` (C-776).",
+        "required": [
+          "document",
+          "format",
+          "dry_run"
+        ],
+        "properties": {
+          "document": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "format": {
+            "type": "string",
+            "description": "`yaml` or `json`."
+          },
+          "generations": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Required to apply: the generation of every section the document touches."
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`replace` (default) or `merge`."
+          }
+        }
+      },
+      "ImportResult": {
+        "type": "object",
+        "description": "The dry-run result, or the applied sections of an import.",
+        "required": [
+          "applied",
+          "sections",
+          "errors"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportError"
+            }
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportSection"
+            }
+          }
+        }
+      },
+      "ImportSection": {
+        "type": "object",
+        "required": [
+          "section",
+          "generation",
+          "diff",
+          "loosening",
+          "warnings"
+        ],
+        "properties": {
+          "diff": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiffItem"
+            }
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "loosening": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LooseningItem"
+            }
+          },
+          "section": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SettingWarning"
+            }
+          }
+        }
+      },
       "Injecting": {
         "type": "object",
         "required": [
@@ -39044,6 +39879,52 @@
           }
         },
         "additionalProperties": false
+      },
+      "LockedKey": {
+        "type": "object",
+        "required": [
+          "section",
+          "key",
+          "helm_key"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "helm_key": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "section": {
+            "type": "string"
+          }
+        }
+      },
+      "LooseningItem": {
+        "type": "object",
+        "required": [
+          "key",
+          "reason"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
       },
       "Me": {
         "type": "object",
@@ -46523,6 +47404,25 @@
           }
         }
       },
+      "PutSection": {
+        "type": "object",
+        "description": "`PUT` and `POST …/preview` body (C-773, C-774).",
+        "required": [
+          "generation",
+          "values"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The generation the form was loaded at (compare-and-set)."
+          },
+          "values": {
+            "type": "object",
+            "description": "The section's dashboard values by dotted key; absent keys return to their default."
+          }
+        }
+      },
       "PutSettings": {
         "type": "object",
         "properties": {
@@ -48480,6 +49380,31 @@
           }
         }
       },
+      "SecretState": {
+        "type": "object",
+        "required": [
+          "set"
+        ],
+        "properties": {
+          "from_env": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The environment variable that supplies the secret (locks the field)."
+          },
+          "set": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "SecretStoreInfo": {
         "type": "object",
         "required": [
@@ -48510,6 +49435,58 @@
             "items": {
               "$ref": "#/components/schemas/SecretStoreInfo"
             }
+          }
+        }
+      },
+      "SectionSummary": {
+        "type": "object",
+        "required": [
+          "section",
+          "title",
+          "description",
+          "generation",
+          "keys_total",
+          "keys_locked",
+          "keys_dashboard"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "keys_dashboard": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "keys_locked": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "keys_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "section": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_by_label": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -48629,6 +49606,302 @@
           "active",
           "disabled"
         ]
+      },
+      "Setting": {
+        "type": "object",
+        "required": [
+          "key",
+          "value",
+          "source",
+          "locked",
+          "helm_key",
+          "default",
+          "schema"
+        ],
+        "properties": {
+          "default": {
+            "type": "object"
+          },
+          "entries": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SettingEntry"
+            }
+          },
+          "helm_key": {
+            "type": "string"
+          },
+          "id_field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The field that identifies a keyed-list entry (`id`, or `class`); additive to C-772 (C-745)."
+          },
+          "key": {
+            "type": "string"
+          },
+          "list": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`whole` or `keyed`."
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/SettingSchema"
+          },
+          "secret": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SecretState"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "`helm`, `dashboard` or `default`."
+          },
+          "value": {
+            "type": "object",
+            "description": "The effective value; `null` for a secret key (see `secret`)."
+          }
+        }
+      },
+      "SettingEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "value",
+          "source",
+          "locked"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "description": "`helm` or `dashboard`."
+          },
+          "value": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Section-specific warnings about this entry (C-813), e.g. `needs_allowed_private`."
+          }
+        }
+      },
+      "SettingSchema": {
+        "type": "object",
+        "description": "The value type of a setting, so a generic form can render it (additive to C-772, C-745).",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "item_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The element type of a list (`kind` of its items)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`bool`, `int`, `duration_secs`, `string`, `enum`, `list`, `object`."
+          },
+          "max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_len": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "min": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "options": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SettingWarning": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "SettingsIndex": {
+        "type": "object",
+        "description": "`GET /v1/admin/settings` (C-771).",
+        "required": [
+          "sections",
+          "locked"
+        ],
+        "properties": {
+          "locked": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LockedKey"
+            },
+            "description": "Every key (and keyed-list entry) the deployment configuration sets: the page's banner."
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SectionSummary"
+            }
+          }
+        }
+      },
+      "SettingsPreview": {
+        "type": "object",
+        "description": "`POST /v1/admin/settings/{section}/preview` (C-774).",
+        "required": [
+          "generation",
+          "diff",
+          "loosening",
+          "affected_orgs",
+          "affected_orgs_total",
+          "warnings"
+        ],
+        "properties": {
+          "affected_orgs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AffectedOrg"
+            }
+          },
+          "affected_orgs_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "diff": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiffItem"
+            }
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "loosening": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LooseningItem"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SettingWarning"
+            }
+          }
+        }
+      },
+      "SettingsSection": {
+        "type": "object",
+        "description": "`GET`/`PUT /v1/admin/settings/{section}` (C-772, C-773).",
+        "required": [
+          "section",
+          "title",
+          "description",
+          "generation",
+          "settings"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "extra": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Section-specific read-only data (C-778..C-782)."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "section": {
+            "type": "string"
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Setting"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_by_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "SetupCheck": {
         "type": "object",

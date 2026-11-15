@@ -35,6 +35,7 @@ pub mod groups;
 pub mod hosted;
 pub mod identities;
 pub mod idp_roles;
+pub mod instance_settings;
 pub mod invitations;
 pub mod lifecycle;
 pub mod link_requests;

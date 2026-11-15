@@ -1,0 +1,1535 @@
+//! The one settings service (phase 5, SET-1, D-236, SEC-89, SEC-90): every write path — the
+//! dashboard/API routes, import and the CLI — goes through [`apply`], so a locked key is refused,
+//! the merged view is validated, the write is compare-and-set, audited in its transaction and
+//! announced in exactly one place.
+
+use super::dto::*;
+use super::handle::{Problem, RowMeta, SettingsHandle, stored_from_rows};
+use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::auth::mail::Mail;
+use crate::domains::me::service::REAUTH_WINDOW_SECS;
+use crate::http::auth::{Caller, Principal};
+use aurora_config::{
+    Effective, ListKind, SectionDef, SettingDef, SettingType, Source, Stored, registry, sections,
+};
+use aurora_core::{ApiError, Secret, limits};
+use aurora_db::repo::instance_settings as repo;
+use aurora_db::repo::sessions;
+use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
+use chrono::Utc;
+use http::StatusCode;
+use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
+use uuid::Uuid;
+
+/// Who is writing.
+#[derive(Clone)]
+pub enum Via {
+    /// An instance admin's dashboard session (re-authentication required).
+    Admin(Caller),
+    /// The operator's shell (`aurora-api settings …`): no re-authentication, source `cli`.
+    Cli,
+}
+
+impl Via {
+    fn actor(&self) -> AuditActor {
+        match self {
+            Self::Admin(c) => AuditActor::instance_admin(c),
+            Self::Cli => AuditActor {
+                kind: "system",
+                id: None,
+                label: "cli".into(),
+                source: "cli",
+                ip: None,
+            },
+        }
+    }
+    fn user_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Admin(c) => Some(c.user_id),
+            Self::Cli => None,
+        }
+    }
+    fn label(&self) -> String {
+        match self {
+            Self::Admin(c) => c.email.clone(),
+            Self::Cli => "cli".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Update,
+    Import,
+    Reset,
+}
+
+impl Kind {
+    const fn action(self) -> &'static str {
+        match self {
+            Self::Update => "instance_settings.update",
+            Self::Import => "instance_settings.import",
+            Self::Reset => "instance_settings.reset",
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------------- errors
+
+fn dberr(e: aurora_db::DbError) -> ApiError {
+    e.into()
+}
+
+pub fn unknown_section(section: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "setting_section_unknown",
+        format!("There is no settings section `{section}`."),
+    )
+}
+
+fn section_def(section: &str) -> Result<&'static SectionDef, ApiError> {
+    sections()
+        .iter()
+        .find(|s| s.id == section)
+        .ok_or_else(|| unknown_section(section))
+}
+
+fn field(path: String, code: &str, message: impl Into<String>) -> Value {
+    json!({ "path": path, "code": code, "message": message.into() })
+}
+
+fn invalid(fields: Vec<Value>) -> ApiError {
+    ApiError::unprocessable(
+        "settings_invalid",
+        "Some settings are not valid. Fix the listed fields and save again.",
+    )
+    .with_details(json!({ "fields": fields }))
+}
+
+fn problems_error(problems: Vec<Problem>) -> ApiError {
+    invalid(
+        problems
+            .into_iter()
+            .map(|p| field(format!("/{}", p.key), &p.code, p.message))
+            .collect(),
+    )
+}
+
+fn stale(section: &str, current: i64) -> ApiError {
+    ApiError::conflict(
+        "stale_revision",
+        "These settings changed since you opened them. Reload and apply your change again.",
+    )
+    .with_details(json!({ "section": section, "current_generation": current }))
+}
+
+fn locked(key: &str, helm_key: &str) -> ApiError {
+    ApiError::conflict(
+        "setting_locked",
+        format!("`{key}` is configured in Helm (`{helm_key}`) and cannot be changed here."),
+    )
+    .with_details(json!({ "key": key, "helm_key": helm_key }))
+}
+
+fn too_large() -> ApiError {
+    ApiError::new(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "settings_too_large",
+        "These settings are too large.",
+    )
+}
+
+pub fn reauth_required() -> ApiError {
+    ApiError::new(
+        StatusCode::PRECONDITION_FAILED,
+        "reauth_required",
+        "Re-authenticate with your sign-in provider to change instance settings.",
+    )
+}
+
+/// The session's last OIDC authentication is within the shared window (412 otherwise).
+pub async fn require_reauth(state: &AppState, via: &Via) -> Result<(), ApiError> {
+    let Via::Admin(c) = via else { return Ok(()) };
+    let Principal::Session { id } = c.principal else {
+        return Err(ApiError::forbidden(
+            "Sign in with your account to change instance settings.",
+        ));
+    };
+    let age = sessions::reauth_age_secs(&state.pool, id)
+        .await
+        .map_err(dberr)?;
+    if !age.is_some_and(|a| (0.0..=REAUTH_WINDOW_SECS).contains(&a)) {
+        return Err(reauth_required());
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------------------ secret values
+
+fn is_stored_secret(v: &Value) -> bool {
+    v.as_object()
+        .filter(|m| m.len() == 1)
+        .and_then(|m| m.get("$secret"))
+        .and_then(Value::as_object)
+        .is_some_and(|s| s.contains_key("ref"))
+}
+
+fn is_secret_marker(v: &Value) -> bool {
+    v.as_object()
+        .is_some_and(|m| m.len() == 1 && m.contains_key("$secret"))
+}
+
+/// Every stored secret `(owner, ref)` anywhere in a value.
+fn collect_secrets(v: &Value, out: &mut Vec<(Uuid, String)>) {
+    if is_stored_secret(v) {
+        if let Some(s) = v.get("$secret")
+            && let (Some(r), Some(o)) = (
+                s.get("ref").and_then(Value::as_str),
+                s.get("owner")
+                    .and_then(Value::as_str)
+                    .and_then(|o| o.parse().ok()),
+            )
+        {
+            out.push((o, r.to_string()));
+        }
+        return;
+    }
+    match v {
+        Value::Object(m) => m.values().for_each(|c| collect_secrets(c, out)),
+        Value::Array(a) => a.iter().for_each(|c| collect_secrets(c, out)),
+        _ => {}
+    }
+}
+
+/// Replace every stored secret in `v` by `label` (what responses, exports and audit rows show).
+fn redact(v: &Value, label: &str) -> Value {
+    if is_stored_secret(v) || is_secret_marker(v) {
+        return Value::String(label.to_string());
+    }
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .map(|(k, c)| (k.clone(), redact(c, label)))
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(|c| redact(c, label)).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A stored secret as the C-772 shape `{ "$secret": { set, updated_at } }`.
+fn public_secrets(v: &Value) -> Value {
+    if is_stored_secret(v) {
+        let at = v["$secret"]
+            .get("updated_at")
+            .cloned()
+            .unwrap_or(Value::Null);
+        return json!({ "$secret": { "set": true, "updated_at": at } });
+    }
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .map(|(k, c)| (k.clone(), public_secrets(c)))
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(public_secrets).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Stored secrets as `{ "$secret": <word> }` (`keep` for round trips, `set` for exports).
+fn secrets_as(v: &Value, word: &str) -> Value {
+    if is_stored_secret(v) {
+        return json!({ "$secret": word });
+    }
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .map(|(k, c)| (k.clone(), secrets_as(c, word)))
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(|c| secrets_as(c, word)).collect()),
+        other => other.clone(),
+    }
+}
+
+fn store_unavailable() -> ApiError {
+    ApiError::unavailable(
+        "secret_store_unavailable",
+        "The secret store is unavailable; nothing was changed. Try again shortly.",
+    )
+}
+
+/// Resolve `{ "$secret": … }` markers in `v` against the stored value `old`: a string seals a new
+/// value, `"keep"` keeps the stored one (400 when there is none), anything else is refused.
+/// `dry` seals nothing (previews).
+#[allow(clippy::too_many_arguments)]
+async fn resolve_secrets(
+    state: &AppState,
+    dry: bool,
+    v: &mut Value,
+    old: Option<&Value>,
+    id_field: Option<&str>,
+    path: &str,
+    fields: &mut Vec<Value>,
+) -> Result<(), ApiError> {
+    if is_secret_marker(v) {
+        let word = v["$secret"].clone();
+        match word.as_str() {
+            Some("keep") => match old.filter(|o| is_stored_secret(o)) {
+                Some(o) => *v = o.clone(),
+                None => {
+                    return Err(ApiError::invalid_request(
+                        "There is no stored secret to keep.",
+                        vec![aurora_core::FieldError::new(
+                            path,
+                            "no stored secret to keep",
+                        )],
+                    ));
+                }
+            },
+            Some(plain) if !plain.is_empty() => {
+                if dry {
+                    *v = json!({ "$secret": { "ref": "preview", "owner": Uuid::nil(), "updated_at": Utc::now() } });
+                } else {
+                    let owner = Uuid::now_v7();
+                    let ctx = SealContext {
+                        purpose: Purpose::InstanceSetting,
+                        owner_id: owner,
+                        org_id: Uuid::nil(),
+                        workspace_id: None,
+                    };
+                    let r = state
+                        .vault
+                        .seal_inline(&ctx, Secret::from(plain.as_bytes().to_vec()))
+                        .await
+                        .map_err(|_| store_unavailable())?;
+                    *v = json!({ "$secret": { "ref": r.to_column(), "owner": owner, "updated_at": Utc::now() } });
+                }
+            }
+            _ => fields.push(field(
+                path.to_string(),
+                "invalid_value",
+                "a secret must be a non-empty string",
+            )),
+        }
+        return Ok(());
+    }
+    match v {
+        Value::Object(m) => {
+            for (k, child) in m.iter_mut() {
+                let o = old.and_then(|o| o.get(k));
+                let p = format!("{path}/{k}");
+                Box::pin(resolve_secrets(state, dry, child, o, None, &p, fields)).await?;
+            }
+        }
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                let id = id_field
+                    .and_then(|f| item.get(f))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let o = match (id_field, &id) {
+                    (Some(f), Some(id)) => old.and_then(Value::as_array).and_then(|a| {
+                        a.iter()
+                            .find(|e| e.get(f).and_then(Value::as_str) == Some(id.as_str()))
+                    }),
+                    _ => None,
+                };
+                let p = format!("{path}/{}", id.as_deref().unwrap_or("?"));
+                Box::pin(resolve_secrets(state, dry, item, o, None, &p, fields)).await?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+// ----------------------------------------------------------------------------- normalisation
+
+fn id_field_of(d: &SettingDef) -> Option<&'static str> {
+    match d.list {
+        Some(ListKind::Keyed { id_field }) => Some(id_field),
+        _ => None,
+    }
+}
+
+fn helm_entry_ids(h: &SettingsHandle, d: &SettingDef) -> Vec<String> {
+    let Some(f) = id_field_of(d) else {
+        return Vec::new();
+    };
+    h.source
+        .helm_value(d.key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.get(f).and_then(Value::as_str).map(str::to_string))
+        .collect()
+}
+
+/// Check a request's `values` against the registry, the locks and the types. Returns the values
+/// to store (locked keys that equal their effective value dropped) and warnings.
+fn normalize(
+    h: &SettingsHandle,
+    section: &str,
+    values: &Map<String, Value>,
+    import: bool,
+) -> Result<(Map<String, Value>, Vec<SettingWarning>), ApiError> {
+    let reg = registry();
+    let mut out = Map::new();
+    let mut warnings = Vec::new();
+    let mut fields = Vec::new();
+    for (key, val) in values {
+        let Some(d) = reg.get(key).filter(|d| d.section == section) else {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "setting_unknown",
+                format!("`{key}` is not a setting of section `{section}`."),
+            )
+            .with_details(json!({ "key": key })));
+        };
+        if d.secret {
+            if val.is_null() {
+                continue;
+            }
+            if !is_secret_marker(val) {
+                fields.push(field(
+                    format!("/{key}"),
+                    "invalid_value",
+                    "a secret is written as { \"$secret\": \"…\" }",
+                ));
+                continue;
+            }
+            if import
+                && val["$secret"]
+                    .as_str()
+                    .is_some_and(|s| s != "set" && s != "keep")
+            {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "secret_in_import",
+                    "Secrets are entered on the page, not imported.",
+                )
+                .with_details(json!({ "key": key })));
+            }
+            out.insert(key.clone(), val.clone());
+            continue;
+        }
+        match d.list {
+            Some(ListKind::Keyed { id_field }) => {
+                let Some(items) = val.as_array() else {
+                    fields.push(field(format!("/{key}"), "invalid_value", "must be a list"));
+                    continue;
+                };
+                let helm_ids = helm_entry_ids(h, d);
+                let mut seen: Vec<&str> = Vec::new();
+                for e in items {
+                    let id = e.get(id_field).and_then(Value::as_str).unwrap_or_default();
+                    if !e.is_object() || id.is_empty() {
+                        fields.push(field(
+                            format!("/{key}/{id}/{id_field}"),
+                            "invalid_value",
+                            format!("every entry needs a non-empty `{id_field}`"),
+                        ));
+                    } else if helm_ids.iter().any(|x| x == id) {
+                        fields.push(field(
+                            format!("/{key}/{id}/{id_field}"),
+                            "entry_id_in_helm",
+                            format!("`{id}` is defined in Helm; choose another id"),
+                        ));
+                    } else if seen.contains(&id) {
+                        fields.push(field(
+                            format!("/{key}/{id}/{id_field}"),
+                            "duplicate_entry_id",
+                            format!("`{id}` appears twice"),
+                        ));
+                    }
+                    seen.push(id);
+                }
+                if let Err(m) = d.check(val) {
+                    fields.push(field(format!("/{key}"), "invalid_value", m));
+                }
+                out.insert(key.clone(), val.clone());
+            }
+            _ => {
+                if h.source.sets(key) {
+                    let helm = h.source.helm_value(key).cloned().unwrap_or(Value::Null);
+                    if &helm != val {
+                        return Err(locked(key, &d.helm_key));
+                    }
+                    if import {
+                        warnings.push(SettingWarning {
+                            code: "locked_ignored".into(),
+                            key: Some(key.clone()),
+                            message: format!("`{key}` is configured in Helm; the imported value equals it and is ignored."),
+                        });
+                    }
+                    continue;
+                }
+                if let Err(m) = d.check(val) {
+                    fields.push(field(format!("/{key}"), "invalid_value", m));
+                }
+                out.insert(key.clone(), val.clone());
+            }
+        }
+    }
+    if fields.is_empty() {
+        Ok((out, warnings))
+    } else {
+        Err(invalid(fields))
+    }
+}
+
+/// The new stored object of a section: locked keys keep their mirrored copy, a keyed list keeps
+/// the entries Helm defines plus the submitted dashboard entries, everything else is the
+/// submitted value (absent = default).
+fn build_new(
+    h: &SettingsHandle,
+    section: &str,
+    old: &Map<String, Value>,
+    norm: &Map<String, Value>,
+) -> Map<String, Value> {
+    let mut out = Map::new();
+    for d in registry().section(section) {
+        let key = d.key;
+        match d.list {
+            Some(ListKind::Keyed { id_field }) => {
+                let helm_ids = helm_entry_ids(h, d);
+                let mut list: Vec<Value> = old
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|e| {
+                        e.get(id_field)
+                            .and_then(Value::as_str)
+                            .is_some_and(|i| helm_ids.iter().any(|x| x == i))
+                    })
+                    .cloned()
+                    .collect();
+                if let Some(v) = norm.get(key).and_then(Value::as_array) {
+                    list.extend(v.iter().cloned());
+                }
+                if !list.is_empty() {
+                    out.insert(key.to_string(), Value::Array(list));
+                }
+            }
+            _ if !d.secret && h.source.sets(key) => {
+                // The mirrored copy stays as it is (mirroring owns it); nothing is invented here.
+                if let Some(v) = old.get(key) {
+                    out.insert(key.to_string(), v.clone());
+                }
+            }
+            _ => {
+                if let Some(v) = norm.get(key) {
+                    out.insert(key.to_string(), v.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+// -------------------------------------------------------------------------------------- diffs
+
+fn bound(v: &Value) -> Value {
+    let s = v.to_string();
+    if s.chars().count() <= limits::SETTINGS_AUDIT_VALUE_MAX {
+        return v.clone();
+    }
+    let cut: String = s.chars().take(limits::SETTINGS_AUDIT_VALUE_MAX).collect();
+    Value::String(format!("{cut}…"))
+}
+
+/// The stored change of a section as audit items `{ key, entry_id?, before, after }`.
+fn stored_changes(section: &str, old: &Map<String, Value>, new: &Map<String, Value>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for d in registry().section(section) {
+        let (o, n) = (old.get(d.key), new.get(d.key));
+        if o == n {
+            continue;
+        }
+        let item = |entry: Option<&str>, b: Option<&Value>, a: Option<&Value>| {
+            let had_b = b.is_some();
+            let before = b.map_or(Value::Null, |v| bound(&redact(v, "(secret)")));
+            let after = match (a, b) {
+                (None, _) if d.secret => Value::String("(secret removed)".into()),
+                (Some(v), _) if d.secret || has_secret(v) => {
+                    if had_b {
+                        Value::String("(secret changed)".into())
+                    } else {
+                        bound(&redact(v, "(secret changed)"))
+                    }
+                }
+                (Some(v), _) => bound(v),
+                (None, _) => Value::Null,
+            };
+            let mut m = Map::new();
+            m.insert("key".into(), json!(d.key));
+            if let Some(e) = entry {
+                m.insert("entry_id".into(), json!(e));
+            }
+            m.insert("before".into(), before);
+            m.insert("after".into(), after);
+            Value::Object(m)
+        };
+        match id_field_of(d) {
+            Some(f) => {
+                let ids = |v: Option<&Value>| -> Vec<(String, Value)> {
+                    v.and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|e| {
+                            (
+                                e.get(f)
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                                e.clone(),
+                            )
+                        })
+                        .collect()
+                };
+                let (ob, nb) = (ids(o), ids(n));
+                let mut all: Vec<&String> = ob.iter().chain(nb.iter()).map(|(i, _)| i).collect();
+                all.sort();
+                all.dedup();
+                for id in all {
+                    let b = ob.iter().find(|(i, _)| i == id).map(|(_, v)| v);
+                    let a = nb.iter().find(|(i, _)| i == id).map(|(_, v)| v);
+                    if a != b {
+                        out.push(item(Some(id), b, a));
+                    }
+                }
+            }
+            None => out.push(item(None, o, n)),
+        }
+    }
+    out
+}
+
+fn has_secret(v: &Value) -> bool {
+    let mut s = Vec::new();
+    collect_secrets(v, &mut s);
+    !s.is_empty() || is_secret_marker(v)
+}
+
+fn src(s: Source) -> String {
+    match s {
+        Source::Helm => "helm",
+        Source::Dashboard => "dashboard",
+        Source::Default => "default",
+    }
+    .into()
+}
+
+/// The effective diff of one section between two merged views, with the keys that loosen.
+fn effective_diff(
+    section: &str,
+    before: &Effective,
+    after: &Effective,
+    old: &Map<String, Value>,
+    new: &Map<String, Value>,
+) -> (Vec<DiffItem>, Vec<LooseningItem>) {
+    let mut diff = Vec::new();
+    let mut loose = Vec::new();
+    for d in registry().section(section) {
+        if d.secret {
+            let (o, n) = (old.get(d.key), new.get(d.key));
+            if o != n {
+                diff.push(DiffItem {
+                    key: d.key.into(),
+                    entry_id: None,
+                    before: o.map_or(Value::Null, |_| json!("(secret)")),
+                    after: match (o, n) {
+                        (Some(_), Some(_)) => json!("(secret changed)"),
+                        (None, Some(_)) => json!("(secret)"),
+                        _ => json!("(secret removed)"),
+                    },
+                    before_source: if o.is_some() { "dashboard" } else { "default" }.into(),
+                    after_source: if n.is_some() { "dashboard" } else { "default" }.into(),
+                });
+            }
+            continue;
+        }
+        let (Some(b), Some(a)) = (before.keys.get(d.key), after.keys.get(d.key)) else {
+            continue;
+        };
+        if let (Some(be), Some(ae)) = (&b.entries, &a.entries) {
+            let mut ids: Vec<&String> = be.iter().chain(ae.iter()).map(|e| &e.id).collect();
+            ids.sort();
+            ids.dedup();
+            for id in ids {
+                let x = be.iter().find(|e| &e.id == id);
+                let y = ae.iter().find(|e| &e.id == id);
+                if x.map(|e| (&e.value, e.source)) == y.map(|e| (&e.value, e.source)) {
+                    continue;
+                }
+                diff.push(DiffItem {
+                    key: d.key.into(),
+                    entry_id: Some(id.clone()),
+                    before: x.map_or(Value::Null, |e| redact(&e.value, "(secret)")),
+                    after: y.map_or(Value::Null, |e| redact(&e.value, "(secret)")),
+                    before_source: x.map_or("default".into(), |e| src(e.source)),
+                    after_source: y.map_or("default".into(), |e| src(e.source)),
+                });
+            }
+            continue;
+        }
+        if b.value == a.value && b.source == a.source {
+            continue;
+        }
+        diff.push(DiffItem {
+            key: d.key.into(),
+            entry_id: None,
+            before: b.value.clone(),
+            after: a.value.clone(),
+            before_source: src(b.source),
+            after_source: src(a.source),
+        });
+        if d.is_loosening(&b.value, &a.value) {
+            loose.push(LooseningItem {
+                key: d.key.into(),
+                entry_id: None,
+                reason: format!("`{}` becomes less strict.", d.key),
+            });
+        }
+    }
+    (diff, loose)
+}
+
+// --------------------------------------------------------------------------------- the plan
+
+struct Plan {
+    section: String,
+    current: i64,
+    old: Map<String, Value>,
+    new: Map<String, Value>,
+    warnings: Vec<SettingWarning>,
+}
+
+fn row_object(row: Option<&repo::SettingsRow>) -> (i64, Map<String, Value>) {
+    match row {
+        Some(r) => (
+            r.generation,
+            match &r.value {
+                Value::Object(m) => m.clone(),
+                _ => Map::new(),
+            },
+        ),
+        None => (0, Map::new()),
+    }
+}
+
+async fn plan_section(
+    state: &AppState,
+    section: &str,
+    row: Option<&repo::SettingsRow>,
+    values: &Map<String, Value>,
+    import: bool,
+    dry: bool,
+) -> Result<Plan, ApiError> {
+    let h = &state.settings;
+    let (current, old) = row_object(row);
+    let (norm, warnings) = normalize(h, section, values, import)?;
+    let mut new = build_new(h, section, &old, &norm);
+    let mut fields = Vec::new();
+    for d in registry().section(section) {
+        if let Some(v) = new.get_mut(d.key) {
+            // Only submitted (non-locked) values can carry markers; stored ones are already sealed.
+            if !has_marker(v) {
+                continue;
+            }
+            let path = format!("/{}", d.key);
+            resolve_secrets(
+                state,
+                dry,
+                v,
+                old.get(d.key),
+                id_field_of(d),
+                &path,
+                &mut fields,
+            )
+            .await?;
+        }
+    }
+    if !fields.is_empty() {
+        return Err(invalid(fields));
+    }
+    if serde_json::to_vec(&Value::Object(new.clone())).map_or(0, |b| b.len())
+        > limits::SETTINGS_SECTION_BYTES_MAX
+    {
+        return Err(too_large());
+    }
+    Ok(Plan {
+        section: section.to_string(),
+        current,
+        old,
+        new,
+        warnings,
+    })
+}
+
+fn has_marker(v: &Value) -> bool {
+    if is_secret_marker(v) {
+        return true;
+    }
+    match v {
+        Value::Object(m) => m.values().any(has_marker),
+        Value::Array(a) => a.iter().any(has_marker),
+        _ => false,
+    }
+}
+
+fn overlay(stored: &mut Stored, plans: &[&Plan]) {
+    for p in plans {
+        stored.sections.insert(
+            p.section.clone(),
+            p.new.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        );
+    }
+}
+
+// ------------------------------------------------------------------------------------ apply
+
+pub struct SectionRequest {
+    pub section: String,
+    /// The generation the writer read; `None` for the CLI (the current one under the row lock).
+    pub expected: Option<i64>,
+    pub values: Map<String, Value>,
+}
+
+pub struct Applied {
+    pub changed: Vec<(String, i64)>,
+}
+
+/// Validate and write one or more sections in **one transaction** (C-773, C-776, C-784).
+pub async fn apply(
+    state: &AppState,
+    via: &Via,
+    kind: Kind,
+    mut reqs: Vec<SectionRequest>,
+    import: bool,
+) -> Result<Applied, ApiError> {
+    for r in &reqs {
+        section_def(&r.section)?;
+    }
+    require_reauth(state, via).await?;
+    reqs.sort_by(|a, b| a.section.cmp(&b.section));
+    let h = &state.settings;
+    let mut tx = audit::begin(state).await?;
+    let mut plans: Vec<Plan> = Vec::new();
+    for r in &reqs {
+        let row = repo::get_for_update(&mut tx, &r.section)
+            .await
+            .map_err(dberr)?;
+        let current = row.as_ref().map_or(0, |x| x.generation);
+        if r.expected.is_some_and(|e| e != current) {
+            return Err(stale(&r.section, current));
+        }
+        plans.push(plan_section(state, &r.section, row.as_ref(), &r.values, import, false).await?);
+    }
+    let changed: Vec<&Plan> = plans.iter().filter(|p| p.new != p.old).collect();
+    if changed.is_empty() {
+        return Ok(Applied {
+            changed: Vec::new(),
+        });
+    }
+    // The merged view of every section, with the new values in place, must be valid.
+    let rows = repo::list_all(&mut *tx).await.map_err(dberr)?;
+    let (mut stored, _) = stored_from_rows(&rows);
+    overlay(&mut stored, &changed);
+    if let Err(problems) = h.evaluate(&stored) {
+        return Err(problems_error(problems));
+    }
+    let mut written = Vec::new();
+    for p in &changed {
+        let g = repo::cas_write(
+            &mut tx,
+            &p.section,
+            p.current,
+            &Value::Object(p.new.clone()),
+            via.user_id(),
+            &via.label(),
+        )
+        .await
+        .map_err(dberr)?
+        .ok_or_else(|| stale(&p.section, p.current + 1))?;
+        written.push((p.section.clone(), g));
+    }
+    let actor = via.actor();
+    let events: Vec<AuditEvent> = match kind {
+        Kind::Import => {
+            let mut changes = Vec::new();
+            for p in &changed {
+                for c in stored_changes(&p.section, &p.old, &p.new) {
+                    let mut c = c;
+                    c["section"] = json!(p.section);
+                    changes.push(c);
+                }
+            }
+            let mut ev = AuditEvent::new(actor, kind.action(), Outcome::Success).metadata(json!({
+                "sections": written.iter().map(|(s, g)| json!({ "section": s, "generation": g })).collect::<Vec<_>>(),
+                "change": changes,
+            }));
+            ev.target_kind = Some("instance_settings".into());
+            vec![ev]
+        }
+        _ => changed
+            .iter()
+            .zip(&written)
+            .map(|(p, (_, g))| {
+                AuditEvent::new(actor.clone(), kind.action(), Outcome::Success)
+                    .target("instance_settings", &p.section)
+                    .metadata(json!({
+                        "section": p.section,
+                        "generation": g,
+                        "change": stored_changes(&p.section, &p.old, &p.new),
+                    }))
+            })
+            .collect(),
+    };
+    audit::commit_critical_many(tx, &events).await?;
+    // After commit: this replica's snapshot, the other replicas and gateways, the secrets that
+    // were replaced, and the administrators.
+    if let Err(e) = h.reload(&state.pool, "api").await {
+        tracing::error!(error = %e, "settings reload after a write failed");
+    }
+    for (section, g) in &written {
+        if let Err(e) = repo::notify(&state.pool, section, *g).await {
+            tracing::warn!(error = %e, section, "settings notify failed; replicas catch up by poll");
+        }
+    }
+    let mut dropped = Vec::new();
+    for p in &changed {
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        collect_secrets(&Value::Object(p.old.clone()), &mut before);
+        collect_secrets(&Value::Object(p.new.clone()), &mut after);
+        dropped.extend(before.into_iter().filter(|b| !after.contains(b)));
+    }
+    for (owner, r) in dropped {
+        if let Ok(r) = r.parse::<SecretRef>() {
+            let ctx = SealContext {
+                purpose: Purpose::InstanceSetting,
+                owner_id: owner,
+                org_id: Uuid::nil(),
+                workspace_id: None,
+            };
+            if let Err(e) = state.vault.discard(&ctx, &r, ValueSource::Managed).await {
+                tracing::warn!(error = %e, "replaced settings secret not discarded");
+            }
+        }
+    }
+    notify_admins(state, via, &changed, &reqs);
+    Ok(Applied { changed: written })
+}
+
+/// E-mail every instance admin who is not disabled: actor, time and key names only.
+fn notify_admins(state: &AppState, via: &Via, changed: &[&Plan], _reqs: &[SectionRequest]) {
+    let state = state.clone();
+    let actor = via.label();
+    let mut titles = Vec::new();
+    let mut keys = Vec::new();
+    for p in changed {
+        if let Ok(s) = section_def(&p.section) {
+            titles.push(s.title.to_string());
+        }
+        for c in stored_changes(&p.section, &p.old, &p.new) {
+            if let Some(k) = c.get("key").and_then(Value::as_str) {
+                keys.push(k.to_string());
+            }
+        }
+    }
+    keys.sort();
+    keys.dedup();
+    tokio::spawn(async move {
+        let emails = match repo::admin_emails(&state.pool).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(error = %e, "settings admin e-mail: recipients not read");
+                return;
+            }
+        };
+        let subject = format!("Aurora: instance settings changed ({})", titles.join(", "));
+        let intro = format!(
+            "{actor} changed instance settings at {}.\n\nChanged: {}.\n\nThe before and after values are in the audit log:",
+            Utc::now().format("%Y-%m-%d %H:%M UTC"),
+            keys.join(", ")
+        );
+        let link = format!(
+            "{}/admin/audit?action=instance_settings",
+            state.config.external_url.trim_end_matches('/')
+        );
+        for to in emails {
+            crate::domains::auth::mail::send_detached(
+                &state.mailer,
+                Mail::new(&to, &subject, &intro, &link),
+            );
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------------- preview
+
+pub async fn preview(
+    state: &AppState,
+    section: &str,
+    generation: i64,
+    values: &Map<String, Value>,
+) -> Result<SettingsPreview, ApiError> {
+    section_def(section)?;
+    let h = &state.settings;
+    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let row = rows.iter().find(|r| r.section == section);
+    let current = row.map_or(0, |r| r.generation);
+    if generation != current {
+        return Err(stale(section, current));
+    }
+    let plan = plan_section(state, section, row, values, false, true).await?;
+    let (stored_before, _) = stored_from_rows(&rows);
+    let mut stored_after = stored_before.clone();
+    overlay(&mut stored_after, &[&plan]);
+    let before = h.source.effective(&stored_before).map_err(|e| {
+        problems_error(
+            e.0.into_iter()
+                .map(|e| Problem::new(e.key, "invalid", e.message))
+                .collect(),
+        )
+    })?;
+    let after = match h.evaluate(&stored_after) {
+        Ok(e) => e,
+        Err(p) => return Err(problems_error(p)),
+    };
+    let (diff, loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
+    let (mut affected_orgs, affected_orgs_total, mut warnings) =
+        super::sections::affected(state, section, &diff).await?;
+    // At most SETTINGS_PREVIEW_ORGS_MAX are listed; `affected_orgs_total` counts the rest.
+    affected_orgs.truncate(limits::SETTINGS_PREVIEW_ORGS_MAX);
+    warnings.extend(plan.warnings);
+    Ok(SettingsPreview {
+        generation: current,
+        diff,
+        loosening,
+        affected_orgs,
+        affected_orgs_total,
+        warnings,
+    })
+}
+
+// ------------------------------------------------------------------------------------ views
+
+fn schema_of(ty: &SettingType) -> SettingSchema {
+    let mut s = SettingSchema {
+        kind: String::new(),
+        min: None,
+        max: None,
+        max_len: None,
+        options: None,
+        item_kind: None,
+    };
+    match ty {
+        SettingType::Bool => s.kind = "bool".into(),
+        SettingType::Int { min, max } => {
+            s.kind = "int".into();
+            s.min = Some(*min);
+            s.max = Some(*max);
+        }
+        SettingType::DurationSecs { min, max } => {
+            s.kind = "duration_secs".into();
+            s.min = Some(*min);
+            s.max = Some(*max);
+        }
+        SettingType::Str { max_len } => {
+            s.kind = "string".into();
+            s.max_len = Some(i64::try_from(*max_len).unwrap_or(i64::MAX));
+        }
+        SettingType::Enum(o) => {
+            s.kind = "enum".into();
+            s.options = Some(o.iter().map(|x| (*x).to_string()).collect());
+        }
+        SettingType::List { item, max_items } => {
+            s.kind = "list".into();
+            s.max = Some(i64::try_from(*max_items).unwrap_or(i64::MAX));
+            s.item_kind = Some(schema_of(item).kind);
+        }
+        SettingType::Object => s.kind = "object".into(),
+    }
+    s
+}
+
+/// A section as C-772 from an effective view and the stored values.
+pub fn build_view(
+    eff: &Effective,
+    stored: &Stored,
+    meta: &BTreeMap<String, RowMeta>,
+    section: &str,
+    extra: Option<Value>,
+) -> Result<SettingsSection, ApiError> {
+    let def = section_def(section)?;
+    let m = meta.get(section);
+    let mut settings = Vec::new();
+    for d in registry().section(section) {
+        let Some(k) = eff.keys.get(d.key) else {
+            continue;
+        };
+        let stored_v = stored.get(section, d.key);
+        let secret = d.secret.then(|| SecretState {
+            set: stored_v.is_some_and(is_stored_secret),
+            updated_at: stored_v
+                .and_then(|v| v["$secret"].get("updated_at"))
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse().ok()),
+            from_env: None,
+        });
+        let entries = k.entries.as_ref().map(|es| {
+            es.iter()
+                .map(|e| SettingEntry {
+                    id: e.id.clone(),
+                    value: public_secrets(&e.value),
+                    source: src(e.source),
+                    locked: e.source == Source::Helm,
+                    warnings: None,
+                })
+                .collect()
+        });
+        settings.push(Setting {
+            key: d.key.into(),
+            value: if d.secret {
+                Value::Null
+            } else {
+                public_secrets(&k.value)
+            },
+            source: src(k.source),
+            locked: k.entries.is_none() && k.source == Source::Helm,
+            helm_key: d.helm_key.clone(),
+            default: d.default.clone(),
+            schema: schema_of(&d.ty),
+            list: d.list.map(|l| match l {
+                ListKind::Whole => "whole".to_string(),
+                ListKind::Keyed { .. } => "keyed".to_string(),
+            }),
+            id_field: id_field_of(d).map(str::to_string),
+            entries,
+            secret,
+        });
+    }
+    Ok(SettingsSection {
+        section: section.into(),
+        title: def.title.into(),
+        description: def.description.into(),
+        generation: m.map_or(0, |m| m.generation),
+        updated_at: m.map(|m| m.updated_at),
+        updated_by_label: m.and_then(|m| m.updated_by_label.clone()),
+        settings,
+        extra,
+    })
+}
+
+pub async fn section_view(state: &AppState, section: &str) -> Result<SettingsSection, ApiError> {
+    section_def(section)?;
+    let snap = state.settings.snapshot();
+    let extra = super::sections::extra(state, section).await?;
+    build_view(&snap.effective, &snap.stored, &snap.meta, section, extra)
+}
+
+pub fn index(state: &AppState) -> SettingsIndex {
+    let snap = state.settings.snapshot();
+    let mut out = Vec::new();
+    for s in sections() {
+        let (mut total, mut lockedn, mut dash) = (0, 0, 0);
+        for d in registry().section(s.id) {
+            total += 1;
+            if let Some(k) = snap.effective.keys.get(d.key) {
+                let helm = match &k.entries {
+                    Some(es) => es.iter().any(|e| e.source == Source::Helm),
+                    None => k.source == Source::Helm,
+                };
+                if helm {
+                    lockedn += 1;
+                } else if k.source == Source::Dashboard {
+                    dash += 1;
+                }
+            }
+        }
+        let m = snap.meta.get(s.id);
+        out.push(SectionSummary {
+            section: s.id.into(),
+            title: s.title.into(),
+            description: s.description.into(),
+            generation: m.map_or(0, |m| m.generation),
+            updated_at: m.map(|m| m.updated_at),
+            updated_by_label: m.and_then(|m| m.updated_by_label.clone()),
+            keys_total: total,
+            keys_locked: lockedn,
+            keys_dashboard: dash,
+        });
+    }
+    let locked = super::handle::locked_keys(&state.settings)
+        .into_iter()
+        .map(|(section, key, entry_id, helm_key)| LockedKey {
+            section: section.into(),
+            key: key.into(),
+            entry_id,
+            helm_key,
+        })
+        .collect();
+    SettingsIndex {
+        sections: out,
+        locked,
+    }
+}
+
+// ------------------------------------------------------------------------- dashboard values
+
+/// The dashboard-owned values of a section (what a round trip through PUT would send): locked
+/// keys and Helm entries left out, secrets as `{ "$secret": <word> }`.
+pub fn dashboard_values(
+    h: &SettingsHandle,
+    stored: &Map<String, Value>,
+    section: &str,
+    secret_word: &str,
+) -> Map<String, Value> {
+    let mut out = Map::new();
+    for d in registry().section(section) {
+        let Some(v) = stored.get(d.key) else { continue };
+        if let Some(f) = id_field_of(d) {
+            let helm_ids = helm_entry_ids(h, d);
+            let list: Vec<Value> = v
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|e| {
+                    !e.get(f)
+                        .and_then(Value::as_str)
+                        .is_some_and(|i| helm_ids.iter().any(|x| x == i))
+                })
+                .map(|e| secrets_as(e, secret_word))
+                .collect();
+            if !list.is_empty() {
+                out.insert(d.key.to_string(), Value::Array(list));
+            }
+        } else if !d.secret && h.source.sets(d.key) {
+            continue;
+        } else {
+            out.insert(d.key.to_string(), secrets_as(v, secret_word));
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------- export
+
+pub fn export_document(state: &AppState, only: Option<&[String]>) -> Result<Value, ApiError> {
+    let h = &state.settings;
+    let snap = h.snapshot();
+    let mut secs = Map::new();
+    for s in sections() {
+        if only.is_some_and(|o| !o.iter().any(|x| x == s.id)) {
+            continue;
+        }
+        let stored: Map<String, Value> = snap
+            .stored
+            .sections
+            .get(s.id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let vals = dashboard_values(h, &stored, s.id, "set");
+        if !vals.is_empty() {
+            secs.insert(s.id.to_string(), Value::Object(vals));
+        }
+    }
+    if let Some(o) = only {
+        for id in o {
+            section_def(id)?;
+        }
+    }
+    let locked: Vec<Value> = super::handle::locked_keys(h)
+        .into_iter()
+        .map(|(section, key, _, helm_key)| json!({ "section": section, "key": key, "helm_key": helm_key }))
+        .collect();
+    Ok(json!({
+        "aurora_settings": 1,
+        "exported_at": Utc::now(),
+        "sections": secs,
+        "locked": locked,
+    }))
+}
+
+// ---------------------------------------------------------------------------------- import
+
+pub struct ImportPlan {
+    pub reqs: Vec<SectionRequest>,
+}
+
+fn parse_document(doc: &str, format: &str) -> Result<Value, ApiError> {
+    let v: Value = match format {
+        "json" => serde_json::from_str(doc).map_err(|e| bad_doc(&e.to_string()))?,
+        "yaml" => serde_yaml::from_str(doc).map_err(|e| bad_doc(&e.to_string()))?,
+        _ => return Err(bad_doc("format must be `yaml` or `json`")),
+    };
+    if v.get("aurora_settings").and_then(Value::as_i64) != Some(1) {
+        return Err(bad_doc(
+            "not an Aurora settings document (aurora_settings: 1 expected)",
+        ));
+    }
+    Ok(v)
+}
+
+/// The path of the first `{ "$secret": "<plaintext>" }` (anything but `set` / `keep`), if any.
+fn plaintext_secret(v: &Value, path: &str) -> Option<String> {
+    if is_secret_marker(v) {
+        return match v["$secret"].as_str() {
+            Some("set" | "keep") => None,
+            _ => Some(path.to_string()),
+        };
+    }
+    match v {
+        Value::Object(m) => m
+            .iter()
+            .find_map(|(k, c)| plaintext_secret(c, &format!("{path}/{k}"))),
+        Value::Array(a) => a
+            .iter()
+            .enumerate()
+            .find_map(|(i, c)| plaintext_secret(c, &format!("{path}/{i}"))),
+        _ => None,
+    }
+}
+
+fn bad_doc(msg: &str) -> ApiError {
+    ApiError::invalid_request(
+        "The settings document could not be read.",
+        vec![aurora_core::FieldError::new("/document", msg)],
+    )
+}
+
+/// The per-section requests of an import document (C-776).
+pub fn import_requests(
+    state: &AppState,
+    doc: &str,
+    format: &str,
+    merge: bool,
+    generations: Option<&Map<String, Value>>,
+) -> Result<Vec<SectionRequest>, ApiError> {
+    let v = parse_document(doc, format)?;
+    let h = &state.settings;
+    let snap = h.snapshot();
+    let mut reqs = Vec::new();
+    let Some(secs) = v.get("sections").and_then(Value::as_object) else {
+        return Err(bad_doc("`sections` is missing"));
+    };
+    // Secrets are entered on the page: a plaintext one anywhere in a document refuses it (C-776).
+    if let Some(key) = plaintext_secret(&Value::Object(secs.clone()), "") {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "secret_in_import",
+            "Secrets are entered on the page, not imported.",
+        )
+        .with_details(json!({ "key": key })));
+    }
+    for (section, vals) in secs {
+        section_def(section).map_err(|_| bad_doc(&format!("unknown section `{section}`")))?;
+        let Some(vals) = vals.as_object() else {
+            return Err(bad_doc(&format!("section `{section}` must be an object")));
+        };
+        let mut values = if merge {
+            let stored: Map<String, Value> = snap
+                .stored
+                .sections
+                .get(section.as_str())
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            dashboard_values(h, &stored, section, "keep")
+        } else {
+            Map::new()
+        };
+        for (k, x) in vals {
+            let x = if is_secret_marker(x) && x["$secret"].as_str() == Some("set") {
+                json!({ "$secret": "keep" })
+            } else {
+                x.clone()
+            };
+            values.insert(k.clone(), x);
+        }
+        let expected = generations
+            .and_then(|g| g.get(section.as_str()))
+            .and_then(Value::as_i64);
+        reqs.push(SectionRequest {
+            section: section.clone(),
+            expected,
+            values,
+        });
+    }
+    Ok(reqs)
+}
+
+/// Dry run of an import: each section's diff, loosening and warnings, and the errors per section.
+pub async fn import_dry_run(state: &AppState, reqs: &[SectionRequest]) -> ImportResult {
+    let rows = repo::list_all(&state.pool).await.unwrap_or_default();
+    let mut sections_out = Vec::new();
+    let mut errors = Vec::new();
+    for r in reqs {
+        let current = rows
+            .iter()
+            .find(|x| x.section == r.section)
+            .map_or(0, |x| x.generation);
+        let pv = match preview_import(state, &r.section, current, &r.values).await {
+            Ok(p) => p,
+            Err(e) => {
+                errors.push(ImportError {
+                    section: r.section.clone(),
+                    code: e.code().into(),
+                    message: e.message().into(),
+                    details: e.details().cloned(),
+                });
+                continue;
+            }
+        };
+        sections_out.push(ImportSection {
+            section: r.section.clone(),
+            generation: current,
+            diff: pv.diff,
+            loosening: pv.loosening,
+            warnings: pv.warnings,
+        });
+    }
+    ImportResult {
+        applied: false,
+        sections: sections_out,
+        errors,
+    }
+}
+
+async fn preview_import(
+    state: &AppState,
+    section: &str,
+    generation: i64,
+    values: &Map<String, Value>,
+) -> Result<SettingsPreview, ApiError> {
+    // The same computation as a preview, with the import's normalisation (locked keys ignored with a warning).
+    let h = &state.settings;
+    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let row = rows.iter().find(|r| r.section == section);
+    let plan = plan_section(state, section, row, values, true, true).await?;
+    let (stored_before, _) = stored_from_rows(&rows);
+    let mut stored_after = stored_before.clone();
+    overlay(&mut stored_after, &[&plan]);
+    let before = h.source.effective(&stored_before).map_err(|e| {
+        problems_error(
+            e.0.into_iter()
+                .map(|e| Problem::new(e.key, "invalid", e.message))
+                .collect(),
+        )
+    })?;
+    let after = h.evaluate(&stored_after).map_err(problems_error)?;
+    let (diff, loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
+    Ok(SettingsPreview {
+        generation,
+        diff,
+        loosening,
+        affected_orgs: Vec::new(),
+        affected_orgs_total: 0,
+        warnings: plan.warnings,
+    })
+}
+
+// ------------------------------------------------------------------------------------ reset
+
+/// Remove dashboard values: the whole section, one key, or one keyed entry (C-784).
+pub async fn reset(
+    state: &AppState,
+    via: &Via,
+    section: &str,
+    key: Option<&str>,
+    entry: Option<&str>,
+    dry_run: bool,
+) -> Result<Vec<Value>, ApiError> {
+    section_def(section)?;
+    let h = &state.settings;
+    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let stored_all = stored_from_rows(&rows).0;
+    let stored: Map<String, Value> = stored_all
+        .sections
+        .get(section)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let mut values = dashboard_values(h, &stored, section, "keep");
+    match (key, entry) {
+        (None, None) => values.clear(),
+        (Some(k), None) => {
+            let d = registry()
+                .get(k)
+                .filter(|d| d.section == section)
+                .ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "setting_unknown",
+                        format!("`{k}` is not a setting of section `{section}`."),
+                    )
+                    .with_details(json!({ "key": k }))
+                })?;
+            if !d.secret && id_field_of(d).is_none() && h.source.sets(k) {
+                return Err(locked(k, &d.helm_key));
+            }
+            values.remove(k);
+        }
+        (Some(k), Some(id)) => {
+            let d = registry()
+                .get(k)
+                .filter(|d| d.section == section)
+                .ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "setting_unknown",
+                        format!("`{k}` is not a setting of section `{section}`."),
+                    )
+                    .with_details(json!({ "key": k }))
+                })?;
+            let f = id_field_of(d).ok_or_else(|| {
+                ApiError::invalid_request(
+                    "`--entry` needs a keyed list.",
+                    vec![aurora_core::FieldError::new(
+                        format!("/{k}"),
+                        "not a keyed list",
+                    )],
+                )
+            })?;
+            if helm_entry_ids(h, d).iter().any(|x| x == id) {
+                return Err(locked(k, &d.helm_key));
+            }
+            if let Some(Value::Array(a)) = values.get_mut(k) {
+                a.retain(|e| e.get(f).and_then(Value::as_str) != Some(id));
+            }
+        }
+        (None, Some(_)) => {
+            return Err(ApiError::invalid_request(
+                "`--entry` needs `--key`.",
+                vec![aurora_core::FieldError::new("/entry", "needs --key")],
+            ));
+        }
+    }
+    let req = SectionRequest {
+        section: section.to_string(),
+        expected: None,
+        values,
+    };
+    if dry_run {
+        let row = rows.iter().find(|r| r.section == section);
+        let plan = plan_section(state, section, row, &req.values, false, true).await?;
+        return Ok(stored_changes(section, &plan.old, &plan.new));
+    }
+    let applied = apply(state, via, Kind::Reset, vec![req], false).await?;
+    Ok(applied
+        .changed
+        .iter()
+        .map(|(s, g)| json!({ "section": s, "generation": g }))
+        .collect())
+}

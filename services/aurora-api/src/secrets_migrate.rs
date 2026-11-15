@@ -123,7 +123,22 @@ struct Source {
     update: &'static str,
 }
 
-const SOURCES: [Source; 8] = [
+const SOURCES: [Source; 9] = [
+    // (phase 5, SET-1, D-236(g)) Every `{ "$secret": { ref, owner } }` field anywhere in a settings
+    // section (top-level keys and fields inside keyed-list entries); the field's own uuid is the
+    // owner. Refs are unique strings, so the update replaces the old ref text. The generation is
+    // bumped so replicas reload; rekeying keeps the value, so nothing else changes.
+    Source {
+        purpose: Purpose::InstanceSetting,
+        select: "SELECT (s.v->>'owner')::uuid, NULL::uuid, NULL::uuid, s.v->>'ref' \
+                 FROM (SELECT jsonb_path_query(value, 'strict $.**.\"$secret\"') AS v \
+                       FROM instance_settings) s \
+                 WHERE (s.v->>'owner')::uuid > $1 ORDER BY 1 LIMIT $2",
+        update: "UPDATE instance_settings SET \
+                 value = replace(value::text, to_json($3::text)::text, to_json($2::text)::text)::jsonb, \
+                 generation = generation + 1, updated_at = now() \
+                 WHERE $1::uuid IS NOT NULL AND value::text LIKE '%' || to_json($3::text)::text || '%'",
+    },
     Source {
         purpose: Purpose::SecretValue,
         select: "SELECT id, org_id, workspace_id, value_ref FROM secrets \

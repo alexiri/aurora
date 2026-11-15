@@ -154,6 +154,43 @@ revision (`expect_revision`): custom API clients that call `…/policy/rollback`
 - Check the connectors (if any) in `GET /v1/admin/connectors`: they should be `active`.
 - Watch the logs and the `/metrics` series listed in docs/15 §Observability on the internal listeners.
 
+## Instance settings: locked keys and break-glass (phase 5, SET-1, D-236..D-238)
+
+Instance-wide settings are edited in the dashboard (Admin › Settings) and applied live. A value
+your Helm values set is **locked**: the dashboard shows it read-only and the API refuses to change
+it. Upgrading to a release with instance settings changes nothing for an existing install: every key
+your values file sets stays locked, and every other key keeps its application default until an
+administrator edits it. The first start of the new API mirrors the locked values into the database
+(`instance_settings.helm_sync` in Admin › Audit), so **removing a key from your values file later
+hands it to the dashboard with the value it had**, never with the default.
+
+*Release-note text:* "N settings in your Helm values are now shown in Admin › Settings as
+'Configured in Helm'. To manage one in the dashboard, remove it from your values file and run
+`helm upgrade`; it keeps its current value. Admin › Settings lists them under 'Which settings'."
+
+**Break-glass.** Recovery never depends on a stored setting:
+
+1. `auth.instance_admins` (in Helm) still grants the instance-admin flag at sign-in, and a sign-in
+   provider defined in Helm works whatever is stored.
+2. Setting a key in Helm overrides any stored value at the next start.
+3. The CLI works from any pod with the API image and configuration, and starts even when the stored
+   settings are invalid:
+
+   ```
+   kubectl -n <ns> exec deploy/<release>-api -- aurora-api settings show [<section>]
+   kubectl -n <ns> exec deploy/<release>-api -- aurora-api settings reset <section> [--key <k>] [--entry <id>] [--dry-run]
+   kubectl -n <ns> exec deploy/<release>-api -- aurora-api settings export [--format yaml|json]
+   ```
+
+   When the API cannot start (invalid stored settings stop it, naming the section, the key and the
+   reset command), run the same commands from a one-off pod built from the API image with the API's
+   ConfigMap and Secret mounted (`kubectl -n <ns> debug` on an API pod, or a `Job` with the API
+   Deployment's pod template and `command: ["aurora-api", "settings", "reset", "<section>"]`). The
+   CLI writes through the same service as the dashboard (validation, an `instance_settings.reset`
+   audit row with source `cli`, `NOTIFY`, an e-mail to every instance admin) and needs no
+   re-authentication. Exit codes: 0 done, 2 refused by validation, 3 a Helm-locked key, 4 the
+   database is unreachable.
+
 ## Rollback
 
 Rolling back the binaries is safe only inside the N and N−1 window above. Forward-only migrations

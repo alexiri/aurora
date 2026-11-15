@@ -16,6 +16,17 @@ const OVERRIDE_PREFIX: &str = "AURORA__";
 /// `/etc/aurora/aurora.toml`. A missing file is tolerated only for the default
 /// path (env may then supply everything; `validate_for` checks completeness).
 pub fn load(path: Option<&Path>, env: impl Iterator<Item = (String, String)>) -> Result<RawConfig> {
+    let (table, env) = read_table(path, env)?;
+    build_raw(&table, &env)
+}
+
+/// The configuration as the merged TOML table (file plus `AURORA__…` overrides) and the process
+/// environment, before it is deserialized (`settings::ConfigSource` keeps both so the
+/// instance-settings view can be rebuilt over different stored values, D-236).
+pub(crate) fn read_table(
+    path: Option<&Path>,
+    env: impl Iterator<Item = (String, String)>,
+) -> Result<(toml::Table, BTreeMap<String, String>)> {
     let env: BTreeMap<String, String> = env.collect();
     let (file, explicit) = match path {
         Some(p) => (p.to_path_buf(), true),
@@ -45,10 +56,19 @@ pub fn load(path: Option<&Path>, env: impl Iterator<Item = (String, String)>) ->
     };
 
     apply_overrides(&mut table, &env, &mut errors);
+    if errors.is_empty() {
+        Ok((table, env))
+    } else {
+        Err(ConfigErrors(errors))
+    }
+}
 
+/// Deserialize a merged table into [`RawConfig`] and read the secret environment variables.
+pub(crate) fn build_raw(table: &toml::Table, env: &BTreeMap<String, String>) -> Result<RawConfig> {
+    let mut errors = Vec::new();
     // Round-trip through canonical text so deserialization errors can be
     // mapped back to a dotted key path.
-    let text = match toml::to_string(&table) {
+    let text = match toml::to_string(table) {
         Ok(t) => t,
         Err(e) => {
             errors.push(ConfigError::new("config", e.to_string()));
@@ -63,7 +83,7 @@ pub fn load(path: Option<&Path>, env: impl Iterator<Item = (String, String)>) ->
         }
     };
 
-    raw.env_secrets = read_env_secrets(&env, &raw, &mut errors);
+    raw.env_secrets = read_env_secrets(env, &raw, &mut errors);
     if errors.is_empty() {
         Ok(raw)
     } else {
@@ -143,7 +163,7 @@ fn apply_overrides(
     }
 }
 
-fn set_path(
+pub(crate) fn set_path(
     table: &mut toml::Table,
     parents: &[String],
     last: &str,

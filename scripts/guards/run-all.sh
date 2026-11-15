@@ -67,6 +67,9 @@ bash scripts/guards/no-deployment-defaults.sh
 echo "== helm-values-docs (FIX-069: docs/23 documents every values.yaml key and names none that do not exist)"
 bash scripts/guards/helm-values-docs.sh
 
+echo "== settings-chart (SET-1, D-237(c): the default render contains no movable instance-setting key)"
+bash scripts/guards/settings-chart.sh
+
 echo "== quick-gate syntax (VEL-002; shellcheck when installed, else bash -n)"
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/dev/quick-gate.sh
