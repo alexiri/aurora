@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod llm_endpoint;
 mod load;
 mod raw;
 mod redacted;
@@ -22,6 +23,10 @@ pub use vault_store::{
 };
 
 pub use error::{ConfigError, ConfigErrors, Result};
+pub use llm_endpoint::{
+    ALLOWED_PATHS_MAX, ENDPOINT_KEYS, EndpointFieldError, EntrySource, endpoint_field_errors,
+    location_valid, project_id_valid, region_valid, unknown_key_code,
+};
 pub use load::{CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH, load};
 pub use raw::*;
 pub use redacted::Redacted;

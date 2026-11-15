@@ -664,11 +664,73 @@ fn llm_endpoint_allowed_paths_are_validated() {
         .api_config()
         .unwrap_err();
     assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
-    let e = load_with(&ep("anthropic", r#"["/a"]"#), &[])
-        .unwrap()
-        .api_config()
-        .unwrap_err();
+    // (D-260(b)) `anthropic` accepts `allowed_paths` now; `bedrock` and `vertex` never do.
+    assert!(
+        load_with(&ep("anthropic", r#"["/a"]"#), &[])
+            .unwrap()
+            .api_config()
+            .is_ok()
+    );
+    let e = load_with(
+        &format!("{BASE}[llm]\nenabled_providers = [\"litellm\", \"anthropic\", \"bedrock\"]\n[[llm.endpoints]]\nid = \"b\"\nprovider = \"bedrock\"\nregion = \"eu-west-1\"\nallowed_paths = [\"/a\"]\n"),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap_err();
     assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
+    assert!(e.to_string().contains("allowed_paths_not_supported"), "{e}");
+}
+
+/// (P4-LLM-1, C-812, D-260(e)) `llm.dev_upstream_overrides`: loopback targets of a provider's fixed origin, only with
+/// `gateway.insecure_loopback_injection`.
+#[test]
+fn dev_upstream_overrides_need_the_insecure_switch_and_loopback_targets() {
+    let cfg = |insecure: bool, key: &str, target: &str| {
+        format!(
+            "{BASE}[gateway]\ninsecure_loopback_injection = {insecure}\n[llm]\nenabled_providers = [\"litellm\", \"anthropic\", \"openai\"]\n[llm.dev_upstream_overrides]\n\"{key}\" = \"{target}\"\n"
+        )
+    };
+    let ok = |c: &str| load_with(c, &[]).unwrap().api_config();
+    assert!(
+        ok(&cfg(
+            true,
+            "https://api.openai.com",
+            "http://127.0.0.1:9000"
+        ))
+        .is_ok()
+    );
+    assert!(
+        ok(&cfg(
+            true,
+            "https://api.anthropic.com",
+            "http://localhost:9000/"
+        ))
+        .is_ok()
+    );
+    assert!(ok(&cfg(true, "https://api.openai.com", "http://[::1]:9000")).is_ok());
+    // without the switch
+    let e = ok(&cfg(
+        false,
+        "https://api.openai.com",
+        "http://127.0.0.1:9000",
+    ))
+    .unwrap_err();
+    assert!(e.has_key("llm.dev_upstream_overrides"), "{e}");
+    // a target that is not loopback, or has userinfo, or a key that is not a fixed origin
+    for (k, t) in [
+        ("https://api.openai.com", "http://10.0.0.5:9000"),
+        ("https://api.openai.com", "https://evil.example"),
+        ("https://api.openai.com", "http://user:pw@127.0.0.1:9000"),
+        ("https://api.openai.com", "ftp://127.0.0.1"),
+        ("https://llm.example.org", "http://127.0.0.1:9000"),
+    ] {
+        let e = ok(&cfg(true, k, t)).unwrap_err();
+        assert!(
+            e.to_string().contains("llm.dev_upstream_overrides"),
+            "{k} {t}: {e}"
+        );
+    }
 }
 
 #[test]

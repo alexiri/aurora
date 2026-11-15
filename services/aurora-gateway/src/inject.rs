@@ -130,10 +130,46 @@ pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), Injec
             // Strip every agent-supplied auth header, then set the provider's.
             t.headers.remove(header::AUTHORIZATION);
             t.headers.remove("x-api-key");
+            t.headers.remove("api-key");
             for h in &l.strip_request_headers {
                 t.headers.remove(*h);
             }
+            // (C-806) Prefix families (`x-amz-*`, `x-goog-*`) are removed whole, never merged.
+            if !l.strip_request_prefixes.is_empty() {
+                let drop: Vec<HeaderName> = t
+                    .headers
+                    .keys()
+                    .filter(|k| {
+                        l.strip_request_prefixes
+                            .iter()
+                            .any(|p| k.as_str().starts_with(p))
+                    })
+                    .cloned()
+                    .collect();
+                for k in drop {
+                    t.headers.remove(k);
+                }
+            }
+            for (name, value) in &l.set_headers {
+                t.headers.insert(
+                    HeaderName::from_static(name),
+                    header_value(value.as_bytes())?,
+                );
+            }
+            // A recipe that needs a mint or a signature is not implemented yet (P4-LLM-2..4): refuse, never send the
+            // request without the credential (the caller answers 502 `credential_unavailable`).
+            if !l.header.is_plain() {
+                return Err(InjectError);
+            }
             match l.header {
+                InjectionHeader::Header(name) => {
+                    t.headers
+                        .insert(HeaderName::from_static(name), header_value(value)?);
+                }
+                InjectionHeader::AwsSigV4
+                | InjectionHeader::AwsAssumeRole
+                | InjectionHeader::GcpToken
+                | InjectionHeader::EntraToken => return Err(InjectError),
                 InjectionHeader::Bearer => {
                     let mut v = b"Bearer ".to_vec();
                     v.extend_from_slice(value);
@@ -314,5 +350,106 @@ mod tests {
             },
         );
         assert_eq!(r, Err(InjectError));
+    }
+
+    fn llm_cand(i: aurora_llm::LlmInjection) -> SecretCand {
+        SecretCand {
+            kind: SecretKind::Llm,
+            injection: Injection::Llm(i),
+            ..cand(InjectionRecipe::Bearer)
+        }
+    }
+
+    fn agent_headers() -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in [
+            ("authorization", "Bearer agent-key"),
+            ("x-api-key", "agent-key"),
+            ("api-key", "agent-key"),
+            ("openai-organization", "org-evil"),
+            ("openai-project", "proj-evil"),
+            ("x-amz-security-token", "agent-token"),
+            ("x-goog-api-key", "agent-key"),
+            ("x-aurora-keep", "yes"),
+        ] {
+            h.insert(HeaderName::from_static(k), v.parse().unwrap());
+        }
+        h
+    }
+
+    fn apply_llm(i: aurora_llm::LlmInjection) -> (HeaderMap, Result<(), InjectError>) {
+        let mut h = agent_headers();
+        let (mut p, mut q) = ("/v1/chat/completions".to_owned(), None);
+        let r = apply(
+            &llm_cand(i),
+            b"sk-real",
+            Target {
+                headers: &mut h,
+                path: &mut p,
+                query: &mut q,
+            },
+        );
+        (h, r)
+    }
+
+    /// (P4-LLM-1, C-806) Every agent-supplied credential header is removed, never merged; the provider's own is set.
+    #[test]
+    fn llm_recipes_replace_every_agent_credential_header() {
+        use aurora_llm::{InjectionHeader as H, LlmInjection};
+        // openai: Bearer, the configured organization and project replace the agent's
+        let mut i = LlmInjection::new(
+            H::Bearer,
+            &[
+                "authorization",
+                "x-api-key",
+                "api-key",
+                "openai-organization",
+                "openai-project",
+            ],
+        );
+        i.set_headers = vec![("openai-organization", "org-acme".into())];
+        let (h, r) = apply_llm(i);
+        r.unwrap();
+        assert_eq!(h["authorization"], "Bearer sk-real");
+        assert_eq!(h["openai-organization"], "org-acme");
+        assert!(
+            h.get("openai-project").is_none()
+                && h.get("x-api-key").is_none()
+                && h.get("api-key").is_none()
+        );
+        assert_eq!(h["x-aurora-keep"], "yes");
+        // compatible with `auth_header = "api-key"`
+        let (h, r) = apply_llm(LlmInjection::new(
+            H::Header("api-key"),
+            &["authorization", "x-api-key", "api-key"],
+        ));
+        r.unwrap();
+        assert_eq!(h["api-key"], "sk-real");
+        assert!(h.get("authorization").is_none() && h.get("x-api-key").is_none());
+        // compatible with `auth_header = "x-api-key"`
+        let (h, r) = apply_llm(LlmInjection::new(
+            H::XApiKey,
+            &["authorization", "x-api-key", "api-key"],
+        ));
+        r.unwrap();
+        assert_eq!(h["x-api-key"], "sk-real");
+        assert!(h.get("authorization").is_none() && h.get("api-key").is_none());
+        // prefix families go whole
+        let mut i = LlmInjection::new(H::Bearer, &["authorization"]);
+        i.strip_request_prefixes = vec!["x-amz-", "x-goog-"];
+        let (h, r) = apply_llm(i);
+        r.unwrap();
+        assert!(h.get("x-amz-security-token").is_none() && h.get("x-goog-api-key").is_none());
+    }
+
+    /// A minted or signed recipe that no lane implements yet refuses (502 `credential_unavailable`) and never lets
+    /// the agent's own credential through.
+    #[test]
+    fn unimplemented_llm_recipes_refuse() {
+        use aurora_llm::{InjectionHeader as H, LlmInjection};
+        for h in [H::AwsSigV4, H::AwsAssumeRole, H::GcpToken, H::EntraToken] {
+            let (_, r) = apply_llm(LlmInjection::new(h, &["authorization"]));
+            assert_eq!(r, Err(InjectError), "{h:?}");
+        }
     }
 }

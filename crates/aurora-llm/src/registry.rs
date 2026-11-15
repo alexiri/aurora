@@ -1,7 +1,7 @@
 use crate::http_util::host_of;
 use crate::{
     AnthropicProvider, Dialect, Endpoint, KeyOriginRule, LitellmProvider, LlmError, LlmProvider,
-    Result,
+    OpenaiCompatibleProvider, OpenaiProvider, Result,
 };
 use aurora_config::{LlmEndpoint, LlmSection, RawConfig};
 use std::collections::BTreeMap;
@@ -17,24 +17,53 @@ fn builtin(id: &str) -> Option<Arc<dyn LlmProvider>> {
     match id {
         "litellm" => Some(Arc::new(LitellmProvider)),
         "anthropic" => Some(Arc::new(AnthropicProvider::default())),
+        "openai" => Some(Arc::new(OpenaiProvider::default())),
+        "openai_compatible" => Some(Arc::new(OpenaiCompatibleProvider)),
         _ => None,
+    }
+}
+
+/// (C-812, D-260(e)) The provider table with `llm.dev_upstream_overrides` applied to the fixed bases: the target
+/// replaces the origin (`https://api.openai.com` → `http://127.0.0.1:9`), so the endpoint's host, injection target
+/// and requests all follow it. The config layer has already refused anything but loopback targets.
+fn with_overrides(
+    overrides: &BTreeMap<String, String>,
+) -> impl Fn(&str) -> Option<Arc<dyn LlmProvider>> + '_ {
+    move |id| {
+        let target = |origin: &str| {
+            overrides
+                .get(origin)
+                .map(|t| t.trim_end_matches('/').to_string())
+        };
+        match id {
+            "anthropic" => Some(match target(crate::ANTHROPIC_BASE_URL) {
+                Some(t) => Arc::new(AnthropicProvider::with_base_url(t)) as Arc<dyn LlmProvider>,
+                None => Arc::new(AnthropicProvider::default()),
+            }),
+            "openai" => Some(match target(crate::OPENAI_BASE_URL) {
+                Some(t) => Arc::new(OpenaiProvider::with_base_url(t)) as Arc<dyn LlmProvider>,
+                None => Arc::new(OpenaiProvider::default()),
+            }),
+            other => builtin(other),
+        }
     }
 }
 
 impl ProviderRegistry {
     pub fn from_config(cfg: &LlmSection) -> Result<Self> {
-        Self::build(cfg, builtin)
+        Self::build(cfg, with_overrides(&cfg.dev_upstream_overrides))
     }
 
     /// Like [`Self::from_config`] with a replaced Anthropic base URL (tests only).
     pub fn from_config_with_anthropic_base(cfg: &LlmSection, base: &str) -> Result<Self> {
         let base = base.to_string();
+        let overrides = cfg.dev_upstream_overrides.clone();
         Self::build(cfg, move |id| match id {
             "anthropic" => {
                 Some(Arc::new(AnthropicProvider::with_base_url(base.clone()))
                     as Arc<dyn LlmProvider>)
             }
-            other => builtin(other),
+            other => with_overrides(&overrides)(other),
         })
     }
 
@@ -83,6 +112,13 @@ impl ProviderRegistry {
                 allowed_models: vec![],
                 key_origin: None,
                 allowed_paths: vec![],
+                organization: None,
+                project: None,
+                auth_header: None,
+                models_path: None,
+                region: None,
+                project_id: None,
+                location: None,
             });
         }
         Ok(Self {
@@ -130,8 +166,9 @@ impl ProviderRegistry {
         let Some(ep) = self.endpoint(endpoint_id) else {
             return true;
         };
-        !matches!(ep.provider.as_str(), "litellm" | "openai_compatible")
-            || crate::inference_path_permitted(method, path, &ep.allowed_paths)
+        // a provider that is not in the registry has no endpoint, so this is always `Some`
+        self.provider_for(ep)
+            .is_none_or(|p| p.inference_path_permitted(ep, method, path))
     }
 
     /// (FIX-104, D-180) Whether a key of `provider` (and `endpoint_id` when the secret names
@@ -246,7 +283,49 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
         allowed_models: e.allowed_models.clone(),
         key_origin,
         allowed_paths: e.allowed_paths.clone(),
+        organization: e.organization.clone(),
+        project: e.project.clone(),
+        auth_header: e.auth_header.clone(),
+        models_path: e.models_path.clone(),
+        region: e.region.clone(),
+        project_id: e.project_id.clone(),
+        location: e.location.clone(),
     })
+}
+
+/// (C-802) The auth modes an endpoint's key-origin rule admits: an `azure_openai` endpoint with `provider_account` admits
+/// `azure_entra` only (the token proves the tenant), a `bedrock` one `aws_assume_role` and `aws_sigv4` only (the
+/// signed caller identity proves the account); every other combination admits the provider's modes.
+pub fn endpoint_auth_modes(provider: &dyn LlmProvider, ep: &Endpoint) -> Vec<crate::AuthMode> {
+    use crate::{AuthMode, OriginMethod};
+    let provider_account = ep
+        .key_origin
+        .as_ref()
+        .is_some_and(|r| r.method == OriginMethod::ProviderAccount);
+    provider
+        .auth_modes()
+        .iter()
+        .copied()
+        .filter(|m| {
+            !provider_account
+                || match provider.id() {
+                    "azure_openai" => *m == AuthMode::AzureEntra,
+                    "bedrock" => matches!(m, AuthMode::AwsSigv4 | AuthMode::AwsAssumeRole),
+                    _ => true,
+                }
+        })
+        .collect()
+}
+
+/// (C-802) The mode the dashboard preselects: `aws_assume_role` for Bedrock, else the first.
+pub fn recommended_auth_mode(provider: &dyn LlmProvider) -> Option<crate::AuthMode> {
+    if provider
+        .auth_modes()
+        .contains(&crate::AuthMode::AwsAssumeRole)
+    {
+        return Some(crate::AuthMode::AwsAssumeRole);
+    }
+    provider.auth_modes().first().copied()
 }
 
 /// Governed LLM hosts: endpoint hosts ∪ known LLM hosts (deduplicated, case-insensitive).

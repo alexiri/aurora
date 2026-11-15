@@ -26,6 +26,7 @@ fn llm_section(allowed_orgs: Vec<String>) -> LlmSection {
     LlmSection {
         enabled_providers: vec!["anthropic".into()],
         provider_preference: vec![],
+        dev_upstream_overrides: Default::default(),
         endpoints: vec![LlmEndpoint {
             id: "anthropic".into(),
             provider: "anthropic".into(),

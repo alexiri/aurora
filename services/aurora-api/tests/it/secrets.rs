@@ -26,6 +26,8 @@ struct World {
     _anthropic: MockServer,
     /// (FIX-105) answers 503 on `/v1/models`.
     _flaky: MockServer,
+    /// (P4-LLM-1) answers as api.openai.com (reached through `llm.dev_upstream_overrides`).
+    _openai: MockServer,
 }
 
 fn endpoint(id: &str, base: &str, rule: Option<KeyOrigin>) -> LlmEndpoint {
@@ -111,8 +113,35 @@ async fn world() -> World {
         .mount(&flaky)
         .await;
 
+    // OpenAI: account by key, reported in the response headers of the model list.
+    let openai = MockServer::start().await;
+    for (key, org) in [("sk-oai-good", "org-good"), ("sk-oai-other", "org-bad")] {
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", format!("Bearer {key}").as_str()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("openai-organization", org)
+                    .set_body_json(json!({"data": [{"id": "gpt-5"}]})),
+            )
+            .mount(&openai)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(5)
+        .mount(&openai)
+        .await;
     let (lu, au, fu) = (litellm.uri(), anthropic.uri(), flaky.uri());
+    let ou = openai.uri();
     let h = Harness::with_config(move |c| {
+        c.llm.enabled_providers = ["litellm", "anthropic", "openai", "openai_compatible"]
+            .map(String::from)
+            .to_vec();
+        c.llm
+            .dev_upstream_overrides
+            .insert("https://api.openai.com".into(), ou.clone());
         c.llm.endpoints = vec![
             endpoint(
                 "central",
@@ -166,6 +195,23 @@ async fn world() -> World {
                 }),
             ),
             LlmEndpoint {
+                id: "oai".into(),
+                provider: "openai".into(),
+                key_origin: Some(KeyOrigin {
+                    method: "provider_account".into(),
+                    allowed_organization_ids: vec!["org-good".into()],
+                    ..KeyOrigin::default()
+                }),
+                ..LlmEndpoint::default()
+            },
+            LlmEndpoint {
+                id: "compat".into(),
+                provider: "openai_compatible".into(),
+                base_url: Some(lu.clone()),
+                auth_header: Some("api-key".into()),
+                ..LlmEndpoint::default()
+            },
+            LlmEndpoint {
                 id: "anthropic".into(),
                 provider: "anthropic".into(),
                 key_origin: Some(KeyOrigin {
@@ -206,7 +252,7 @@ async fn world() -> World {
         .bind(json!({"llm": {"endpoints": {
             "central": {"key_scopes": ["organization"]},
             "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {},
-            "flaky": {}, "flaky_rule": {}
+            "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}
         }}}))
         .execute(h.pool())
         .await
@@ -233,6 +279,7 @@ async fn world() -> World {
         _litellm: litellm,
         _anthropic: anthropic,
         _flaky: flaky,
+        _openai: openai,
     }
 }
 
@@ -972,6 +1019,156 @@ async fn reference_mode_via_memory_store() {
         items
             .iter()
             .any(|i| i["id"] == "memory" && i["capabilities"]["references"] == true)
+    );
+}
+
+/// (P4-LLM-1, C-801, C-802, C-804) An `openai` key validates through the strict model listing, its account comes from
+/// the `openai-organization` response header and must satisfy the endpoint's `provider_account` rule; a compatible
+/// key validates through `models_path`; a mode the endpoint does not admit is refused; the provider listing reports
+/// modes, shapes and harnesses.
+#[tokio::test]
+async fn openai_and_compatible_keys_validate_and_the_listing_reports_modes() {
+    let w = world().await;
+    let llm = |ep: &str, val: &str, mode: Option<&str>| {
+        let mut l = json!({"endpoint_id": ep});
+        if let Some(m) = mode {
+            l["auth_mode"] = json!(m);
+        }
+        json!({"name": format!("k-{ep}-{}-{}", val.len(), mode.unwrap_or("")), "kind": "llm", "llm": l, "value": val})
+    };
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("oai", "sk-oai-good", None)),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["method"], "provider_account");
+    assert_eq!(v["origin"]["organization_id"], "org-good");
+    assert_eq!(v["host_pattern"], w._openai.address().to_string().as_str());
+    assert_eq!(v["injection"], json!({"kind": "bearer"}));
+    no_value(&v, &["sk-oai-good"]);
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("oai", "sk-oai-other", None)),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_wrong_organization")),
+        "{v}"
+    );
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("oai", "sk-oai-bad", None)),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    // a compatible key (api-key header) validates by listing
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.ws_url(),
+            &w.owner,
+            Some(llm("compat", "sk-compat", None)),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["method"], "endpoint");
+    // modes the endpoint does not admit
+    for (ep, mode) in [
+        ("oai", "aws_sigv4"),
+        ("compat", "azure_entra"),
+        ("oai", "bogus"),
+    ] {
+        let (s, v) = w
+            .call(
+                Method::POST,
+                &w.ws_url(),
+                &w.owner,
+                Some(llm(ep, "sk-oai-good", Some(mode))),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("llm_key_invalid")),
+            "{ep} {mode}: {v}"
+        );
+        assert_eq!(
+            v["error"]["details"]["reason"], "auth_mode_unsupported",
+            "{v}"
+        );
+    }
+
+    let (s, v) = w
+        .call(Method::GET, "/v1/llm/providers", &w.member, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let oa = v["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "openai")
+        .unwrap();
+    assert_eq!(oa["auth_modes"], json!(["api_key"]));
+    assert_eq!(
+        oa["auth_mode_details"],
+        json!([{"id": "api_key", "value_shape": "string", "recommended": true}])
+    );
+    assert_eq!(oa["dialects"], json!(["openai_chat", "openai_responses"]));
+    let ep = |id: &str| {
+        v["endpoints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    let (oai, compat, anthropic) = (ep("oai"), ep("compat"), ep("anthropic"));
+    assert_eq!(oai["auth_modes"], json!(["api_key"]));
+    assert_eq!(oai["recommended_auth_mode"], "api_key");
+    // harnesses whose dialects intersect: codex speaks responses, claude-code messages (D-260(a))
+    assert_eq!(
+        oai["harnesses"],
+        json!(
+            ["codex"]
+                .iter()
+                .filter(|h| w
+                    .h
+                    .state
+                    .config
+                    .hosted
+                    .enabled_harnesses
+                    .iter()
+                    .any(|e| e == *h))
+                .collect::<Vec<_>>()
+        )
+    );
+    assert_eq!(
+        compat["harnesses"],
+        json!([]),
+        "chat-only: no shipped harness"
+    );
+    assert!(
+        anthropic["harnesses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|h| h == "claude-code")
     );
 }
 
