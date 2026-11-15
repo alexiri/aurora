@@ -203,6 +203,10 @@ fixtures for unknown `search_id` and oversized responses.
   filter syntax and worked searches; `cern-maps`: one file per API family: search, FeatureServer,
   GeocodeServer, NAServer routing, deep links). Catalogue tools carry a `description`. Preview
   with `aurora plugin guide`; the repo's CI runs `aurora plugin validate`, which checks the guide.
+  *(Superseded, D-298, 2026-11-15: this task ran before P5-GUIDE-1. The two addons adopt the guide
+  shape afterwards, in the `aurora-addons-cern` repository, once a release with P5-GUIDE-1 exists:
+  summary, essentials, guide files and, where useful, recipes (`24 §3.1`) and an operations file
+  (`24 §3.5`) for `cern-maps`. Not a phase-5 row.)*
 - Non-goals: contract status / nationality attributes (owner), write operations of any kind,
   Mattermost/channel presence, indoor turn-by-turn navigation, cached local copies of directory
   data.

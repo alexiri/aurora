@@ -364,6 +364,18 @@ socket `/run/aurora/tools.sock` → supervisor → `tool.call` frame (stamped wi
 conversation and current turn) → runner (stamps sandbox and boot) →
 `POST /v1/runner/tool-calls` → **tool registry** → result back.
 
+(phase 5, P5-GUIDE-7, D-297, SEC-119, `24 §10b`) A second client takes the same path from the
+socket on: **`aurora-tool`** (`aurora-supervisor tool`, wrapper `/opt/aurora/bin/aurora-tool`),
+run by the agent from its shell, with the conversation from `AURORA_SESSION`, which the
+supervisor sets in the environment of every harness process it starts (not for the web
+terminal, SSH sessions or `process_start` children). Each `ToolDescriptor` carries `family` and
+`exposure` (`core` / `on_demand`); in mode `on_demand` (`hosted.platform_tools`, carried in the
+render inputs as `platform_tools`) the bridge's `tools/list` returns the core tools only, its
+`tools/call` still forwards any name, and the socket's `list` returns every available tool. A
+supervisor without the command (no wrappers, `agent_cli` false, C-653) behaves as mode `all`.
+Idle sessions are released on a catalogue change only when the core descriptors or the rendered
+instruction files change (C-654).
+
 - (FIX-110) `turn_id` is required and must be an active turn of the calling agent;
   a call without one is refused `no_active_turn` (the supervisor refuses it locally
   when no turn is running in the conversation, and the API refuses it again).
@@ -445,10 +457,11 @@ The home (`/workspace`) holds:
   docs links, presences, peers, memory language, schedules summary, timezone),
   `tools` (catalogue), (phase 5, P5-GUIDE-2) `apps` (agent guide files, below), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
 - (phase 5, P5-GUIDE-2, D-171, SEC-117, `24 §7`) **`apps` parts** carry file entries
-  `{ path, content }` (the entry shape of `skills`) for `.aurora/apps/<app_id>/<file>`: the two
-  files the API renders per connected app (`guide.md`, `tools.md`) and the reference files of the
-  app's package, the latter up to `AGENT_GUIDE_SYNC_MAX` per sync (apps beyond the budget, in
-  `app_id` order, get the two generated files only and their `guide.md` says so).
+  `{ path, content }` (the entry shape of `skills`) for `.aurora/apps/<app_id>/<file>`: the
+  files the API renders per connected app (`guide.md`, `tools.md`, and from P5-GUIDE-6
+  `api.json`) and the recipes and reference files of the app's package, the latter up to
+  `AGENT_GUIDE_SYNC_MAX` per sync (apps beyond the budget, in `app_id` order, get the generated
+  files only and their `guide.md` says so).
   `.aurora/apps/` is a managed root: an entry is accepted only at exactly
   `.aurora/apps/<id>/<name>` with both segments matching their grammars (`24 §3.1`), files are
   installed 0444, and the root is pruned to the manifest at commit, so a folder disappears with

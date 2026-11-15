@@ -161,6 +161,8 @@ admin UI's Add dialog ("format documentation").
   guide section of the plugin page (P5-GUIDE-3). The paused lane `alexiri/p5-asrc` rebases on
   P5-GUIDE-1: both edit `services/aurora-api/src/domains/plugins/` and
   `plugin_packages`-adjacent code, and the two must not run at the same time.
+  *(Superseded, D-298, 2026-11-15: P5-ASRC merged before P5-GUIDE-1. The `docs/22` and fixture-addon
+  items above move to P5-GUIDE-1's scope.)*
 - Non-goals: per-source schedules, addon uninstall of packages still connected (existing removal
   rules apply), auto-updates, private/authenticated repos, non-git sources, review of addon
   *content* beyond the existing permissions review.

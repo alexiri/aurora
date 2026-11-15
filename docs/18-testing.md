@@ -685,7 +685,52 @@ done when its tests exist, pass in CI, and the security invariants it touches
   remove confirms, update review (full diff, disabled approve for non-authority with explanation), repository text
   rendered as data (an HTML/markdown/URL payload is inert), no horizontal scroll at 390 px, both themes.
 
-### App guides on demand (phase 5, P5-GUIDE-1..5, D-170..D-172, SEC-117, SEC-91)
+### App guides on demand (phase 5, P5-GUIDE-1..7, D-170..D-172, D-295..D-297, SEC-91, SEC-117..SEC-120)
+
+**Amendment of 2026-11-15 (D-295..D-297).** Where the list below says *inline* or *index*, read:
+the supervisor snapshots are **index always** (one, two and 23 apps), the older-API fallback
+(no `guide_path` → today's inline file byte for byte), and the paragraph with and without
+`agent_cli`; the "inline at the threshold" case is gone. Added:
+
+- **Recipes** (P5-GUIDE-1): linter rows for `agent_recipe_not_markdown` and `agent_guide_kind`;
+  renderer snapshots of `guide.md` with recipes (section order, *Procedure* header on the
+  projected file); `fixture-guide` gains one recipe.
+- **Operations and `api.json`** (P5-GUIDE-6): one `fixture-invalid-agent-operations-*` package
+  per rule of `24 §3.5` (format, unknown key, forbidden header in each case variant, foreign
+  host, path with `..`/`//`/query, undeclared or duplicate path parameter, bad JSON path,
+  unknown tool, too many, too large, listed in `guide`); `api.json` `insta` snapshots: package
+  operations mapped by the gateway matcher (including one that maps to no tool → `untooled`
+  access), catalogue-only operations, two accounts with different grants, an instance-bound
+  account's `base_url`, truncation at a lowered `AGENT_API_JSON_MAX`; `import-openapi` writes a
+  byte-stable `operations.json` for the three checked-in documents and it validates.
+- **`aurora-app`** (P5-GUIDE-6, `services/aurora-supervisor` unit tests with a local mock proxy):
+  `search` ranking on a fixed `api.json`; `describe` bound; `call` argument coercion and refusals
+  (missing required, unknown name, enum) with exit 2 and **no request sent**; path encoding of
+  `/`, `..`, `?`, `#`, `%2F` as one segment; `--path` refusals (scheme, `//host`, `@`); account
+  selection (implicit with one, refused with several and none given); `x-aurora-connection-id`
+  set and no other Aurora header; pagination for each style, the page cap and a cross-origin
+  `next` refused; save path, `AGENT_CLI_SAVE_MAX` stop, preview bound on a 10 MiB body, `--raw`;
+  exit 1 on upstream 404, exit 3 on a gateway refusal body (SEC-118, SEC-120).
+- **Platform tools on demand** (P5-GUIDE-7): registry test that every tool declares a family and
+  the core set equals `send_file`, `complete_task` (a new tool that forgets `family` fails the
+  test); bridge tests: `tools/list` in `on_demand` = core set, in `all` = everything, without
+  `agent_cli` = everything; `tools/call` of an on-demand tool served in every mode; instruction
+  snapshots for the *platform tools* fragment (both modes, a family with an unavailable tool
+  omitted); `aurora-tool` tests: no `AURORA_SESSION` → exit 2 without touching the socket,
+  argument coercion against a schema, preview/save, error result exit 1, socket down exit 4;
+  `AURORA_SESSION` present in a harness spawn's environment and absent from terminal, SSH and
+  `process_start` environments; session release: changing an on-demand tool's description
+  releases no idle session, changing the core set does (SEC-119).
+- **End to end** (kind, `fake` harness scripted to run shell commands): `aurora-app call
+  fixture-guide <op>` reaches the mock upstream with the connection header and the gateway's
+  injected credential; the same operation under a grant that blocks it exits 3; `aurora-tool call
+  memory_save key=… content=…` produces the same `tool.started` / `tool.finished` events and audit
+  row as the MCP path.
+- **Live, env-gated** (as below, reported, not a gate): with `on_demand`, an agent asked to
+  "remind me every Monday at 9" creates a schedule through `aurora-tool`; with three connected
+  apps, an agent asked for the Indico free-room task opens the recipe before calling. P4-EVAL
+  runs comparing `all` and `on_demand` are recorded in P5-GUIDE-7's completion report (`24 §13`).
+
 - **Fixture packages** (`plugins/fixtures`): `fixture-guide` (`09 §13`) and one
   `fixture-invalid-agent-guide-*` package per linter rule of `24 §3` (unlisted file, missing file,
   reserved name, bad name, not text, file too large, summary required), each with its line in

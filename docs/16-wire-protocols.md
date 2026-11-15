@@ -206,7 +206,10 @@ ok: true, content: [{ type: "text", text } | { type: "json", value }] }` or
 never leave the supervisor.
 
 MCP surface: `tools/list` answered from the synced catalogue (+ local tools);
-`tools/call` as above; no MCP resources or prompts in phase 0.
+`tools/call` as above; no MCP resources or prompts in phase 0. (phase 5, P5-GUIDE-7, D-297,
+C-654) `ToolDescriptor` gains optional `family` and `exposure` (`core` / `on_demand`, omitted =
+`on_demand`); in mode `on_demand` `tools/list` returns the core descriptors only, `tools/call`
+is unchanged, and the socket's `list` (used by `aurora-tool`) returns all (`24 §10b`).
 
 ---
 

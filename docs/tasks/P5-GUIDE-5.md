@@ -5,6 +5,11 @@ Fifth task of "app guides on demand". Normative spec: `docs/24-app-guides.md` §
 addon tasks: it is needed before the first large-API app (Zoom, OpenStack, OpenSearch, or any
 third-party addon with hundreds of operations).
 
+**Amendment of 2026-11-15 (D-296):** P5-GUIDE-6 extends this command to also write
+`operations.json` (C-656). Structure the parser's intermediate model (operations with
+parameters, body fields, responses' array shape and `Link` header, tags, generated tool id) so
+that the third output is a serializer over the same model, not a second parse.
+
 ## Why
 
 A large API cannot be packaged by hand: hundreds of catalogue tools, and an agent that needs to

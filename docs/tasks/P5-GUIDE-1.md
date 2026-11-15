@@ -1,9 +1,28 @@
 # P5-GUIDE-1: Agent guides — package format, linter, storage, snapshot, renderer, CLI (owner, 2026-11-13)
 
-First task of "app guides on demand" and the **first addon-related task of phase 5** (before
-P5-ASRC and P5-CERN-ADDONS). Normative spec: `docs/24-app-guides.md` (§3, §4, §5, §8, §10);
-contracts C-640, C-641, C-642, C-646, C-647, C-649; decisions D-170, D-171; SEC-117, SEC-91.
-Read `24` fully and `09 §2`, `§3.4 agent`, `§6`, `§9`; nothing else is needed.
+First task of "app guides and tools on demand". (Written as the first addon-related task of
+phase 5; P5-ASRC merged and P5-CERN-ADDONS ran first, D-298.) Normative spec:
+`docs/24-app-guides.md` (§3, §4, §5, §8, §10); contracts C-640, C-641, C-642, C-646, C-647,
+C-649; decisions D-170, D-171, **D-295**; SEC-117, SEC-91. Read `24` fully and `09 §2`, `§3.4
+agent`, `§6`, `§9`; nothing else is needed.
+
+**Amendment of 2026-11-15 (D-295, D-298), applies to everything below:**
+- **Recipes**: a guide entry is `{ file, title, kind? }`, `kind` = `reference` (default) |
+  `recipe`; the linter adds `agent_recipe_not_markdown` and `agent_guide_kind`; the snapshot
+  always carries `kind`; `guide.md` gains the **Recipes** section (C-646) and a recipe's projected
+  header says *Procedure* (`24 §5.3`); `api.json` joins the reserved names (C-640). Fixtures:
+  `fixture-guide` gains one recipe; add `fixture-invalid-agent-guide-{recipe-not-markdown,kind}`.
+- **No `AGENT_NOTES_INLINE_MAX`**: do not define it (removed by D-295). Limits from `24 §8` that
+  belong to P5-GUIDE-6/7 are defined by those tasks.
+- **`docs/22-addon-repos.md`** (moved here from P5-ASRC, which merged first): list the agent
+  guide among the `plugin.yaml` fields that matter for addons (`agent.summary`,
+  `agent.instructions` as the essentials, `agent.guide[]` with reference files and recipes),
+  point to `24 §3` without restating the rules, and show `aurora plugin guide` in the worked
+  example. The fixture addon repository's package (if P5-ASRC left one under `plugins/` or
+  `tests/`) ships a guide file.
+- The renderer signature gains what the Recipes section needs (the entries' `kind`); keep it
+  pure. Shape it so P5-GUIDE-6 can add `api_json: Option<String>` to `Rendered` without changing
+  callers.
 
 ## What it delivers
 
@@ -17,8 +36,8 @@ hashes exactly as before.
 
 1. **Limits** (`crates/aurora-core/src/limits.rs`): `AGENT_SUMMARY_MAX` 160,
    `AGENT_GUIDE_FILES_MAX` 24, `AGENT_GUIDE_FILE_MAX` 64 KiB, `AGENT_GUIDE_APP_MAX` 256 KiB,
-   `AGENT_GUIDE_SYNC_MAX` 2 MiB, `AGENT_NOTES_INLINE_MAX` 4 000 (the last two are used by
-   P5-GUIDE-2; define them here so that task does not touch this file).
+   `AGENT_GUIDE_SYNC_MAX` 2 MiB (used by P5-GUIDE-2; define it here so that task does not touch
+   this file).
 2. **Archive** (`crates/aurora-registry/src/package.rs`): accept `agent/<app_id>/<file>` (exactly
    that depth; `<file>` grammar of C-640); the existing path-safety, duplicate and
    decompressed-size rules apply.
@@ -72,13 +91,13 @@ packages (P5-GUIDE-4); `import-openapi` (P5-GUIDE-5); any gateway, policy or hoo
 
 ## Ownership (disjoint from every other open lane)
 
-`crates/aurora-registry/**`, `crates/aurora-core/src/limits.rs` (the six constants) and
+`crates/aurora-registry/**`, `crates/aurora-core/src/limits.rs` (the five constants) and
 `crates/aurora-core/src/sanitize.rs` (moved helpers), one migration,
 `crates/aurora-db/src/repo/plugins.rs` (one function),
 `services/aurora-api/src/domains/plugins/{ingest.rs,registry.rs}`, `services/aurora-cli/src/plugin/**`,
-`plugins/fixtures/**`, `plugins/builtin/README.md`,
-`services/aurora-supervisor/src/instructions.rs` (only the helper move). The paused P5-ASRC lane
-touches `domains/plugins`: it rebases on this task, not the reverse.
+`plugins/fixtures/**`, `plugins/builtin/README.md`, `docs/22-addon-repos.md` (the agent-guide
+paragraph), `services/aurora-supervisor/src/instructions.rs` (only the helper move). P5-ASRC's
+code in `domains/plugins` is merged: rebase on master before starting.
 
 ## Acceptance criteria
 

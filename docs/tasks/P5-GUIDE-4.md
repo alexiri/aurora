@@ -5,6 +5,20 @@ Fourth task of "app guides on demand": the "adapt our addons" part. Normative sp
 P5-GUIDE-1). Depends on **P5-GUIDE-1** (format, linter, `aurora plugin guide`); the end-to-end
 check at the end needs P5-GUIDE-2. A package task: no Rust, no dashboard.
 
+**Amendment of 2026-11-15 (D-295), applies to everything below:** the instruction file never
+carries the notes, so the `summary` is the only text that makes an agent pick an app; name the
+tasks the app serves. Write **recipes** (`kind: recipe`, `24 §3.1`) for the tasks people
+actually ask for, at least:
+- **indico**: "Find a free room and book it" (search per building with `repeat_frequency`, name
+  the rooms, confirm with the person, book, verify the booking; the never-retry rule for
+  bookings), and "Find the events of a category in a date range";
+- **gitlab** / **github** family: "Find why a pipeline / workflow run failed and retry it";
+- **microsoft-365**: "Find a meeting slot for several people";
+- **jira** / **jira-dc**: "Create an issue with the right project, type and fields".
+More are welcome where an app has a multi-step task with pitfalls. Recipes must use only
+requests the catalogue names, and say which ones need approval. No operations files in this
+task (P5-GUIDE-6 adds them where they help).
+
 ## What it delivers
 
 Each of the 23 apps in `plugins/builtin/` (13 packages) gets a `summary`; its

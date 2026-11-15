@@ -1,15 +1,24 @@
 # P5-GUIDE-2: Agent guides — home sync, supervisor projection, instruction file, admin API (owner, 2026-11-13)
 
 Second task of "app guides on demand". Normative spec: `docs/24-app-guides.md` (§5.3, §6, §7,
-§9, §11); contracts C-643, C-644, C-645, C-648; decisions D-171; SEC-117, SEC-91. Also read
-`12 §Home projection` and `10 §Agent instructions`. Depends on **P5-GUIDE-1** (renderer, guide
-blobs, snapshot keys, limits).
+§9, §11); contracts C-643, C-644, C-645, C-648; decisions D-171, **D-295**; SEC-117, SEC-91.
+Also read `12 §Home projection` and `10 §Agent instructions`. Depends on **P5-GUIDE-1** (renderer,
+guide blobs, snapshot keys, limits).
+
+**Amendment of 2026-11-15 (D-295), applies to everything below:** the instruction file is
+**always the index** (C-645 as amended); there is no inline mode and no `AGENT_NOTES_INLINE_MAX`.
+Today's inline rendering remains only as the fallback when an app entry has no `guide_path`
+(older API). The index paragraph and the preamble are rendered in their "no `agent_cli`" form
+(the `aurora-app` sentences come with P5-GUIDE-6, C-653); write the renderer so P5-GUIDE-6 adds
+them behind one boolean. Recipes are projected like reference files (with the *Procedure*
+header from P5-GUIDE-1's `reference_header`), and `PluginPackage.agent_guides[].files[]` carries
+`kind` (C-648 as amended); `operations` in C-648 is `null` until P5-GUIDE-6.
 
 ## What it delivers
 
-Every hosted agent gets `.aurora/apps/<app_id>/{guide.md,tools.md,<reference files>}` for each
-connected app, kept current by the ordinary home sync, and an instruction file that lists apps
-by one line each once the plugin notes pass `AGENT_NOTES_INLINE_MAX`. Instance admins can read a
+Every hosted agent gets `.aurora/apps/<app_id>/{guide.md,tools.md,<recipes and reference
+files>}` for each connected app, kept current by the ordinary home sync, and an instruction file
+that lists apps by one line each and carries no plugin notes. Instance admins can read a
 package's agent guide through the API. **No gateway, policy, runner or hook-host change.**
 
 ## Scope
@@ -37,7 +46,8 @@ package's agent guide through the API. **No gateway, policy, runner or hook-host
      grammars, `guide.md` / `tools.md` allowed); 0444 files in 0555 directories; pruned at commit.
      It must not collide with the other `.aurora/` content (`tools.json`, `sync/`, `pg/`, inbox).
    - `RenderInputs.apps[]` gains `app_id`, `summary`, `guide_path` (all optional on the wire).
-   - Inline / index rendering and the preamble paragraph exactly as C-645 and `24 §6`.
+   - The index rendering (always; the inline text only as the older-API fallback) and the
+     preamble paragraph exactly as C-645 and `24 §6`.
 4. **Admin API** (`services/aurora-api/src/domains/plugins/{dto.rs,routes.rs,service.rs,lifecycle.rs}`):
    `PluginPackage.agent_guides`, the file route, `agent_guide_changed` in the audit metadata
    (C-648); OpenAPI and `web/src/lib/api/schema.d.ts` regenerated; permission-matrix row for the
@@ -69,9 +79,9 @@ e2e addition. Not `ingest.rs` / `registry.rs` (P5-GUIDE-1).
 - [ ] **Written first, on the unmodified code**: a supervisor test that a sync carrying an
       unknown part kind and unknown render-input fields commits and renders today's instruction
       snapshot. It passes before and after.
-- [ ] Supervisor snapshots: inline at exactly `AGENT_NOTES_INLINE_MAX`; index at one character
-      more; render inputs without `guide_path` → the pre-feature file byte for byte; preamble
-      paragraph only with at least one app.
+- [ ] Supervisor snapshots: index with one app, with two, and with every built-in fixture app
+      (all with small notes: no notes appear in the file); render inputs without `guide_path` →
+      the pre-feature file byte for byte; preamble paragraph only with at least one app.
 - [ ] Supervisor home tests: accepted and refused paths (deeper path, bad id, bad name,
       traversal), modes, prune when the app leaves the manifest.
 - [ ] `home_agent_guides.rs`: everything listed in `18 §App guides on demand` (*API*): folders

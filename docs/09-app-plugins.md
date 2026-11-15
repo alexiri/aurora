@@ -600,20 +600,23 @@ agent:
   summary: "Tasks, projects and comments over REST v2."     # one line, ≤ AGENT_SUMMARY_MAX
   instructions: |                                           # unchanged; the essentials
     Task ids are strings. Send JSON bodies.
-  guide:                                                    # reference files in agent/<app_id>/
+  guide:                                                    # reference files and recipes in agent/<app_id>/
     - { file: api.md, title: "Endpoints, filters, pagination, errors" }
+    - { file: weekly-review.md, title: "Prepare a weekly review of open tasks", kind: recipe }
+  operations: operations.json                               # (P5-GUIDE-6, D-296) machine-readable operations
 ```
 `summary` says what the app is for and is the one line of plugin text an agent always sees;
 `instructions` keeps its limit and becomes the **essentials** (what must be known before the
-first request); `guide` lists the files of `agent/<app_id>/`, each with a one-line title. The
-core projects them, with two files it writes itself (`guide.md`: accounts, access, file list,
-essentials; `tools.md`: every catalogue tool and the agent's access to it), into
-`.aurora/apps/<app_id>/` of each hosted agent that holds a grant on a connection of the app
-(`24 §5`, `12 §Home projection`). The instruction file names the folder and, above
-`AGENT_NOTES_INLINE_MAX` of essentials in total, no longer carries the notes themselves
-(`10 §Agent instructions`). A package without the keys is untouched; a core that does not know
-them rejects the package (packages declare `min_core`). A tool's optional `description` is
-printed in `tools.md`.
+first request); `guide` lists the files of `agent/<app_id>/`, each with a one-line title, and
+(D-295) marks task procedures as `kind: recipe`; `operations` (D-296) names the operations file
+(`24 §3.5`). The core projects them, with files it writes itself (`guide.md`: accounts, access,
+recipes, file list, essentials; `tools.md`: every catalogue tool and the agent's access to it;
+`api.json`: operations and access for `aurora-app`), into `.aurora/apps/<app_id>/` of each
+hosted agent that holds a grant on a connection of the app (`24 §5`, `12 §Home projection`).
+The instruction file names the folder and never carries the notes themselves (D-295, `10
+§Agent instructions`). A package without the keys is untouched; a core that does not know them
+rejects the package (packages declare `min_core`). A tool's optional `description` is printed in
+`tools.md`.
 
 #### `grants` (phase 4, P4-GRANTS, D-123, SEC-67)
 ```yaml
