@@ -335,7 +335,7 @@ async fn ensure_personal_workspace(
 // ---- admin ------------------------------------------------------------------------------
 
 fn signup_mode_name(state: &AppState) -> &'static str {
-    match state.config.signup_mode {
+    match state.auth().signup_mode {
         aurora_config::SignupMode::Open => "open",
         aurora_config::SignupMode::InviteOnly => "invite_only",
         aurora_config::SignupMode::SsoJit => "sso_jit",
@@ -361,7 +361,7 @@ fn personal_role(s: &str) -> PersonalRole {
 pub async fn view(state: &AppState) -> Result<PlacementView, ApiError> {
     let row = repo::get(&state.pool).await?;
     let saved = row.is_some();
-    let open = state.config.signup_mode == aurora_config::SignupMode::Open;
+    let open = state.auth().signup_mode == aurora_config::SignupMode::Open;
     let mut warnings = Vec::new();
     let mut v = PlacementView {
         saved,

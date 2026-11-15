@@ -197,8 +197,11 @@ pub struct OidcProvider {
     #[serde(alias = "issuer_url")]
     pub issuer: String,
     pub client_id: String,
-    /// Name of the environment variable holding the client secret.
+    /// Name of the environment variable holding the client secret (Helm-defined providers).
     pub client_secret_env: String,
+    /// (SET-4, D-236(g)) The client secret the dashboard sealed in the inline store; exclusive
+    /// with `client_secret_env`. Never a plaintext value.
+    pub client_secret: Option<SealedSecret>,
     pub scopes: Vec<String>,
     /// Removed in phase 1 (RFE-004): an unverified e-mail is always refused. `false` fails
     /// startup; `true` is accepted and ignored.
@@ -237,6 +240,7 @@ impl Default for OidcProvider {
             issuer: String::new(),
             client_id: String::new(),
             client_secret_env: String::new(),
+            client_secret: None,
             scopes: strs(&["openid", "email", "profile"]),
             require_email_verified: None,
             allowed_email_domains: vec![],
@@ -251,6 +255,24 @@ impl Default for OidcProvider {
             group_claim_source: String::new(),
         }
     }
+}
+
+/// `{ "$secret": { "ref", "owner", "updated_at" } }` (SET-4, D-236(g)): a value the dashboard
+/// sealed in the inline store (purpose `instance_setting`). Only the reference lives in the
+/// configuration; the owner is the id the value was sealed under.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SealedSecret {
+    #[serde(rename = "$secret")]
+    pub inner: SealedSecretRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SealedSecretRef {
+    #[serde(rename = "ref")]
+    pub sealed_ref: String,
+    pub owner: uuid::Uuid,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 /// (D-139) One exact, case-sensitive claim value and what it grants.
@@ -322,6 +344,10 @@ pub struct EmailSection {
     /// (FIX-116) The password read from the environment (never from the file).
     #[serde(skip)]
     pub smtp_password: Option<Redacted<String>>,
+    /// (SET-4) The password the dashboard sealed (`email.smtp_password`); set by the settings
+    /// merge, never read from the file. The environment's password wins when both exist.
+    #[serde(skip)]
+    pub smtp_password_sealed: Option<SealedSecret>,
     /// (FIX-116) Log-only mode writes the action link (sign-in / invitation tokens) to the log.
     /// Development only; default `false`.
     pub log_links: bool,

@@ -39,6 +39,21 @@ pub async fn by_user<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// How many identities are linked per provider id, for the given ids (the settings preview's
+/// `identities_orphaned`, SET-4). Ids without an identity are absent.
+pub async fn counts_by_provider<'e, E: PgExecutor<'e>>(
+    exec: E,
+    provider_ids: &[String],
+) -> Result<Vec<(String, i64)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT provider_id, count(*)::bigint FROM user_identities \
+         WHERE provider_id = ANY($1) GROUP BY provider_id ORDER BY provider_id",
+    )
+    .bind(provider_ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Link `(provider, subject)` to `user`. A duplicate is `DbError::UniqueViolation`
 /// on `user_identities_provider_id_subject_key`.
 pub async fn insert<'e, E: PgExecutor<'e>>(

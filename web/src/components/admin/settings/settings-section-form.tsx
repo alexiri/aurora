@@ -65,7 +65,8 @@ function isSecretMarker(v: unknown): v is { $secret: unknown } {
 
 /** Secrets inside stored entries come back as `{ $secret: { set } }`: send them back as `keep`. */
 function toWire(v: unknown): unknown {
-  if (isSecretMarker(v)) return { $secret: "keep" };
+  // A stored marker has an object (`{ set }`); a plaintext the admin just typed (`{ $secret: "…" }`) goes as typed.
+  if (isSecretMarker(v)) return typeof v.$secret === "object" ? { $secret: "keep" } : v;
   if (Array.isArray(v)) return v.map(toWire);
   if (typeof v === "object" && v !== null) {
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toWire(x)]));
@@ -151,8 +152,11 @@ export function SettingsSectionForm({
   onReload,
   groups,
   controls,
+  footer,
 }: {
   section: SettingsSection;
+  /** Extra content above Save, given the values a save would send (SET-4: the e-mail page's test button). */
+  footer?: (values: SettingValues, dirty: boolean) => ReactNode;
   /** Refetch the section (stale revision / locked key). */
   onReload: () => void;
   /** Split the settings into titled `FormSection`s (a section page's own layout); default: one. */
@@ -290,6 +294,8 @@ export function SettingsSectionForm({
           </FormSection>
         );
       })}
+
+      {footer ? footer(toValues(section, draft), dirty) : null}
 
       <FormActions>
         <Button type="submit" disabled={busy || !dirty}>

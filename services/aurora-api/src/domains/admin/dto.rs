@@ -62,33 +62,6 @@ impl From<aurora_db::repo::idp_roles::SyncState> for IdpRoles {
     }
 }
 
-/// `GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets.
-#[derive(Serialize, ToSchema)]
-pub struct AdminIdentity {
-    pub providers: Vec<IdentityProvider>,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct IdentityProvider {
-    pub id: String,
-    pub display_name: Option<String>,
-    pub issuer: String,
-    /// Dot path of the role claim; `null` when the provider reads no roles.
-    pub role_claim: Option<String>,
-    /// `id_token` | `userinfo`.
-    pub role_claim_source: String,
-    pub require_role: bool,
-    pub role_mappings: Vec<IdentityMapping>,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct IdentityMapping {
-    pub value: String,
-    pub instance_admin: bool,
-    pub org: Option<IdpOrgGrant>,
-    pub workspaces: Vec<IdpWorkspaceGrant>,
-}
-
 impl From<AdminUserRow> for AdminUser {
     fn from(u: AdminUserRow) -> Self {
         Self {

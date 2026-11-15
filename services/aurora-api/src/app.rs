@@ -55,7 +55,14 @@ pub struct AppState {
     pub counters: Arc<web::counters::ApiCounters>,
     pub session_cache: Arc<AuthCache>,
     pub net: Arc<NetPolicy>,
+    /// The mailer; unless a test replaced it, a [`LiveMailer`](domains::settings::live::LiveMailer)
+    /// whose transport follows the `email` settings (SET-4).
     pub mailer: Arc<dyn Mailer>,
+    /// The live mailer behind `mailer` (the settings swap writes it).
+    pub mail_live: Arc<domains::settings::live::LiveMailer>,
+    /// Sign-in settings in force, replaced when the `sign_in` or `email` section changes (SET-4);
+    /// read them with [`AppState::auth`].
+    pub auth_live: Arc<arc_swap::ArcSwap<domains::settings::live::LiveAuth>>,
     /// Secret value store registry (built from `[secrets]`).
     pub vault: Arc<aurora_secrets::SecretVault>,
     /// Core LLM provider registry (built from `[llm]`), replaced live when the `llm` settings
@@ -120,7 +127,13 @@ impl AppState {
     /// Build the state; fails on invalid `[secrets]` / `[llm]` configuration.
     pub fn try_new(pool: PgPool, config: ApiConfig) -> Result<Self, String> {
         let net = Arc::new(NetPolicy::from_config(&config));
-        let mailer = crate::domains::auth::mail::from_config(&config);
+        let mail_live = Arc::new(domains::settings::live::LiveMailer::new(
+            crate::domains::auth::mail::from_config(&config),
+        ));
+        let mailer: Arc<dyn Mailer> = mail_live.clone();
+        let auth_live = Arc::new(arc_swap::ArcSwap::from_pointee(
+            domains::settings::live::LiveAuth::from_config(&config),
+        ));
         let keyring = build_keyring(&config)?;
         let vault = Arc::new(aurora_secrets::SecretVault::new(
             aurora_secrets::StoreRegistry::from_config_with_tls(
@@ -189,6 +202,8 @@ impl AppState {
             session_cache: Arc::new(AuthCache::default()),
             net,
             mailer,
+            mail_live,
+            auth_live,
             vault,
             llm_live: Arc::new(arc_swap::ArcSwap::new(llm)),
             gov_live,
@@ -208,7 +223,68 @@ impl AppState {
         };
         state.install_live_secrets();
         state.install_live_governance();
+        state.install_live_sign_in();
         Ok(state)
+    }
+
+    /// The sign-in settings now in force (SET-4): sign-up mode, session lifetimes, providers. One
+    /// load per request path, so a swap mid-request never mixes two sets.
+    #[must_use]
+    pub fn auth(&self) -> Arc<domains::settings::live::LiveAuth> {
+        self.auth_live.load_full()
+    }
+
+    /// Replace the sign-in settings and the mailer whenever a `sign_in` or `email` setting changes
+    /// (SET-4). The mailer is rebuilt in the background (its password is opened from the store);
+    /// mail in flight finishes with the old transport.
+    fn install_live_sign_in(&self) {
+        let auth_cell = self.auth_live.clone();
+        let mail = self.mail_live.clone();
+        let vault = self.vault.clone();
+        let sessions = self.session_cache.clone();
+        self.settings.on_swap(Arc::new(move |old, new| {
+            let changed = |prefix: &str| {
+                new.effective
+                    .keys
+                    .keys()
+                    .chain(old.effective.keys.keys())
+                    .filter(|k| k.starts_with(prefix))
+                    .any(|k| {
+                        old.effective.keys.get(k).map(|e| &e.value)
+                            != new.effective.keys.get(k).map(|e| &e.value)
+                    })
+            };
+            let auth_changed = changed("auth.");
+            let mail_changed = changed("email.")
+                || old.effective.raw.email.smtp_password_sealed
+                    != new.effective.raw.email.smtp_password_sealed;
+            if !auth_changed && !mail_changed {
+                return;
+            }
+            let cfg = match new.effective.raw.api_config() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(error = %e, "sign-in settings did not resolve; keeping the previous ones");
+                    return;
+                }
+            };
+            if auth_changed {
+                auth_cell.store(Arc::new(domains::settings::live::LiveAuth::from_config(
+                    &cfg,
+                )));
+                // Cached sessions were judged under the old lifetimes: a shorter one must apply at
+                // the next request (and open streams re-check), so the cache is dropped.
+                if changed("auth.session_") {
+                    sessions.clear();
+                }
+            }
+            if mail_changed {
+                let (vault, mail, email) = (vault.clone(), mail.clone(), cfg.email.clone());
+                tokio::spawn(async move {
+                    mail.set(domains::settings::live::build_mailer(&vault, &email).await);
+                });
+            }
+        }));
     }
 
     /// The instance governance ceiling now in force (SET-2): one load per request path, so a
@@ -295,6 +371,12 @@ impl AppState {
             .set_allowed_private(self.config.gateway_allowed_private.clone());
         self.install_live_secrets();
         self.install_live_governance();
+        self.install_live_sign_in();
+        // Sign-in as the configuration defines it (in production the same as the boot values).
+        if let Ok(c) = self.settings.snapshot().effective.raw.api_config() {
+            self.auth_live
+                .store(Arc::new(domains::settings::live::LiveAuth::from_config(&c)));
+        }
         // The merged view (the configuration's stores, nothing stored yet) is the first registry.
         let snap = self.settings.snapshot();
         let configured = snap
@@ -345,6 +427,7 @@ impl AppState {
     pub fn with_vault(mut self, vault: Arc<aurora_secrets::SecretVault>) -> Self {
         self.vault = vault;
         self.install_live_secrets();
+        self.install_live_sign_in();
         self
     }
 
