@@ -94,7 +94,7 @@ rcgen = "0.13"
 x509-parser = "0.16"
 futures = "0.3"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
-lru = "0.18"
+lru = "0.19"
 openidconnect = { version = "4.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 
 # containers (podman API)
