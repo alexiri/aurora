@@ -377,15 +377,15 @@ overridden by the named configuration key (`15`).
 | `SSH_EXEC_COMMAND_MAX` / `SSH_ENV_VARS_MAX` | (phase 5, P4-SSH-2) 8 KiB `exec` command (no NUL) / 16 accepted `env` variables of ≤ 256 bytes each | — | 12, 16 |
 | `SSH_API_RATE` | (phase 5, P4-SSH-2) 50 terminator-plane requests/s per terminator replica, burst 100 | — | 16 |
 | `SSH_SESSION_RETENTION` | (phase 5, P4-SSH-2) 30 days for closed `ssh_sessions` rows | — | 03 |
-| `EVAL_QUESTIONS_PER_AGENT` | (phase 5, P4-EVAL, D-293(c); pending Q-EVAL-3) 100 eval questions per agent (422 `eval_question_limit`) | — | 10, 05 |
+| `EVAL_QUESTIONS_PER_AGENT` | (phase 5, P4-EVAL, D-293(c); Q-EVAL-3 accepted, D-300) 100 eval questions per agent (422 `eval_question_limit`) | — | 10, 05 |
 | `EVAL_QUESTION_CHARS` / `EVAL_EXPECTED_TEXT_CHARS` / `EVAL_CRITERIA_CHARS` | (phase 5, P4-EVAL) 2 000 / 1 000 / 1 000 characters of a question / of an expected text answer / of judged criteria | — | 10, 03 |
 | `EVAL_ANSWER_CHARS` | (phase 5, P4-EVAL) 4 000 characters of an answer kept on an eval result (sanitised; the judge reads its own cut, `EVAL_JUDGE_INPUT_MAX`) | — | 10, 03 |
 | `EVAL_TURN_TIMEOUT` | (phase 5, P4-EVAL, D-290) 900 s per eval question; the turn is aborted and the question is `error` (`timeout`); never above `TURN_CEILING` | — | 10 |
-| `EVAL_RUNS_ACTIVE_PER_AGENT` / `EVAL_RUNS_PER_AGENT_DAY` | (phase 5, P4-EVAL, D-290(d), D-293(c); pending Q-EVAL-3) 1 active run per agent (409 `eval_run_active`) / 20 run starts per agent per UTC day, manual and scheduled together (429 `eval_runs_limited`) | — | 10, 05 |
-| `EVAL_SCHEDULE_MIN_INTERVAL` / `EVAL_SCHEDULES_PER_AGENT` | (phase 5, P4-EVAL, D-293(b); pending Q-EVAL-3) 1 h between eval schedule occurrences / 5 eval schedules per agent | — | 10, 05 |
-| `EVAL_JUDGE_TIMEOUT` / `EVAL_JUDGE_MAX_TOKENS` / `EVAL_JUDGE_INPUT_MAX` / `EVAL_RATIONALE_CHARS` | (phase 5, P4-EVAL, D-292; pending Q-EVAL-3, Q-EVAL-4) 60 s per judge call / 512 output tokens / 8 KiB of answer text sent to the judge / 300 characters of judge rationale kept | — | 10, 08 |
-| `EVAL_RUN_RETENTION` | (phase 5, P4-EVAL, D-294; pending Q-EVAL-6) 90 days after a run finishes, then the run, its results and its eval conversations are deleted | — | 10, 05 |
-| `EVAL_REGRESSION_DROP` | (phase 5, P4-EVAL, D-293(d); pending Q-EVAL-7) 10 percentage points of pass rate below the previous finished run of the same question-set version before a notice shows | — | 10 |
+| `EVAL_RUNS_ACTIVE_PER_AGENT` / `EVAL_RUNS_PER_AGENT_DAY` | (phase 5, P4-EVAL, D-290(d), D-293(c); Q-EVAL-3 accepted, D-300) 1 active run per agent (409 `eval_run_active`) / 20 run starts per agent per UTC day, manual and scheduled together (429 `eval_runs_limited`) | — | 10, 05 |
+| `EVAL_SCHEDULE_MIN_INTERVAL` / `EVAL_SCHEDULES_PER_AGENT` | (phase 5, P4-EVAL, D-293(b); Q-EVAL-3 accepted, D-300) 1 h between eval schedule occurrences / 5 eval schedules per agent | — | 10, 05 |
+| `EVAL_JUDGE_TIMEOUT` / `EVAL_JUDGE_MAX_TOKENS` / `EVAL_JUDGE_INPUT_MAX` / `EVAL_RATIONALE_CHARS` | (phase 5, P4-EVAL, D-292; Q-EVAL-3, Q-EVAL-4 accepted, D-300) 60 s per judge call / 512 output tokens / 8 KiB of answer text sent to the judge / 300 characters of judge rationale kept | — | 10, 08 |
+| `EVAL_RUN_RETENTION` | (phase 5, P4-EVAL, D-294; Q-EVAL-6 accepted, D-300) 90 days after a run finishes, then the run, its results and its eval conversations are deleted | — | 10, 05 |
+| `EVAL_REGRESSION_DROP` | (phase 5, P4-EVAL, D-293(d); Q-EVAL-7 accepted, D-300) 10 percentage points of pass rate below the previous finished run of the same question-set version before a notice shows | — | 10 |
 | `PREVIEW_CONNECT_TIMEOUT` / `PREVIEW_HEADER_TIMEOUT` | (phase 4, P4-PRV-2) 10 s to open a stream (supervisor connect 5 s) / 60 s for upstream response headers | — | 16 |
 | `PREVIEW_REQUEST_BODY_MAX` | (phase 4, P4-PRV-2) 100 MiB (the ceiling and the binary's default; the Helm chart ships 32 MiB, FIX-074) | `relay.request_body_max_bytes` (lower only) | 15, 16 |
 | `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day, one shared counter across relay replicas (429 `preview_quota` with `Retry-After` to the next UTC midnight; FIX-072, C-637, `16 §W18`) | `previews.bytes_per_share_day` | 16 |
