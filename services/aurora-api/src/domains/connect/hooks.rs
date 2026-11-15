@@ -1,5 +1,6 @@
 //! API-side W9 client for `connect.authorize` / `connect.exchange` (C-19).
 use aurora_core::limits::HOOK_WALL;
+use aurora_core::telemetry::InternalRequest;
 use serde_json::{Map, Value, json};
 
 pub struct HookClient {
@@ -101,9 +102,8 @@ impl HookClient {
             .post(format!("{}/internal/v1/hooks/{hook}", self.base))
             .bearer_auth(&self.bearer)
             .header(aurora_core::limits::KEY_ID_HEADER, &self.key_id)
-            .headers(aurora_core::telemetry::headers())
             .json(&body)
-            .send()
+            .send_internal("aurora-hookhost")
             .await
             .map_err(|_| fail("hook host unavailable"))?;
         let v: Value = resp

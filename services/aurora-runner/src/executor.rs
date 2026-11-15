@@ -17,6 +17,35 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+/// `work {kind}` span of one work item: a child of `item.trace_context` when it has a valid one,
+/// else its own trace. Names carry the kind only (SEC-88: no ids, no paths).
+fn item_span(item: &WorkItem) -> tracing::Span {
+    let kind = match &item.body {
+        WorkItemBody::SandboxStart(_) => "sandbox.start",
+        WorkItemBody::SandboxStop(_) => "sandbox.stop",
+        WorkItemBody::HomeSync(_) => "home.sync",
+        WorkItemBody::TurnDeliver(_) => "turn.deliver",
+        WorkItemBody::TurnMessage(_) => "turn.message",
+        WorkItemBody::TurnSendNow(_) => "turn.send_now",
+        WorkItemBody::TurnAbort(_) => "turn.abort",
+        WorkItemBody::TurnNotice(_) => "turn.notice",
+        WorkItemBody::SessionRelease(_) => "session.release",
+        WorkItemBody::SessionPurge(_) => "session.purge",
+        WorkItemBody::PreviewStart(_) => "preview.start",
+        _ => "other",
+    };
+    let span = tracing::info_span!(
+        "work_item",
+        otel.name = %format!("work {kind}"),
+        otel.kind = "consumer",
+        work.kind = kind,
+    );
+    if !aurora_core::telemetry::adopt_turn_context(&span, item.trace_context.as_deref()) {
+        aurora_core::telemetry::tag_request_id(&span);
+    }
+    span
+}
+
 use crate::api::ApiClient;
 use crate::backend::{Backend, BackendError, ContainerRef, HoldCallback, StartRequest};
 use crate::hub::{ChannelHub, Frame, HubError};
@@ -323,7 +352,14 @@ impl Executor {
             let id = item.item_id;
             // A panicking step must not wedge the sandbox queue.
             let this = self.clone();
-            let res = tokio::spawn(async move { this.handle(item).await }).await;
+            // (FIX-146, D-232 (7)) The item's span is a child of the turn's trace context the API
+            // read from the database; the sandbox never supplies it.
+            let span = item_span(&item);
+            let res = tokio::spawn(tracing::Instrument::instrument(
+                async move { this.handle(item).await },
+                span,
+            ))
+            .await;
             if res.is_err() {
                 tracing::error!(item_id = %id, "work item handler panicked");
             }
@@ -711,4 +747,66 @@ impl Executor {
 
 fn reason_str(r: &StopReason) -> &str {
     r.as_str()
+}
+
+#[cfg(test)]
+mod trace_tests {
+    //! FIX-146 B (D-232 (7)): the `work {kind}` span of an item is a child of the item's trace
+    //! context; a missing or malformed value gives its own trace; the name carries the kind only.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use aurora_protocol::runner::TurnRef;
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::InMemorySpanExporter;
+    use tracing_subscriber::{Layer as _, layer::SubscriberExt as _};
+
+    fn item(tp: Option<&str>) -> WorkItem {
+        WorkItem {
+            item_id: Uuid::now_v7(),
+            sandbox_id: Uuid::now_v7(),
+            boot_id: Uuid::now_v7(),
+            trace_context: tp.map(str::to_owned),
+            body: WorkItemBody::TurnAbort(TurnRef {
+                turn_id: Uuid::now_v7(),
+            }),
+        }
+    }
+
+    #[test]
+    fn work_span_is_a_child_of_the_item_context() {
+        let exporter = InMemorySpanExporter::default();
+        let provider = aurora_core::telemetry::provider_builder("test", 1.0)
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let sub = tracing_subscriber::registry().with(
+            tracing_opentelemetry::layer()
+                .with_tracer(provider.tracer("t"))
+                .with_filter(tracing_subscriber::filter::filter_fn(|m| m.is_span())),
+        );
+        let _g = tracing::subscriber::set_default(sub);
+        let good = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        drop(item_span(&item(Some(good))));
+        drop(item_span(&item(Some("garbage"))));
+        drop(item_span(&item(None)));
+        let spans = exporter.get_finished_spans().unwrap();
+        assert_eq!(spans.len(), 3);
+        for s in &spans {
+            assert_eq!(s.name.as_ref(), "work turn.abort");
+        }
+        assert_eq!(
+            format!("{:032x}", spans[0].span_context.trace_id()),
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
+        assert_eq!(
+            format!("{:016x}", spans[0].parent_span_id),
+            "00f067aa0ba902b7"
+        );
+        for s in &spans[1..] {
+            assert_ne!(
+                format!("{:032x}", s.span_context.trace_id()),
+                "4bf92f3577b34da6a3ce929d0e0e4736"
+            );
+            assert!(!s.parent_span_id.to_string().contains("f067"));
+        }
+    }
 }

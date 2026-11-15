@@ -146,6 +146,49 @@ print("chart-ops: monitoring peers ok")
 "${H[@]}" --set monitoring.podMonitor.enabled=true --set relay.enabled=true --set relay.domain=previews.guard.invalid \
   | grep -c 'kind: PodMonitor' | grep -qx 6 || fail "the PodMonitor flag must render six monitors (api, gateway, hookhost, runner, relay, connector host)"
 
+# --- tracing (FIX-146 Part C, D-232): telemetryTo egress, the web env only with an endpoint, the NOTES warning ---
+telemetry_check() { # expect: none | policy, args after: helm --set flags
+  local expect="$1" ratio="$2"; shift 2
+  "${H[@]}" --set 'connectors[0].id=trace' --set 'connectors[0].image=guard.invalid/c:1' \
+    --set 'connectors[0].tokenSecret.name=s' --set 'connectors[0].tokenSecret.key=k' "$@" \
+    | python3 -I -c '
+import sys, yaml
+expect, ratio = sys.argv[1], sys.argv[2]
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+def fail(m): sys.exit("chart-ops: FAIL: tracing: " + m)
+pol = [d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-telemetry")]
+web = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("-web")][0]
+env = {e["name"]: e.get("value") for c in web["spec"]["template"]["spec"]["containers"] for e in c["env"]}
+if expect == "none":
+    if pol: fail("a telemetry policy rendered without telemetryTo")
+else:
+    if len(pol) != 1: fail("want one -telemetry NetworkPolicy, got %d" % len(pol))
+    comps = [e for e in pol[0]["spec"]["podSelector"]["matchExpressions"] if e["key"].endswith("/component")][0]["values"]
+    want = {"api", "gateway", "hookhost", "runner", "relay", "connector-host", "connector-trace"}
+    if set(comps) != want: fail("telemetry policy components %s, want %s" % (sorted(comps), sorted(want)))
+    if "web" in comps: fail("the web workload must not get collector egress")
+    if pol[0]["spec"]["policyTypes"] != ["Egress"] or not pol[0]["spec"]["egress"][0]["to"]:
+        fail("the telemetry policy must be egress-only with the operator peers")
+    if not any(p["metadata"]["name"].endswith("-default-deny") for p in docs if p["kind"] == "NetworkPolicy"): fail("no default-deny")
+got = env.get("AURORA_TRACING_SAMPLE_RATIO")
+if got != (ratio if ratio != "-" else None): fail("web AURORA_TRACING_SAMPLE_RATIO=%r, want %r" % (got, ratio))
+' "$expect" "$ratio"
+}
+telemetry_check none - || exit 1
+if telemetry_check none - --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32' >/dev/null 2>&1; then
+  fail "self-test: the 'no telemetry policy' check passed although telemetryTo rendered one"
+fi
+telemetry_check policy 1 --set config.telemetry.otlp_endpoint=http://c:4318 --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32' || exit 1
+telemetry_check policy 0.0 --set config.telemetry.otlp_endpoint=http://c:4318 --set config.telemetry.sample_ratio=0.0 --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32' || exit 1
+telemetry_check policy 0.25 --set config.telemetry.otlp_endpoint=http://c:4318 --set config.telemetry.sample_ratio=0.25 --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32' || exit 1
+# an endpoint with no telemetryTo: no policy, the env still rendered, and NOTES.txt warns
+telemetry_check none 1 --set config.telemetry.otlp_endpoint=http://c:4318 || exit 1
+notes="$(helm install guard deploy/helm/aurora -n aurora --dry-run=client --set database.allowSharedLogin=true --set config.telemetry.otlp_endpoint=http://c:4318 2>&1)"
+grep -q 'networkPolicy.telemetryTo is empty' <<<"$notes" || fail "NOTES.txt must warn when an endpoint is set and telemetryTo is empty"
+notes="$(helm install guard deploy/helm/aurora -n aurora --dry-run=client --set database.allowSharedLogin=true --set config.telemetry.otlp_endpoint=http://c:4318 --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32' 2>&1)"
+! grep -q 'networkPolicy.telemetryTo is empty' <<<"$notes" || fail "NOTES.txt warns although telemetryTo is set"
+echo "chart-ops: tracing egress, web env and NOTES ok"
+
 # --- half-enabled switches fail the render ---
 must_fail() {
   local what="$1"; shift

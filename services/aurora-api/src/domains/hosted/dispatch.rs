@@ -39,8 +39,35 @@ fn item(sandbox_id: Uuid, boot_id: Uuid, body: WorkItemBody) -> WorkItem {
         item_id: Uuid::now_v7(),
         sandbox_id,
         boot_id,
+        trace_context: None,
         body,
     }
+}
+
+/// (FIX-146, C-732 (3)) Work items that concern a turn carry that turn's `trace_context`, read
+/// from the database (never from the sandbox), so the runner's spans are children of the turn.
+async fn attach_trace_contexts(
+    tx: &mut PgConnection,
+    items: &mut [WorkItem],
+) -> Result<(), ApiError> {
+    let turn_of = |b: &WorkItemBody| match b {
+        WorkItemBody::TurnDeliver(d) => Some(d.turn_id),
+        WorkItemBody::TurnMessage(m) => Some(m.turn_id),
+        WorkItemBody::TurnSendNow(r) | WorkItemBody::TurnAbort(r) => Some(r.turn_id),
+        WorkItemBody::TurnNotice(n) => Some(n.turn_id),
+        _ => None,
+    };
+    let ids: Vec<Uuid> = items.iter().filter_map(|i| turn_of(&i.body)).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let rows = turns::trace_contexts(&mut *tx, &ids).await?;
+    for i in items.iter_mut() {
+        if let Some(t) = turn_of(&i.body) {
+            i.trace_context = rows.get(&t).cloned();
+        }
+    }
+    Ok(())
 }
 
 fn secs(d: Duration) -> f64 {
@@ -129,6 +156,7 @@ pub async fn arms(
     arm6_dispatch(s, tx, runner, replica, items, after).await?;
     arm7_steer(tx, runner, replica, items).await?;
     arm8_stale(s, tx, runner, replica, items, after).await?;
+    attach_trace_contexts(tx, items).await?;
     Ok(())
 }
 

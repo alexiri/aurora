@@ -56,6 +56,23 @@ pub async fn process_batch(
 ) -> Result<usize, ApiError> {
     let rows = inbox::claim(&state.pool, BATCH, INBOX_LEASE.as_secs_f64()).await?;
     let n = rows.len();
+    if n == 0 {
+        // (FIX-146, D-232 (6)) An iteration that finds nothing opens no span.
+        return Ok(0);
+    }
+    tracing::Instrument::instrument(
+        process_rows(state, handlers, rows),
+        aurora_core::telemetry::job_span("connector inbox"),
+    )
+    .await?;
+    Ok(n)
+}
+
+async fn process_rows(
+    state: &AppState,
+    handlers: &[Arc<dyn InboxHandler>],
+    rows: Vec<InboxRow>,
+) -> Result<(), ApiError> {
     for row in rows {
         let pool = &state.pool;
         let max = OP_MAX_ATTEMPTS as i32;
@@ -81,7 +98,7 @@ pub async fn process_batch(
             }
         }
     }
-    Ok(n)
+    Ok(())
 }
 
 /// Start the processor on the current runtime (every replica; rows are claimed `SKIP LOCKED`).

@@ -4,6 +4,7 @@
 //! registration, `X-Aurora-Replica` + `X-Aurora-Protocol: relay/1`. Failures of `resolve` are
 //! answers (the relay renders the decision), failures of the rest are retried by the callers.
 
+use aurora_core::telemetry::InternalRequest;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -174,7 +175,7 @@ impl RelayApi {
 
     async fn send<T: DeserializeOwned>(rb: reqwest::RequestBuilder) -> Result<T, ApiError> {
         let resp = rb
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         let status = resp.status();
@@ -217,7 +218,7 @@ impl RelayApi {
             .post("/resolve")
             .timeout(timeout)
             .json(&body)
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         let status = resp.status();
@@ -286,7 +287,7 @@ impl RelayApi {
         let resp = self
             .post("/report")
             .json(&serde_json::json!({ "shares": shares }))
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         if resp.status().is_success() {

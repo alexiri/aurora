@@ -5,6 +5,8 @@
 // TODO(BE-051/052 follow-up): move `sandbox`, `restart`, `models` to `api.*` once the routes are generated.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { traceAction } from "@/lib/telemetry";
+
 import { api, ApiError } from "./client";
 import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
@@ -89,15 +91,17 @@ export const chatApi = {
   /** `idempotencyKey` (RFE-018): the same key on a retry returns the first result instead of a second message. */
   /** `replyToSeq`: quote an earlier message of this conversation (C-725); `text` may be empty with attachments (C-726). */
   send: (id: string, text: string, attachmentIds: string[] = [], idempotencyKey?: string, replyToSeq?: number) =>
-    unwrap(
-      api.POST("/v1/conversations/{id}/messages", {
-        params: { path: { id }, ...(idempotencyKey ? { header: { "Idempotency-Key": idempotencyKey } } : {}) },
-        body: {
-          text,
-          ...(attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
-          ...(replyToSeq ? { reply_to: { seq: replyToSeq } } : {}),
-        },
-      }),
+    traceAction("send_message", () =>
+      unwrap(
+        api.POST("/v1/conversations/{id}/messages", {
+          params: { path: { id }, ...(idempotencyKey ? { header: { "Idempotency-Key": idempotencyKey } } : {}) },
+          body: {
+            text,
+            ...(attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
+            ...(replyToSeq ? { reply_to: { seq: replyToSeq } } : {}),
+          },
+        }),
+      ),
     ),
   continue: (id: string) => unwrap(api.POST("/v1/conversations/{id}/continue", { params: { path: { id } } })),
   abort: (turn: string) => unwrap(api.POST("/v1/turns/{id}/abort", { params: { path: { id: turn } } })),

@@ -160,6 +160,11 @@ config:
     ops_bind: 0.0.0.0
   telemetry:
     log_level: info
+    # Tracing (FIX-146, D-232): request ids and propagation always work; spans are exported only when an
+    # OTLP/HTTP endpoint is set. Set networkPolicy.telemetryTo with it (default-deny blocks the collector
+    # otherwise). `sample_ratio` (0.0-1.0, default 1.0) also reaches the dashboard as AURORA_TRACING_SAMPLE_RATIO.
+    # otlp_endpoint: http://collector.observability:4318
+    # sample_ratio: 1.0
   # Instance settings (phase 5, SET-1, D-237(c)): a key listed in deploy/helm/aurora/movable-keys.txt
   # is edited in the dashboard (Admin › Settings) and its default lives in the application. Setting
   # it here LOCKS it: the dashboard shows it read-only and the API refuses to change it. The chart
@@ -447,6 +452,13 @@ networkPolicy:
   #   - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
   # Empty (default): nothing opens them (FIX-102).
   monitoringFrom: []
+  # Tracing export (FIX-146, D-232): where the OTLP collector named by config.telemetry.otlp_endpoint
+  # lives, as raw NetworkPolicy `to` entries (the default-deny policies block it otherwise), e.g.
+  #   - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
+  #     podSelector: {matchLabels: {app: otel-collector}}
+  # Rendered into the egress of api, gateway, hookhost, runner, relay, connector host and connector
+  # Deployments only. Set it whenever an endpoint is set (NOTES.txt warns otherwise).
+  telemetryTo: []
   # Ports the API server listens on behind the `kubernetes` Service (its endpoint port).
   kubeApiPorts: [443, 6443]
   # Cilium does not match the API server or cluster nodes with a NetworkPolicy ipBlock (they are

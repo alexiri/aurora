@@ -385,6 +385,68 @@ fn chan(user: &str, text: &str, thread: Option<&str>, mention: bool) -> Value {
     p
 }
 
+// ------------------------------------------------------------------ tracing
+
+/// FIX-146 (D-232 (6)/(7)): a chat-platform event that starts a turn is handled in a `job
+/// connector inbox` root span (a new trace: the platform sends no context); the turn it creates
+/// stores that trace, so the runner and gateway work of the turn joins it; the message text is
+/// in no span.
+#[tokio::test]
+async fn a_channel_event_turn_belongs_to_the_inbox_job_trace() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    let (exporter, _logs, _guard) = crate::trace_e2e::install();
+    w.send(
+        w.integ,
+        "e1",
+        "message.posted",
+        dm("U1", "canary-chat-text-61f0", "BD1"),
+    )
+    .await;
+    w.run().await;
+    assert_eq!(w.outcome("e1").await["result"], "turn_created");
+
+    let spans = exporter.get_finished_spans().unwrap();
+    let by_id = crate::trace_e2e::index(&spans);
+    let job: Vec<_> = spans
+        .iter()
+        .filter(|s| s.name == "job connector inbox")
+        .collect();
+    assert_eq!(
+        job.len(),
+        1,
+        "{:?}",
+        spans.iter().map(|s| s.name.to_string()).collect::<Vec<_>>()
+    );
+    let job = job[0];
+    assert_eq!(
+        job.parent_span_id,
+        opentelemetry::trace::SpanId::INVALID,
+        "a root span"
+    );
+    let stored: String = sqlx::query_scalar(
+        "SELECT trace_context FROM turns WHERE role='turn' ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    let sc = aurora_core::telemetry::parse_traceparent(&stored).unwrap();
+    assert_eq!(sc.trace_id(), job.span_context.trace_id());
+    let at = by_id
+        .get(&format!("{:016x}", sc.span_id()))
+        .expect("an exported span");
+    assert!(crate::trace_e2e::descends(&by_id, at, job));
+    assert!(
+        spans
+            .iter()
+            .any(|s| s.name == "INSERT turns" && crate::trace_e2e::descends(&by_id, s, job))
+    );
+    let dump = spans.iter().map(|s| format!("{s:?}")).collect::<String>();
+    assert!(!dump.contains("canary-chat-text-61f0"));
+}
+
 // ------------------------------------------------------------------ routing
 
 #[tokio::test]

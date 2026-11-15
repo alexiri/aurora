@@ -87,6 +87,9 @@ pub struct AppState {
     /// (phase 5, SET-1, D-236) Instance settings: the deployment configuration's presence and the
     /// snapshot every replica serves from. Nothing reads it yet except the Admin › Settings routes.
     pub settings: Arc<domains::settings::handle::SettingsHandle>,
+    /// (phase 5, FIX-146 Part D, C-732 (6)) Browser span ingestion: `None` without
+    /// `telemetry.otlp_endpoint`, then `POST /v1/telemetry/traces` answers 404.
+    pub browser_spans: Option<Arc<domains::telemetry::BrowserSpans>>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
     /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
@@ -173,8 +176,12 @@ impl AppState {
                 config.tls.extra_ca_bundle.as_deref(),
             )?,
         )));
+        let browser_spans = domains::telemetry::BrowserSpans::from_config(&config.telemetry)
+            .map_err(|e| format!("telemetry.otlp_endpoint: {e}"))?
+            .map(Arc::new);
         let state = Self {
             pool,
+            browser_spans,
             config: Arc::new(config),
             rate_limiter: Arc::new(RateLimiter::new()),
             api_limiter,
@@ -436,6 +443,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::settings::router())
         .merge(domains::previews::router())
         .merge(domains::terminal::router())
+        .merge(domains::telemetry::router())
         .merge(domains::relay::router())
         .merge(domains::groups::router())
         // (P4-GRP-2, FIX-081) The SCIM management routes are ordinary owner `/v1` routes and

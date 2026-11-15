@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { chatApi, type TranscriptEvent } from "@/lib/api/conversations";
 import { setRateNotice } from "@/lib/api/rate-limit";
+import { traceStreamConnect } from "@/lib/telemetry";
 import { loginUrl } from "@/lib/auth/use-unauthorized-redirect";
 
 import { applyEvent, emptyTranscript, loadHistory, parseStreamEvent, STREAM_EVENT_TYPES, type TranscriptState } from "./transcript";
@@ -58,7 +59,10 @@ export function useTranscript(conversationId: string | undefined): TranscriptHoo
         if (typeof EventSource === "undefined") return;
         const es = new EventSource(`/v1/conversations/${conversationId}/stream?after_seq=${hist.lastSeq}`);
         esRef.current = es;
+        // (FIX-146) one `stream connect` span per (re)connect; EventSource cannot send `traceparent`.
+        const connectSpan = traceStreamConnect("/v1/conversations/{id}/stream");
         es.onopen = () => {
+          connectSpan.end(true);
           retries.current = 0;
           setLive(true);
         };
@@ -66,6 +70,7 @@ export function useTranscript(conversationId: string | undefined): TranscriptHoo
           // The C-501 SSE event *named* `error` also fires `onerror`; it carries `data` and is a transcript event
           // (routed by the `error` listener below). Only a real connection error (no data) clears "Live".
           if (typeof (e as MessageEvent | undefined)?.data === "string") return;
+          connectSpan.end(false);
           setLive(false);
           // A refused connection is CLOSED and not retried by the browser, and `EventSource` hides
           // the status. Ask the server what it was (FIX-099): only a 429 `too_many_streams`

@@ -1,5 +1,6 @@
 //! API client for the W5 runner plane (`16 §W5`).
 
+use aurora_core::telemetry::InternalRequest;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -130,7 +131,7 @@ impl ApiClient {
             rb = rb.json(b);
         }
         let resp = rb
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         let status = resp.status();
@@ -354,7 +355,7 @@ impl ApiClient {
             rb = rb.header(HDR_REPLICA, r.to_string());
         }
         let mut resp = rb
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         let status = resp.status();
@@ -410,7 +411,7 @@ impl ApiClient {
         }
         let resp = rb
             .body(bytes)
-            .send()
+            .send_internal("aurora-api")
             .await
             .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
         let status = resp.status();

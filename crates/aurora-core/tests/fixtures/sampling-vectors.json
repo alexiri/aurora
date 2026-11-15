@@ -1,0 +1,25 @@
+{
+  "comment": "C-732 (7): a trace id is sampled when its rightmost 7 bytes (bytes 9..16, big-endian) are < floor(ratio * 2^56). Read by crates/aurora-core (telemetry.rs tests) and web/src/lib/telemetry (vitest); change both sides together.",
+  "thresholds": [
+    { "ratio": 0.0, "threshold": "0" },
+    { "ratio": 1.0, "threshold": "72057594037927936" },
+    { "ratio": 0.5, "threshold": "36028797018963968" },
+    { "ratio": 0.25, "threshold": "18014398509481984" },
+    { "ratio": 0.1, "threshold": "7205759403792794" }
+  ],
+  "vectors": [
+    { "ratio": 1.0, "trace_id": "aaaaaaaaaaaaaaaaaaffffffffffffff", "sampled": true },
+    { "ratio": 1.0, "trace_id": "aaaaaaaaaaaaaaaaaa00000000000000", "sampled": true },
+    { "ratio": 0.0, "trace_id": "aaaaaaaaaaaaaaaaaa00000000000000", "sampled": false },
+    { "ratio": 0.0, "trace_id": "aaaaaaaaaaaaaaaaaa00000000000001", "sampled": false },
+    { "ratio": 0.5, "trace_id": "aaaaaaaaaaaaaaaaaa7fffffffffffff", "sampled": true },
+    { "ratio": 0.5, "trace_id": "aaaaaaaaaaaaaaaaaa80000000000000", "sampled": false },
+    { "ratio": 0.5, "trace_id": "ffffffffffffffffff7fffffffffffff", "sampled": true },
+    { "ratio": 0.5, "trace_id": "000000000000000000ffffffffffffff", "sampled": false },
+    { "ratio": 0.25, "trace_id": "aaaaaaaaaaaaaaaaaa3fffffffffffff", "sampled": true },
+    { "ratio": 0.25, "trace_id": "aaaaaaaaaaaaaaaaaa40000000000000", "sampled": false },
+    { "ratio": 0.1, "trace_id": "aaaaaaaaaaaaaaaaaa19999999999999", "sampled": true },
+    { "ratio": 0.1, "trace_id": "aaaaaaaaaaaaaaaaaa1999999999999a", "sampled": false },
+    { "ratio": 0.1, "trace_id": "aaaaaaaaaaaaaaaaaa1999999999999b", "sampled": false }
+  ]
+}

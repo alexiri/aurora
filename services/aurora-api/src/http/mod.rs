@@ -9,3 +9,4 @@ pub mod error;
 pub mod json;
 pub mod pagination;
 pub mod ratelimit;
+pub mod trace_trust;

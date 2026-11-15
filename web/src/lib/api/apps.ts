@@ -3,6 +3,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
+import { traceAction } from "@/lib/telemetry";
+
 import { api, ApiError } from "./client";
 import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
@@ -296,7 +298,7 @@ export type ConnectResult = components["schemas"]["ConnectResponse"];
 export type OAuthClientDefinition = components["schemas"]["AppOauthClient"];
 
 export function connectApp(app: string, body: ConnectRequest): Promise<ConnectResult> {
-  return unwrap(api.POST("/v1/apps/{app}/connect", { params: { path: { app } }, body }));
+  return traceAction("app_connect", () => unwrap(api.POST("/v1/apps/{app}/connect", { params: { path: { app } }, body })));
 }
 
 // ---- OAuth sign-in window and its result channel (D-272, C-842) ----

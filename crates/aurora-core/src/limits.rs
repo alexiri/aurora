@@ -404,6 +404,24 @@ pub const TERMINALS_PER_USER: u32 = 2;
 pub const TERMINAL_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// total life of one terminal session.
 pub const TERMINAL_MAX_LIFETIME: Duration = Duration::from_secs(4 * 3600);
+/// (FIX-146, D-232 (g)) cap on the parameterised SQL in a database span's `db.query.text`.
+pub const DB_SPAN_STATEMENT_MAX: usize = 4 * KIB;
+/// (FIX-146 Part D, C-732 (6)) request body of `POST /v1/telemetry/traces` (413 above it).
+pub const TELEMETRY_INGEST_BODY_MAX: usize = 256 * KIB;
+/// (FIX-146 Part D) spans per `POST /v1/telemetry/traces` request (400 above it).
+pub const TELEMETRY_INGEST_SPANS_MAX: usize = 512;
+/// (FIX-146 Part D) attributes per browser span (400 above it).
+pub const TELEMETRY_SPAN_ATTRIBUTES_MAX: usize = 32;
+/// (FIX-146 Part D) events per browser span (400 above it; events are never exported).
+pub const TELEMETRY_SPAN_EVENTS_MAX: usize = 8;
+/// (FIX-146 Part D) kept bytes of a browser span's `exception.stacktrace`.
+pub const TELEMETRY_STACKTRACE_MAX: usize = 4 * KIB;
+/// (FIX-146 Part D) browser span timestamps older than this are clamped up to `now - this`.
+pub const TELEMETRY_CLOCK_PAST: Duration = Duration::from_secs(15 * 60);
+/// (FIX-146 Part D) browser span timestamps later than `now + this` are clamped down.
+pub const TELEMETRY_CLOCK_FUTURE: Duration = Duration::from_secs(60);
+/// (FIX-146 Part D) longest browser span duration kept (an end later than `start + this` is clamped).
+pub const TELEMETRY_SPAN_DURATION_MAX: Duration = Duration::from_secs(15 * 60);
 /// each keep-awake stamp of a byte-carrying session refreshes `terminal_active_until` by this much.
 pub const TERMINAL_AWAKE_GRACE: Duration = Duration::from_secs(120);
 /// the keep-awake reason `terminal` ends this long after the boot's first session byte
