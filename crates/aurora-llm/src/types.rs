@@ -82,6 +82,8 @@ impl AuthMode {
 pub enum EndpointKind {
     Fixed(&'static str),
     Configured,
+    /// (P4-LLM-2) No `base_url` in the entry: the origin follows other keys (Vertex: `location`).
+    Derived,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
