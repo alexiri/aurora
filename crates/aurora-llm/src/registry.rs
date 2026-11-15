@@ -57,12 +57,13 @@ impl ProviderRegistry {
     /// Like [`Self::from_config`] with a replaced Anthropic base URL (tests only).
     pub fn from_config_with_anthropic_base(cfg: &LlmSection, base: &str) -> Result<Self> {
         let base = base.to_string();
+        let overrides = cfg.dev_upstream_overrides.clone();
         Self::build(cfg, move |id| match id {
             "anthropic" => {
                 Some(Arc::new(AnthropicProvider::with_base_url(base.clone()))
                     as Arc<dyn LlmProvider>)
             }
-            other => builtin(other),
+            other => with_overrides(&overrides)(other),
         })
     }
 
@@ -290,6 +291,41 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
         project_id: e.project_id.clone(),
         location: e.location.clone(),
     })
+}
+
+/// (C-802) The auth modes an endpoint's key-origin rule admits: an `azure_openai` endpoint with `provider_account` admits
+/// `azure_entra` only (the token proves the tenant), a `bedrock` one `aws_assume_role` and `aws_sigv4` only (the
+/// signed caller identity proves the account); every other combination admits the provider's modes.
+pub fn endpoint_auth_modes(provider: &dyn LlmProvider, ep: &Endpoint) -> Vec<crate::AuthMode> {
+    use crate::{AuthMode, OriginMethod};
+    let provider_account = ep
+        .key_origin
+        .as_ref()
+        .is_some_and(|r| r.method == OriginMethod::ProviderAccount);
+    provider
+        .auth_modes()
+        .iter()
+        .copied()
+        .filter(|m| {
+            !provider_account
+                || match provider.id() {
+                    "azure_openai" => *m == AuthMode::AzureEntra,
+                    "bedrock" => matches!(m, AuthMode::AwsSigv4 | AuthMode::AwsAssumeRole),
+                    _ => true,
+                }
+        })
+        .collect()
+}
+
+/// (C-802) The mode the dashboard preselects: `aws_assume_role` for Bedrock, else the first.
+pub fn recommended_auth_mode(provider: &dyn LlmProvider) -> Option<crate::AuthMode> {
+    if provider
+        .auth_modes()
+        .contains(&crate::AuthMode::AwsAssumeRole)
+    {
+        return Some(crate::AuthMode::AwsAssumeRole);
+    }
+    provider.auth_modes().first().copied()
 }
 
 /// Governed LLM hosts: endpoint hosts ∪ known LLM hosts (deduplicated, case-insensitive).

@@ -33337,6 +33337,27 @@
           }
         }
       },
+      "AuthModeInfo": {
+        "type": "object",
+        "description": "(C-802) One auth mode of a provider.",
+        "required": [
+          "id",
+          "value_shape",
+          "recommended"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "value_shape": {
+            "type": "string",
+            "description": "`string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`."
+          }
+        }
+      },
       "BatchDecided": {
         "type": "object",
         "required": [
@@ -38924,9 +38945,18 @@
           "provider",
           "display_name",
           "base_url",
-          "dialects"
+          "dialects",
+          "auth_modes",
+          "harnesses"
         ],
         "properties": {
+          "auth_modes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(P4-LLM-1, C-802) The modes this endpoint's key-origin rule admits."
+          },
           "base_url": {
             "type": "string"
           },
@@ -38938,6 +38968,13 @@
           },
           "display_name": {
             "type": "string"
+          },
+          "harnesses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(C-802, D-260(a)) Enabled harnesses whose dialects intersect this endpoint's."
           },
           "id": {
             "type": "string"
@@ -38965,6 +39002,12 @@
           },
           "provider": {
             "type": "string"
+          },
+          "recommended_auth_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -38982,14 +39025,23 @@
           "id",
           "display_name",
           "auth_modes",
+          "auth_mode_details",
           "dialects"
         ],
         "properties": {
+          "auth_mode_details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthModeInfo"
+            },
+            "description": "(P4-LLM-1, C-802) Each mode with the shape of its secret value and whether it is the recommended one."
+          },
           "auth_modes": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "The mode ids (kept as a string list for existing clients; `auth_mode_details` carries the C-802 items)."
           },
           "dialects": {
             "type": "array",

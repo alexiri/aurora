@@ -203,6 +203,8 @@ struct Opts {
     /// (FIX-105) `Some(allowed_paths)`: the endpoint is a LiteLLM one (`central`) instead of
     /// Anthropic's, with those operator-declared extra paths.
     litellm: Option<Vec<String>>,
+    /// (P4-LLM-1, D-260(b)) `allowed_paths` of the Anthropic endpoint.
+    anthropic_paths: Vec<String>,
 }
 
 fn doc() -> Value {
@@ -224,6 +226,7 @@ impl Default for Opts {
             secrets: vec![("sk-good", true, Some(verified("org_ok")))],
             known_hosts: vec![],
             litellm: None,
+            anthropic_paths: vec![],
         }
     }
 }
@@ -354,6 +357,7 @@ async fn start(o: Opts) -> Env {
                 id: "anthropic".into(),
                 provider: "anthropic".into(),
                 allowed_models: o.instance_models.clone(),
+                allowed_paths: o.anthropic_paths.clone(),
                 key_origin: Some(aurora_config::KeyOrigin {
                     method: "provider_account".into(),
                     allowed_organization_ids: vec!["org_ok".into()],
@@ -907,6 +911,52 @@ async fn backstop_counts_missing_headers_without_refusing() {
     let r = msg(&env, "", &hello()).await;
     assert_eq!(r.status, 200);
     assert_eq!(env.gov.header_missing_total(), 1);
+}
+
+/// (P4-LLM-1, D-260(c), D-268(d), SEC-65) The Anthropic key is injected on the inference routes only (on by
+/// default): Files, Batches and the other APIs are refused before policy and before any credential is opened;
+/// `allowed_paths` adds what the operator lists.
+#[tokio::test]
+async fn anthropic_key_is_injected_only_on_inference_paths() {
+    let env = start(Opts {
+        secrets: vec![("sk-good", true, Some(verified("org_ok")))],
+        anthropic_paths: vec!["/v1/files".into()],
+        ..Opts::default()
+    })
+    .await;
+    for (method, path) in [
+        ("POST", "/v1/messages"),
+        ("POST", "/v1/messages/count_tokens"),
+        ("GET", "/v1/models"),
+        ("GET", "/v1/files"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{\"model\":\"m\"}").await;
+        assert_eq!(r.status, 200, "{method} {path}: {}", r.body);
+    }
+    env.mem.set_unavailable(true);
+    let other_before = env.counters.other.load(Ordering::SeqCst);
+    for (method, path) in [
+        ("GET", "/v1/files/file_1"),
+        ("POST", "/v1/messages/batches"),
+        ("GET", "/v1/messages/batches/b1"),
+        ("POST", "/v1/skills"),
+        ("GET", "/v1/organizations/me"),
+        ("GET", "/v1/messages"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert!(
+            has(&r, "llm_path_not_permitted"),
+            "{method} {path}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("sk-good"), "{}", r.body);
+    }
+    assert_eq!(
+        env.counters.other.load(Ordering::SeqCst),
+        other_before,
+        "nothing reached the endpoint"
+    );
 }
 
 /// (D-177, SEC-65, FIX-105) A sanctioned LiteLLM key is injected on the inference routes only:

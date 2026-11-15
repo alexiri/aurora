@@ -397,10 +397,24 @@ pub async fn create(
             ));
         }
         let mode = spec.auth_mode.as_deref().unwrap_or("api_key");
+        let lc = llm_ctx(state, scope.org, scope.ws, &spec.endpoint_id, true).await?;
+        // (C-801, C-802) A mode the endpoint does not admit is refused before the value is read. Only `api_key`
+        // has a value handler in this lane; the minted and signed modes arrive with their providers (P4-LLM-2..4)
+        // and are listed by `endpoint_auth_modes` only then.
+        let admitted = aurora_llm::AuthMode::parse(mode)
+            .is_some_and(|m| aurora_llm::endpoint_auth_modes(lc.provider, lc.ep).contains(&m));
+        if !admitted {
+            return Err(ApiError::unprocessable(
+                "llm_key_invalid",
+                "This endpoint does not accept that kind of credential.",
+            )
+            .with_details(
+                serde_json::json!({ "reason": "auth_mode_unsupported", "auth_mode": mode }),
+            ));
+        }
         if mode != "api_key" {
             return Err(bad("/llm/auth_mode", "unsupported auth mode"));
         }
-        let lc = llm_ctx(state, scope.org, scope.ws, &spec.endpoint_id, true).await?;
         host = lc
             .provider
             .hosts(lc.ep)
