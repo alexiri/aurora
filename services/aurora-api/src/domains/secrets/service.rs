@@ -413,9 +413,10 @@ pub async fn create(
                 serde_json::json!({ "reason": "auth_mode_unsupported", "auth_mode": mode }),
             ));
         }
-        // Only `api_key` and the minted `gcp_service_account`, `azure_entra` have value handlers so far (P4-LLM-4 adds
-        // the AWS ones).
-        if !matches!(mode, "api_key" | "gcp_service_account" | "azure_entra") {
+        if !matches!(
+            mode,
+            "api_key" | "gcp_service_account" | "azure_entra" | "aws_sigv4" | "aws_assume_role"
+        ) {
             return Err(bad("/llm/auth_mode", "unsupported auth mode"));
         }
         host = lc
@@ -430,12 +431,18 @@ pub async fn create(
         let key = plain_of(&st)
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
-        check_value_shape(mode, &key)?;
+        check_value_shape(mode, lc.ep, &key)?;
+        let check = llm::key_check(
+            &state.pool,
+            scope.org,
+            aurora_llm::AuthMode::parse(mode).unwrap_or(aurora_llm::AuthMode::ApiKey),
+        )
+        .await?;
         let o = llm::check_key(
             &state.llm_http,
             lc.provider,
             lc.ep,
-            aurora_llm::AuthMode::parse(mode).unwrap_or(aurora_llm::AuthMode::ApiKey),
+            &check,
             &lc.eff,
             &key,
             1,
@@ -610,7 +617,11 @@ pub async fn delete(state: &AppState, caller: &Caller, row: &SecretRow) -> Resul
 
 /// (C-801) The shape of a minted mode's value, checked before any outbound call: 422 `llm_key_invalid` with the C-801
 /// `reason` (and the offending `field`), never a part of the value.
-fn check_value_shape(mode: &str, key: &Plain<String>) -> Result<(), ApiError> {
+fn check_value_shape(
+    mode: &str,
+    ep: &aurora_llm::Endpoint,
+    key: &Plain<String>,
+) -> Result<(), ApiError> {
     let refused = |what: &'static str, reason: &'static str, field: Option<&'static str>| {
         ApiError::unprocessable("llm_key_invalid", what)
             .with_details(serde_json::json!({ "reason": reason, "field": field }))
@@ -634,6 +645,27 @@ fn check_value_shape(mode: &str, key: &Plain<String>) -> Result<(), ApiError> {
                     e.field,
                 )
             }),
+        "aws_sigv4" => aurora_llm::mint::sts::parse_sigv4_value(key.expose().as_bytes())
+            .map(|_| ())
+            .map_err(|e| {
+                refused(
+                    "The value is not a usable AWS access key.",
+                    e.reason,
+                    e.field,
+                )
+            }),
+        "aws_assume_role" => aurora_llm::mint::sts::parse_assume_role_value(
+            key.expose().as_bytes(),
+            ep.region.as_deref().unwrap_or_default(),
+        )
+        .map(|_| ())
+        .map_err(|e| {
+            refused(
+                "The value is not a usable AWS role credential.",
+                e.reason,
+                e.field,
+            )
+        }),
         _ => Ok(()),
     }
 }
@@ -670,12 +702,17 @@ pub async fn set_value(
         let key = plain_of(&staged)
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
-        check_value_shape(row.llm_auth_mode.as_deref().unwrap_or("api_key"), &key)?;
+        check_value_shape(
+            row.llm_auth_mode.as_deref().unwrap_or("api_key"),
+            lc.ep,
+            &key,
+        )?;
+        let check = llm::key_check(&state.pool, row.org_id, auth_mode_of(row)).await?;
         let o = llm::check_key(
             &state.llm_http,
             lc.provider,
             lc.ep,
-            auth_mode_of(row),
+            &check,
             &lc.eff,
             &key,
             new_version,
@@ -758,11 +795,12 @@ pub async fn verify(state: &AppState, row: &SecretRow) -> Result<StoredOrigin, A
         false,
     )
     .await?;
+    let check = llm::key_check(&state.pool, row.org_id, auth_mode_of(row)).await?;
     let o = llm::check_key(
         &state.llm_http,
         lc.provider,
         lc.ep,
-        auth_mode_of(row),
+        &check,
         &lc.eff,
         &key,
         i64::from(row.value_version),
@@ -875,9 +913,10 @@ pub async fn models(state: &AppState, row: &SecretRow) -> Result<Models, ApiErro
     let list = match model_cache().get(row.org_id, ep_id, key.expose()) {
         Some(l) => l,
         None => {
+            let check = llm::key_check(&state.pool, row.org_id, auth_mode_of(row)).await?;
             let l = lc
                 .provider
-                .list_models(lc.ep, &key, &state.llm_http)
+                .list_models_as(lc.ep, &check, &key, &state.llm_http)
                 .await
                 .map_err(|e| match e {
                     aurora_llm::LlmError::InvalidKey => ApiError::unprocessable(

@@ -1,8 +1,8 @@
 use crate::http_util::host_of;
 use crate::{
-    AnthropicProvider, AzureOpenaiProvider, Dialect, Endpoint, KeyOriginRule, LitellmProvider,
-    LlmError, LlmProvider, OpenaiCompatibleProvider, OpenaiProvider, Overrides, Result,
-    VertexProvider,
+    AnthropicProvider, AzureOpenaiProvider, BedrockProvider, Dialect, Endpoint, KeyOriginRule,
+    LitellmProvider, LlmError, LlmProvider, OpenaiCompatibleProvider, OpenaiProvider, Overrides,
+    Result, VertexProvider,
 };
 use aurora_config::{LlmEndpoint, LlmSection, RawConfig};
 use std::collections::BTreeMap;
@@ -23,6 +23,7 @@ fn builtin(id: &str) -> Option<Arc<dyn LlmProvider>> {
         "openai_compatible" => Some(Arc::new(OpenaiCompatibleProvider)),
         "vertex" => Some(Arc::new(VertexProvider::default())),
         "azure_openai" => Some(Arc::new(AzureOpenaiProvider::default())),
+        "bedrock" => Some(Arc::new(BedrockProvider::default())),
         _ => None,
     }
 }
@@ -49,6 +50,9 @@ fn with_overrides(
                 None => Arc::new(OpenaiProvider::default()),
             }),
             "vertex" => Some(Arc::new(VertexProvider::with_overrides(Overrides::new(
+                overrides,
+            )))),
+            "bedrock" => Some(Arc::new(BedrockProvider::with_overrides(Overrides::new(
                 overrides,
             )))),
             "azure_openai" => Some(Arc::new(AzureOpenaiProvider::with_overrides(
@@ -250,7 +254,8 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
             }
             url.to_string()
         }
-        crate::EndpointKind::Derived => String::new(),
+        // `bedrock` may name a VPC endpoint; `vertex` never has a `base_url` (the config refuses it).
+        crate::EndpointKind::Derived => e.base_url.clone().unwrap_or_default(),
         crate::EndpointKind::Configured => {
             let b = e.base_url.clone().ok_or_else(|| {
                 LlmError::Config(format!("endpoint `{}`: base_url is required", e.id))

@@ -23,6 +23,7 @@ pub fn detail_of(e: &crate::LlmError) -> String {
         E::Unreachable(_) => "endpoint_unreachable".to_owned(),
         E::InvalidKey => "key_rejected".to_owned(),
         E::MintRejected => "mint_rejected".to_owned(),
+        E::AssumeRoleDenied => "assume_role_denied".to_owned(),
         E::Status(s) => format!("key_info_http_{s}"),
         E::BadResponse(_) => "bad_response".to_owned(),
         E::Unverifiable(s) => s.clone(),

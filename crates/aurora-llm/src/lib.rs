@@ -6,6 +6,7 @@
 
 mod anthropic;
 mod azure_openai;
+mod bedrock;
 mod classify;
 mod endpoint;
 mod error;
@@ -19,11 +20,13 @@ pub mod origin;
 mod overrides;
 pub mod paths;
 mod registry;
+pub mod sigv4;
 mod types;
 mod vertex;
 
 pub use anthropic::{ANTHROPIC_BASE_URL, AnthropicProvider};
 pub use azure_openai::AzureOpenaiProvider;
+pub use bedrock::BedrockProvider;
 pub use classify::{LlmErrorClass, classify};
 pub use endpoint::Endpoint;
 pub use error::{LlmError, Result};
@@ -34,8 +37,8 @@ pub use openai_compatible::OpenaiCompatibleProvider;
 pub use overrides::Overrides;
 pub use registry::{ProviderRegistry, endpoint_auth_modes, governed_hosts, recommended_auth_mode};
 pub use types::{
-    AuthMode, Dialect, EndpointKind, InjectionHeader, KeyOrigin, KeyOriginRule, LlmInjection,
-    LlmProvider, ModelInfo, ModelRef, OriginMethod,
+    AuthMode, Dialect, EndpointKind, InjectionHeader, KeyCheck, KeyOrigin, KeyOriginRule,
+    LlmInjection, LlmProvider, ModelInfo, ModelRef, OriginMethod,
 };
 pub use vertex::VertexProvider;
 
