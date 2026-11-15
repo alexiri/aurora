@@ -313,6 +313,15 @@ overridden by the named configuration key (`15`).
 | `SUMMARY_LIMITS` | title 120, ≤12 fields, value 200, text 1 000 chars | — | 09 |
 | `PACKAGE_MAX` | 20 MiB archive, decompressed ≤ 4 × `PACKAGE_MAX`, `plugin.yaml` ≤ 256 KiB (`PACKAGE_MANIFEST_MAX`, FIX-107), icon PNG ≤ 256 KiB, setup guide ≤ 64 KiB | — | 09 |
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
+| `AGENT_SUMMARY_MAX` | (phase 5, P5-GUIDE-1) 160 chars, one line (`agent.summary`) | — | 24 |
+| `AGENT_GUIDE_FILES_MAX` / `AGENT_GUIDE_FILE_MAX` / `AGENT_GUIDE_APP_MAX` | (phase 5, P5-GUIDE-1) 24 guide files per app / 64 KiB per file / 256 KiB per app (UTF-8 bytes) | — | 24 |
+| `AGENT_GUIDE_SYNC_MAX` | (phase 5, P5-GUIDE-2) 2 MiB of package reference files and recipes projected into one agent's home per sync; the generated `guide.md`, `tools.md` and `api.json` are never dropped | — | 24, 12 |
+| `AGENT_OPERATIONS_MAX` / `AGENT_OPERATIONS_FILE_MAX` | (phase 5, P5-GUIDE-6, D-296) 2 000 operations / 512 KiB per operations file | — | 24 |
+| `AGENT_API_JSON_MAX` | (phase 5, P5-GUIDE-6) 512 KiB per rendered `api.json` | — | 24 |
+| `AGENT_CLI_PREVIEW_MAX` | (phase 5, P5-GUIDE-6/7) 2 000 chars printed by one `aurora-agent` call unless `--raw` | — | 24 |
+| `AGENT_CLI_PAGES_DEFAULT` / `AGENT_CLI_PAGES_MAX` | (phase 5, P5-GUIDE-6) 20 / 200 pages for `aurora-agent call --all` | — | 24 |
+| `AGENT_CLI_SAVE_MAX` | (phase 5, P5-GUIDE-6) 64 MiB written by one `aurora-agent call`, all pages together | — | 24 |
+| `PLATFORM_TOOLS_CORE_MAX` | (phase 5, P5-GUIDE-7, D-297) 8 platform tools listed by the MCP bridge in `on_demand` mode | — | 24, 12 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
 | `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600); (phase 5, FIX-146, D-232) telemetry 60/min (20), the per-user limit of `POST /v1/telemetry/traces` | `ratelimit.api.*` | 05 |

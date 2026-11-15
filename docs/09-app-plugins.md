@@ -42,10 +42,15 @@ assets/icon-dark.png   # optional
 docs/setup.md          # required, CommonMark without raw HTML, ≤64 KiB
 hooks.wasm             # optional, WebAssembly component (wasm32-wasip2 target, no WASI imports used)
 tests/*.yaml           # fixtures (required for built-ins; recommended otherwise)
+agent/<app_id>/<file>  # optional (phase 5, P5-GUIDE-1): agent guide reference files, UTF-8 text, listed in apps[].agent.guide (24 §3.2)
 SIGNATURE              # required
 ```
 
 No other paths, no symlinks, no absolute or `..` paths, no duplicate entries.
+(phase 5, P5-GUIDE-1, D-171) `agent/<app_id>/<file>` holds the reference files of an app's
+**agent guide**: what a hosted agent can read about the app in its home. Names, content rules
+and sizes are in `24 §3.2`; the files are data, covered by the digest and the signature, and
+never interpreted by the core. A core that does not know the path rejects the package.
 
 **Canonical digest**: list every file except `SIGNATURE`, sorted by path
 (bytewise); for each emit `<path>\0<sha256 hex of content>\n`; the package
@@ -588,6 +593,31 @@ agent:
 proxy and CA variables, LLM client variables). Stub paths are relative to the
 home and confined to it.
 
+(phase 5, P5-GUIDE-1, D-171, SEC-117) **Agent guide.** `agent` gains two optional keys, additive
+in contract 1 (`24 §3` is normative):
+```yaml
+agent:
+  summary: "Tasks, projects and comments over REST v2."     # one line, ≤ AGENT_SUMMARY_MAX
+  instructions: |                                           # unchanged; the essentials
+    Task ids are strings. Send JSON bodies.
+  guide:                                                    # reference files and recipes in agent/<app_id>/
+    - { file: api.md, title: "Endpoints, filters, pagination, errors" }
+    - { file: weekly-review.md, title: "Prepare a weekly review of open tasks", kind: recipe }
+  operations: operations.json                               # (P5-GUIDE-6, D-296) machine-readable operations
+```
+`summary` says what the app is for and is the one line of plugin text an agent always sees;
+`instructions` keeps its limit and becomes the **essentials** (what must be known before the
+first request); `guide` lists the files of `agent/<app_id>/`, each with a one-line title, and
+(D-295) marks task procedures as `kind: recipe`; `operations` (D-296) names the operations file
+(`24 §3.5`). The core projects them, with files it writes itself (`guide.md`: accounts, access,
+recipes, file list, essentials; `tools.md`: every catalogue tool and the agent's access to it;
+`api.json`: operations and access for `aurora-agent`), into `.aurora/apps/<app_id>/` of each
+hosted agent that holds a grant on a connection of the app (`24 §5`, `12 §Home projection`).
+The instruction file names the folder and never carries the notes themselves (D-295, `10
+§Agent instructions`). A package without the keys is untouched; a core that does not know them
+rejects the package (packages declare `min_core`). A tool's optional `description` is printed in
+`tools.md`.
+
 #### `grants` (phase 4, P4-GRANTS, D-123, SEC-67)
 ```yaml
 grants:
@@ -822,6 +852,19 @@ if any of:
   `library_no_credential`, `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
   unknown keys or non-conforming values), or `library` on an app without a credential that can
   authenticate requests to `request_host`;
+- (phase 5, P5-GUIDE-1) the agent guide rules of `24 §3`: `agent.summary` longer than
+  `AGENT_SUMMARY_MAX` or not one line (`agent_summary_too_long`, `agent_summary_multiline`),
+  `guide` without `summary` (`agent_summary_required`); a guide entry whose `file` does not match
+  the name grammar, is `guide.md` or `tools.md`, is listed twice, or whose `title` is empty, longer
+  than 120 characters or not one line (`agent_guide_file_name`, `agent_guide_reserved_name`,
+  `agent_guide_duplicate_file`, `agent_guide_title`), or that carries `sha256` or `size`
+  (`agent_guide_computed_field`: they exist only in the snapshot); a file under `agent/` that is not listed, a
+  listed file that is missing, a directory for an app the package does not contain
+  (`agent_guide_unlisted_file`, `agent_guide_missing_file`, `agent_guide_unknown_app`); content
+  that is not UTF-8 text without control characters other than LF and TAB
+  (`agent_guide_not_text`); more than `AGENT_GUIDE_FILES_MAX` files, a file over
+  `AGENT_GUIDE_FILE_MAX`, an app over `AGENT_GUIDE_APP_MAX` (`agent_guide_too_many_files`,
+  `agent_guide_file_too_large`, `agent_guide_app_too_large`);
 - (FIX-123, D-214) connect methods: a duplicate method id (`duplicate_connect_method`), a `label`
   over 60 or a `description` over 400 characters, blank or with control characters
   (`method_text_invalid`), more than one `recommended` (`recommended_multiple`), a
@@ -1028,6 +1071,13 @@ The gateway, the API (catalogue, forms, effective views, simulation) and the
 hook host all consume the same snapshot; there is no second copy of any
 catalogue or matcher.
 
+(phase 5, P5-GUIDE-1) `apps[].agent` gains `summary` and
+`guide: [{ file, title, sha256, size }]`, both **omitted when absent** (a snapshot of packages
+that do not use them is byte-identical to before). `sha256` and `size` are computed by the core
+from the stored archive, as `hooks_digest` is; the file bytes live in `plugin_blobs` (`kind = 'agent_guide'`, read by digest) and are never in
+the snapshot. Only the API reads these keys; a gateway or hook host that predates them refuses a
+snapshot carrying them and keeps the previous one (`06 §Registry snapshot loading`).
+
 ## 10. Package lifecycle
 
 | Source | Behaviour |
@@ -1150,6 +1200,13 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
 - **New tools arrive blocked** in custom grants; removed tools make referencing
   rules inert (flagged).
 - Each connection records `app_version` for diagnostics.
+- (phase 5, P5-GUIDE-1, D-171) A change of `agent.summary`, `agent.instructions` or of an agent
+  guide file is **not a widening**: the text is untrusted data that gives the package no
+  capability (SEC-117). It is shown and audited instead: the permissions review has an **Agent
+  guide** section that marks what changed against the active version (`24 §9`), and
+  `plugin.approve` / the system row `plugin.activate` carry
+  `agent_guide_changed: [app_id, …]` in their metadata. Activation needs no extra step: the new
+  snapshot bumps the home sync generation of the affected agents as every snapshot does.
 
 ## 11. Connect flow (API)
 
@@ -1191,7 +1248,14 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
     hooks through an embedded hook-host runtime against recorded HTTP (`hook:` cases with an
     `http_cassette`; format in `plugins/builtin/README.md`);
   - `sign --key <file>` — write `SIGNATURE`; `keygen` — create an ed25519 pair;
-  - `docs` — render setup guide + permissions table to HTML/Markdown.
+  - `docs` — render setup guide + permissions table to HTML/Markdown;
+  - (phase 5, P5-GUIDE-1) `guide [--app <id>] [--access full|custom] [--out <dir>]` — render what
+    an agent would read for a sample account (`guide.md`, `tools.md`, the reference files), with
+    the renderer the API uses (`24 §5`, `§10`); `new` scaffolds a summary, essentials and one
+    guide file, `build` packs `agent/**`;
+  - (phase 5, P5-GUIDE-5) `import-openapi <file> --app <id> [--host <host>]` — from a local
+    OpenAPI 3.0/3.1 document write an operation index and per-tag reference files into
+    `agent/<app_id>/` and print a `tools:` catalogue skeleton; deterministic, no network (`24 §10`).
 
 Fixture file format (`tests/*.yaml`):
 ```yaml
@@ -1272,4 +1336,5 @@ hook point.
 | `fixture-sigv4` | `aws_sigv4` finalizer (checked against AWS test vectors), `org_external_id` context variable |
 | `fixture-graphql-git` | GraphQL query/mutation tools (fail-closed), git push/fetch tools, `git_commit_trailer`, `registry_token_challenge` |
 | `fixture-conflict` | a claim overlapping `fixture-bearer` for host-claim decisions |
+| `fixture-guide` (phase 5, P5-GUIDE-1) | agent guide: one app with `summary`, essentials, two guide files (`.md` and `.tsv`) and tool descriptions, a second app with none of them; tools of all three access states under a custom grant |
 | `fixture-invalid-*` | one package per linter rule, each expected to be rejected with a specific reason |
