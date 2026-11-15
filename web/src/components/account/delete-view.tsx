@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { ReauthErrorNotice } from "@/components/auth/reauth-error-notice";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { DangerZone } from "@/components/ui/section";
@@ -51,6 +52,7 @@ export function DeleteView({ onDeleted }: { onDeleted?: () => void }) {
       description="This permanently deletes your account and signs you out everywhere. It cannot be undone. You will be asked to sign in again with your provider first."
     >
       <form onSubmit={(e) => void submit(e)} noValidate className="max-w-md space-y-4">
+        <ReauthErrorNotice />
         {error !== null ? (
           <Notice tone="danger" role="alert">
             {deleteErrorMessage(error)}

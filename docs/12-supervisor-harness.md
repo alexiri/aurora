@@ -94,6 +94,7 @@ pub struct HarnessCapabilities {
     pub dialects: Vec<Dialect>,   // LLM API dialects it can speak (08)
     pub skills_dir: Option<RelPath>,       // home-relative, e.g. ".claude/skills"
     pub instruction_files: Vec<RelPath>,   // e.g. ["CLAUDE.md", "AGENTS.md"]
+    pub model_roles: Vec<ModelRole>,       // (phase 5, P5-MODELS-1, D-303) roles it can map: large/medium/small; [] = none
 }
 
 #[async_trait]
@@ -192,6 +193,31 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   extended thinking, `max` = the largest thinking budget the CLI accepts).
 - The adapter holds a starting session's first turn until the harness has
   listed MCP tools, so a stale on-disk tool cache is never used.
+- (phase 5, P5-MODELS-1, D-302, D-303, C-877) **Models.** `ANTHROPIC_MODEL` is the **default** model
+  (`08 §Model selection`). The adapter declares `model_roles = [large, medium, small]` and maps
+  `ModelChoice` as follows:
+  - `roles.large` → `ANTHROPIC_DEFAULT_OPUS_MODEL`, `roles.medium` → `ANTHROPIC_DEFAULT_SONNET_MODEL`,
+    `roles.small` → `ANTHROPIC_DEFAULT_HAIKU_MODEL`. An unset role sets nothing. The CLI's other aliases
+    (`fable`) stay unmapped.
+  - `subagent_role` → `CLAUDE_CODE_SUBAGENT_MODEL=<alias of the role>` (`opus`/`sonnet`/`haiku`). It is
+    never `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`, so a subagent definition's own `model:` still wins.
+  - `model_meta` → for each role whose model has `capabilities`, the CLI's per-alias capabilities
+    variable (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL_SUPPORTED_CAPABILITIES`, comma-joined). The default model's
+    `context_window` → the CLI's context-window override (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`). If the
+    pinned version accepts a per-alias override, each role's `context_window` is mapped to it as well.
+
+  The exact variable names are pinned next to the CLI version, like the `client_env` names (C-809). The
+  live conformance suite verifies that a subagent with `model: haiku` and the CLI's background requests
+  reach `roles.small` (seen in `request_log.llm_model`). Every value is re-checked against
+  `MODEL_ID_PATTERN` (or as an integer, or the capability vocabulary) before it enters the environment
+  (SEC-122). The adapter never writes `.claude/agents/`: subagent definitions are the agent's (D-302(d)).
+- (phase 5, P5-MODELS-2, D-304, C-879) **Usage.** `Done { usage }` is built from the result's
+  per-model report (`modelUsage`; the key is pinned with the CLI version). Each entry becomes a
+  `by_model` entry (`inputTokens` → `input_tokens`, `outputTokens` → `output_tokens`,
+  `cacheReadInputTokens` → `cache_read_tokens`, `cacheCreationInputTokens` → `cache_write_tokens`), and
+  the totals are their sum. The result's top-level `usage` covers the main loop only, and is used only
+  when the per-model report is absent. `costUSD` and `total_cost_usd` are dropped. Streaming `Usage`
+  events stay main-loop progress counters. The terminal `Done` is authoritative.
 
 ### Harness selection and adapter contract (phase 4, P4-HAR, D-122, SEC-66)
 
@@ -316,6 +342,11 @@ specified here is the contract.
 - **Not supported:** ChatGPT-subscription sign-in (the host `chatgpt.com` stays a known
   LLM host, refused under `sanctioned_only`), Codex cloud/remote features, IDE/app-server
   modes, its own MCP-server catalogue beyond Aurora's bridge.
+- (phase 5, P5-MODELS, D-303, D-304) **Models.** `model_roles = []`: `roles`, `subagent_role` and
+  `model_meta` are received and ignored, and the dashboard says "Not used by Codex". A later pinned
+  version that can choose a model per task declares roles in its own spec change. The rendered `model` is
+  the default. Usage reports one `by_model` entry, for the default model, unless the pinned version
+  reports per-model token counts.
 
 ### Adapter `fake`
 
@@ -363,6 +394,19 @@ Harness → MCP (stdio) → `aurora-supervisor mcp-bridge --session <id>` → Un
 socket `/run/aurora/tools.sock` → supervisor → `tool.call` frame (stamped with
 conversation and current turn) → runner (stamps sandbox and boot) →
 `POST /v1/runner/tool-calls` → **tool registry** → result back.
+
+(phase 5, P5-GUIDE-7, D-297, SEC-119, `24 §10b`) A second client takes the same path from the
+socket on: **`aurora-agent`** with the target `aurora` (`aurora-supervisor agent`, wrapper
+`/opt/aurora/bin/aurora-agent`, `24 §10a`),
+run by the agent from its shell, with the conversation from `AURORA_SESSION`, which the
+supervisor sets in the environment of every harness process it starts (not for the web
+terminal, SSH sessions or `process_start` children). Each `ToolDescriptor` carries `family` and
+`exposure` (`core` / `on_demand`); in mode `on_demand` (`hosted.platform_tools`, carried in the
+render inputs as `platform_tools`) the bridge's `tools/list` returns the core tools only, its
+`tools/call` still forwards any name, and the socket's `list` returns every available tool. A
+supervisor without the command (no wrappers, `agent_cli` false, C-653) behaves as mode `all`.
+Idle sessions are released on a catalogue change only when the core descriptors or the rendered
+instruction files change (C-654).
 
 - (FIX-110) `turn_id` is required and must be an active turn of the calling agent;
   a call without one is refused `no_active_turn` (the supervisor refuses it locally
@@ -430,7 +474,9 @@ The home (`/workspace`) holds:
 2. **Projection** (managed roots only): `<skills_dir>/` (0444/0555),
    `memory/` (`*.md` 0644 + `index.md` 0444), instruction files (0444) at the
    paths the harness declares, `.aurora/` (tool catalogue cache, inbox
-   attachments).
+   attachments), (phase 5, P5-GUIDE-2) `.aurora/apps/<app_id>/` (the agent guide of each
+   connected app: `guide.md`, `tools.md` and the package's reference files, 0444 in 0555
+   directories; `24 §5`, `§7`).
 3. **Ephemeral** `/run/aurora`: CA, tools socket, boot-time stubs outside home.
 
 ### Sync protocol
@@ -441,7 +487,22 @@ The home (`/workspace`) holds:
 - Part kinds: `skills` (full files), `memory` (rendered files), `render_inputs`
   (preamble data, brief, capability fragment inputs: apps with snippets and
   docs links, presences, peers, memory language, schedules summary, timezone),
-  `tools` (catalogue), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
+  `tools` (catalogue), (phase 5, P5-GUIDE-2) `apps` (agent guide files, below), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
+- (phase 5, P5-GUIDE-2, D-171, SEC-117, `24 §7`) **`apps` parts** carry file entries
+  `{ path, content }` (the entry shape of `skills`) for `.aurora/apps/<app_id>/<file>`: the
+  files the API renders per connected app (`guide.md`, `tools.md`, and from P5-GUIDE-6
+  `api.json`) and the recipes and reference files of the app's package, the latter up to
+  `AGENT_GUIDE_SYNC_MAX` per sync (apps beyond the budget, in `app_id` order, get the generated
+  files only and their `guide.md` says so).
+  `.aurora/apps/` is a managed root: an entry is accepted only at exactly
+  `.aurora/apps/<id>/<name>` with both segments matching their grammars (`24 §3.1`), files are
+  installed 0444, and the root is pruned to the manifest at commit, so a folder disappears with
+  the grant, connection or availability that put it there. Each `render_inputs` app entry gains
+  `app_id`, `summary` and `guide_path`; `name`, `accounts`, `docs_links` and `snippet` are
+  unchanged. A supervisor that predates the kind skips the part and renders as before; a
+  supervisor that gets no `guide_path` (an older API) renders as before. A sync that changes
+  only files under `.aurora/apps/` leaves the instruction files byte-identical and therefore
+  releases no idle session.
 - The supervisor applies each part idempotently without buffering; only the
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves

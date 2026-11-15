@@ -25,6 +25,9 @@ backlog stops growing instead of burying CI.
 | Item | Why | How it is updated instead |
 |---|---|---|
 | `wasmtime`, `wasmtime-wasi` (majors only) | The hook host's component-model API, epoch interruption and limits change between majors (HOOK-001/002). Minor and patch releases still arrive. | By hand, with `aurora-hookhost`'s tests and the plugin hook conformance cases. |
+| `wasmparser`, `wit-bindgen` (majors and minors; root workspace and hook crates) | The component-model tooling of the same wasmtime line: the registry validates hook components with `wasmparser` before wasmtime loads them, and the guests are built with `wit-bindgen`. As 0.x crates they break their API on minors (PR #13). Patch releases still arrive. | By hand, together with a wasmtime bump: `aurora-registry` and `aurora-hookhost` tests, the hook crates rebuilt and re-signed, the plugin hook conformance cases. |
+| `@types/node` (majors only) | The web runtime is Node 22 (web image, CI) with a documented dev floor of 20.9; the types must track the runtime major, not run ahead of it (26.x was proposed). Minor and patch releases still arrive. | By hand, together with the Node runtime (web `engines`, `web.Containerfile`, CI `setup-node`, README). |
+| `jsdom` (majors only) | jsdom 31 needs Node `^22.22.2 \|\| ^24.15.0 \|\| >=26`, above the 20.9 floor in `web/package.json`. | By hand, together with raising the Node floor (engines, README) and a full vitest run. |
 | `@anthropic-ai/claude-code` | The version must equal `PINNED_VERSION` in `services/aurora-supervisor/src/adapters/claude_code/mod.rs` (FIX-103). | By hand, together with the supervisor constant and the claude-code conformance run. |
 | LiteLLM and VidaiMock digests (`ghcr.io/berriai/litellm`, `ghcr.io/vidaiuk/vidaimock`) | I-30: a changed mock changes what the live claude-code acceptance proves. | By hand, with `scripts/e2e/llm.sh` and the hosted e2e. |
 | Mattermost 11.7 (`mattermost/mattermost-preview`) | MM-003: 11.7 is the supported production version, the dev image is pinned to 11.7.15 by digest. | By hand, with `scripts/conformance.sh --mattermost` and `scripts/e2e/mattermost.sh`. |
@@ -64,6 +67,22 @@ notes, and run `bash scripts/guards/run-all.sh` plus an image build. This is a k
    PRs; workers do not merge. Grouped weekly PRs are reviewed within the week; security PRs the same
    day. A PR that cannot be merged within two weeks is closed with a comment saying why (and an
    `ignore` entry if the pin is intentional) so the bot does not reopen it.
+
+## Known Dependabot quirks
+
+- **Web PRs drop the `overrides:` block of `web/pnpm-lock.yaml`.** `web/package.json` has
+  `pnpm.overrides` (minimatch), and Dependabot's regenerated lockfile omits it, so the `web` job dies
+  in `pnpm install --frozen-lockfile` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` before any test runs.
+  Fix on the Dependabot branch: `pnpm -C web install --lockfile-only`, commit the lockfile.
+- **GitHub-side merges of several Cargo PRs can corrupt `Cargo.lock`** (textual merge of adjacent
+  entries; seen with PRs #8 + #9: `toml_datetime` listed twice). After merging more than one cargo PR
+  in a row, run `cargo metadata --locked` on master. Better: merge one, then `@dependabot rebase` the
+  next before merging it.
+- **Paired crates come grouped**: `utoipa` + `utoipa-axum` and `kube` + `kube-*` + `k8s-openapi`
+  only work in matching versions, so `dependabot.yml` groups each pair (all update types) and one PR
+  moves both (PRs #18, #19 bumped one half and could not build).
+- **Docker dependency names drop the registry**: Dependabot reports `ghcr.io/berriai/litellm` as
+  `berriai/litellm`, so an `ignore` entry lists both spellings (PR #3 slipped past the first one).
 
 ## Checking the configuration
 

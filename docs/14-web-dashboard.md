@@ -1097,6 +1097,17 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
     every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
+    (phase 5, P5-MODELS-3, D-302, D-303, C-876) The model field is labelled **Default model**, with the
+    help text "The model the agent starts with. It may use other allowed models on the same endpoint,
+    for example for subagents." Below it is a **Model roles** group: three `Select`s (Large, Medium,
+    Small), each listing the default endpoint's allowed models, plus "Use the endpoint's setting
+    (<model> | none)". For `claude-code`, each label shows the alias it maps to (`opus`, `sonnet`,
+    `haiku`). Next comes **Subagents use**: "Same as the default", Large, Medium or Small. Readiness
+    warnings appear as inline `Notice`s, for example "Small is not set. On this endpoint, subagents and
+    background requests may ask for a model it does not serve." When the harness maps no roles
+    (`GET /v1/harnesses` `model_roles = []`), the group is replaced by the note "Not used by Codex".
+    Saving roles stamps the current default endpoint, and a dropped role shows the drop notice. Built
+    with the shared `Field`, `Select` and `Notice` primitives only.
   - **Access** — (phase 4, P4-GRANTS) for an app whose manifest is `custom_only` the grant
     form has no "Full access" option, shows "This app only supports custom access: choose
     the tools the agent may use" and starts with every tool on *block*; an app with
@@ -1112,7 +1123,9 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     (owners) from `GET /v1/agents/{a}/model-readiness`: each granted LLM key
     with "Ready" or its reason in words and the fix as a link (`08 §Model
     readiness`), the model the next turn will use, or "No model chosen —
-    choose one on Instructions" when `default` is null. The kind column says
+    choose one on Instructions" when `default` is null. (phase 5, P5-MODELS-3, C-878) Under the
+    default model it lists the resolved roles with their source ("from the endpoint", "set on this
+    agent") and any role warnings, linking to Instructions. The kind column says
     "LLM key" for LLM secrets in the effective view too. (The connection grant
     editor above is FIX-022: specified since phase 0, not yet built.)
   - **Channels** — presences (attach dedicated/shared per integration
@@ -1347,7 +1360,10 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
 - **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
 - **Skills** (phase 3, RFE-020; phase 4, P4-GSL: also **Add from library…**, library badges, read-only library skills and the update review, as on the agent Skills tab, with `can_own` as the authority) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
-  link), usage.
+  link), usage. (phase 5, P5-MODELS-3, C-879, C-880) The request log shows an LLM request's model
+  (`llm_model`). Usage, wherever it is shown (a turn's details, and the usage view once its route
+  exists), breaks tokens down by model. A turn with `unverified_models` is marked "model reported by the
+  harness could not be verified".
 - **Policy** also edits the workspace's uncredentialed default and allow-list
   (can only tighten the org's egress posture) and, from phase 1 (RFE-003), the
   workspace's **open-lane posture** (locked with "enforced by org/instance"
@@ -1380,7 +1396,9 @@ with **Delete workspace…**. Both deletes use a danger `FormDialog`: it names w
 access. Conversations, credentials and settings are deleted; the audit log and usage
 records are kept. This cannot be undone."), asks for the slug typed exactly, and on 412
 `reauth_required` runs the same re-authentication step as account deletion, then
-retries once. On success the list refreshes and a status notice names what was
+retries once. (FIX-152, C-890) A failed re-authentication comes back to the page with
+`reauth_error`, and the page shows it as a danger `Notice`. Account deletion and Directory
+settings do the same. On success the list refreshes and a status notice names what was
 deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
 No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
 
@@ -1434,6 +1452,12 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   compatible base URL, auth header and models path) and hides `allowed_paths` for Bedrock and
   Vertex. Each row shows the harnesses the endpoint serves as `Badge`s and, when it serves none,
   a `Notice` ("No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.").
+  (phase 5, P5-MODELS-3, C-875) The dialog also has **Model roles** (Large, Medium, Small: the
+  endpoint's models or free text checked against `MODEL_ID_PATTERN`) and **Model details**, a keyed
+  list of model id → context window and capability checkboxes. Its help text reads "For models the
+  harness does not recognise, such as non-Claude models behind LiteLLM". A `Notice` on an endpoint
+  whose provider is not `anthropic` and that has no roles says "Agents on this endpoint will ask for
+  Claude model names for subagents and background work. Set the roles."
   A row marked `needs_allowed_private` shows a warning `Badge` "Private address not allowed" with a
   link to Limits › `gateway.allowed_private`; the preview's `endpoint_resolves_private` warning
   appears in the save confirmation; `http_needs_private_host` and `endpoint_host_claimed` land on
@@ -1452,7 +1476,12 @@ Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
 hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes; phase 4, P4-S3: the active blob backend, bytes and counts per backend, and for `s3` the bucket, prefix, health ("reachable" / "unreachable since …"), encryption and versioning state — never credentials; an unreachable store shows a banner and uploads show "Attachment storage is temporarily unavailable, try again in a moment" instead of the quota text; an expired chip is unchanged), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
-approved version; reject/disable/uninstall with orphan warnings), **Host
+approved version; (phase 5, P5-GUIDE-3, C-648, SEC-117) an **Agent guide** section per app, on the
+package page and in the review: the summary, the essentials and the guide files with their sizes,
+each marked added / changed / removed against the active version, under the sentence "Agents that
+use this app can read this text. It is written by the publisher."; a file opens in the shared
+preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
+the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
 claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
 P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
 list with key fingerprint and check status, add with a preview/trust review of the

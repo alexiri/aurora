@@ -295,7 +295,11 @@ core requires the same user, and a re-authentication is accepted only when the I
 token carries `auth_time` within 60 s (allowing clock skew, so a value up to 60 s in
 the future passes and further ahead is refused); a missing claim is refused
 `reauth_stale` (OIDC Core requires the claim once `max_age` is sent, so an IdP that
-ignores `prompt=login` cannot let a stolen session stamp it). Then it stamps `sessions.reauth_at = now()`. Operations that formerly
+ignores `prompt=login` cannot let a stolen session stamp it). (Phase 5, FIX-152, D-305, C-890) The
+`user.login` denial audited for `reauth_stale` records `auth_time_age_s` or `auth_time_missing`, so
+an operator can tell a stale claim, a missing one and clock skew apart. Once the state has opened,
+every failure of a re-authentication returns to `return_to` with `reauth_error=<code>`, where the page
+shows it. The person is still signed in, so it does not go to the sign-in page. Then it stamps `sessions.reauth_at = now()`. Operations that formerly
 required the password (account deletion) require `reauth_at` within 10 minutes
 (412 `reauth_required` otherwise; the dashboard starts the flow).
 

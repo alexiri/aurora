@@ -13046,7 +13046,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Complete OIDC sign-in: sets the session cookie and redirects to `return_to`, or to\n`/auth/login?error=<code>`.",
+        "summary": "Complete OIDC sign-in: sets the session cookie and redirects to `return_to`, or to\n`/auth/login?error=<code>`. A failed re-authentication (the flow state opened and the flow was\na re-authentication) redirects back to the flow's `return_to` with `reauth_error=<code>`.",
         "operationId": "oidcCallback",
         "parameters": [
           {
@@ -13085,7 +13085,7 @@
         ],
         "responses": {
           "302": {
-            "description": "Redirect to `return_to` or `/auth/login?error=<code>`"
+            "description": "Redirect to `return_to` (on a failed re-authentication, with `reauth_error=<code>` appended) or `/auth/login?error=<code>`"
           },
           "404": {
             "description": "",

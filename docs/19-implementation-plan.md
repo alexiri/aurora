@@ -218,6 +218,9 @@ Phases 3 and 4 start once phases 1 and 2 are done.
 
 Multi-arch (arm64) images, OPS-022 (owner, 2026-11-07: no arm deployment planned; images are
 amd64 only until then). Dependabot, OPS-021, and the Slack connector (owner, 2026-11-08, D-78; the Slack connector moved on to phase 6, D-285).
+App guides and tools on demand, P5-GUIDE-1..8 (owner, 2026-11-13 and 2026-11-15, D-170..D-172,
+D-295..D-298; `24`, `21 §Phase 5 — App guides and tools on demand`): P5-GUIDE-1 is the first
+addon-related task of the phase, before addon sources (P5-ASRC) and the CERN addons.
 
 ## Phase 6 — Proposed (not started)
 
@@ -225,6 +228,8 @@ Owner, 2026-11-14: ideas prepared ahead of time, not to be started yet. **Nested
 (an org tree: department → group → section, tighten-only inheritance of governance, policy,
 retention, availability and limits; `docs/tasks/P6-ORGTREE.md`) and **usage limits and load
 knobs** (quotas per user/agent/workspace/org, limit profiles, sandbox awake-time budgets, automation
-caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`), and the **Slack connector** (P6-SLACK, moved from phase 5 by the owner 2026-11-15, D-285: not a priority). Both
-are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run when the owner
-starts phase 6. See `21 §Phase 6`.
+caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`), and the **Slack connector** (P6-SLACK, moved from phase 5 by the owner 2026-11-15, D-285: not a priority). The org tree
+and limits items are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run
+when the owner starts phase 6. See `21 §Phase 6`. (The third proposal, "the harness chooses models",
+was moved to phase 5 by the owner on 2026-11-15, D-302(f), and is specified as P5-MODELS-1..3,
+`21 §The harness chooses models`.)

@@ -24,7 +24,9 @@ pub fn tls_fixture(names: &[&str]) -> (String, tokio_rustls::TlsAcceptor) {
     let mut lp =
         CertificateParams::new(names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>()).unwrap();
     lp.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let leaf = lp.signed_by(&leaf_key, &ca, &ca_key).unwrap();
+    let leaf = lp
+        .signed_by(&leaf_key, &rcgen::Issuer::from_params(&p, &ca_key))
+        .unwrap();
     let chain = vec![rustls::pki_types::CertificateDer::from(leaf.der().to_vec())];
     let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
         leaf_key.serialize_der(),

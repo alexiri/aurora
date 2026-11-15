@@ -15,6 +15,13 @@ updates:
     labels: [dependencies, rust]
     commit-message: { prefix: "deps(cargo)" }
     groups:
+      # Crates that only work as a pair arrive in one PR (a dependency goes to the first group that
+      # matches): utoipa-axum is built for one utoipa major (PR #18), kube for one k8s-openapi
+      # release (PR #19).
+      utoipa:
+        patterns: [utoipa, utoipa-axum]
+      kube:
+        patterns: [kube, kube-*, k8s-openapi]
       cargo-minor-patch:
         update-types: [minor, patch]
     ignore:
@@ -25,6 +32,14 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: wasmtime-wasi
         update-types: ["version-update:semver-major"]
+      # The component-model tooling moves with that wasmtime line, not on its own: the registry
+      # validates hook components with wasmparser before wasmtime loads them, and the guests are
+      # built with wit-bindgen. These 0.x crates break their API on every minor (PR #13: wasmparser
+      # 0.261's ComponentExternName), so minors are bumped by hand together with wasmtime.
+      - dependency-name: wasmparser
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: wit-bindgen
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # --- Rust: standalone hook guests of the built-in plugins (own Cargo.lock and [workspace]) ----
   # Each ships inside a signed built-in package (D-77); one PR per hook crate keeps the review small.
@@ -40,6 +55,10 @@ updates:
     groups:
       hooks-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # wit-bindgen moves with the hook host's wasmtime line (see the root workspace entry).
+      - dependency-name: wit-bindgen
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # --- Dashboard: pnpm, web/ ---------------------------------------------------------------------
   # Dependabot reads pnpm-lock.yaml under the `npm` ecosystem.
@@ -52,6 +71,17 @@ updates:
     groups:
       web-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # The web runtime is Node 22 (images/services/web.Containerfile, CI setup-node 22) and the
+      # documented dev floor is Node 20.9 (web/package.json engines, README). @types/node must track
+      # the runtime major, so a major above 22 describes APIs the runtime does not have; moved by
+      # hand together with the runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # jsdom 27+ requires Node ^22.22.2 || ^24.15 || >=26 (31.0.0), above the Node 20.9 floor of
+      # web/package.json engines; bumped by hand together with raising that floor and the README.
+      - dependency-name: jsdom
+        update-types: ["version-update:semver-major"]
 
   # --- The sandbox image's Claude Code CLI ---------------------------------------------------------
   - package-ecosystem: npm
@@ -97,8 +127,12 @@ updates:
     ignore:
       # I-30: the LLM mock stack is pinned by digest on purpose (a changed mock changes what the
       # claude-code conformance run proves); bumped by hand with a conformance run.
+      # Dependabot names ghcr images without the registry (PR #3 bumped "berriai/litellm" past the
+      # first entry), so both spellings are listed.
       - dependency-name: ghcr.io/berriai/litellm
+      - dependency-name: berriai/litellm
       - dependency-name: ghcr.io/vidaiuk/vidaimock
+      - dependency-name: vidaiuk/vidaimock
       # MM-003: Mattermost 11.7 is the supported (production) version; the preview image in
       # scripts/mattermost/setup.sh is pinned to 11.7.15 by digest.
       - dependency-name: mattermost/mattermost-preview

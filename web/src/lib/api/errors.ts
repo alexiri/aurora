@@ -33,7 +33,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_token: "This link is invalid, has already been used, or has expired.",
   reauth_required: "Please confirm it is you by signing in again with your provider.",
   reauth_user_mismatch: "You signed in as a different user. Sign in again as the account you are using.",
-  reauth_stale: "The sign-in was too old. Please try again.",
+  reauth_stale: "Your sign-in provider did not confirm a fresh sign-in, so nothing was changed. Please try again. If it keeps happening, an administrator can find the details in the audit log (sign-in denied, reason reauth_stale).",
   authorization_pending: "Waiting for approval.",
   expired_token: "This code has expired. Start again from your terminal.",
   access_denied: "The request was denied.",
@@ -262,4 +262,9 @@ export function fieldErrors(err: unknown): Record<string, string> {
     }
   }
   return out;
+}
+
+/** Text for a `reauth_error` code on a page that started a re-authentication (unknown codes get a generic line). */
+export function reauthErrorMessage(code: string): string {
+  return Object.hasOwn(ERROR_MESSAGES, code) ? ERROR_MESSAGES[code]! : "Re-authentication failed. Please try again.";
 }
