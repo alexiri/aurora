@@ -150,7 +150,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-151, D-289, C-860, SEC-114, migration `20261201000236`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-151, D-295, C-875, SEC-117, migration `20261201000241`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -163,6 +163,7 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | SET-1..SET-5 (spec merged) | D-236..D-238 (used) | C-770..C-784 (used) | `20261201000190..199` | SEC-89, SEC-90 (used) |
 | P4-SSH-1/2 (spec merged) | D-239 (used) | C-790..C-799 (used) | `20261201000200..209` | SEC-92..SEC-96 (used) |
 | P4-011B-1..5 (spec merged) | D-264..D-267 (used) | C-820..C-839 (used) | `20261201000220..223` | SEC-102 (used) |
+| P4-EVAL spec batch (coordinator, started 2026-11-15) | D-289..D-294 | C-860..C-874 | `20261201000236..240` | SEC-114..SEC-116 |
 | P4-NARR / P4-UTOK (spec merged) | D-279..D-284 (used) | C-846..C-859 (used) | `20261201000231..233` (`234`, `235` released) | SEC-111..SEC-113 (used) |
 | P5-CALINV | D-274 (used) | C-844 (used) | `20261201000230` | SEC-108 (used) |
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
