@@ -380,6 +380,14 @@ overridden by the named configuration key (`15`).
 | `SSH_SESSIONS_PER_USER` / `SSH_SESSIONS_PER_AGENT` | (phase 5, P4-SSH-2) 4 / 8 open SSH sessions, counted over open lease-current `ssh_sessions` rows (global, not per replica); over a cap the session open is refused and the client sees an ordinary authentication failure | `ssh.sessions_per_user`, `ssh.sessions_per_agent` (lower only) | 11 |
 | `SSH_CHANNELS_PER_SESSION` / `SSH_CHANNELS_PER_SANDBOX` | (phase 5, P4-SSH-2) 4 concurrent session channels per SSH connection (terminator) / 8 concurrent SSH channels per sandbox (runner and supervisor; separate from `TERMINALS_PER_SANDBOX`) | — | 12, 16 |
 | `SSH_GRANT_TTL` | (phase 5, P4-SSH-2) 30 s single-use `auz_` channel grant | — | 16 |
+| `EXECS_PER_SANDBOX` | (phase 5, P5-FILES-1, D-316) 12 concurrent `exec.*` children per sandbox at the supervisor (`SSH_CHANNELS_PER_SANDBOX` + `FILE_SESSIONS_PER_SANDBOX`; the per-kind caps are the runner's) | — | 12 |
+| `FILES_GRANT_TTL` / `FILE_SESSIONS_PER_SANDBOX` | (phase 5, P5-FILES-1) 30 s single-use `auf_` files grant / 4 live files legs per sandbox (runner, 4409) | — | 16 |
+| `FILES_SESSION_IDLE` / `FILES_SESSION_LIFETIME` | (phase 5, P5-FILES-1) 60 s without a request / 1 h, then the API's pooled SFTP session for a (person, agent) closes; the next request opens another | — | 16 |
+| `FILES_LIST_MAX` / `FILES_DELETE_MAX` | (phase 5, P5-FILES-1, D-316(e)) 5,000 entries per listing (`truncated` beyond) / 10,000 entries per recursive delete (422 `too_many_entries`, nothing deleted) | — | 05 |
+| `FILES_UPLOAD_MAX` / `FILES_EDIT_MAX` | (phase 5, P5-FILES-1, D-316(e)) 512 MiB per uploaded file (413 `file_too_large`) / 1 MiB of UTF-8 text opened in the editor (422 `file_not_editable`) | — | 05 |
+| `FILES_PATH_MAX` | (phase 5, P5-FILES-1) 4,096 bytes per path, 255 per component (400 `invalid_path`) | — | 05 |
+| `FILE_TRANSFERS_PER_USER` / `FILES_TRANSFER_IDLE` | (phase 5, P5-FILES-1) 4 concurrent content transfers per person per API replica (429 `too_many_transfers`) / 60 s without progress aborts a transfer | — | 05 |
+| `FILES_AWAKE_GRACE` / `FILES_AWAKE_CAP` | (phase 5, P5-FILES-1) 120 s after the last Files request / 4 h per boot of Files-held wakefulness (keep-awake reason `files`) | — | 11 |
 | `SSH_IDLE_TIMEOUT` / `SSH_MAX_LIFETIME` | (phase 5, P4-SSH-2) 600 s without channel bytes or client keepalives / 4 h per SSH connection | `ssh.idle_timeout_secs` (lower only) | 11 |
 | `SSH_AWAKE_GRACE` / `SSH_AWAKE_CAP` | (phase 5, P4-SSH-2) 120 s after the last channel byte / 4 h per boot of SSH-held wakefulness | `ssh.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
 | `SSH_WAKE_WAIT` | (phase 5, P4-SSH-2) 90 s a channel waits for a waking sandbox (the terminator's long-polls of ≤ 45 s each), then the channel fails with a notice | `ssh.wake_wait_secs` | 11 |

@@ -340,7 +340,10 @@ watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
   `PREVIEW_AWAKE_CAP` (4 h) since the first preview heartbeat of this boot (`§Port previews`);
 - (phase 4, P4-TERM, D-161) a **terminal session in use**: `terminal_active_until > now()` and
   fewer than `TERMINAL_AWAKE_CAP` (4 h) since the first session byte of this boot
-  (`§Web terminal`).
+  (`§Web terminal`);
+- (phase 5, P5-FILES-1, D-316) **files in use**: `files_active_until > now()` (stamped by the API at
+  each Files request, grace `FILES_AWAKE_GRACE` 120 s) and fewer than `FILES_AWAKE_CAP` (4 h) since
+  the first files stamp of this boot (`§Files`).
 
 (phase 5 (D-138, moved from phase 4), RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
 the agent was refused, its turn ends, and the pending decision lives in Postgres. The
@@ -575,6 +578,46 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   admits :4108 from the relay pods **and** the api pods (only those), `15 §Port previews`.
   An older runner without the `kind` extension refuses terminal grants (the API answers 4502
   — the tab shows "the runner does not support terminals").
+
+## Files (phase 5, P5-FILES-1, D-316, SEC-125, SEC-126)
+
+People who can use the terminal can also browse, upload, download, rename, delete and edit the files
+under the sandbox's `/workspace` from the dashboard (**Files** page of the Computer section, `14`),
+without a shell. It is the terminal's privilege with another interface: the same availability
+(`terminal.enabled`, hosted, `can_use`, session only, no access while frozen; D-316(b)(d)) and the
+same identity in the sandbox (the agent uid). Routes and errors: API_CONTRACTS C-898..C-903; wire:
+`16 §W21`.
+
+- **How.** The API is an SFTP client. For a person's first request it mints a single-use `auf_` grant
+  and dials the runner's :4108 listener; the runner opens an `exec` in mode `sftp` on the sandbox's
+  channel, and the supervisor starts the image's fixed `sftp-server` as the agent user with the
+  terminal's scrubbed environment (`12 §SSH channels`). The API keeps that SFTP session for the
+  person's next requests (60 s idle, 1 h lifetime). The sandbox gains no listener and no network path,
+  and the platform adds no file-handling code inside it: paths, permissions and renames are OpenSSH's.
+- **Scope.** Paths are confined to `/workspace` after symlink resolution, and `/workspace/.aurora`
+  (platform-managed) is read-only (C-899). This keeps the page about the agent's work; it is not a
+  security boundary, because the agent's own code already has every permission the operations use
+  (SEC-125). Files the projection manages read-only (skills, `memory/index.md`, instruction files) stay
+  read-only: their owner write bit is clear and the API refuses to replace them. A person who edits
+  `memory/*.md` changes the agent's memory exactly as the terminal or the agent itself would; the
+  memory harvest picks it up (`12 §Memory harvest`).
+- **Wake and keep-awake.** A request on a parked sandbox is a wake demand on the terminal's path
+  (`terminal_wake_at`, `TERMINAL_WAKE_WINDOW`, the shared per-agent wake budget) and answers 503
+  `sandbox_waking` until it runs; the page retries. While a person uses the page the API stamps
+  `files_active_until` (grace `FILES_AWAKE_GRACE` 120 s) and the sandbox is kept awake with the
+  reason **`files`** ("awake because…" says "Files in use"), capped at `FILES_AWAKE_CAP` (4 h per
+  boot). Files is never a turn, a conversation event or a `last_engaged_at` stamp, and the agent is not
+  told about the changes (as with the terminal).
+- **Lifecycle.** Freeze → new requests 423 and transfers in flight end within the 10 s re-check;
+  park, restart, harness change, runner move → the SFTP session ends (`files_unavailable`) and the next
+  request wakes or reopens; agent deleted → nothing remains. Contents are never logged or stored; the
+  best-effort audit rows `agent.files.download`, `agent.files.write`, `agent.files.mkdir`,
+  `agent.files.rename` and `agent.files.delete` record paths and sizes (`04 §Audit`).
+- **Runner side.** The runner accepts `auf_` legs on :4108 where the terminal is enabled (it already
+  opens the listener then), opens only an `sftp` exec for them, caps live files legs per sandbox at
+  `FILE_SESSIONS_PER_SANDBOX` (4) and registers the `files` capability. An older runner refuses the
+  unknown grant kind and the page says "This agent's runner does not support file access yet"; a custom
+  image without `/usr/libexec/openssh/sftp-server` gets "This sandbox image has no SFTP server".
 
 ## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
 

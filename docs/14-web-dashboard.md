@@ -399,8 +399,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     agent's banner stays full width under the header.
   - **Sections**, in this order: **Chat** (hosted only) · **Behaviour**
     (Instructions, Memory, Skills, Evals) · **Triggers** (Schedules, Webhooks, Channels,
-    Peers) · **Computer** (Computer, Terminal, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
-    **Access**. Pages keep today's availability rules (Terminal and Previews only
+    Peers) · **Computer** (Computer, Terminal, (phase 5, P5-FILES) Files, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
+    **Access**. Pages keep today's availability rules (Terminal, Files and Previews only
     where enabled; BYO has only Instructions, Computer: Connect and Access); a
     section with no available page is hidden; a section with several pages shows
     them as a segmented `Tabs` row under the header. The URL keeps
@@ -441,7 +441,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       to the agent. Refetched when a turn ends and every 30 s while visible.
     - **Computer** (`MonitorIcon`): the sandbox state (same labels and tooltip as
       the header), "Open computer" (Computer section) and, where the Terminal page
-      is available, "Terminal".
+      is available, "Terminal" and (phase 5, P5-FILES-2) "Files".
     - **About** (`BookIcon`): kind and Default badges, the agent's brief, "Edit
       instructions" (Behaviour › Instructions).
   - **Rail states.** Expanded: 288 px, heading "Status" and a collapse button
@@ -1271,6 +1271,67 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     their own state under `/workspace/.aurora/terminal`; a harness the instance does not enable
     prints "not enabled on this instance". The pane carries no hint line for them (the web does
     not know which harnesses an image holds; the wrapper's message is the answer).
+  - **Files** (phase 5, P5-FILES-2/3, D-316, C-904, C-905) — a page of the **Computer** section between
+    Terminal and Previews (`?tab=files`), with exactly the Terminal page's availability (hosted,
+    `features.terminal`, `can_use`; hidden for BYO agents and non-`can_use` callers; a frozen agent
+    shows the freeze banner and no listing). It shows the sandbox's `/workspace` and nothing outside it.
+    Content, top to bottom:
+    1. **Path bar**: breadcrumbs from `/workspace` (each segment a link; the bar wraps instead of
+       scrolling at 390 px) and **Go to path** (a small `FormDialog` taking a path under `/workspace`).
+       The current path is in the URL (`&path=`), so Back and reload keep the place.
+    2. **Toolbar** (wraps on narrow screens): **Upload** (a menu: Files…, Folder…), **New folder**,
+       **New file**, **Refresh**, and a **Show hidden** switch (off by default; remembered per browser,
+       `localStorage` key `aurora.files.hidden`; hides names starting with `.`).
+    3. **Listing**: a `DataTable` — icon (`FolderIcon`, `FileIcon`, `FileTextIcon`, `ImageIcon`,
+       `LinkIcon` for a symlink), name, size (human units; "—" for folders), modified (relative time,
+       absolute in the tooltip) and a row menu: **Open** (folders navigate, files open the viewer),
+       **Download**, **Rename**, **Delete**, **Copy path**. Folders first, then by name. A symlink shows
+       its target in muted mono; a link whose target is outside `/workspace` or missing is shown but not
+       openable ("Points outside the workspace" / "Broken link"). A non-writable entry (`writable:
+       false`, everything under `.aurora`) carries a `Read-only` `Badge` and no write actions. A
+       truncated listing ends with a `Notice`: "Showing the first 5,000 items. Use the Terminal to see
+       the rest." At 390 px rows become cards (name and menu on the first line, size and time on the
+       second). Empty folder: the empty state "This folder is empty" with Upload and New file.
+    4. **Uploading**: Upload, or dropping files or folders anywhere on the listing (the drop target is
+       the `DropZone` primitive: `accent-soft` circle with `UploadIcon` and "Drop to upload to
+       <folder>"). Folders are recreated (`mkdir` with `parents`) before their files. At most three
+       uploads run at once per tab; an **upload tray** under the toolbar lists them with the chat
+       attachment chip states (progress with Cancel, done, failed `danger` chip with the reason, for
+       example "Too large: the limit is 512 MB"). A name that already exists asks **Replace**, **Keep
+       both** (the next free `name (1).ext`) or **Skip**, with "Do this for the remaining N" — never a
+       silent overwrite (uploads send `If-None-Match: *` unless Replace was chosen).
+    5. **Rename** is a `FormDialog` (a name, not a path; an existing name is refused inline). **Delete**
+       is a `ConfirmDialog` with `danger`: "Delete <name>?" — for a folder "…and everything inside it
+       (N items)" when the listing knows N; the error `too_many_entries` reads "This folder has more
+       than 10,000 items; delete it from the Terminal."
+    6. **Viewer** (P5-FILES-3): opening a file replaces the listing (the breadcrumb stays; a Back to
+       folder link) with:
+       - **Editor** for a UTF-8 text file ≤ 1 MB: CodeMirror 6 (lazy-loaded; theme from the tokens in
+         both themes; syntax colours for a small fixed set of languages by extension — JS/TS, JSON,
+         Markdown, Python, Rust, TOML, YAML, HTML, CSS, shell; line numbers; the file's line ending
+         kept). A header with the file name, a `●` "Unsaved changes" marker, **Save** (also
+         Ctrl/Cmd+S) and **Download**. Saving sends the etag; if the file changed in the sandbox since
+         it was opened a `Dialog` says "This file changed in the sandbox after you opened it." with
+         **Reload** (lose my changes), **Overwrite** and **Copy my text**. Leaving with unsaved
+         changes asks first (`ConfirmDialog`; the browser's own prompt on unload). Tab indents; Esc,
+         then Tab (within 1.5 s) leaves the editor for the next control and says "Left the editor."
+         (WCAG 2.1.2), stated beside the editor like the terminal's note. Read-only files open
+         read-only with a `Read-only` badge and no Save.
+       - **Image preview** for PNG, JPEG, GIF and WebP ≤ 10 MB, recognised by the content's first
+         bytes (never by the name): shown as a `data:` URL, fitted to the pane, with its pixel size.
+       - Anything else (binary, too large, not UTF-8, SVG, HTML is shown as text only when it is a
+         text file): a `Card` "No preview for this file" with the size, type guess and **Download**.
+       Files are never rendered as HTML and never opened in a new browser tab (SEC-126).
+    7. **States**: a parked sandbox shows "Waking the computer…" while the page retries (`sandbox_waking`,
+       up to twelve attempts); `files_not_supported` shows a `Notice` with the reason (runner too old,
+       image without an SFTP server); `files_unavailable` shows "The computer restarted; retrying…".
+       Error codes map to sentences (C-898..C-901), never raw codes.
+    An open Files page keeps the sandbox awake while it is being used ("awake because…" says "Files in
+    use"); viewing a listing without acting does not keep it awake past the 2-minute grace. Tokens and
+    shared primitives only (`DataTable`, `Card`, `Badge`, `Notice`, `Dialog`, `FormDialog`,
+    `ConfirmDialog`, `Menu`, `DropZone`, `Switch`, `Button`, `EmptyState`); any missing primitive (the
+    breadcrumb, the upload tray) is added to the shared set, not styled one-off. Both themes; no
+    horizontal scroll at 390 px (long names wrap; the editor scrolls inside itself).
   - **SSH** (phase 5, P4-SSH-1/2, D-239, C-795) — a page of the **Computer** section beside Terminal
     and Previews (`?tab=ssh`), with the same availability rule as Terminal but on `features.ssh`:
     hosted agents only, `can_use`, hidden for BYO agents and non-`can_use` callers; a frozen agent shows

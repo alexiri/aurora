@@ -28,6 +28,7 @@ implementation repo and checked in (CI fails on drift).
 | W18 | Preview byte streams (phase 4, P4-PRV-2) | relay → runner :4108 (WebSocket per stream); runner ↔ supervisor (stream frames on W6) | stream grant `aux_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
 | W19 | Terminal streams (phase 4, P4-TERM) | browser → API `/v1/agents/{agent}/terminal` (WebSocket); API → runner :4108 (grant redemption); runner ↔ supervisor (`pty.*` frames on W6) | terminal grant `auy_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
 | W20 | SSH access (phase 5, P4-SSH-2, D-239) | SSH client → terminator (SSH, certificate-only); terminator → API `/v1/terminator`; terminator → runner :4108 (one WebSocket per SSH channel); runner ↔ supervisor (`exec.*` frames on W6) | OpenSSH user certificate; `aut_` + replica; channel grant `auz_` (single use); the authenticated W6 channel | this doc, `04 §SSH access`, `11 §SSH access`, `12 §SSH channels` |
+| W21 | Files sessions (phase 5, P5-FILES-1, D-316) | browser → API `/v1/agents/{agent}/files*` (REST); API → runner :4108 (one WebSocket per SFTP session); runner ↔ supervisor (`exec.*` frames on W6, mode `sftp`) | session cookie; files grant `auf_` (single use); the authenticated W6 channel | this doc, `11 §Files`, `12 §SSH channels`, API_CONTRACTS C-898..C-907 |
 
 ## Cross-cutting conventions
 
@@ -698,3 +699,57 @@ agent, sandbox, boot); the runner takes sandbox and boot only from the API's ans
 only on that boot's channel; the supervisor accepts only the three modes, its fixed `sftp-server` path
 and the `LANG`/`LC_*` environment. No hop dials a TCP port or a socket for SSH: forwarding does not exist
 below the terminator either.
+
+(Phase 5, P5-FILES-1, D-316) The `exec.*` leg 2 and the supervisor's `sftp` mode land first with the
+files sessions of `§W21`; P4-SSH-2 adds `shell`, `exec` and `tty` and the `auz_` leg 1 on top. The
+supervisor's exec ceiling is `EXECS_PER_SANDBOX` (12), the runner's per-kind caps
+`SSH_CHANNELS_PER_SANDBOX` (8) and `FILE_SESSIONS_PER_SANDBOX` (4).
+
+## W21 — Files sessions (phase 5, P5-FILES-1, D-316, SEC-125, SEC-126)
+
+The dashboard's Files page (`14 §Files`) reads and writes the sandbox's `/workspace` through REST
+routes on the API (`05`, API_CONTRACTS C-898). The **API** is the SFTP client: it speaks SFTP
+version 3 to the image's `sftp-server`, which the supervisor starts as an `exec` in mode `sftp`. The
+hops are W20's legs 1 and 2 with a different grant and no terminator; this section owns only the
+differences. No gate of its own: the routes and the runner kind exist where `terminal.enabled` is on.
+
+**Leg 0, browser → API.** Plain HTTPS with the dashboard session cookie (session only, CSRF on
+mutations). The browser never sees a grant, a runner address or an SFTP byte.
+
+**Leg 1, API → runner.** `GET /v1/preview-stream` on the runner's stream listener :4108,
+`Authorization: Bearer auf_…` — the prefix selects the kind, as `auy_` and `auz_` do. The runner
+redeems the grant (`POST /v1/runner/preview-streams/open { kind: "files", grant }` → `{ sandbox_id,
+boot_id, window, idle_secs, max_lifetime_secs }`; 403 `grant_invalid`; 409 `not_current` when the boot
+is stale, the agent frozen or `terminal.enabled` off), checks it holds that boot's channel (404
+`not_here`), enforces `FILE_SESSIONS_PER_SANDBOX` (4) live `auf_` legs (4409) and completes the
+handshake (101). The API's **first message** must be one Text frame within 5 s (else 4504):
+`{"kind":"exec.open","mode":"sftp"}` — on an `auf_` leg any other mode, a `command`, a `tty` or a
+non-empty `env` closes the leg 4502 without reaching the supervisor. The runner answers
+`{"kind":"exec.opened"}` or closes 4502 (refused, unsupported, timeout) / 4409 (limit). After that the
+frames are W20 leg 1's minus `pty.resize`: Binary `[0x02][payload ≤ 16 KiB]` both ways (the SFTP
+stream), Binary `[0x03]` runner → API (the server's stderr; the API discards it and counts bytes),
+Text `exec.eof` API → runner, Text `exec.exit` runner → API then `1000`. Close codes, ping/pong, the
+30 s stalled-write rule, credit windows (`TERMINAL_STREAM_WINDOW` 128 KiB) and violation counting are
+W18/W20's. The runner stamps **no** keep-awake for `auf_` legs: the API stamps `files_active_until`
+itself on each request (`11 §Files`).
+
+**Leg 2, runner ↔ supervisor.** W20's `exec.*` frames, unchanged, with `mode: "sftp"`, `env: {}` and no
+`tty`; the supervisor cannot tell a files session from an SFTP channel of an SSH session, by design:
+both get exactly the same process (`12 §SSH channels`).
+
+**API side.** One SFTP session per (person, agent) per API replica, multiplexing that person's
+requests by SFTP request id; idle `FILES_SESSION_IDLE` 60 s, lifetime `FILES_SESSION_LIFETIME` 1 h
+(the next request opens a new one); any leg close drops it and fails in-flight requests 503
+`files_unavailable`. Writes are pipelined at most 4 × 32 KiB outstanding per transfer, so a transfer
+holds a bounded buffer; the leg's credit window bounds the rest. Only these SFTP requests are ever
+sent: `INIT`, `REALPATH`, `STAT`, `LSTAT`, `FSTAT`, `OPENDIR`, `READDIR`, `CLOSE`, `OPEN`, `READ`,
+`WRITE`, `FSETSTAT` (mode only), `MKDIR`, `RMDIR`, `REMOVE`, `READLINK` and the extension
+`posix-rename@openssh.com` (checked in the server's `VERSION` extensions; without it the session is
+`files_not_supported`, `details.reason: "image"`). Bytes and file contents are never logged or stored
+at any hop (byte totals in metrics only); paths appear only in the audit rows of C-906.
+
+**Allow-list at every hop.** The API mints an `auf_` grant only for a request that passed C-900's
+authority, bound to (agent, sandbox, boot, person); the runner opens only an `sftp` exec for it and
+never a PTY, a shell, a command or a port; the supervisor starts only its fixed `sftp-server` path.
+An `auf_` grant redeemed with another kind, or an `auy_`/`auz_`/`aux_` grant redeemed as `files`, is
+403 `grant_invalid`.

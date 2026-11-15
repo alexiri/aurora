@@ -623,6 +623,7 @@ the frozen payload.
 | Open a preview in the browser (phase 4, P4-PRV-2) | a **live dashboard session** of a user for whom `can_use(workspace)` holds, re-checked at least every `PREVIEW_AUTH_CACHE` (15 s); never an API key, never an agent credential, no other visibility (`04 §Preview access`) |
 | Register, rename, delete one's own **SSH public keys** (phase 5, P4-SSH-1, D-239) | any signed-in user, own keys only; **session only** (403 `session_required` for API keys, like creating an API key); no re-authentication (the terminal needs none either) |
 | Mint an **SSH user certificate** for an agent; connect to its sandbox over SSH (phase 5, P4-SSH-1/2, D-239) | the web terminal's rule, unchanged: `can_use` of the agent's workspace, hosted agents only, agent not frozen, instance `ssh.enabled`; session or the user's own API key for the mint (never a service key or an agent credential), re-checked by the API at session open, channel open and every heartbeat (`§SSH access`); **never an agent tool** |
+| Browse, download, upload, create, rename, delete and edit files under the agent's `/workspace` (**Files** page; phase 5, P5-FILES-1, D-316) | the web terminal's rule, unchanged: `can_use` of the agent's workspace, hosted agents only, agent not frozen (423, no read access either), instance `terminal.enabled`; **session only**, re-checked at every request; `/workspace/.aurora` read-only; **never an agent tool** |
 | Read, create, edit and delete one's eval questions and eval schedules, read results, start and cancel eval runs (phase 5, P4-EVAL, D-289) | `can_use` of the agent's workspace (session or API key); hosted agents only; frozen agent: 423 for starts; **never an agent tool**; expected answers and answers are agent-audience data (SEC-116); deleting a run `can_own` (`10 §Evals`, Q-EVAL-1) |
 | Set or clear an agent's eval **judge key** and the regression notice setting (phase 5, P4-EVAL, D-292, C-863) | `can_own` of the agent's workspace; the key must be granted to the agent and admitted by governance (SEC-115); session only |
 | List and disconnect SSH sessions (phase 5, P4-SSH-2) | one's own: the session's person; all sessions of an agent: `can_own` of its workspace; terminator replicas: instance admin |
@@ -1369,5 +1370,9 @@ coarse client address, terminator replica), `agent.ssh.close` (agent, workspace,
 channel counts per mode, byte totals; written once by the close-exactly-once transition) and
 `ssh_session.disconnect` (a person or owner ended a session; metadata: session, agent, `by`) — is
 best-effort. SSH channel bytes and `exec` command lines are never recorded anywhere.
+(phase 5, P5-FILES-1, D-316, C-906) `agent.files.download` (agent, workspace, path, bytes, `via`:
+`download`|`editor`), `agent.files.write` (path, bytes, `created`), `agent.files.mkdir` (path),
+`agent.files.rename` (from, to) and `agent.files.delete` (path, entries deleted) are best-effort; paths
+are truncated to 1,024 bytes; file contents are never recorded anywhere and listings are not audited.
 (phase 5, P4-SSH-1) `ssh_key.create` and `ssh_key.delete` (metadata: name, fingerprint; never the key
 blob) are **security-critical** (Keys and credentials).
