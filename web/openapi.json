@@ -2551,7 +2551,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Delete any organization with everything in it (instance administrators; recent re-auth,\ntyped slug). Runs the owner delete's services; allowed while frozen; shows no content.",
+        "summary": "Delete any organization with everything in it (instance administrators; session only,\ntyped slug). Runs the owner delete's services; allowed while frozen; shows no content.",
         "operationId": "adminDeleteOrg",
         "parameters": [
           {
@@ -2608,15 +2608,6 @@
             }
           },
           "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4525,15 +4516,6 @@
               }
             }
           },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "422": {
             "content": {
               "application/json": {
@@ -4761,15 +4743,6 @@
               }
             }
           },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "422": {
             "content": {
               "application/json": {
@@ -4926,15 +4899,6 @@
               }
             }
           },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "422": {
             "content": {
               "application/json": {
@@ -5043,15 +5007,6 @@
               }
             }
           },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
             "content": {
@@ -5146,15 +5101,6 @@
             }
           },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5583,15 +5529,6 @@
               }
             }
           },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "413": {
             "content": {
               "application/json": {
@@ -5878,7 +5815,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Replace a section's dashboard values (C-773): compare-and-set on `generation`, re-authentication\nwithin 600 s, audited with a before/after diff.",
+        "summary": "Replace a section's dashboard values (C-773): compare-and-set on `generation`, session only\n(no re-authentication, FIX-157, D-317), audited with a before/after diff.",
         "operationId": "adminPutSettingsSection",
         "parameters": [
           {
@@ -5949,15 +5886,6 @@
             }
           },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6697,7 +6625,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the\nowner delete's services; shows no content.",
+        "summary": "Delete any workspace (instance administrators; session only, typed slug). Runs the\nowner delete's services; shows no content.",
         "operationId": "adminDeleteWorkspace",
         "parameters": [
           {
@@ -6754,15 +6682,6 @@
             }
           },
           "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -17096,7 +17015,7 @@
         "tags": [
           "me"
         ],
-        "summary": "Delete the caller's own account (needs a recent OIDC re-authentication, else 412 `reauth_required`).",
+        "summary": "Delete the caller's own account (session only; no re-authentication, FIX-157, D-317).",
         "operationId": "deleteMe",
         "responses": {
           "204": {
@@ -17122,15 +17041,6 @@
             }
           },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -21855,7 +21765,7 @@
         "tags": [
           "scim"
         ],
-        "summary": "`PUT /v1/orgs/{org}/scim` — owner + recent re-auth; validates domains (422\n`scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when\nenabling); 409 `scim_unavailable` while the instance switch is off.",
+        "summary": "`PUT /v1/orgs/{org}/scim` — owner, session only; validates domains (422\n`scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when\nenabling); 409 `scim_unavailable` while the instance switch is off.",
         "operationId": "putScimSettings",
         "parameters": [
           {
@@ -21918,15 +21828,6 @@
             }
           },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -22115,7 +22016,7 @@
         "tags": [
           "scim"
         ],
-        "summary": "`POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`\n(instance off) / 422 `scim_token_limit_reached` (org off, limit); 412 `reauth_required`.",
+        "summary": "`POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`\n(instance off) / 422 `scim_token_limit_reached` (org off, limit). No re-authentication.",
         "operationId": "createScimToken",
         "parameters": [
           {
@@ -22187,15 +22088,6 @@
             }
           },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {

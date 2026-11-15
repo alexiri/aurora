@@ -1,8 +1,10 @@
-# P5-WEBHOOK: Outgoing webhook — agents call a webhook the person set up, without ever seeing its URL — **proposal, spec batch (Opus) after the owner's answers**
+# P5-WEBHOOK: Outgoing webhook — agents call a webhook the person set up, without ever seeing its URL (owner, 2026-11-15, phase 5, D-320, C-909..C-913, SEC-127)
 
-> **Status: proposal (2026-11-15).** Nothing here is decided. No D-, C-, SEC- or migration numbers are
-> taken yet: the spec batch takes them from PROGRESS's next-free note once the owner has answered the
-> questions at the end (`Q-P5-WH-n`). The recommendations are the coordinator's.
+> **Status: decided (2026-11-15).** The owner answered every question (end of this file, D-320). The
+> contracts are C-909..C-913, the invariant is SEC-127, and the migration is `20261201000243`. This file
+> is the design. The implementation briefs are **P5-WEBHOOK-1** (the `aurora-webhook` crate, registry
+> and package), **-2** (API and gateway), **-3** (`aurora-agent` exposure) and **-4** (dashboard). Where
+> this text and the contracts differ, the contracts win.
 
 ## Goal
 
@@ -120,14 +122,17 @@ Bounds (the spec fixes them in `limits.rs`): template ≤ 16 KiB, ≤ 20 slots, 
 total, rendered body ≤ 256 KiB.
 
 ### 3. What the agent sees and does
-- The supervisor writes **`~/.aurora/webhooks.json`** (`0600`, removed when empty), one entry per
-  granted connection: `name`, `url` (`https://<connection_id>.link.aurora.internal/`), `description`,
-  `method`, `slots` (name, type, required, description, limits) and an example call. It never contains
-  the template, the fixed values, the secret values or the real URL. It is a separate file from
-  `links.json` so the calendar snippet stays simple, and both come from the same home-sync `links` list,
-  which gains a `mode`.
-- **Sending:** `curl -X POST <url> -H 'Content-Type: application/json' -d '{"text": "…"}'` (the slot
-  values).
+**Decided (D-320(g), C-911): everything goes through `aurora-agent`.** There is no `webhooks.json`.
+- Each granted webhook is an **operation of the `webhook` target** in the app's `api.json`:
+  - `send_<name slug>`, bound to its connection (`account`);
+  - its slots are the body fields;
+  - the person's description is the operation's `notes`.
+- `aurora-agent search`, `list webhook`, `describe webhook send_ops_alerts` and
+  `call webhook send_ops_alerts text="Deploy 42 failed on prod"` all work with no new verb.
+- `tools.md` lists the same operations with a `curl` example, for a sandbox without `agent_cli`.
+- None of these shows the template, the fixed values, the secret values or the real URL.
+- **Sending without the command:**
+  `curl -X POST <base_url>/ -H 'Content-Type: application/json' -d '{"text": "…"}'` (the slot values).
 - **Dry run:** the header `X-Aurora-Dry-Run: 1` validates the values and returns the rendered body,
   with secret values masked, without sending. It goes through the same admission, so the agent can check
   a payload before acting.
@@ -138,15 +143,12 @@ total, rendered body ≤ 256 KiB.
     apart from the receiver's own 4xx (e.g. Slack's `invalid_payload`);
   - `invalid_slot` names the slot and the rule it broke.
 - **Agent snippet** (≤ 2,000 characters):
-  - read `webhooks.json` first and send only to listed webhooks, following each one's description;
+  - find webhooks with `aurora-agent list webhook` and follow each one's description;
   - use the dry run when unsure;
   - **after a timeout, do not retry blindly**, because the receiver may already have acted; say so, or
     ask the person;
   - a refusal code is not the receiver's answer.
-- **Later, with P5-GUIDE-6/7:** each webhook could also appear as a typed operation of the `webhook`
-  target of `aurora-agent` (`aurora-agent describe webhook`, `aurora-agent call webhook <name> …`), with
-  its slots as the input schema. That needs per-connection operations in `api.json`, so it is a
-  follow-up and not part of this proposal (Q-P5-WH-9).
+- The dry run is the operation's header parameter `X-Aurora-Dry-Run=1`.
 
 ### 4. Gateway: the send mode of the secret-link lane
 The admission is unchanged from C-843: the connection exists and is of a `secret_link` app, it is
@@ -165,11 +167,12 @@ with the tool taken from the manifest. Then:
   host and to every redirect hop.
 - **Redirects** (≤ 3, `https` only, never shown to the agent): a `307`/`308` is followed with the
   same method and body. A `301`/`302`/`303` is followed as a body-less `GET`, as browsers do; Google Apps
-  Script web apps answer a `POST` this way. Q-P5-WH-7 asks about this.
+  Script web apps answer a `POST` this way (owner: follow, D-320(e)).
 - **Time-out:** 15 s. Then `504 webhook_timeout`, and the snippet says "may have been delivered".
 - **No automatic retry and no cache**, because a webhook is not idempotent.
-- **Rate limit per connection**, on the shared counters (D-119): defaults 30 a minute and 500 a day. The
-  person may lower them, and the instance sets the ceiling.
+- **Rate limit per connection**, on the shared counters (D-119): defaults 30 a minute and 500 a day.
+  **Configurable (D-320(h), C-912):** the instance settings set them, an org may tighten them, and a
+  person may lower them per connection. The lowest applies.
 - **Echo check (FIX-104):** the needles are the URL, its path-with-query (raw and percent-encoded) and
   every secret value. A match gives 502 `upstream_echoed_credential`.
 - **Logs and traces:** the connection id, the host, the status, the slot *names* and the rendered size.
@@ -187,7 +190,7 @@ written to the request log), which a receiver can use to drop duplicates.
 ### 6. Policy, approvals and governance
 - The package's one tool, `send`, is a **write** tool:
   - a Read-only connection refuses every send, so the person can pause a webhook without deleting it;
-  - the proposed default is **Ask** (Q-P5-WH-3). The person can allow it per agent with an ordinary
+  - the default is **Ask** (D-320(d)). The person can allow it per agent with an ordinary
     policy rule ("send to Ops alerts without asking").
 - **The approval card** shows the webhook's name and host, the method and each slot value (long values
   folded). It shows neither the URL, the fixed parts of the template nor secret values. It uses a new
@@ -211,23 +214,22 @@ written to the request log), which a receiver can use to drop duplicates.
   template editor reuses the code-editor primitive used for policy JSON, if one exists; otherwise the
   dashboard brief adds one to the shared set.
 
-## What changes where (for the spec batch)
+## What changes where (the briefs update these docs)
 - **`09` §3.4:** `secret_link` gains `mode: fetch | send` (default `fetch`; the ICS package is
   unchanged). In `send` mode:
   - the tools are `POST`/`PUT` on `*.link.aurora.internal`;
   - `expect_prefix` is refused;
   - the connection carries a payload definition.
-- **Storage:** connection metadata fields today are short strings, and a payload definition (≤ 16 KiB
-  JSON) does not fit them. Two options: a `config jsonb` column on connections (one migration), or a
-  sealed document beside the credentials. The spec picks; the coordinator leans to the column, because
-  the definition is not secret and editors read it back.
+- **Storage (decided, C-909):** a `config jsonb` column on `app_connections`, migration
+  `20261201000243`. The definition is not secret and editors read it back. The secret values and the
+  signing secret stay in the sealed credential JSON.
 - **`06`:** the send path of the secret-link lane. **`07`:** the `slots` decoder and the default.
-  **`12`:** `webhooks.json`. **`14`:** the dialog and editor. **`15`:** the org switch. **`17`:** extend
-  SEC-107 (it says "`GET`/`HEAD` only" today) or add a sibling invariant for send mode.
-  **`05`/API_CONTRACTS:** connect with a payload definition, edit, dry run, send test, error codes.
-  **`18`:** the tests below.
+  **`24`:** per-connection operations in `api.json`, and `aurora-agent`. **`14`:** the dialog and
+  editor. **`15`:** the `outgoing_webhooks` settings section and the org settings. **`17`:** SEC-127
+  (written with this spec). **`03`/`05`:** the column and the routes of C-909. **`18`:** the tests
+  below.
 
-## Tests the spec will require (sketch)
+## Tests (each brief lists its own)
 - **Linter:** `send` mode with `expect_prefix`; a `GET` tool in send mode; a template that refers to an
   undeclared slot or secret.
 - **Render:** slot-type validation for each type; JSON, form and text escaping (quotes, newlines,
@@ -247,8 +249,8 @@ written to the request log), which a receiver can use to drop duplicates.
     API read.
 - **Approval:** the card shows the slot values and no fixed part or secret.
 - **Signing:** vectors; the receiver-side verification example in the setup guide checked against them.
-- **End-to-end on the dev stack:** a recorded receiver gets the rendered body; an agent posts through
-  `webhooks.json`.
+- **End-to-end on the dev stack:** a recorded receiver gets the rendered body; an agent posts with
+  `aurora-agent call webhook …`.
 - **Live check by the lane:** one real incoming webhook of the owner's choice (e.g. a test Mattermost
   channel), kept outside the repo like the ICS test link.
 
@@ -259,8 +261,8 @@ written to the request log), which a receiver can use to drop duplicates.
 - **Give the agent the URL** (an environment secret): the URL is a bearer secret, and it would end up
   in transcripts, files and logs.
 - **A built-in platform tool `webhook_send`** (like `calendar_invite`): it would not use the gateway's
-  grants, approvals, request log and egress policy, which the app lane already provides. A typed
-  interface through `aurora-agent` is the better later step (Q-P5-WH-9).
+  grants, approvals, request log and egress policy, which the app lane already provides. The typed
+  interface comes through `aurora-agent` instead (D-320(g)).
 - **Let the agent write any body (Idea A)**: see §2.
 
 ## Risks
@@ -269,25 +271,38 @@ written to the request log), which a receiver can use to drop duplicates.
   Ask by default, slot limits, the org switch and the egress policy.
 - **Duplicate sends** after a time-out. There is no automatic retry, the snippet warns about it, and
   `X-Aurora-Delivery` lets receivers drop duplicates.
-- **Template-editor scope.** The example picker is the most work in the dashboard brief. The raw
-  editor alone would be enough for a first version (Q-P5-WH-8).
+- **Template-editor scope.** The example picker is the most work in the dashboard brief (P5-WEBHOOK-4).
+  The owner wants it in the first version (D-320(f)).
 
-## Size and split (proposed)
-- **P5-WEBHOOK-1** (Rust, M–L, `rust-developer`):
-  - the registry `mode: send`;
-  - the gateway send path (render, validate, sign, redirects, rate limit, dry run);
-  - the API connect, edit, send-test and storage (maybe one migration);
-  - the home-sync `mode` and the supervisor's `webhooks.json`;
-  - the `slots` decoder;
-  - the package with its presets and setup guide.
+## Briefs and order
+| Brief | What | Size, agent | Depends on |
+|---|---|---|---|
+| `P5-WEBHOOK-1` | the pure crate `aurora-webhook` (config validation, template parse and render, slot validation, signing); the registry's `mode: send` and presets; the `webhook` package; the `limits.rs` constants | M, `rust-developer` | P5-ICS merged (it extends `secret_link`) |
+| `P5-WEBHOOK-2` | the migration; the API connect, edit, preview, presets and send-test routes; the settings section and org settings; the gateway send path; the `slots` approval decoder | L, `rust-developer` | P5-WEBHOOK-1; SET-5 (generic section form) for the Admin rendering only |
+| `P5-WEBHOOK-3` | `aurora-agent` exposure: render inputs, per-connection operations in `api.json`, `tools.md`, the CLI's account-bound operations and the `json` field type | M, `rust-developer` | P5-WEBHOOK-2, P5-GUIDE-6 |
+| `P5-WEBHOOK-4` | dashboard: connect steps, presets, example picker, raw editor, preview, Send test, card, the settings and org settings | M–L, `nextjs-developer` | the contracts (now); end-to-end against P5-WEBHOOK-2 |
 
-  It goes in the same lane as P5-ICS and **after it**, because it extends the same registry, gateway
-  and supervisor code.
-- **P5-WEBHOOK-2** (Next.js, M, `nextjs-developer`): the connect steps, the example picker, the raw
-  editor, the Preview, Send test and the connection card. It can run in parallel with -1 once the
-  contract is fixed.
+**Proposed placement** (the Orchestrator decides):
+- -1 → -2 in `p5-apps` after P5-ICS (P5-CALDAV may go before or after; the two do not touch each other's
+  files beyond the registry, which is sequential in that lane anyway);
+- -3 after P5-GUIDE-6 in the same lane;
+- -4 in any lane with free web capacity, because it owns only `web/` files.
 
-## Open questions for the owner
+## Owner answers (2026-11-15, D-320)
+1. Payload as slots (Idea C): **yes**.
+2. Phase: **phase 5**.
+3. Ask by default: **yes**.
+4. Secret values: **yes**.
+5. Signing: **yes**.
+6. `https` only: **yes**.
+7. Follow redirects: **yes**, as described.
+8. Examples and presets: **yes**, both the example picker and the presets.
+9. `aurora-agent`: **yes, and from the first version**. "Everything should be exposed through
+   `aurora-agent`" (P5-WEBHOOK-3; no `webhooks.json`).
+10. Limits: **yes**, 30 a minute and 500 a day, **configurable** at instance, org and connection
+    level (C-912).
+
+## Original questions (answered above)
 - **Q-P5-WH-1** Payload model: a template with typed slots (Idea C) rather than a description only (A)
   or a schema only (B)? *Recommended: C. Free-form JSON is one of its presets.*
 - **Q-P5-WH-2** Phase: build it in phase 5, in `p5-apps` right after P5-ICS (and P5-CALDAV), or keep it

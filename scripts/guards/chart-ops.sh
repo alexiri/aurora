@@ -183,9 +183,32 @@ telemetry_check policy 0.0 --set config.telemetry.otlp_endpoint=http://c:4318 --
 telemetry_check policy 0.25 --set config.telemetry.otlp_endpoint=http://c:4318 --set config.telemetry.sample_ratio=0.25 --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32' || exit 1
 # an endpoint with no telemetryTo: no policy, the env still rendered, and NOTES.txt warns
 telemetry_check none 1 --set config.telemetry.otlp_endpoint=http://c:4318 || exit 1
-notes="$(helm install guard deploy/helm/aurora -n aurora --dry-run=client --set database.allowSharedLogin=true --set config.telemetry.otlp_endpoint=http://c:4318 2>&1)"
+# NOTES.txt is not part of `helm template` output, and `helm install --dry-run=client` is no help:
+# helm v3 still contacts the cluster ("Kubernetes cluster unreachable" on a runner, "exists and cannot
+# be imported" against a developer's cluster); only helm v4 is truly client-side. So render the same
+# template through `helm template` from a scratch copy of the chart in which NOTES.txt is wrapped as a
+# YAML block scalar. Works unchanged on helm v3 and v4, with or without a cluster.
+notes_chart="$(mktemp -d)"
+trap 'rm -f "$planted"; rm -rf "$notes_chart"' EXIT
+cp -r deploy/helm/aurora "$notes_chart/aurora"
+rm "$notes_chart/aurora/templates/NOTES.txt"
+{
+  echo '{{- define "guard.notes" -}}'
+  cat deploy/helm/aurora/templates/NOTES.txt
+  printf '\n{{- end }}\nnotes: |\n{{ include "guard.notes" . | indent 2 }}\n'
+} >"$notes_chart/aurora/templates/zz-guard-notes.yaml"
+# Capture the exit status explicitly: under `set -e` a failing `notes="$(...)"` would end the guard silently.
+notes_of() {
+  local out
+  if ! out="$(helm template guard "$notes_chart/aurora" -n aurora --set database.allowSharedLogin=true --show-only templates/zz-guard-notes.yaml "$@" 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    fail "rendering NOTES.txt failed (helm $(helm version --short 2>/dev/null)); output above"
+  fi
+  printf '%s' "$out"
+}
+notes="$(notes_of --set config.telemetry.otlp_endpoint=http://c:4318)" || exit 1
 grep -q 'networkPolicy.telemetryTo is empty' <<<"$notes" || fail "NOTES.txt must warn when an endpoint is set and telemetryTo is empty"
-notes="$(helm install guard deploy/helm/aurora -n aurora --dry-run=client --set database.allowSharedLogin=true --set config.telemetry.otlp_endpoint=http://c:4318 --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32' 2>&1)"
+notes="$(notes_of --set config.telemetry.otlp_endpoint=http://c:4318 --set 'networkPolicy.telemetryTo[0].ipBlock.cidr=10.0.0.9/32')" || exit 1
 ! grep -q 'networkPolicy.telemetryTo is empty' <<<"$notes" || fail "NOTES.txt warns although telemetryTo is set"
 echo "chart-ops: tracing egress, web env and NOTES ok"
 
