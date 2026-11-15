@@ -254,6 +254,11 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<Vec<ModelInfo>> {
         self.list_models(ep, key, http).await
     }
+    /// (P4-LLM-2) Whether the key is validated by the origin proof itself (Vertex: the mint that proves the project and
+    /// e-mail is also the validation), so the API makes one call, not a listing and a proof.
+    fn validates_by_origin(&self) -> bool {
+        false
+    }
     fn default_model(&self, ep: &Endpoint) -> Option<String>;
     /// Placeholder-only environment for a sandboxed client.
     fn client_env(&self, ep: &Endpoint, dialect: Dialect, mode: &AuthMode)

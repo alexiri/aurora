@@ -168,6 +168,9 @@ impl LlmProvider for VertexProvider {
             Err(e) => Err(e),
         }
     }
+    fn validates_by_origin(&self) -> bool {
+        true
+    }
     fn default_model(&self, ep: &Endpoint) -> Option<String> {
         ep.default_model.clone()
     }
