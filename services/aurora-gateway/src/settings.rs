@@ -159,6 +159,19 @@ impl Settings {
         }));
     }
 
+    /// (SET-5) The hold timeouts follow the `approvals` settings live.
+    pub fn apply_approvals_on_change(&self, holds: Arc<crate::hold::Holds>) {
+        self.on_swap(Arc::new(move |old, new| {
+            if section_changed(old, new, &["approvals."]) {
+                let a = &new.raw.approvals;
+                holds.set_timeouts(
+                    std::time::Duration::from_secs(a.timeout_secs),
+                    std::time::Duration::from_secs(a.max_timeout_secs),
+                );
+            }
+        }));
+    }
+
     pub fn snapshot(&self) -> Arc<Snapshot> {
         self.snap.load_full()
     }

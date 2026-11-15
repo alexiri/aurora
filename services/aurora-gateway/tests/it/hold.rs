@@ -704,6 +704,13 @@ async fn effective_timeout_is_clamped_to_the_bounds() {
         holds.effective_timeout(Some(14_400)),
         Duration::from_secs(1200)
     );
+    // (SET-5) A settings swap replaces both for the holds recorded afterwards.
+    holds.set_timeouts(Duration::from_secs(900), Duration::from_secs(7200));
+    assert_eq!(holds.effective_timeout(None), Duration::from_secs(900));
+    assert_eq!(
+        holds.effective_timeout(Some(14_400)),
+        Duration::from_secs(7200)
+    );
 }
 
 #[tokio::test]

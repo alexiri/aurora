@@ -298,6 +298,8 @@ async fn serve(
         resolver.clone(),
         policy_resolver.clone(),
     );
+    // (SET-5) Hold timeouts follow the `approvals` settings live.
+    settings.apply_approvals_on_change(holds.clone());
     // Loaded before serving so a dashboard-defined store is there for the first request; a
     // database without the grant yet keeps the configuration's stores (logged by `run`).
     if let Err(e) = settings.reload(&pool).await {
