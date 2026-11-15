@@ -1047,6 +1047,9 @@ async fn lock_held(state: &AppState) -> bool {
         .bind(secrets_migrate::MIGRATION_LOCK_KEY)
         .fetch_one(&mut *tx)
         .await;
+    // A probe that took the lock must give it back at once (a dropped transaction only queues
+    // its rollback), or it would exclude the next real run.
+    let _ = tx.rollback().await;
     matches!(got, Ok(false))
 }
 

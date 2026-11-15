@@ -528,7 +528,9 @@ async fn update_is_audited_with_a_diff_and_every_admin_is_told_by_key_name_only(
         &a,
         "settings_test",
         0,
-        json!({ "settings_test.limit": 42 }),
+        // 77 cannot occur in the mail's "YYYY-MM-DD HH:MM UTC" stamp (minutes < 60), unlike 42,
+        // which the body-leak check below tripped over whenever the test ran at minute :42.
+        json!({ "settings_test.limit": 77 }),
     )
     .await;
     assert_eq!(s, 200, "{v}");
@@ -550,7 +552,7 @@ async fn update_is_audited_with_a_diff_and_every_admin_is_told_by_key_name_only(
     assert_eq!(row.3["generation"], 1);
     assert_eq!(
         row.3["change"][0],
-        json!({ "key": "settings_test.limit", "before": null, "after": 42 })
+        json!({ "key": "settings_test.limit", "before": null, "after": 77 })
     );
     // The e-mail goes to every instance admin who is not disabled, names keys, never values.
     let mut sent = Vec::new();
@@ -571,7 +573,7 @@ async fn update_is_audited_with_a_diff_and_every_admin_is_told_by_key_name_only(
         m.subject
     );
     assert!(
-        m.body.contains("settings_test.limit") && !m.body.contains("42"),
+        m.body.contains("settings_test.limit") && !m.body.contains("77"),
         "{}",
         m.body
     );
