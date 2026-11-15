@@ -24,7 +24,8 @@ false every `/scim/v2` path answers 404 and the dashboard shows no Directory syn
    invitations, JIT, role-claim and new-user placement memberships of people the directory
    did not provision (a refused role claim or placement lets the person sign in without
    that membership; a refused JIT fails the sign-in) — and saves. Turning
-   SCIM on asks for a fresh sign-in (step-up re-authentication).
+   SCIM on needs no fresh sign-in (phase 5, FIX-157, D-317: the step-up re-authentication it once
+   asked for is removed).
 3. **Token.** On the same page the owner creates a provisioning token, names it after the
    IdP ("Entra ID"), and copies the **base URL** (`<your-aurora>/scim/v2`) and the
    `aud_…` token into the IdP. The token is shown **once**; at most 5 tokens can be active

@@ -8,14 +8,12 @@ use super::handle::{Problem, RowMeta, SettingsHandle, stored_from_rows};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::auth::mail::Mail;
-use crate::domains::me::service::REAUTH_WINDOW_SECS;
 use crate::http::auth::{Caller, Principal};
 use aurora_config::{
     Effective, ListKind, SectionDef, SettingDef, SettingType, Source, Stored, registry, sections,
 };
 use aurora_core::{ApiError, Secret, limits};
 use aurora_db::repo::instance_settings as repo;
-use aurora_db::repo::sessions;
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
 use chrono::Utc;
 use http::StatusCode;
@@ -26,9 +24,9 @@ use uuid::Uuid;
 /// Who is writing.
 #[derive(Clone)]
 pub enum Via {
-    /// An instance admin's dashboard session (re-authentication required).
+    /// An instance admin's dashboard session (session only; no re-authentication, D-317).
     Admin(Caller),
-    /// The operator's shell (`aurora-api settings …`): no re-authentication, source `cli`.
+    /// The operator's shell (`aurora-api settings …`): source `cli`.
     Cli,
 }
 
@@ -142,28 +140,15 @@ fn too_large() -> ApiError {
     )
 }
 
-pub fn reauth_required() -> ApiError {
-    ApiError::new(
-        StatusCode::PRECONDITION_FAILED,
-        "reauth_required",
-        "Re-authenticate with your sign-in provider to change instance settings.",
-    )
-}
-
-/// The session's last OIDC authentication is within the shared window (412 otherwise).
-pub async fn require_reauth(state: &AppState, via: &Via) -> Result<(), ApiError> {
+/// Settings writes are session only: an API key or agent token is refused (FIX-157, D-317: no
+/// OIDC re-authentication is required any more). The CLI is the operator's shell.
+pub fn require_session(via: &Via) -> Result<(), ApiError> {
     let Via::Admin(c) = via else { return Ok(()) };
-    let Principal::Session { id } = c.principal else {
+    let Principal::Session { .. } = c.principal else {
         return Err(ApiError::forbidden(
             "Sign in with your account to change instance settings.",
         ));
     };
-    let age = sessions::reauth_age_secs(&state.pool, id)
-        .await
-        .map_err(dberr)?;
-    if !age.is_some_and(|a| (0.0..=REAUTH_WINDOW_SECS).contains(&a)) {
-        return Err(reauth_required());
-    }
     Ok(())
 }
 
@@ -949,7 +934,7 @@ pub async fn apply(
 ) -> Result<Applied, ApiError> {
     // Secrets sealed for a write that then fails (stale, invalid, audit down) are discarded at
     // once: nothing references them.
-    require_reauth(state, via).await?;
+    require_session(via)?;
     guard_dashboard_addresses(state, &reqs).await?;
     let mut fresh = Vec::new();
     let r = apply_inner(state, via, kind, reqs, import, &mut fresh).await;
@@ -1008,7 +993,7 @@ async fn apply_inner(
     for r in &reqs {
         section_def(&r.section)?;
     }
-    require_reauth(state, via).await?;
+    require_session(via)?;
     reqs.sort_by(|a, b| a.section.cmp(&b.section));
     let h = &state.settings;
     let mut tx = audit::begin(state).await?;

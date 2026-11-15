@@ -174,20 +174,6 @@ pub async fn stamp_reauth<'e, E: PgExecutor<'e>>(
     Ok(r.rows_affected() > 0)
 }
 
-/// Seconds since the session's last re-authentication (database clock); `None` if never.
-pub async fn reauth_age_secs<'e, E: PgExecutor<'e>>(
-    exec: E,
-    id: Uuid,
-) -> Result<Option<f64>, DbError> {
-    let age: Option<Option<f64>> = sqlx::query_scalar(
-        "SELECT EXTRACT(EPOCH FROM (now() - reauth_at))::float8 FROM sessions WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(exec)
-    .await?;
-    Ok(age.flatten())
-}
-
 /// The session's absolute expiry (the preview credential is capped by it, docs/04
 /// §Preview access step 3); `None` when the session is gone.
 pub async fn expires_of<'e, E: PgExecutor<'e>>(

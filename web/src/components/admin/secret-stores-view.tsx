@@ -2,7 +2,6 @@
 
 import { useState, type FormEvent } from "react";
 
-import { ReauthPrompt } from "@/components/admin/settings/reauth-prompt";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,8 +29,6 @@ import {
   type TestResult,
 } from "@/lib/api/secret-stores";
 
-const RETURN_TO = "/admin/secret-stores";
-
 const STEP_LABEL: Record<string, string> = {
   configuration: "Definition is valid",
   authenticate: "Signed in to the store",
@@ -58,11 +55,10 @@ function when(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : "";
 }
 
-/** The error of a write: stale, re-authentication, locked, validation fields and everything else. */
-function WriteError({ error, onReload, onRetry }: { error: unknown; onReload: () => void; onRetry?: () => void }) {
+/** The error of a write: stale, validation fields and everything else. */
+function WriteError({ error, onReload }: { error: unknown; onReload: () => void }) {
   if (!error) return null;
   const code = error instanceof ApiError ? error.code : null;
-  if (code === "reauth_required") return <ReauthPrompt returnTo={RETURN_TO} onRetry={onRetry} />;
   if (code === "stale_revision") {
     return (
       <Notice tone="pending" role="alert" className="space-y-2">
@@ -254,7 +250,7 @@ function StoreDialog({
         </Notice>
       ) : null}
       {result ? <TestOutcome result={result} /> : null}
-      <WriteError error={put.error} onReload={onClose} onRetry={() => save()} />
+      <WriteError error={put.error} onReload={onClose} />
     </FormDialog>
   );
 }
@@ -458,7 +454,7 @@ function DefaultStore({ status, onReload }: { status: StoresStatus; onReload: ()
           <code className="font-mono">{status.effective_default}</code> until it works again.
         </Notice>
       ) : null}
-      <WriteError error={put.error} onReload={onReload} onRetry={() => put.mutate({ storeId: choice, generation: status.generation })} />
+      <WriteError error={put.error} onReload={onReload} />
     </Section>
   );
 }
@@ -565,7 +561,7 @@ function Migration({ status, onReload }: { status: StoresStatus; onReload: () =>
           <CountsTable m={m} label="Last migration report" />
         </div>
       ) : null}
-      <WriteError error={start.error} onReload={onReload} onRetry={doStart} />
+      <WriteError error={start.error} onReload={onReload} />
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}

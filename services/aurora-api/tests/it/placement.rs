@@ -912,13 +912,6 @@ async fn deleting_an_account_deletes_a_solely_used_personal_workspace_and_keeps_
     let (bws, cws) = (ws_of(bob).await, ws_of(cy).await);
     // Cy is bound to Bob's personal workspace too: it is not Bob's alone.
     e.h.bind_ws(bws, cy, "member").await;
-    for u in [bob, cy] {
-        sqlx::query("UPDATE sessions SET reauth_at = now() WHERE user_id = $1")
-            .bind(u)
-            .execute(e.h.pool())
-            .await
-            .unwrap();
-    }
     let (s, v) = e.call(&cookies[0], Method::DELETE, "/v1/me", None).await;
     assert_eq!(s, 204, "{v}");
     let (owner, personal): (Option<Uuid>, bool) =

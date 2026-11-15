@@ -3,7 +3,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 
-import { ReauthPrompt } from "@/components/admin/settings/reauth-prompt";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
@@ -17,7 +16,6 @@ import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import {
   usePreviewSettings,
   usePutSettings,
-  sectionSlug,
   type Setting,
   type SettingsPreview,
   type SettingsSection,
@@ -121,7 +119,7 @@ function needsConfirmation(p: SettingsPreview): boolean {
 /**
  * The generic section form (SET-1): renders any C-772 section — scalars, enums, booleans, whole lists,
  * keyed lists and write-only secrets — through `SettingField`. Save calls the preview route first and
- * asks for confirmation when something loosens; 409 / 412 / 422 follow `14 §Instance administration`.
+ * asks for confirmation when something loosens; 409 / 422 follow `14 §Instance administration`.
  */
 export function SettingsSectionForm({
   section,
@@ -140,7 +138,6 @@ export function SettingsSectionForm({
   const put = usePutSettings(section.section);
   const qc = useQueryClient();
   const busy = preview.isPending || put.isPending;
-  const returnTo = `/admin/settings/${sectionSlug(section.section)}`;
 
   const dirty = JSON.stringify(toValues(section, draft)) !== JSON.stringify(toValues(section, initial));
   const errs = error ? fieldErrors(error) : {};
@@ -221,8 +218,7 @@ export function SettingsSectionForm({
           A setting you changed is configured in Helm and cannot be changed here. The page was reloaded.
         </Notice>
       ) : null}
-      {code === "reauth_required" ? <ReauthPrompt returnTo={returnTo} onRetry={() => void submit()} /> : null}
-      {error && !["stale_revision", "setting_locked", "reauth_required", "settings_invalid"].includes(code ?? "") ? (
+      {error && !["stale_revision", "setting_locked", "settings_invalid"].includes(code ?? "") ? (
         <Notice tone="danger" role="alert">
           {errorMessage(error)}
         </Notice>

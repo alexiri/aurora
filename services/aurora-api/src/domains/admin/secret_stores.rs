@@ -1,7 +1,7 @@
 //! Admin › Secret stores (phase 5, FIX-124, D-195, D-236, D-237; C-746..C-749): the store
 //! registry as an instance setting. Every configuration write is the settings service's
 //! compare-and-set on the `secrets` section (locks, merged-view validation, critical audit,
-//! re-authentication, e-mail, `aurora_settings` reload); this module adds the status view with
+//! session-only check, e-mail, `aurora_settings` reload); this module adds the status view with
 //! cached health and counts, Test connection, and the value-migration job.
 
 use crate::app::AppState;
@@ -591,8 +591,8 @@ fn source_of(state: &AppState, id: &str) -> Option<Source> {
     params(("id" = String, Path, description = "Store id")),
     request_body = PutStore,
     responses((status = 200, body = StoresStatus), (status = 403, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 412, body = ErrorEnvelope),
-        (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn put_store(
     c: InstanceAdmin,
@@ -625,7 +625,7 @@ async fn put_store(
     params(("id" = String, Path, description = "Store id"), GenerationQuery),
     responses((status = 200, body = StoresStatus), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
-        (status = 412, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+        (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn delete_store(
     c: InstanceAdmin,
@@ -700,8 +700,8 @@ async fn delete_store(
     tag = "admin",
     request_body = PutDefault,
     responses((status = 200, body = StoresStatus), (status = 403, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 412, body = ErrorEnvelope),
-        (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn put_default(
     c: InstanceAdmin,
@@ -731,8 +731,7 @@ async fn put_default(
     request_body = PutScopes,
     responses((status = 200, body = StoresStatus), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
-        (status = 412, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
-        (status = 503, body = ErrorEnvelope)),
+        (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn put_scopes(
     c: InstanceAdmin,
@@ -1144,8 +1143,7 @@ fn summary_view(
     request_body = StartMigration,
     responses((status = 200, body = MigrationView), (status = 202, body = MigrationView),
         (status = 403, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
-        (status = 412, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
-        (status = 503, body = ErrorEnvelope)),
+        (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn start_migration(
     c: InstanceAdmin,
@@ -1186,7 +1184,7 @@ async fn start_migration(
             }),
         ));
     }
-    service::require_reauth(&s, &Via::Admin(c.0.clone())).await?;
+    service::require_session(&Via::Admin(c.0.clone()))?;
     let key = db_key(&s);
     if lock_jobs()
         .get(&key)

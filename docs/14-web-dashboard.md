@@ -984,8 +984,7 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
   "effective role" with the source ("Admin via <group>"); at 390 px every table
   collapses to the stacked-row pattern.
 - **Directory sync** (`/o/<org>/settings/directory`, phase 4, P4-GRP-2, D-132; **org owners only,
-  hidden unless the instance has `scim.enabled`**): an enable switch (turning it on opens the
-  re-authentication step), the required **e-mail domains** editor, the `exclusive` switch ("Only people
+  hidden unless the instance has `scim.enabled`**): an enable switch ((phase 5, FIX-157, D-317) turning it on needs no re-authentication step), the required **e-mail domains** editor, the `exclusive` switch ("Only people
   your directory provisions can join this organization", default off), the **SCIM base URL** with a copy
   button, **tokens** (create → the `aud_` token is shown once in a copy dialog with the warning
   "Store it in your identity provider now; it cannot be shown again", list with expiry and last use, a
@@ -1455,11 +1454,10 @@ counts and a table of its workspaces (name, slug, "Personal" badge, agents, crea
 with **Delete workspace…**. Both deletes use a danger `FormDialog`: it names what goes
 ("Deletes the organization Acme with its 4 workspaces, 12 agents and 30 members'
 access. Conversations, credentials and settings are deleted; the audit log and usage
-records are kept. This cannot be undone."), asks for the slug typed exactly, and on 412
-`reauth_required` runs the same re-authentication step as account deletion, then
-retries once. (FIX-152, C-890) A failed re-authentication comes back to the page with
-`reauth_error`, and the page shows it as a danger `Notice`. Account deletion and Directory
-settings do the same. On success the list refreshes and a status notice names what was
+records are kept. This cannot be undone."), asks for the slug typed exactly, and the first confirm deletes.
+(Phase 5, FIX-157, D-317) There is no re-authentication step any more, and no page shows a
+"Sign in again" link or a `reauth_error` notice (FIX-152's notice is removed); the API's
+`reauth=1` flow stays but nothing starts it. On success the list refreshes and a status notice names what was
 deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
 No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
 
@@ -1481,7 +1479,7 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   store** `Section` (locked when Helm sets it; a notice when the configured default could not start)
   and a **Move values** `Section`: target, **Preview what would move** (a `DataTable` per kind of
   value), **Migrate to <store>…** (`ConfirmDialog`), then live progress and the final report. 409
-  `stale_revision` offers a reload, 412 the re-authentication step, 422 lists the fields.
+  `stale_revision` offers a reload, 422 lists the fields (no re-authentication step, FIX-157, D-317).
 - **Index** (`/admin/settings`): a `Section` per settings section with its description, the number
   of keys configured in Helm and set in the dashboard, the last change (who, when) and a link; a
   `Notice` (`neutral`) when keys are locked: "N settings are configured in Helm and cannot be
@@ -1490,7 +1488,7 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   local storage). Actions: **Export** (YAML, or JSON from a menu) and **Import…** (`FormDialog`
   `xl`: paste or choose a file, then a per-section diff table from the dry run, keys that would be
   ignored because Helm sets them to the same value, and errors; **Apply** is enabled only without
-  errors and runs the re-authentication step on 412).
+  errors; (phase 5, FIX-157, D-317) no re-authentication step).
 - **Section page**: `PageHeader` (title, one-line description, last change), then the section's
   settings in `FormSection`s, each through the **`SettingField`** primitive (below). One
   `FormActions` row: **Save** (primary) and **Discard changes**. Save first calls the preview
@@ -1498,8 +1496,8 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   ("This allows more than before: … — affects 3 organizations: Acme, Physics, Beams") before the
   PUT; otherwise it saves directly. 409 `stale_revision` shows a `Notice` ("Someone changed these
   settings meanwhile") with **Reload** (the typed values are kept until reload); 409
-  `setting_locked` reloads the page (Helm changed under it); 412 runs the same
-  re-authentication step as account deletion and retries once; 422 errors land on their fields,
+  `setting_locked` reloads the page (Helm changed under it); (phase 5, FIX-157, D-317) there is
+  no re-authentication step; 422 errors land on their fields,
   and an error on a key of another section names it with a link. A success shows a status notice
   "Saved. Applied to every replica within seconds."
 - **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
