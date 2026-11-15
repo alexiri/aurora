@@ -5,7 +5,7 @@ use crate::domains::secrets::gov;
 use aurora_core::ApiError;
 use aurora_db::repo::hosted::{self, LlmCandidate};
 use aurora_llm::governance::{EffectiveGovernance, OriginStatus, StoredOrigin};
-use aurora_llm::{AuthMode, Dialect, Endpoint, ModelRef};
+use aurora_llm::{AuthMode, Dialect, Endpoint, ModelRef, ProviderRegistry};
 use aurora_protocol::runner::ModelChoice;
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -232,12 +232,13 @@ impl Readiness<'_> {
 
 /// Readiness of one granted key, first failing check in the `08` order.
 fn key_reason<'a>(
-    state: &'a AppState,
+    state: &AppState,
+    llm: &'a ProviderRegistry,
     eff: &EffectiveGovernance,
     harness: &str,
     c: &LlmCandidate,
 ) -> (Option<&'a Endpoint>, Option<Reason>, Option<Dialect>) {
-    let ep = state.llm.endpoint(&c.llm_endpoint_id);
+    let ep = llm.endpoint(&c.llm_endpoint_id);
     if c.status != "active" {
         return (ep, Some(Reason::NotActive), None);
     }
@@ -245,11 +246,18 @@ fn key_reason<'a>(
         return (None, Some(Reason::EndpointUnknown), None);
     };
     // The key's provider is no longer the one this endpoint serves, or is not enabled.
-    let provider = state
+    let enabled = state
+        .settings
+        .snapshot()
+        .effective
+        .raw
         .llm
+        .enabled_providers
+        .clone();
+    let provider = llm
         .provider_for(ep)
         .filter(|_| ep.provider == c.llm_provider)
-        .filter(|_| state.config.llm.enabled_providers.contains(&c.llm_provider));
+        .filter(|_| enabled.contains(&c.llm_provider));
     let Some(provider) = provider else {
         return (Some(ep), Some(Reason::ProviderDisabled), None);
     };
@@ -290,12 +298,13 @@ fn key_reason<'a>(
 
 /// Usable keys in `provider_preference` order, for the model pickers.
 pub fn usable<'a>(
-    state: &'a AppState,
+    state: &AppState,
+    llm: &'a ProviderRegistry,
     eff: &EffectiveGovernance,
     harness: &str,
     cands: Vec<LlmCandidate>,
 ) -> Vec<Usable<'a>> {
-    keys_of(state, eff, harness, cands)
+    keys_of(state, llm, eff, harness, cands)
         .into_iter()
         .filter_map(|k| match (k.reason, k.ep, k.dialect) {
             (None, Some(ep), Some(dialect)) => Some(Usable {
@@ -309,17 +318,24 @@ pub fn usable<'a>(
 }
 
 fn keys_of<'a>(
-    state: &'a AppState,
+    state: &AppState,
+    llm: &'a ProviderRegistry,
     eff: &EffectiveGovernance,
     harness: &str,
     cands: Vec<LlmCandidate>,
 ) -> Vec<KeyState<'a>> {
     // enabled providers the list does not name are appended (`08 §Phase 4 providers`)
-    let pref = state.config.llm.effective_provider_preference();
+    let pref = state
+        .settings
+        .snapshot()
+        .effective
+        .raw
+        .llm
+        .effective_provider_preference();
     let mut out: Vec<(usize, KeyState<'a>)> = cands
         .into_iter()
         .map(|c| {
-            let (ep, reason, dialect) = key_reason(state, eff, harness, &c);
+            let (ep, reason, dialect) = key_reason(state, llm, eff, harness, &c);
             let rank = ep
                 .and_then(|e| pref.iter().position(|p| *p == e.provider))
                 .unwrap_or(usize::MAX);
@@ -346,11 +362,11 @@ fn model_ok(eff: &EffectiveGovernance, ep: &str, model: &str) -> bool {
 /// The endpoint's default model (or the first allowed one when the default is not allowed),
 /// with where it came from.
 fn default_model(
-    state: &AppState,
+    llm: &ProviderRegistry,
     eff: &EffectiveGovernance,
     ep: &Endpoint,
 ) -> Option<(String, Source)> {
-    let provider = state.llm.provider_for(ep)?;
+    let provider = llm.provider_for(ep)?;
     let allowed = eff
         .endpoints
         .get(&ep.id)
@@ -373,7 +389,8 @@ fn default_model(
 /// or first failing reason, plus the default selection with its source. Keeps the selection
 /// semantics: the override first, never re-pointed, dropped when no longer usable.
 pub async fn readiness<'a>(
-    state: &'a AppState,
+    state: &AppState,
+    llm: &'a ProviderRegistry,
     conn: &mut PgConnection,
     agent: Uuid,
     org: Uuid,
@@ -384,7 +401,7 @@ pub async fn readiness<'a>(
     let cands = hosted::granted_llm_secrets(conn, agent, org, workspace).await?;
     let (prov, epid, mid, effort) = hosted::model_prefs(conn, agent).await?;
     let effort = effort.unwrap_or_else(|| "medium".to_owned());
-    let keys = keys_of(state, &eff, harness, cands);
+    let keys = keys_of(state, llm, &eff, harness, cands);
     let mut override_dropped = None;
     let mut default = None;
     if let (Some(p), Some(e), Some(m)) = (prov, epid, mid) {
@@ -408,7 +425,7 @@ pub async fn readiness<'a>(
             let (None, Some(ep)) = (k.reason, k.ep) else {
                 continue;
             };
-            if let Some((model, source)) = default_model(state, &eff, ep) {
+            if let Some((model, source)) = default_model(llm, &eff, ep) {
                 default = Some(Resolved {
                     key: i,
                     model,
@@ -427,15 +444,14 @@ pub async fn readiness<'a>(
 }
 
 fn choice(
-    state: &AppState,
+    llm: &ProviderRegistry,
     ep: &Endpoint,
     dialect: Dialect,
     mode: AuthMode,
     model: String,
     effort: &str,
 ) -> ModelChoice {
-    let client_env = state
-        .llm
+    let client_env = llm
         .provider_for(ep)
         .map(|p| p.client_env(ep, dialect, &mode))
         .unwrap_or_default();
@@ -474,7 +490,8 @@ pub async fn select(
             notices: vec![],
         });
     }
-    let r = readiness(state, conn, agent, org, workspace, harness).await?;
+    let llm = state.llm();
+    let r = readiness(state, &llm, conn, agent, org, workspace, harness).await?;
     if !r.any_usable() {
         return Ok(Selection::NoKey {
             message: r.no_key_message(),
@@ -496,7 +513,7 @@ pub async fn select(
     }
     Ok(Selection::Chosen {
         choice: choice(
-            state,
+            &llm,
             ep,
             dialect,
             k.secret

@@ -86,6 +86,53 @@ pub struct SettingsHandle {
     hooks: std::sync::Mutex<Vec<SwapHook>>,
 }
 
+/// A startup-validation error on the merged view as a settings [`Problem`]. A key into a keyed
+/// list (`llm.endpoints[1].allowed_paths`) is named by the entry's id and field
+/// (`llm.endpoints/<id>/allowed_paths`, C-773), and the stable code of a rule written as
+/// `<code> (<field>)` (the shared endpoint rules, C-800) is the problem's code.
+fn entry_problem(eff: &Effective, key: String, message: String) -> Problem {
+    let code = message
+        .split_once(" (")
+        .filter(|(c, rest)| {
+            rest.ends_with(')')
+                && !c.is_empty()
+                && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        })
+        .map_or("invalid", |(c, _)| c)
+        .to_owned();
+    let Some((base, rest)) = key.split_once('[') else {
+        return Problem::new(key, &code, message);
+    };
+    let Some((idx, tail)) = rest.split_once(']') else {
+        return Problem::new(key, &code, message);
+    };
+    let id = idx
+        .parse::<usize>()
+        .ok()
+        .and_then(|i| {
+            eff.keys
+                .get(base)?
+                .entries
+                .as_ref()?
+                .get(i)
+                .map(|e| e.id.clone())
+        })
+        .filter(|id| !id.is_empty());
+    let Some(id) = id else {
+        return Problem::new(key, &code, message);
+    };
+    let field = tail
+        .trim_start_matches('.')
+        .replace(['.', '['], "/")
+        .replace(']', "");
+    let path = if field.is_empty() {
+        format!("{base}/{id}")
+    } else {
+        format!("{base}/{id}/{field}")
+    };
+    Problem::new(path, &code, message)
+}
+
 /// A live reader notified when the snapshot is swapped.
 pub type SwapHook = Arc<dyn Fn(&Snapshot, &Snapshot) + Send + Sync>;
 
@@ -167,7 +214,7 @@ impl SettingsHandle {
         {
             problems.extend(
                 e.0.into_iter()
-                    .map(|e| Problem::new(e.key, "invalid", e.message)),
+                    .map(|e| entry_problem(&eff, e.key, e.message)),
             );
         }
         problems.extend(super::rules::cross_rules(&eff));

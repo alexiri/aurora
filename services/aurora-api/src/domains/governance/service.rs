@@ -39,6 +39,7 @@ fn sourced<T>(value: T, s: Source) -> Sourced<T> {
     Sourced {
         value,
         source: src(s),
+        instance_setting: None,
     }
 }
 
@@ -80,7 +81,7 @@ fn allow(a: &g::AllowEntry) -> AllowlistEntry {
 
 pub async fn get(state: &AppState, org: Uuid) -> Result<GovernanceDocument, ApiError> {
     let (raw, revision) = repo::get(&state.pool, org).await?.ok_or_else(not_found)?;
-    let doc = g::from_stored(&raw, &state.gov_instance).map_err(|e| malformed(org, &e))?;
+    let doc = g::from_stored(&raw, &state.gov_instance()).map_err(|e| malformed(org, &e))?;
     Ok(GovernanceDocument {
         document: serde_json::to_value(doc).map_err(|_| ApiError::internal("Internal error."))?,
         revision,
@@ -88,7 +89,7 @@ pub async fn get(state: &AppState, org: Uuid) -> Result<GovernanceDocument, ApiE
 }
 
 /// Why a secret does not comply with the effective governance (`None` = compliant).
-fn classify(eff: &Eff, s: &repo::LlmSecretRef) -> Option<&'static str> {
+pub(crate) fn classify(eff: &Eff, s: &repo::LlmSecretRef) -> Option<&'static str> {
     let ep = s.llm_endpoint_id.as_deref()?;
     let e = eff.endpoints.get(ep).filter(|e| e.permitted);
     let Some(e) = e else {
@@ -119,11 +120,55 @@ fn classify(eff: &Eff, s: &repo::LlmSecretRef) -> Option<&'static str> {
     }
 }
 
+/// The `08 §11.2` re-evaluation of one organization's stored state against its effective
+/// governance, inside the caller's transaction (no provider calls): LLM secrets whose verified
+/// origin no longer complies become `mismatch`; agent model overrides that are no longer allowed
+/// are cleared. Returns `(secrets marked, agents cleared)`; both empty = nothing to do, which is
+/// what makes a rerun a no-op (SET-2).
+pub async fn reevaluate_stored(
+    tx: &mut sqlx::PgConnection,
+    org: Uuid,
+    eff: &Eff,
+) -> Result<(Vec<Uuid>, Vec<Uuid>), ApiError> {
+    let secrets = repo::llm_secrets(&mut *tx, org).await?;
+    let secrets_marked: Vec<Uuid> = secrets
+        .iter()
+        .filter(|s| {
+            classify(eff, s) == Some("mismatch")
+                && s.origin
+                    .as_ref()
+                    .and_then(|o| o.get("status"))
+                    .and_then(Value::as_str)
+                    == Some("verified")
+        })
+        .map(|s| s.id)
+        .collect();
+    if !secrets_marked.is_empty() {
+        repo::mark_mismatch(&mut *tx, &secrets_marked).await?;
+    }
+    let agents_cleared: Vec<Uuid> = repo::agent_models(&mut *tx, org)
+        .await?
+        .into_iter()
+        .filter(|a| {
+            let m = a
+                .model_id
+                .clone()
+                .map_or(ModelRef::NoModel, ModelRef::Model);
+            eff.model_allowed(&a.model_endpoint_id, &m).is_err()
+        })
+        .map(|a| a.id)
+        .collect();
+    if !agents_cleared.is_empty() {
+        repo::clear_agent_models(&mut *tx, &agents_cleared).await?;
+    }
+    Ok((secrets_marked, agents_cleared))
+}
+
 pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernance, ApiError> {
     let eff = gov::effective_for(state, org).await?;
     let secrets = repo::llm_secrets(&state.pool, org).await?;
-    let endpoints = state
-        .llm
+    let registry = state.llm();
+    let endpoints = registry
         .endpoints()
         .iter()
         .filter_map(|ep| {
@@ -133,7 +178,8 @@ pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernanc
                 provider: ep.provider.clone(),
                 display_name: ep.display_name.clone(),
                 permitted: sourced(e.permitted, e.permitted_source),
-                key_scopes: sourced(e.key_scopes.clone(), e.key_scopes_source),
+                key_scopes: sourced(e.key_scopes.clone(), e.key_scopes_source)
+                    .setting("governance.llm.allowed_key_scopes"),
                 allowed_models: sourced(e.allowed_models.clone(), e.allowed_models_source),
                 origin_rule: e.origin_rule.as_ref().map(rule),
             })
@@ -165,27 +211,31 @@ pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernanc
         .await?
         .ok_or_else(not_found)?;
     let org_byo = g::OrgByo::from_stored(org_doc.get("byo"));
-    let byo = effective_byo_view(&state.gov_instance, &org_byo);
-    let org_tokens = g::from_stored(&org_doc, &state.gov_instance)
+    let inst = state.gov_instance();
+    let byo = effective_byo_view(&inst, &org_byo);
+    let org_tokens = g::from_stored(&org_doc, &inst)
         .map(|d| d.agent_tokens.max_age_days)
         .unwrap_or_default();
     let (days, days_src) =
-        g::effective_agent_token_max_age(state.gov_instance.agent_token_max_age_days, org_tokens);
+        g::effective_agent_token_max_age(inst.agent_token_max_age_days, org_tokens);
     Ok(EffectiveGovernance {
         byo,
         agent_tokens: EffectiveAgentTokens {
-            max_age_days: sourced(days, days_src),
+            max_age_days: sourced(days, days_src).setting("governance.agent_tokens.max_age_days"),
         },
         llm: EffectiveLlm {
-            posture: sourced(llm_posture(eff.llm_posture), eff.llm_posture_source),
+            posture: sourced(llm_posture(eff.llm_posture), eff.llm_posture_source)
+                .setting("governance.llm.minimum_posture"),
             endpoints,
         },
         egress: EffectiveEgress {
             posture: sourced(
                 egress_posture(eff.egress_posture),
                 eff.egress_posture_source,
-            ),
-            open_lane: sourced(open_lane_posture(eff.open_lane), eff.open_lane_source),
+            )
+            .setting("governance.egress.minimum_posture"),
+            open_lane: sourced(open_lane_posture(eff.open_lane), eff.open_lane_source)
+                .setting("governance.egress.open_lane_minimum"),
             org_allowlist: org_list,
             baseline_allowlist: baseline,
         },
@@ -210,15 +260,21 @@ fn effective_byo_view(inst: &g::Instance, org: &g::OrgByo) -> EffectiveByo {
         posture: Sourced {
             value: e.posture.as_str().to_owned(),
             source: lvl(Some(e.posture_level)),
-        },
+            instance_setting: None,
+        }
+        .setting("byo.minimum_posture"),
         source_cidrs: Sourced {
             value: e.source_strings(),
             source: lvl(e.source_level),
-        },
+            instance_setting: None,
+        }
+        .setting("byo.default_source_cidrs"),
         require_context_credentials: Sourced {
             value: e.require_context,
             source: lvl(e.require_context_level),
-        },
+            instance_setting: None,
+        }
+        .setting("byo.require_context_credentials"),
     }
 }
 
@@ -240,7 +296,7 @@ pub async fn put(
     if current != req.revision {
         return Err(stale());
     }
-    let doc = g::validate(&req.document, &state.gov_instance).map_err(|errs| {
+    let doc = g::validate(&req.document, &state.gov_instance()).map_err(|errs| {
         let code = if errs.iter().any(|e| e.code == BELOW_MIN) {
             "governance_below_instance_minimum"
         } else if errs.iter().any(|e| e.code == g::BYO_CIDR_OUTSIDE_DEFAULT) {
@@ -266,41 +322,12 @@ pub async fn put(
     let revision = repo::store(&mut tx, org, &stored).await?;
 
     // Re-evaluate stored origins and agent model overrides (no provider calls).
-    let eff = g::effective(&state.gov_instance, &doc);
-    let secrets = repo::llm_secrets(&mut *tx, org).await?;
-    let secrets_marked: Vec<Uuid> = secrets
-        .iter()
-        .filter(|s| {
-            classify(&eff, s) == Some("mismatch")
-                && s.origin
-                    .as_ref()
-                    .and_then(|o| o.get("status"))
-                    .and_then(Value::as_str)
-                    == Some("verified")
-        })
-        .map(|s| s.id)
-        .collect();
-    if !secrets_marked.is_empty() {
-        repo::mark_mismatch(&mut tx, &secrets_marked).await?;
-    }
-    let agents_cleared: Vec<Uuid> = repo::agent_models(&mut tx, org)
-        .await?
-        .into_iter()
-        .filter(|a| {
-            let m = a
-                .model_id
-                .clone()
-                .map_or(ModelRef::NoModel, ModelRef::Model);
-            eff.model_allowed(&a.model_endpoint_id, &m).is_err()
-        })
-        .map(|a| a.id)
-        .collect();
-    if !agents_cleared.is_empty() {
-        repo::clear_agent_models(&mut tx, &agents_cleared).await?;
-    }
+    let inst = state.gov_instance();
+    let eff = g::effective(&inst, &doc);
+    let (secrets_marked, agents_cleared) = reevaluate_stored(&mut tx, org, &eff).await?;
     // (RFE-013, C-315) Introducing or tightening the org's maximum age shortens its live agent
     // tokens (7-day minimum remaining life); loosening or removing never extends one.
-    let old_days = g::from_stored(&current_doc, &state.gov_instance)
+    let old_days = g::from_stored(&current_doc, &inst)
         .ok()
         .and_then(|d| d.agent_tokens.max_age_days);
     let agent_tokens_retrofitted = match doc.agent_tokens.max_age_days {
@@ -339,7 +366,8 @@ pub async fn put(
 }
 
 pub fn instance(state: &AppState) -> InstanceGovernance {
-    let i = &state.gov_instance;
+    let inst = state.gov_instance();
+    let i = &inst;
     InstanceGovernance {
         llm: InstanceLlm {
             allowed_key_scopes: i.allowed_key_scopes.clone(),
@@ -347,7 +375,7 @@ pub fn instance(state: &AppState) -> InstanceGovernance {
             require_key_origin: i.require_key_origin,
             known_llm_hosts: i.known_llm_hosts.clone(),
             endpoints: state
-                .llm
+                .llm()
                 .endpoints()
                 .iter()
                 .map(|ep| InstanceEndpoint {
@@ -386,10 +414,18 @@ pub fn instance(state: &AppState) -> InstanceGovernance {
 /// own smaller value honoured. One system `governance.update` audit row, only when something
 /// changed; the affected gateway identity caches are invalidated.
 pub async fn retrofit_instance(state: &AppState) -> Result<u64, ApiError> {
-    let Some(days) = state.gov_instance.agent_token_max_age_days else {
+    retrofit_instance_pool(&state.pool, state.gov_instance().agent_token_max_age_days).await
+}
+
+/// [`retrofit_instance`] over a pool and the instance maximum (`None` = no limit, nothing to do).
+pub async fn retrofit_instance_pool(
+    pool: &aurora_db::PgPool,
+    days: Option<u32>,
+) -> Result<u64, ApiError> {
+    let Some(days) = days else {
         return Ok(0);
     };
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
     let changed = credentials::retrofit_instance(
         &mut *tx,
         days,

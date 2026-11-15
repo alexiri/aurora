@@ -500,10 +500,11 @@ impl PolicyHandler {
         };
         let unavailable = aurora_llm::mint::MintError::unavailable;
         let mint = self.llm_mint.as_ref().ok_or_else(unavailable)?;
+        let llm = self.resolver.llm();
         let ep = c
             .llm_endpoint
             .as_deref()
-            .and_then(|id| self.resolver.llm().endpoint(id))
+            .and_then(|id| llm.endpoint(id))
             .ok_or_else(unavailable)?;
         // (D-261(b)) The organization's own external id, read here and never taken from the request or the secret; without
         // it the role is not assumed at all (the confused-deputy guard fails closed).
@@ -552,10 +553,11 @@ impl PolicyHandler {
         target: Target<'_>,
     ) -> Result<(), inject::InjectError> {
         use aurora_llm::mint::sts;
+        let llm = self.resolver.llm();
         let region = c
             .llm_endpoint
             .as_deref()
-            .and_then(|id| self.resolver.llm().endpoint(id))
+            .and_then(|id| llm.endpoint(id))
             .and_then(|e| e.region.clone())
             .filter(|r| !r.is_empty())
             .ok_or(inject::InjectError)?;
@@ -1059,17 +1061,17 @@ impl PolicyHandler {
             let app_claim_port = app_match
                 .as_ref()
                 .and_then(|m| mechanisms::route::claim_port(&m.entry.host));
+            let llm = self.resolver.llm();
             cands.retain(|c| match c {
                 Cand::App(_) => mechanisms::route::claim_transport_ok(app_claim_port, https, port),
-                Cand::Secret(s) if s.kind == aurora_policy::facts::SecretKind::Llm => {
-                    self.resolver.llm().accepts_injection(
+                Cand::Secret(s) if s.kind == aurora_policy::facts::SecretKind::Llm => llm
+                    .accepts_injection(
                         s.llm_endpoint.as_deref(),
                         s.provider.as_deref(),
                         https,
                         &host,
                         port,
-                    )
-                }
+                    ),
                 Cand::Secret(s) => mechanisms::route::claim_transport_ok(s.claim_port, https, port),
             });
         }

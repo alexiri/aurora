@@ -79,7 +79,7 @@ pub fn reject_public(v: &Violation) -> ApiError {
 /// `*.aurora.internal`.
 pub fn reserved_names(state: &AppState) -> Vec<String> {
     let cfg = &state.config;
-    let mut names = state.llm.endpoint_hosts();
+    let mut names = state.llm().endpoint_hosts();
     for url in [
         &cfg.external_url,
         &cfg.hookhost_url,

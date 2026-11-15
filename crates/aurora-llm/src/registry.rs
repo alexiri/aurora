@@ -28,6 +28,23 @@ fn builtin(id: &str) -> Option<Arc<dyn LlmProvider>> {
     }
 }
 
+/// The provider ids this build can enable (SET-3: the dashboard offers exactly these). A provider
+/// a later task adds to `builtin` appears here by being listed among the candidates.
+pub fn supported_providers() -> Vec<&'static str> {
+    [
+        "litellm",
+        "anthropic",
+        "openai",
+        "azure_openai",
+        "bedrock",
+        "vertex",
+        "openai_compatible",
+    ]
+    .into_iter()
+    .filter(|id| builtin(id).is_some())
+    .collect()
+}
+
 /// (C-812, D-260(e)) The provider table with `llm.dev_upstream_overrides` applied to the fixed bases: the target
 /// replaces the origin (`https://api.openai.com` → `http://127.0.0.1:9`), so the endpoint's host, injection target
 /// and requests all follow it. The config layer has already refused anything but loopback targets.

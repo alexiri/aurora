@@ -315,6 +315,28 @@ export async function mockApi(
         ],
       });
     }
+    // (phase 5, SET-3) Admin › Settings › LLM endpoints: a Helm endpoint and a dashboard endpoint, the providers
+    // of this release, the preference order locked by Helm.
+    if (p === "/v1/admin/settings/llm") {
+      const sch = (kind: string, extra: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...extra });
+      const central = { id: "central", provider: "litellm", base_url: "https://llm.example.test", default_model: "claude-sonnet" };
+      const team = { id: "team", provider: "openai_compatible", base_url: "https://team-llm.example.test/v1", auth_header: "api-key" };
+      return json({
+        section: "llm", title: "LLM endpoints", description: "Providers and endpoints agents may reach.", generation: 2,
+        updated_at: now, updated_by_label: "root@example.test", extra: { providers: ["litellm", "anthropic", "openai", "openai_compatible", "vertex"] },
+        settings: [
+          { key: "llm.enabled_providers", value: ["litellm", "anthropic", "openai_compatible"], source: "dashboard", locked: false, helm_key: "config.llm.enabled_providers", default: ["litellm", "anthropic"], schema: sch("list", { item_kind: "string" }), list: "whole", id_field: null, entries: null, secret: null },
+          { key: "llm.provider_preference", value: ["litellm", "anthropic"], source: "helm", locked: true, helm_key: "config.llm.provider_preference", default: ["litellm", "anthropic"], schema: sch("list", { item_kind: "string" }), list: "whole", id_field: null, entries: null, secret: null },
+          {
+            key: "llm.endpoints", value: [central, team], source: "helm", locked: false, helm_key: "config.llm.endpoints", default: [], schema: sch("list", { item_kind: "object" }), list: "keyed", id_field: "id", secret: null,
+            entries: [
+              { id: "central", value: central, source: "helm", locked: true, warnings: null },
+              { id: "team", value: team, source: "dashboard", locked: false, warnings: null },
+            ],
+          },
+        ],
+      });
+    }
     if (p === "/v1/admin/placement/preview") return json({ name: "bobj", slug: "bobj", used: 0, unresolved: [] });
     if (p === "/v1/admin/placement/choices") {
       return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
@@ -440,6 +462,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-placement", path: "/admin/placement" },
   { name: "admin-settings", path: "/admin/settings" },
   { name: "admin-settings-section", path: "/admin/settings/governance" },
+  { name: "admin-settings-llm", path: "/admin/settings/llm" },
   { name: "admin-secret-stores", path: "/admin/secret-stores" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },

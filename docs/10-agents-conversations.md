@@ -462,7 +462,7 @@ caps `ATTACH_OUT_*`; produces an `attachment` event and, for threads, a
 - Storage through the **BlobStore** trait (`put`, `get`, `delete`; backend key
 per row). Phase 0 backend: `postgres` (`blobs` table). An S3-compatible
 backend is a later registry entry.
-- **S3-compatible backend (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63).** The registry entry
+- **S3-compatible backend (phase 6 (D-318, moved from phase 5), P4-S3, D-120, SEC-63).** The registry entry
   is `s3` (`15 §S3-compatible blob store`): `blobs.backend = "s3"` makes **new**
   attachments go to the bucket; `attachments.blob_backend` is already per row, so
   `postgres` rows stay readable and nothing is converted unless the operator runs

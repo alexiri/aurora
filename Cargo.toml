@@ -38,7 +38,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 license = "GPL-3.0-or-later"
 publish = false
 
@@ -99,9 +99,9 @@ openidconnect = { version = "4.1", default-features = false, features = ["reqwes
 
 # containers (podman API)
 bollard = { version = "0.21", default-features = false, features = ["pipe"] }
-# Kubernetes (RUN-004): rustls only (no openssl). kube 4 keeps MSRV 1.88; k8s-openapi `earliest` = oldest API the chart supports.
-kube = { version = "4.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
-k8s-openapi = { version = "0.28", default-features = false, features = ["earliest"] }
+# Kubernetes (RUN-004): rustls only (no openssl). kube 5 is built for k8s-openapi 0.29 (they move together); k8s-openapi `earliest` = oldest API the chart supports.
+kube = { version = "5.1", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
+k8s-openapi = { version = "0.29", default-features = false, features = ["earliest"] }
 
 # data
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
@@ -111,8 +111,8 @@ serde_path_to_error = "0.1"
 serde_yaml = "0.9"
 schemars = { version = "1", features = ["uuid1", "chrono04"] }
 jsonschema = { version = "0.33", default-features = false }
-utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
-utoipa-axum = "0.2"
+utoipa = { version = "6", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.3"
 uuid = { version = "1.22", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
@@ -129,10 +129,10 @@ psl = "2"
 pulldown-cmark = { version = "0.13", default-features = false }
 # WHATWG URL parsing for the deceptive-label check of markdown_safe (FIX-142 review): the host a browser would use.
 url = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 # avatar re-encode (I-31): png/jpeg/webp decoders + png encoder only
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-hmac = "0.12"
+hmac = "0.13"
 arc-swap = "1"
 
 # crypto
@@ -140,7 +140,7 @@ aws-lc-rs = "1.18"
 ed25519-dalek = { version = "3.0", features = ["rand_core", "zeroize"] }
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "tokio1", "aws-lc-rs", "hostname"] }
 zeroize = { version = "1.8", features = ["derive"] }
-base64 = "0.22"
+base64 = "0.23"
 crc32fast = "1"
 hex = "0.4"
 rustix = { version = "1", default-features = false, features = ["std", "process", "pty", "termios", "fs"] }

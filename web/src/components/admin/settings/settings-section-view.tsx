@@ -1,6 +1,8 @@
 "use client";
 
 import { SecretStoresView } from "@/components/admin/secret-stores-view";
+import { GovernanceSettingsView } from "@/components/admin/settings/governance-settings-view";
+import { LlmSettingsView } from "@/components/admin/settings/llm-settings-view";
 import { SettingsSectionForm } from "@/components/admin/settings/settings-section-form";
 import { ErrorState, Loading } from "@/components/states";
 import { PageHeader } from "@/components/ui/page-header";
@@ -14,6 +16,10 @@ function when(iso: string | null | undefined): string {
 export function SettingsSectionView({ slug }: { slug: string }) {
   // FIX-124: the secret stores have their own editor (health, Test connection, migration).
   if (sectionFromSlug(slug) === "secrets") return <SecretStoresView />;
+  // SET-2: the instance governance ceiling, with where organizations stand beneath the form.
+  if (sectionFromSlug(slug) === "governance") return <GovernanceSettingsView />;
+  // SET-3: providers, preference order and endpoints, with a connection test.
+  if (sectionFromSlug(slug) === "llm") return <LlmSettingsView />;
   return <GenericSectionView slug={slug} />;
 }
 

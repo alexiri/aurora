@@ -3,7 +3,7 @@
 //! cannot verify itself), and the AWS event-stream framing.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 fn hex(b: &[u8]) -> String {

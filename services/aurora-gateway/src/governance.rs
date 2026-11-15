@@ -81,8 +81,10 @@ struct Inner {
 type VerKey = (Uuid, [u8; 32]);
 
 pub struct Governance {
-    instance: Instance,
-    registry: Arc<ProviderRegistry>,
+    /// The instance ceiling; replaced when the `governance` (or `llm`) settings change (SET-2).
+    instance: arc_swap::ArcSwap<Instance>,
+    /// The provider table; replaced with the instance when the `llm` settings change (SET-3).
+    registry: arc_swap::ArcSwap<ProviderRegistry>,
     source: Arc<dyn GovSource>,
     http: reqwest::Client,
     ttl: Duration,
@@ -114,8 +116,8 @@ impl Governance {
         source: Arc<dyn GovSource>,
     ) -> Self {
         Self {
-            instance,
-            registry,
+            instance: arc_swap::ArcSwap::from_pointee(instance),
+            registry: arc_swap::ArcSwap::new(registry),
             source,
             http: reqwest::Client::new(),
             ttl: EFFECTIVE_TTL,
@@ -125,6 +127,32 @@ impl Governance {
             verified: Mutex::new(HashMap::new()),
             header_missing: AtomicU64::new(0),
         }
+    }
+
+    /// Replace the instance ceiling after a settings swap (SET-2, `08 §11.1`). The caller flushes
+    /// every cache (`all`) afterwards; the cache is also dropped here so an `effective` computed
+    /// from the old ceiling cannot be stored after the swap (generation bump).
+    pub fn set_instance(&self, instance: Instance) {
+        self.instance.store(Arc::new(instance));
+        self.flush_all();
+    }
+
+    /// The provider table now in force (SET-3).
+    pub fn registry(&self) -> Arc<ProviderRegistry> {
+        self.registry.load_full()
+    }
+
+    /// Replace the provider table and the instance ceiling (which carries the endpoints) after an
+    /// `llm` settings swap, then drop every cached effective governance and verified key. The
+    /// registry goes first: a request that sees the new ceiling never meets the old table.
+    pub fn set_registry_and_instance(&self, registry: Arc<ProviderRegistry>, instance: Instance) {
+        self.registry.store(registry);
+        self.set_instance(instance);
+    }
+
+    /// The instance ceiling now in force.
+    pub fn instance(&self) -> Arc<Instance> {
+        self.instance.load_full()
     }
 
     /// Override the origin re-check TTL (tests).
@@ -156,9 +184,10 @@ impl Governance {
             .org_governance(org)
             .await?
             .ok_or("organization not found")?;
-        let doc: OrgGovernance = aurora_llm::governance::from_stored(&raw, &self.instance)
+        let instance = self.instance.load_full();
+        let doc: OrgGovernance = aurora_llm::governance::from_stored(&raw, &instance)
             .map_err(|e| format!("governance document: {e}"))?;
-        let value = Arc::new(effective(&self.instance, &doc));
+        let value = Arc::new(effective(&instance, &doc));
         if let Ok(mut g) = self.cache.lock()
             && g.generation == gen_seen
         {
@@ -227,9 +256,9 @@ impl Governance {
         // (D-177, SEC-65, FIX-105) The sanctioned key is injected only on the endpoint's inference
         // paths; nothing else of the host (LiteLLM management, files, images, fine-tuning) gets it.
         // Before policy and before any credential is opened.
-        if !self.registry.path_permitted(ep_id, method, path) {
-            let provider = self
-                .registry
+        let registry = self.registry.load_full();
+        if !registry.path_permitted(ep_id, method, path) {
+            let provider = registry
                 .endpoint(ep_id)
                 .map(|e| e.provider.clone())
                 .unwrap_or_default();
@@ -271,11 +300,10 @@ impl Governance {
             .get(ep_id)
             .is_some_and(|e| !e.allowed_models.is_empty());
         if allowed {
-            let model = self
-                .registry
+            let model = registry
                 .endpoint(ep_id)
                 .and_then(|ep| {
-                    self.registry
+                    registry
                         .provider_for(ep)
                         .map(|p| p.model_from_request(ep, method, path, body, truncated))
                 })
@@ -379,13 +407,14 @@ impl Governance {
             )
             .with_details(json!({ "endpoint_id": b.endpoint_id }))
         };
+        let registry = self.registry.load_full();
         let (Some(ep), Ok(text)) = (
-            self.registry.endpoint(&b.endpoint_id),
+            registry.endpoint(&b.endpoint_id),
             std::str::from_utf8(plaintext),
         ) else {
             return Err(self.mark(b, None, "unverifiable", Some("bad_response")));
         };
-        let Some(provider) = self.registry.provider_for(ep) else {
+        let Some(provider) = registry.provider_for(ep) else {
             return Err(unavailable());
         };
         let secret = Secret::new(text.to_owned());
@@ -420,8 +449,9 @@ impl Governance {
 
     /// Step 14 backstop: `Some(refusal)` when the provider-reported account does not comply.
     pub fn backstop(&self, b: &BackstopInfo, headers: &HeaderMap) -> Option<ApiError> {
-        let ep = self.registry.endpoint(&b.endpoint_id)?;
-        let provider = self.registry.provider_for(ep)?;
+        let registry = self.registry.load_full();
+        let ep = registry.endpoint(&b.endpoint_id)?;
+        let provider = registry.provider_for(ep)?;
         match provider.origin_from_response(ep, headers) {
             None => {
                 self.header_missing.fetch_add(1, Ordering::Relaxed);

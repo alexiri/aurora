@@ -34,7 +34,7 @@ import {
   type GovForm,
   type GovIssues,
 } from "@/lib/api/governance";
-import { useWorkspaces } from "@/lib/api/queries";
+import { useMe, useWorkspaces } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
 type Tab = "models" | "egress" | "apps" | "byo" | "compliance";
@@ -47,11 +47,22 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "compliance", label: "Compliance" },
 ];
 
-export function Locked() {
-  return (
+/**
+ * "Enforced by instance". With `setting` (the registry key, C-783) instance admins get a link to
+ * `/admin/settings/governance#<key>`; everyone else sees plain text.
+ */
+export function Locked({ setting }: { setting?: string }) {
+  const me = useMe();
+  const badge = (
     <Badge className="ml-2 align-middle normal-case tracking-normal" title="Set by the instance operator">
       enforced by instance
     </Badge>
+  );
+  if (!setting || me.data?.user.is_instance_admin !== true) return badge;
+  return (
+    <Link href={`/admin/settings/governance#${setting}`} className="no-underline" aria-label={`Enforced by instance: open the ${setting} setting`}>
+      {badge}
+    </Link>
   );
 }
 
@@ -180,13 +191,15 @@ function Body({
 }
 
 function PostureSelect<T extends string>({
-  label, value, options, locked, readOnly, onChange,
+  label, value, options, locked, readOnly, onChange, setting,
 }: {
   label: string; value: T; options: { value: T; label: string }[]; locked: boolean; readOnly: boolean; onChange: (v: T) => void;
+  /** The instance setting that decides when `locked` (C-783). */
+  setting?: string;
 }) {
   return (
     <label className="block text-sm font-medium text-ink">
-      <span>{label}{locked ? <Locked /> : null}</span>
+      <span>{label}{locked ? <Locked setting={setting} /> : null}</span>
       <select className={cn(inputClass, "mt-1.5 max-w-lg")} value={value} disabled={locked || readOnly} onChange={(e) => onChange(e.target.value as T)}>
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -205,6 +218,7 @@ function ModelsTab({ form, patch, issues, readOnly }: { form: GovForm; patch: (p
         label="LLM posture"
         value={form.llmPosture}
         locked={form.llmPostureLocked}
+        setting="governance.llm.minimum_posture"
         readOnly={readOnly}
         onChange={(v) => patch({ llmPosture: v })}
         options={[
@@ -230,7 +244,7 @@ function ModelsTab({ form, patch, issues, readOnly }: { form: GovForm; patch: (p
             <Errors messages={issuesUnder(issues, `${base}/allowed`)} />
             <div role="group" aria-label={`Key scopes for ${e.display_name}`} className="text-sm text-ink">
               <span className="font-medium">Key scopes</span>
-              {e.locked.key_scopes ? <Locked /> : null}
+              {e.locked.key_scopes ? <Locked setting="governance.llm.allowed_key_scopes" /> : null}
               <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
                 {KEY_SCOPES.map((s) => (
                   <label key={s} className="flex items-center gap-1.5">
@@ -290,6 +304,7 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
         label="Egress posture"
         value={form.egressPosture}
         locked={form.egressPostureLocked}
+        setting="governance.egress.minimum_posture"
         readOnly={readOnly}
         onChange={(v) => patch({ egressPosture: v })}
         options={[
@@ -302,6 +317,7 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
         label="Browser tunnels (open lane)"
         value={form.openLane}
         locked={form.openLaneLocked}
+        setting="governance.egress.open_lane_minimum"
         readOnly={readOnly}
         onChange={(v) => patch({ openLane: v })}
         options={[
@@ -361,7 +377,7 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
         </section>
       ) : null}
       <section aria-label="Instance baseline" className="space-y-3">
-        <h2 className="font-display text-base font-semibold text-ink">Instance baseline<Locked /></h2>
+        <h2 className="font-display text-base font-semibold text-ink">Instance baseline<Locked setting="governance.egress.baseline_allowlist" /></h2>
         {eff.egress.baseline_allowlist.length === 0 ? (
           <p className="text-sm text-ink-2">The instance has no baseline allow-list.</p>
         ) : (

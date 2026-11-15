@@ -8,6 +8,19 @@ the key table is [docs/15 §Configuration reference](../15-deployment-operations
 In Helm, put the keys under `config:` in your values file (for example `config.byo.minimum_posture`), except where a
 section below names a dedicated chart value.
 
+**The instance governance ceiling is edited in the dashboard (phase 5, SET-2, D-236/D-237).** The keys under
+`governance.*` and `byo.*` (the LLM, egress, BYO and agent-token floors; not the configuration-only
+`governance.llm.known_llm_hosts`) are edited on **Admin › Settings › Governance** by an instance
+administrator and apply to the API and every gateway within seconds, **without a restart**, including the
+`byo.enabled` master switch. Setting a key in Helm instead **locks** it: the page shows it read-only as
+"Managed by Helm" and the API refuses a write (409 `setting_locked`). Saving a change re-evaluates every
+organization's stored state (LLM keys whose verified origin no longer complies become `mismatch`, model overrides that are no
+longer allowed are cleared, live agent tokens are shortened when the maximum age is lowered; `08 §7`, `08 §11.2`) in the
+background, once per organization and idempotently. The page lists where each organization stands (effective postures,
+and the settings where it is stricter than the floor or clamped by it) and, before a loosening save, which organizations
+change. Policy itself stays per organization and workspace; there is no instance-wide rule scope. The tables below name
+the keys; "Changed by restart" applies only to a key you lock in Helm.
+
 ## TLS proxy listener
 
 The proxy listener is **TLS-only** for everyone: hosted sandboxes, in-cluster clients and external BYO agents.
@@ -87,7 +100,7 @@ A BYO agent runs outside Aurora and dials the proxy with an `aug_` token. Hosted
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `byo.enabled` | `true` | Master switch. `false`: BYO creation is refused and every BYO credential is refused by the gateway (403 `byo_disabled`), whatever org and workspace say. Changed by restart. |
+| `byo.enabled` | `true` | Master switch. `false`: BYO creation is refused and every BYO credential is refused by the gateway (403 `byo_disabled`), whatever org and workspace say. Live from the dashboard (no restart); changed by restart only when Helm sets it. |
 | `byo.minimum_posture` | `owners_only` | Floor for every org and workspace. `enabled`: any member who can use the workspace may create a BYO agent (the phase 0 behaviour). `owners_only`: only workspace owners and org owners/admins. `disabled`: nobody, and existing credentials are refused. |
 | `byo.default_source_cidrs` | `[]` (unrestricted) | Default source CIDR list for every BYO agent that has no list of its own or of its organization. At most 32 entries; `/0` is refused. Orgs and agents can only narrow it. |
 | `byo.require_context_credentials` | `false` | When `true`, a BYO agent must use context credentials (`auc_`) for any request that would inject a credential (403 `context_credential_required`). |

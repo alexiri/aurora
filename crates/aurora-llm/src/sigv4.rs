@@ -1,7 +1,7 @@
 //! (D-261, C-807, docs/09 §5) AWS Signature Version 4 over HMAC-SHA256: the one signer of the platform. The gateway's
 //! `aws_sigv4` finalizer, its Bedrock inference signing and the STS `AssumeRole` mint all call [`sign`]; the API signs
 //! its Bedrock listing and `GetCallerIdentity` calls with it too. Checked against the AWS signature test suite.
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use http::Method;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use sha2::{Digest, Sha256};

@@ -21,7 +21,7 @@ implementation repo and checked in (CI fails on drift).
 | W11 | Upstream | gateway → internet | guarded resolver; (phase 5 (D-138, moved from phase 4), P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers`; (phase 5, P4-LLM spec batch, D-261) and gateway-minted Entra tokens (Azure) and STS `AssumeRole` sessions (Bedrock), from one mint service at pinned token endpoints | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
 | W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
-| W14 | Blob store (phase 5 (D-138, moved from phase 4), P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
+| W14 | Blob store (phase 6 (D-318, moved from phase 5), P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
 | W15 | SCIM 2.0 (phase 4, P4-GRP-2) | IdP → API `/scim/v2` | `aud_` bearer per org | this doc, `04 §SCIM` |
 | W16 | Web Push (phase 5 (D-138, moved from phase 4), RFE-011b) | API → browser push service (FCM, Mozilla, Apple, WNS) | VAPID (RFC 8292) JWT signed by the instance key | this doc, `07 §Web Push` |
 | W17 | Relay plane (phase 4, P4-PRV-2) | relay → API `/v1/relay`; runner → API `/v1/runner/preview-streams/*` | `aul_` + replica; `aur_` + replica | this doc, `04 §Preview access` |
@@ -258,7 +258,7 @@ every transport failure is `Unavailable` and is handled by the class policy
 
 ---
 
-## W14 — Blob store (phase 5 (D-138, moved from phase 4), P4-S3)
+## W14 — Blob store (phase 6 (D-318, moved from phase 5), P4-S3)
 
 The API speaks the S3 REST API (`PutObject` with `x-amz-checksum-sha256`, the configured
 `x-amz-server-side-encryption` and `If-None-Match: *`, `GetObject`, `DeleteObject`,
