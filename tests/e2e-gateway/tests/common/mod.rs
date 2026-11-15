@@ -36,6 +36,9 @@ pub struct Opts {
     /// (P4-LLM-1, C-812) An `openai` endpoint whose fixed origin `https://api.openai.com` is replaced by this
     /// loopback target through `llm.dev_upstream_overrides` (the API's key validation and listing use it).
     pub llm_openai_override: Option<String>,
+    /// (P4-LLM-2) A `vertex` endpoint `vx` (project `inference-proj`, `us-east5`): `(google token base, vertex base)`, both
+    /// loopback targets of `llm.dev_upstream_overrides`.
+    pub llm_vertex: Option<(String, String)>,
     /// Writes `gateway.insecure_loopback_injection = false` (the config the override must refuse).
     pub no_insecure_loopback: bool,
     /// Run the gateway once with this config, expect it to refuse to start (log in `<dir>/refused.log`) and return.
@@ -169,6 +172,11 @@ api_internal_url = "http://{API_IP}:4111"
         if let Some(t) = &o.llm_openai_override {
             toml.push_str(&format!(
                 "\n[llm]\nenabled_providers = [\"openai\"]\nprovider_preference = [\"openai\"]\n\n[llm.dev_upstream_overrides]\n\"https://api.openai.com\" = \"{t}\"\n\n[[llm.endpoints]]\nid = \"openai\"\nprovider = \"openai\"\n"
+            ));
+        }
+        if let Some((google, vertex)) = &o.llm_vertex {
+            toml.push_str(&format!(
+                "\n[llm]\nenabled_providers = [\"vertex\"]\nprovider_preference = [\"vertex\"]\n\n[llm.dev_upstream_overrides]\n\"https://oauth2.googleapis.com\" = \"{google}\"\n\"https://us-east5-aiplatform.googleapis.com\" = \"{vertex}\"\n\n[[llm.endpoints]]\nid = \"vx\"\nprovider = \"vertex\"\nproject_id = \"inference-proj\"\nlocation = \"us-east5\"\nmodels = [\"claude-x\"]\ndefault_model = \"claude-x\"\n"
             ));
         }
         let mut stack = Stack {

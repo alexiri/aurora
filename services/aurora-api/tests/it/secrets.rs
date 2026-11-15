@@ -28,6 +28,9 @@ struct World {
     _flaky: MockServer,
     /// (P4-LLM-1) answers as api.openai.com (reached through `llm.dev_upstream_overrides`).
     _openai: MockServer,
+    /// (P4-LLM-2) Google's token endpoint (`llm.dev_upstream_overrides`) and the service-account key it accepts.
+    google: aurora_testkit::llm::google_token::MockGoogleToken,
+    vkey: aurora_testkit::llm::google_token::TestKey,
 }
 
 fn endpoint(id: &str, base: &str, rule: Option<KeyOrigin>) -> LlmEndpoint {
@@ -133,12 +136,27 @@ async fn world() -> World {
         .with_priority(5)
         .mount(&openai)
         .await;
+    let vkey = aurora_testkit::llm::google_token::TestKey::generate(
+        "key-proj",
+        "sa@key-proj.iam.gserviceaccount.com",
+    );
+    let google = aurora_testkit::llm::google_token::MockGoogleToken::start(&vkey).await;
+    let gu = google.base().to_owned();
     let (lu, au, fu) = (litellm.uri(), anthropic.uri(), flaky.uri());
     let ou = openai.uri();
     let h = Harness::with_config(move |c| {
-        c.llm.enabled_providers = ["litellm", "anthropic", "openai", "openai_compatible"]
-            .map(String::from)
-            .to_vec();
+        c.llm.enabled_providers = [
+            "litellm",
+            "anthropic",
+            "openai",
+            "openai_compatible",
+            "vertex",
+        ]
+        .map(String::from)
+        .to_vec();
+        c.llm
+            .dev_upstream_overrides
+            .insert("https://oauth2.googleapis.com".into(), gu.clone());
         c.llm
             .dev_upstream_overrides
             .insert("https://api.openai.com".into(), ou.clone());
@@ -204,6 +222,33 @@ async fn world() -> World {
                 }),
                 ..LlmEndpoint::default()
             },
+            // (P4-LLM-2) Vertex: the key's project must be `key-proj` (`vx`) / another one (`vx_other`).
+            LlmEndpoint {
+                id: "vx".into(),
+                provider: "vertex".into(),
+                project_id: Some("inference-proj".into()),
+                location: Some("us-east5".into()),
+                models: vec!["claude-x".into()],
+                key_origin: Some(KeyOrigin {
+                    method: "provider_account".into(),
+                    allowed_workspace_ids: vec!["key-proj".into()],
+                    ..KeyOrigin::default()
+                }),
+                ..LlmEndpoint::default()
+            },
+            LlmEndpoint {
+                id: "vx_other".into(),
+                provider: "vertex".into(),
+                project_id: Some("inference-proj".into()),
+                location: Some("global".into()),
+                models: vec!["claude-x".into()],
+                key_origin: Some(KeyOrigin {
+                    method: "provider_account".into(),
+                    allowed_workspace_ids: vec!["another-proj".into()],
+                    ..KeyOrigin::default()
+                }),
+                ..LlmEndpoint::default()
+            },
             LlmEndpoint {
                 id: "compat".into(),
                 provider: "openai_compatible".into(),
@@ -252,7 +297,7 @@ async fn world() -> World {
         .bind(json!({"llm": {"endpoints": {
             "central": {"key_scopes": ["organization"]},
             "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {},
-            "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}
+            "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}, "vx": {}, "vx_other": {}
         }}}))
         .execute(h.pool())
         .await
@@ -280,6 +325,8 @@ async fn world() -> World {
         _anthropic: anthropic,
         _flaky: flaky,
         _openai: openai,
+        google,
+        vkey,
     }
 }
 
@@ -1435,4 +1482,110 @@ async fn org_secret_provenance_is_for_org_admins_only() {
         .find(|i| i["id"] == id.as_str())
         .unwrap();
     assert!(item["created_by"].is_object(), "{v}");
+}
+
+/// (P4-LLM-2, C-801, C-804, SEC-97, acceptance 4) A `gcp_service_account` key: shape refusals name the C-801 reason and
+/// call nothing; a valid key is verified by one mint and its origin is the key's own project and e-mail; the
+/// `provider_account` rule on another project refuses it; a rejected mint is `llm_key_invalid`.
+#[tokio::test]
+async fn vertex_service_account_keys_are_checked_minted_and_attributed() {
+    use aurora_testkit::llm::google_token::Behaviour;
+    let w = world().await;
+    let save = |ep: &str, value: String, name: &str| {
+        json!({"name": name, "kind": "llm",
+               "llm": {"endpoint_id": ep, "auth_mode": "gcp_service_account"}, "value": value})
+    };
+    let url = w.ws_url();
+    let post = |body: Value| w.call(Method::POST, &url, &w.owner, Some(body));
+    // Shape refusals: nothing is called.
+    let json_with = |f: &dyn Fn(&mut Value)| {
+        let mut v: Value = serde_json::from_str(&w.vkey.json()).unwrap();
+        f(&mut v);
+        v.to_string()
+    };
+    for (name, value, reason) in [
+        (
+            "wrong-uri",
+            w.vkey
+                .json_with("service_account", "https://evil.example/token"),
+            "token_uri_not_google",
+        ),
+        (
+            "not-sa",
+            w.vkey
+                .json_with("authorized_user", "https://oauth2.googleapis.com/token"),
+            "not_service_account",
+        ),
+        (
+            "not-json",
+            "just a string".to_owned(),
+            "not_service_account",
+        ),
+        (
+            "bad-key",
+            json_with(&|v| {
+                v["private_key"] =
+                    "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----".into()
+            }),
+            "missing_field",
+        ),
+        (
+            "extra",
+            json_with(&|v| v["region"] = "us".into()),
+            "unknown_field",
+        ),
+    ] {
+        let (s, v) = post(save("vx", value, name)).await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("llm_key_invalid")),
+            "{name}: {v}"
+        );
+        assert_eq!(v["error"]["details"]["reason"], reason, "{name}: {v}");
+        no_value(&v, &["BEGIN PRIVATE KEY"]);
+    }
+    assert_eq!(
+        w.google.requests(),
+        0,
+        "shape refusals make no outbound call"
+    );
+    // A valid key: one mint, origin from the key.
+    let (s, v) = post(save("vx", w.vkey.json(), "good")).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(w.google.requests(), 1);
+    assert!(w.google.refused().is_empty());
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["workspace_id"], "key-proj");
+    assert_eq!(
+        v["origin"]["user_id"],
+        "sa@key-proj.iam.gserviceaccount.com"
+    );
+    assert_eq!(v["llm"]["auth_mode"], "gcp_service_account");
+    assert_eq!(v["host_pattern"], "us-east5-aiplatform.googleapis.com");
+    no_value(&v, &["BEGIN PRIVATE KEY", "ya29"]);
+    // The provider_account rule with another project.
+    let (s, v) = post(save("vx_other", w.vkey.json(), "other")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_wrong_organization")),
+        "{v}"
+    );
+    // A rejected mint.
+    w.google.set_behaviour(Behaviour::InvalidGrant);
+    let (s, v) = post(save("vx", w.vkey.json(), "rejected")).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    // The api_key mode is not admitted on vertex.
+    let (s, v) =
+        post(json!({"name": "ak", "kind": "llm", "llm": {"endpoint_id": "vx"}, "value": "sk-x"}))
+            .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_invalid")),
+        "{v}"
+    );
+    assert_eq!(v["error"]["details"]["reason"], "auth_mode_unsupported");
 }

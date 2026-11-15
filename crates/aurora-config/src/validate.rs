@@ -2336,6 +2336,27 @@ fn check_allowed_paths(c: &mut Ctx, key: &str, provider: &str, paths: &[String])
     }
 }
 
+/// (C-812) The origins `llm.dev_upstream_overrides` may replace (P4-LLM-2: Google's token endpoint and the Vertex
+/// hosts; the Entra and AWS origins join with their providers).
+fn dev_override_origin_ok(origin: &str) -> bool {
+    match origin.strip_prefix("https://") {
+        Some(
+            "api.openai.com"
+            | "api.anthropic.com"
+            | "oauth2.googleapis.com"
+            | "aiplatform.googleapis.com",
+        ) => true,
+        Some(h) => h
+            .strip_suffix("-aiplatform.googleapis.com")
+            .is_some_and(|l| {
+                !l.is_empty()
+                    && l.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            }),
+        None => false,
+    }
+}
+
 /// (C-812) `llm.dev_upstream_overrides`: a key is a provider's fixed origin, a target a loopback `http(s)://host[:port]`;
 /// only with `gateway.insecure_loopback_injection`, never inside Kubernetes.
 fn check_dev_upstream_overrides(c: &mut Ctx, l: &LlmSection, insecure_loopback: bool) {
@@ -2353,11 +2374,12 @@ fn check_dev_upstream_overrides(c: &mut Ctx, l: &LlmSection, insecure_loopback: 
         c.err(key, "refused inside a Kubernetes cluster");
     }
     for (origin, target) in &l.dev_upstream_overrides {
-        if !matches!(
-            origin.as_str(),
-            "https://api.openai.com" | "https://api.anthropic.com"
-        ) {
-            c.err(format!("{key}.{origin}"), "must be a fixed provider origin: https://api.openai.com or https://api.anthropic.com");
+        if !dev_override_origin_ok(origin) {
+            c.err(
+                format!("{key}.{origin}"),
+                "must be a fixed provider or mint origin: https://api.openai.com, https://api.anthropic.com, \
+                 https://oauth2.googleapis.com, https://aiplatform.googleapis.com or https://<location>-aiplatform.googleapis.com",
+            );
         }
         let loopback = target
             .split_once("://")

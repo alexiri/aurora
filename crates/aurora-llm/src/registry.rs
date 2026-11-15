@@ -1,7 +1,7 @@
 use crate::http_util::host_of;
 use crate::{
     AnthropicProvider, Dialect, Endpoint, KeyOriginRule, LitellmProvider, LlmError, LlmProvider,
-    OpenaiCompatibleProvider, OpenaiProvider, Result,
+    OpenaiCompatibleProvider, OpenaiProvider, Overrides, Result, VertexProvider,
 };
 use aurora_config::{LlmEndpoint, LlmSection, RawConfig};
 use std::collections::BTreeMap;
@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub struct ProviderRegistry {
     providers: BTreeMap<&'static str, Arc<dyn LlmProvider>>,
     endpoints: Vec<Endpoint>,
+    overrides: Overrides,
 }
 
 fn builtin(id: &str) -> Option<Arc<dyn LlmProvider>> {
@@ -19,6 +20,7 @@ fn builtin(id: &str) -> Option<Arc<dyn LlmProvider>> {
         "anthropic" => Some(Arc::new(AnthropicProvider::default())),
         "openai" => Some(Arc::new(OpenaiProvider::default())),
         "openai_compatible" => Some(Arc::new(OpenaiCompatibleProvider)),
+        "vertex" => Some(Arc::new(VertexProvider::default())),
         _ => None,
     }
 }
@@ -44,6 +46,9 @@ fn with_overrides(
                 Some(t) => Arc::new(OpenaiProvider::with_base_url(t)) as Arc<dyn LlmProvider>,
                 None => Arc::new(OpenaiProvider::default()),
             }),
+            "vertex" => Some(Arc::new(VertexProvider::with_overrides(Overrides::new(
+                overrides,
+            )))),
             other => builtin(other),
         }
     }
@@ -124,7 +129,13 @@ impl ProviderRegistry {
         Ok(Self {
             providers,
             endpoints,
+            overrides: Overrides::new(&cfg.dev_upstream_overrides),
         })
+    }
+
+    /// (C-812) `llm.dev_upstream_overrides`, for the mint service and the API's validation.
+    pub fn overrides(&self) -> &Overrides {
+        &self.overrides
     }
 
     pub fn endpoint(&self, id: &str) -> Option<&Endpoint> {
@@ -234,6 +245,7 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
             }
             url.to_string()
         }
+        crate::EndpointKind::Derived => String::new(),
         crate::EndpointKind::Configured => {
             let b = e.base_url.clone().ok_or_else(|| {
                 LlmError::Config(format!("endpoint `{}`: base_url is required", e.id))
@@ -269,7 +281,7 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
             LlmError::Config(format!("endpoint `{}`: unknown dialect `{d}`", e.id))
         })?);
     }
-    Ok(Endpoint {
+    let mut ep = Endpoint {
         id: e.id.clone(),
         provider: e.provider.clone(),
         display_name: e
@@ -290,7 +302,11 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
         region: e.region.clone(),
         project_id: e.project_id.clone(),
         location: e.location.clone(),
-    })
+    };
+    if provider.endpoint_kind() == crate::EndpointKind::Derived {
+        ep.base_url = provider.base_url(&ep);
+    }
+    Ok(ep)
 }
 
 /// (C-802) The auth modes an endpoint's key-origin rule admits: an `azure_openai` endpoint with `provider_account` admits
