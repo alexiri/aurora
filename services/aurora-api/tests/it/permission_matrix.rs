@@ -487,7 +487,12 @@ const ROWS: &[Row] = &[
         G::Inst,
         true,
     ),
-    r("POST", "/v1/admin/settings/llm/endpoint-test", G::Inst, true),
+    r(
+        "POST",
+        "/v1/admin/settings/llm/endpoint-test",
+        G::Inst,
+        true,
+    ),
     r("GET", "/v1/admin/secret-stores", G::Inst, true),
     r("PUT", "/v1/admin/secret-stores/{id}", G::Inst, true),
     r("DELETE", "/v1/admin/secret-stores/{id}", G::Inst, true),
