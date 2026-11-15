@@ -2,5 +2,17 @@
 # aurora-config keeps this equal to the settings registry; scripts/guards/settings-chart.sh fails
 # when the rendered aurora.toml contains one of these keys (the chart renders a movable key only
 # when the operator set it). Each section brief (SET-2..SET-5, FIX-124) adds its keys here.
+byo.default_source_cidrs
+byo.enabled
+byo.minimum_posture
+byo.require_context_credentials
+governance.agent_tokens.max_age_days
+governance.egress.baseline_allowlist
+governance.egress.minimum_posture
+governance.egress.open_lane_minimum
+governance.llm.allowed_key_scopes
+governance.llm.known_llm_hosts_extra
+governance.llm.minimum_posture
+governance.llm.require_key_origin
 secrets.default_store
 secrets.stores
