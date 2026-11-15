@@ -1,7 +1,7 @@
 //! Adapter `fake`: in-process, directive-driven, no LLM (`docs/12-supervisor-harness.md`).
 //!
 //! Directives in the turn text: `[[say: …]]`, `[[tool: name {json}]]`, `[[http: GET url]]`
-//! (through the session proxy), `[[sleep: 2s]]`, `[[fail: code]]`, `[[steer-accept]]`. Without any
+//! (through the session proxy; a JSON body may follow the URL), `[[sleep: 2s]]`, `[[fail: code]]`, `[[steer-accept]]`. Without any
 //! directive the turn echoes the text word by word.
 
 use std::path::{Path, PathBuf};
@@ -406,7 +406,16 @@ impl Script {
             b = b.add_root_certificate(cert);
         }
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
-        let resp = b.build()?.request(method, url).send().await?;
+        // `[[http: POST https://host/path {"json":"body"}]]`: whatever follows the URL is a JSON body
+        // (it cannot contain `]]`, which ends the directive).
+        let (url, body) = url
+            .split_once(char::is_whitespace)
+            .map_or((url, None), |(u, b)| (u, Some(b.trim().to_owned())));
+        let mut req = b.build()?.request(method, url);
+        if let Some(body) = body {
+            req = req.header("content-type", "application/json").body(body);
+        }
+        let resp = req.send().await?;
         let status = resp.status().as_u16();
         let body = resp.text().await.unwrap_or_default();
         let snippet: String = body.chars().take(200).collect();
@@ -429,5 +438,11 @@ mod tests {
         assert_eq!(d[3], Directive::Http("GET".into(), "http://x/y".into()));
         assert_eq!(d[4], Directive::SteerAccept);
         assert_eq!(d[5], Directive::Fail("provider_quota".into()));
+        // The URL and an optional JSON body travel together (split when the request is built).
+        let d = parse(r#"[[http: POST https://h/p {"filter":"(uid=x)"}]]"#);
+        assert_eq!(
+            d[0],
+            Directive::Http("POST".into(), r#"https://h/p {"filter":"(uid=x)"}"#.into())
+        );
     }
 }

@@ -1224,51 +1224,55 @@ async fn k7_cern_addons_source_to_phonebook_search_and_route() {
         assert_eq!(s, 200, "grant: {g}");
     }
 
-    // From the agent's sandbox, through the gateway (the Pod's proxy settings are the agent's own).
+    // From the agent's own turns (a turn's credential carries the grants; a bare exec into the Pod
+    // is the boot identity, which has none), through the gateway. The fake harness's `[[http: ...]]`
+    // directive makes the request and puts the status and the first 200 characters in the transcript.
     let conv = admin.direct().await;
-    let v = admin.say(&conv, "[[sleep: 120s]]").await;
-    let _turn = turn_id(&v);
-    let (_boot, pod) = wait_boot_pod(&admin, 180).await;
-    let (rc, out) = exec_in(
-        &pod,
-        "curl -sS -m 40 -X POST -H 'content-type: application/json' \
-         -d '{\"filter\":\"(|(displayName=Fabiola Gianotti*)(cn=fabiola gianotti*))\",\"attributes\":[\"displayName\",\"mail\",\"physicalDeliveryOfficeName\",\"manager\"],\"limit\":3}' \
-         https://cern-phonebook.ldap.aurora.internal/search",
+    let run = |directive: String| {
+        let (admin, conv) = (&admin, conv.clone());
+        async move {
+            let before = transcript(&admin.events(&conv).await).len();
+            say_and_finish(admin, &conv, &directive).await;
+            transcript(&admin.events(&conv).await)[before..].to_owned()
+        }
+    };
+    let t = run(
+        r#"[[http: POST https://cern-phonebook.ldap.aurora.internal/search {"filter":"(|(displayName=Fabiola Gianotti*)(cn=fabiola gianotti*))","attributes":["mail"],"limit":3}]]"#
+            .into(),
+    )
+    .await;
+    assert!(
+        t.contains("http 200") && t.contains("@cern.ch"),
+        "phonebook search: {t}"
     );
-    assert_eq!(rc, 0, "phonebook search: {out}");
-    let v: Value = serde_json::from_str(out.trim()).unwrap_or_else(|_| panic!("not JSON: {out}"));
-    let entries = v["entries"].as_array().unwrap_or_else(|| panic!("no entries: {out}"));
-    assert_eq!(entries.len(), 1, "{out}");
-    let mail = entries[0]["attributes"]["mail"][0].as_str().unwrap_or_default();
-    assert!(mail.ends_with("@cern.ch"), "mail: {out}");
-    assert!(entries[0]["attributes"]["manager"][0].as_str().is_some(), "{out}");
     // An attribute the package does not list is refused by the lane (and never read).
-    let (_, out) = exec_in(
-        &pod,
-        "curl -sS -m 40 -X POST -H 'content-type: application/json' -d '{\"filter\":\"(uid=*)\",\"attributes\":[\"userPassword\"]}' \
-         https://cern-phonebook.ldap.aurora.internal/search",
+    let t = run(
+        r#"[[http: POST https://cern-phonebook.ldap.aurora.internal/search {"filter":"(uid=*)","attributes":["userPassword"]}]]"#
+            .into(),
+    )
+    .await;
+    assert!(t.contains("ldap_request_invalid"), "{t}");
+    let t =
+        run("[[http: GET https://maps.cern.ch/api/search?query=513&resultRecordCount=2]]".into())
+            .await;
+    assert!(
+        t.contains("http 200") && t.contains("categories"),
+        "maps search: {t}"
     );
-    assert!(out.contains("ldap_request_invalid"), "{out}");
-
-    let (rc, out) = exec_in(
-        &pod,
-        "curl -sS -m 40 'https://maps.cern.ch/api/search?query=513&resultRecordCount=2'",
+    let t = run(
+        "[[http: GET https://maps.cern.ch/arcgis/rest/services/Routing/NetworkAnalysis/NAServer/Route/solve?stops=6.0459,46.2325;6.0526,46.2330&inSR=4326&returnRoutes=true&f=json]]"
+            .into(),
+    )
+    .await;
+    assert!(
+        t.contains("http 200") && t.contains("checksum"),
+        "route: {t}"
     );
-    assert_eq!(rc, 0, "{out}");
-    let v: Value = serde_json::from_str(out.trim()).unwrap_or_else(|_| panic!("not JSON: {out}"));
-    assert!(v["found"].as_i64().unwrap_or(0) > 0, "{out}");
-    let (rc, out) = exec_in(
-        &pod,
-        "curl -sS -m 60 -G 'https://maps.cern.ch/arcgis/rest/services/Routing/NetworkAnalysis/NAServer/Route/solve' \
-         --data-urlencode 'stops=6.0459,46.2325;6.0526,46.2330' --data-urlencode inSR=4326 \
-         --data-urlencode returnRoutes=true --data-urlencode f=json",
-    );
-    assert_eq!(rc, 0, "{out}");
-    assert!(out.contains("Total_Meters"), "route: {out}");
     // A path the package does not catalogue stays blocked.
-    let (_, out) = exec_in(
-        &pod,
-        "curl -sS -m 40 -o /dev/null -w '%{http_code}' 'https://maps.cern.ch/arcgis/rest/admin/services?f=json'",
+    let t =
+        run("[[http: GET https://maps.cern.ch/arcgis/rest/admin/services?f=json]]".into()).await;
+    assert!(
+        !t.contains("http 200"),
+        "uncatalogued ArcGIS path was served: {t}"
     );
-    assert!(out.trim() != "200", "uncatalogued ArcGIS path was served: {out}");
 }

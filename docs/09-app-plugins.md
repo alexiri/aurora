@@ -723,7 +723,7 @@ ordinary tools on that host (`POST /search`). The `connect` flow is `kind: field
 is part of what an admin approves: **adding or changing it widens permissions** unless it is the
 same server, port and base with a subset of the attributes and no larger `max_entries`
 (`Widening::Directory`, `§10`). Fixtures send `POST https://<app id>.ldap.aurora.internal/search`
-and expect a `tool` (`plugins/addons/cern-phonebook/tests`).
+and expect a `tool` (the reference package `cern-phonebook` lives in `github.com/alexiri/aurora-addons-cern`, `plugins/cern-phonebook/tests`).
 
 ## 4. Template substitution
 
