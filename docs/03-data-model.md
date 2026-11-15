@@ -1609,8 +1609,14 @@ tables above in the same change (and this section shrinks).
 | expires_at | timestamptz not null | `created_at + PENDING_ACCESS_TTL` (30 days); an index on it serves the sweeper | 5 (P5-UX-5) |
 
 Index `(org_id, email_normalized)` serves the sign-in lookup. The gateway role gets nothing on this table.
-The placement document (C-520, wherever placement is stored today) gains
-`personal_workspace.display_name_template` (C-923); no column.
+C-923 (a personal workspace named after the person) adds no column and no setting: the name is derived when
+the workspace is created.
+
+#### `app_connections` (the limit of an organization's account; phase 5, P5-UX-11, D-353, C-990)
+
+| Column | Type | Notes | Phase |
+|---|---|---|---|
+| limit_level | text null | CHECK in (`read`, `ask`, `act`); set only for organization scope, null otherwise. The migration fills it from `access` (`read` → `read`, `write` → `act`). `access` stays in step (`read` for `read`, `write` otherwise) and keeps being what the gateway enforces | 5 (P5-UX-11) |
 
 (Landed, FIX-146 Part B: `turns.trace_context` and `gateway_credentials.trace_context` are in §6 and §3 with migration `20261201000150_turn_trace_context.sql`. The gateway role gets no grant on `turns`: the value is copied onto the context credential at mint.)
 

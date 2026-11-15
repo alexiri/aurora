@@ -12,15 +12,16 @@ P5-IA-1 moved the existing pieces under these topics. This task makes each a coh
 
 ## Linked requirements
 
-- D-338, D-339, D-340, D-351; contracts **C-968, C-969, C-970**; uses C-963 (`ScopeLadder`) and C-971
-  (`SettingsSectionFields`).
+- D-338, D-339, D-340, D-351; contracts **C-968, C-969, C-970, C-967 (the workspace part)**; uses C-963
+  (`ScopeLadder`) and C-971 (`SettingsSectionFields`).
 - Normative: `14 §Information architecture` (People, Data, Platform, Chat platforms and Settings rows;
   the settings map), `15 §Instance settings` (sections; unchanged).
 
 ## Wave and order
 
 - **Wave 2.** Starts after P5-IA-1 (the pages, `SettingsSectionFields`) and P5-IA-2 (`ScopeLadder`).
-- Disjoint from P5-IA-3 (other pages) and P5-IA-5 (the settings form's rendering).
+- Disjoint from P5-IA-3 (other pages; this task alone edits `components/settings/settings-view.tsx`
+  and the workspace's agents list header) and P5-IA-5 (the settings form's rendering).
 - **SET-4/5** (lane `p5-apps`) register the `sign_in`, `email`, `retention`, `scim` and `limits` sections
   that render on these pages. They add no navigation (D-340). The Orchestrator orders this task after
   SET-4.
@@ -69,18 +70,25 @@ P5-IA-1 moved the existing pieces under these topics. This task makes each a coh
      the member and agent limits), **API keys**, **Danger zone** (freeze, delete). Retention has moved to
      Data.
    - **Workspace** `…/settings`: **General** (name, time zone, memory language), **API keys**, **Audit**,
-     **Danger zone**. People and BYO have moved.
-5. **Tests.**
+     **Danger zone**. People has moved (scope 1).
+   - **The workspace's BYO setting (C-967)** moves, in this task, from Settings › General to the header
+     of the workspace's agents list, as a ladder row: the organization's value above, the workspace's
+     choice behind **Tighten…**.
+5. **Empty states and read-only views.** Members who can open a page here see values as text and no
+   controls (`14` "What a person sees of something they cannot do").
+6. **Tests.**
    - Vitest: each tab renders its content; the organization's Retention form saves both values and shows
      the maximums above; the Sign-in page's three parts.
    - Playwright: change the organization's attachment retention on Data › Retention; open Sign-in from
-     Administration; a workspace owner opens People from the sidebar; old URLs land on the right tabs.
+     Administration; a workspace owner opens People from the sidebar; a workspace's agents list shows
+     the organization's BYO value; old URLs land on the right tabs.
    - Axe and narrow-route suites, both themes.
 
 ## Constraints / file ownership
 
 - Owns: the People, Data, Platform, Chat platforms and Settings pages at each level; the moved components
-  (composition); the deletion of the Identity page.
+  (composition); the workspace BYO field's move to the agents list header; the deletion of the Identity
+  page.
 - Administration › Overview is P5-UX-6's.
 - No API change.
 

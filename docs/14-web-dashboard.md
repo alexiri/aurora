@@ -944,8 +944,10 @@ Binding for every label, title, empty state, error and help text. Code and API n
 | **Account**: "your GitHub account", a **connected account** | Connection, credential, grant target | something an agent can use: an app account, a website with a token, or an AI key |
 | **App**, **Website**, **AI key** (the three kinds of account) | Connection, secret, service, LLM key | App: an account of an app from the catalogue. Website: any other website or API, reached with a token you store. AI key: the key to an AI provider |
 | **Access**: Read only · Ask before changes · Change without asking · Custom | Grant, mode, full access, preset | what one agent may do with one account |
-| **Limit** (of a shared account, of the organization, of Administration) | Connection access, posture, floor, ceiling | the most a level below may allow |
-| **Give access**, **Remove access** | Grant, revoke | the verbs |
+| **Limit** (of an organization's account, of the organization, of Administration) | Connection access, posture, floor, ceiling, maximum | the most a level below may allow |
+| **Give access**, **Remove access** | Grant, revoke | the verbs for an agent and an account |
+| **Connect**, **Reconnect**, **Remove** | Add a connection, delete | the verbs for an account itself |
+| **Turn off**, **Turn on** | Disable, enable | the verbs for anything that can be paused: an account, a rule, an app |
 | **AI models** | Model access, LLM, Governance › Model access | endpoints and the models agents may use |
 | **Internet access**, **Rule** | Policy, Egress, Governance › Egress | which websites agents may reach, and rules that allow, ask or block |
 | **Check what would happen** | Simulate, Test a request | try a request against access, rules and limits |
@@ -960,12 +962,23 @@ Binding for every label, title, empty state, error and help text. Code and API n
 | **Your account** | — | the signed-in person's own Aurora account (`/account`). It is always "your account", so it is never confused with a connected account |
 
 "Governance", "Policy", "Credentials", "connection", "grant", "secret" and "service" are not used in the
-interface. The words stay in operator docs and APIs.
+interface. The words stay in operator docs and APIs. Three notes:
+- **Secret stores** keeps its name. It is an operator page under Platform about where Aurora keeps what it
+  stores, and it never names an account.
+- **Member** stays as the name of a role and as the organization's **Members** tab under People. Only
+  "Members" as a page name is retired.
+- **Website** has one meaning per place. Under Internet access it is a site an agent reaches. As a kind of
+  account it is a site Aurora holds a token for. Text that could be read either way says "a token for
+  <site>".
+
+One sentence per thing: the wording of a state, a level or an action is written once, in §Agents, accounts
+and access, and every screen quotes it. A brief never rephrases it.
 
 #### Topics per level
 
 Each topic is one page (`PageHeader` + at most **four** tabs). Routes use `?tab=`. `/apps/<app>` is the
-per-app setup page (§Agents, accounts and access §4).
+per-app setup page (§Agents, accounts and access §4). An agent's own page is not a topic and keeps its
+five tabs.
 
 | Topic | Administration (`/admin/…`) | Organization (`/o/<org>/…`) | Workspace (`/o/<org>/w/<ws>/…`) |
 |---|---|---|---|
@@ -985,9 +998,14 @@ The workspace also has **Approvals** and **Activity** (daily pages, not settings
   accounts and the organization's shared ones. An agent's **Access** tab is that list filtered to the
   agent. The organization's shows the accounts shared with the whole organization.
 - **Apps** is the catalogue: at Administration with package approval, in an organization with
-  availability, in a workspace with **Connect**. Every app name links to its setup page.
+  availability, in a workspace with **Connect**. In a workspace and an organization, every app name links
+  to its setup page. In Administration, an app name opens its catalogue entry
+  (`/admin/apps/packages/<id>`), which links to **OAuth clients for this app** (the OAuth clients tab
+  filtered to it).
 - A workspace has no OAuth clients tab: an app's setup page holds the workspace's clients for that app.
-  Agents' requests for access (proposals) appear as a banner on Accounts when any wait.
+  Agents' requests for access appear as a banner on Accounts when any wait.
+- **AI keys are added on Accounts** at both levels: a workspace's key under the workspace's Accounts, a
+  key for the whole organization under the organization's Accounts (**Add › Add an AI key**).
 - Administration's **Advanced** tab holds Package sources, Publishers and Host conflicts. Its **Sign-in**
   tab under People holds providers, role mapping and directory sync. Its **Computers** tab under Agents
   holds the terminal and previews settings.
@@ -1001,10 +1019,19 @@ guides keep working.
 - **Org members** see Workspaces, plus **AI models** and **Internet access** read-only, so they can see
   why a model or a website is refused.
 - **Org owners and admins** see every org topic.
-- **Workspace members** see Overview, Agents, Apps & accounts and Internet access (both read-only),
-  Skills, Activity, and Approvals if they may approve.
+- **Workspace members** see Overview, Agents, Skills, Activity, and Approvals if they may approve. They
+  also see Apps & accounts and Internet access, read-only.
 - **Workspace owners** also see People and Settings.
 - **Administration** is shown only to instance admins.
+
+**What a person sees of something they cannot do** (C-961, one rule for every page):
+- The page's **main action** (for example **Give <Agent> an app**, **Add**, **Add rule**, **Add people**)
+  is replaced by the §Who can fix this sentence in the same place: "Only workspace owners can give Daneel
+  an app. Ask Bob Builder."
+- Other controls they cannot use (row menus, switches, the access choice) are not shown. Values are shown
+  as text: a member reads "Daneel · Read only" on a row and cannot change it.
+- A member can always chat with an agent, read what it can use (its Access tab and summary), and see why
+  something was refused.
 
 **Administration entry and level** (C-962):
 - **Administration** is a labelled link at the foot of the sidebar and in the account menu.
@@ -1034,13 +1061,14 @@ The ladder applies to Internet access, AI models, Agents › BYO, Data › Reten
 
 Whenever a person meets something they cannot do or change, the interface says **who can**, the same way
 everywhere, with one component (`WhoCan`) fed by one server shape:
-- "Ask Ada Lovelace or Alan Turing (organization admins)."
+- "Ask Ada Lovelace or Alan Turing (organization owners and admins)."
 - "Only workspace owners can add an account. Ask Bob Builder."
 - "An Aurora administrator can set this up."
 
-Instance admins are never named. A person who can do it themselves sees the action or a link instead of
+The role phrases are fixed: "workspace owners", "workspace owners and approvers", "organization owners",
+"organization owners and admins", "an Aurora administrator". Instance admins are never named. A person who can do it themselves sees the action or a link instead of
 the sentence. This one mechanism serves refusals, empty states, blocked connect methods, setup pages,
-guide links, ladder rows and shared accounts.
+guide links, ladder rows and the organization's accounts.
 
 #### Settings live in their topics (D-340, C-971, C-973)
 
@@ -1843,36 +1871,21 @@ status and either does the thing in place or explains the Helm value to change
 At first sign-in the user lands on a **Welcome** page in the workspace placement chose
 (their personal workspace if there is one), not on Overview:
 
-- **Where you are**, in three short cards using real names: "This is **bobj**, your
-  workspace in **Users**. Workspaces hold agents, credentials and rules." /
-  "**Daneel** is your agent. It works on its own computer and reaches the internet only
-  through Aurora's gateway, which adds credentials and asks you before risky actions." /
-  "**You are the owner** of this workspace" (or member, with what that allows).
-- **Get Daneel talking**: a numbered guide whose steps tick themselves from real state
-  (model readiness C-500, grants, conversations), not from clicks:
-  1. *LLM key*: done and collapsed when Daneel already has a usable key ("Your
-     organization provides an LLM key: AIGW"). Otherwise it says what a key is, where to
-     get one, and opens the LLM key form inline.
-  2. *Give Daneel access*: the FIX-021 "Give agents access" step, preselected to Daneel
-     here.
-  3. *Model*: only when readiness says no model resolves; a model picker inline.
-  4. *Say hello*: opens Chat with a suggested first message.
-  Optional, below: connect an app, write instructions for the agent, set up a schedule,
-  invite a teammate (owners). (Phase 5, P5-UX, C-927: **superseded by §Agents, accounts and access
-  §9**. The guide has two steps, AI key and Say hello: adding the key gives the agent access to it, and
-  no model step is shown when the key's endpoint has a default model. "Connect an app" opens the connect
-  journey for this agent; "Add people" opens the workspace's **People** page.)
-- A member who **cannot** do a step (not owner) sees who can: "Ask a workspace owner
-  (Ada Lovelace) to add an LLM key", never a dead button.
-- "Skip for now" goes to Overview, where the same guide sits at the top until complete
-  or dismissed (then it is one line, "Getting started — 4/4").
+- (Phase 5, P5-UX-7, C-927) **The cards, the guide and the links of Welcome are specified in §Agents,
+  accounts and access §9**, which replaced the phase-4 text that stood here (three cards with fixed
+  wording and a four-step guide). What stays from phase 4:
+  - the guide's steps tick themselves from real state (model readiness C-500, the agent's access to a
+    key, conversations), not from clicks;
+  - a person who cannot do a step sees who can (§Who can fix this), never a dead button;
+  - "Skip for now" goes to Overview, where the same guide sits at the top until complete or dismissed
+    (then it is one line, "Getting started — 2/2").
 
 ### 3. Tour and contextual help
 
 - **"Show me around"** (offered at the end of Welcome, replayable from the account
   menu): 6–8 coach marks over the real navigation ((phase 5, P5-IA-1, C-975) one stop per topic
   the viewer sees, from `visibleTopics`, with the topic names of §Information architecture: Overview,
-  Agents (with Chat and Access › Add an app), Apps & accounts, Internet access, Approvals,
+  Agents (with Chat and Access › Give <Agent> an app), Apps & accounts, Internet access, Approvals,
   Activity, People, Settings). Each has one or two sentences on what lives
   there and when you need it. Keyboard-operable (Next, Back, Esc), focus-managed,
   respects reduced motion, and on 390 px opens the navigation drawer as it goes.
@@ -1882,7 +1895,8 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
 - **Errors link to the guide step** that fixes them (`no_model_key`,
   `no_default_model`, missing grant).
 - (Phase 5, P5-UX-3, C-927) The **Agents** stop also says that the agent gets apps on its
-  Access tab ("Open an agent, then **Access** › **Add an app** to let it use GitHub, Linear and more").
+  Access tab ("Open an agent, then **Access** › **Give <Agent> an app** to let it use GitHub, Linear and
+  more").
 
 ## Agents, accounts and access (phase 5, P5-UX, D-321..D-337, D-343..D-352)
 
@@ -1921,19 +1935,28 @@ list of the earlier draft.
   - the icon and name ("GitHub · bob-builder");
   - a kind chip: **App**, **Website** or **AI key**;
   - **who can use it**: each agent with its access ("Daneel · Read only"), or the `warning` badge **No
-    agent can use this** with **Give access**;
+    agent can use this** with **Give access**. For people who may change it, each agent's entry opens the
+    access choice (§2) and **Remove access**;
   - a health line (§7): "Works · used 2 hours ago", or what went wrong with **Reconnect**;
   - "Shared by <org>" for an organization's account, with who manages it (§Who can fix this);
-  - one menu: Change access, Give access, Rename, Reconnect or Replace token, Test, Remove.
+  - one menu, in this order: Give access, Rename, Reconnect or Replace (§7), Test, Turn off (or Turn on),
+    Remove. An account that is turned off keeps its setup and no agent can use it; its health line reads
+    "Turned off".
+- **Empty states.** A workspace with no account: "Nothing connected yet. Connect an app, a website or an
+  AI key, and choose which agents can use it." with **Connect an app or website**. An organization with
+  none: "No accounts for the whole organization yet. An account connected here can be given to agents in
+  any workspace." An agent with none: the summary's sentence (§8) with **Give <Agent> an app**.
 - **AI keys** are rows of kind AI key. On an agent's Access tab the AI key row carries the agent's model
   line: "Daneel thinks with claude-sonnet through this key."
-- **Add** has two entries: **Connect an app or website** (the journey, §3) and **Add an AI key**.
+- **Add** has two entries: **Connect an app or website** (the journey, §3) and **Add an AI key**. On an
+  agent's Access tab the button is **Give <Agent> an app** (the same journey), with **Add an AI key** in
+  its menu.
 - **Giving access.** Every picker that asks "which agents" preselects the agent whose page opened it,
   otherwise the only agent the person may choose when there is exactly one, otherwise none. The button
   names the result: **Give Daneel access**. When agents of more than one workspace are listed, each row
   leads with the workspace: "Platform team · Daneel".
 - **What an agent asked for.** When agents have asked for an account (§6), a banner on Accounts lists the
-  requests, each with **Connect**.
+  requests ("Daneel asked for Linear"), each with **Give Daneel Linear**.
 
 No row shows a rule id, a host pattern or the word "secret".
 
@@ -1945,19 +1968,25 @@ No row shows a rule id, a host pattern or the word "secret".
   - **Change without asking**: "<Agent> may make changes on its own."
 
   Websites, AI keys and apps that can only read have no choice to make: the agent can use them or not.
-- **One setting, not two.** An account used by one agent has no other access setting: choosing the
-  agent's access is the whole decision, and one save applies it (C-980). There is no separate "read-only
-  connection" to keep in step.
-- **Shared accounts have a limit.** An account of the organization, or one given to more than one agent,
-  shows a **limit** on its row: "Agents may at most: Read only" or "…: Change things". Choices above the
-  limit are not offered; the control says "Limited by the shared account" and who can change the limit.
-  An agent whose saved access is above a lowered limit simply shows the limit.
-- **Custom.** A **Custom…** link under the choices opens the per-tool editor: Allow, Ask or Block for each
-  thing the app can do. It starts from the current choice. Each row is the tool's name and a one-sentence
-  description; methods and host patterns are under **Technical details**. Apps that require a per-tool
-  choice (C-410) open it directly with reads allowed.
-- **"Always allow"** in Approvals (§5) is the everyday way to loosen access one action at a time; most
-  people never open Custom.
+- **One setting, not two.** A workspace's account has no access setting of its own: each agent's access
+  is the whole decision, and one save applies it (C-980). There is no separate "read-only connection" to
+  keep in step, whether one agent uses the account or several.
+- **Only the organization's accounts have a limit** (§11). The limit is one of the same three choices,
+  shown on the account's row: "Agents may at most: Read only". In a workspace, choices above the limit
+  are not offered; the control says "Limited by <org>" and who can change the limit (§Who can fix this).
+  Lowering a limit lowers the access of every agent above it, and says so before saving.
+- **Always allowed changes.** Under **Ask before changes**, a person can stop the agent asking for one
+  kind of change, usually by answering **Always allow** in Approvals (§5). The choice stays Ask before
+  changes, and the row lists the exceptions under it: "Always allowed: create issues, add comments", each
+  with a remove button that makes the agent ask again. Choosing a level again clears them.
+- **Every action, when needed.** **What exactly?** on the row (§8) lists each thing the app can do with
+  Allowed, Asks you or Blocked. People who may change the access can change any line there. The same
+  table opens from **Custom…** under the choices in the journey and the picker.
+  - Under Ask before changes, setting a change to Allowed is the same as Always allow.
+  - Any other difference from a level shows the choice as **Custom** ("Custom: 2 actions differ from Ask
+    before changes").
+  - Methods and host patterns are under **Technical details**.
+  - Apps that require a choice per action (C-410) open the table directly, with reads allowed.
 - The gateway enforces exactly what these controls show (D-240 unchanged underneath).
 
 ### 3. Giving an agent an app: the journey (P5-UX-2/3, D-337, D-321, D-322, C-914, C-955..C-959, C-988)
@@ -1966,43 +1995,54 @@ One `Dialog` (`size="lg"`) titled **"Give <Agent> an app"**, or **"Give <Agent> 
 known. It always ends with an account **and** the agent's access to it, made in one request, so the
 agent can use the app the moment the dialog says "Done".
 
-**Entry points.**
-- Agent page › **Access** › **Add an app** (the agent is fixed).
-- Apps & accounts › Accounts › **Add › Connect an app or website**, and Apps › **Connect** on an app
-  (`…/apps?tab=apps&connect=<app>`): the same journey with an **agent step** added after the app (§1
-  preselection). Choosing no agent is allowed.
-- An app's setup page (§4): **Connect**.
-- Welcome › **Connect an app**: the journey for the workspace's default agent.
-- A request from the agent in chat (§6), and every gateway refusal for an app the agent lacks, link to
-  `…/agents/<agent id>?tab=access&connect=<app>` (C-959).
-- Reconnect (an account's menu) keeps the existing C-842 dialog.
+**What the buttons say.** One rule, so that one flow has one name:
+
+| Where the person is | Button | Opens |
+|---|---|---|
+| An agent is known, no app yet: the agent's Access tab, Welcome, the Done step | **Give <Agent> an app** | the journey for that agent, at the App step |
+| An agent and an app are known: the agent's request (§6), the banner on Accounts, a refusal's link | **Give <Agent> <App>** | the journey for that agent and app |
+| No agent is known: Accounts › Add, the Apps tab, an app's setup page | **Connect an app or website**, or **Connect** beside an app's name | the journey with an **agent step** after the app (§1 preselection; choosing no agent is allowed) |
+| The journey's last form | **Sign in to <App>**, or **Connect** for a token | — |
+
+No other label opens the journey. Links use `…/agents/<agent id>?tab=access&connect=<app>` when the agent
+is known (C-959) and `…/apps?tab=apps&connect=<app>` otherwise. **Reconnect** (an account's menu) keeps
+the existing C-842 dialog, with its texts in the vocabulary (§7).
 
 **Steps.** Each step is one screen. Back works throughout. Steps with nothing to ask are skipped.
 1. **App** (only when no app was given): the workspace's apps as tiles grouped **Ready to connect**,
    **Already connected** and **Needs setup by an admin**. The last tile is **Another website or API**.
    Apps the organization does not allow are not shown. A blocked tile is not clickable; it says what is
-   missing and who can fix it (§Who can fix this). Families (FIX-135) stay one tile.
+   missing and who can fix it (§Who can fix this). Families (FIX-135) stay one tile: the hosted service
+   is assumed, and "Where does your <App> run?" is asked only when a self-hosted one is registered.
 2. **Account** (only when an account of this app already exists that the person may give): "Use <name>
-   (connected by Bob)" (recommended) or "Connect another account". Using an existing account skips to
-   step 5 and saves only the agent's access.
-3. **Access** (§2): Read only (preselected), Ask before changes, and Change without asking under **More
-   choices**. Skipped for websites and apps that can only read. For a shared account, choices above its
-   limit are not offered.
+   (connected by Bob)" (recommended) or "Connect another account". Using an existing account skips the
+   Sign in step: the person still chooses the access.
+3. **Access** (§2): the three choices, Read only preselected. Skipped for websites and apps that can
+   only read. For an organization's account, choices above its limit are not offered.
 4. **Sign in**: only the **suggested method** (C-955), with one primary action.
    - Sign-in methods: **Sign in to <App>** (FIX-149 sign-in window). The dialog says "Waiting for you to
      sign in to <App>…".
-   - Token methods: only that method's fields, each help link a button such as **Create a token on
-     GitHub**, never a raw URL. Values the person must copy (the organization's external id) are shown
-     with **Copy** above the fields (C-942).
+   - Token methods: only that method's fields and **Connect**. The link to the app's token page is a
+     button, **Create a token on <App>**, never a raw URL, followed by the permissions to tick there for
+     the chosen access ("Tick: repo (read), read:org"), from the method's `scope_presets` (C-956). Other
+     help links read **Where do I find this?**. Values the person must copy (the organization's external
+     id) are shown with **Copy** above the fields (C-942).
    - **Another website or API**: Name, Website and Token. **Advanced** holds the path and the other ways
      to send the token (`08 §5`).
    - No suggested method: the step shows who can set it up instead of a form.
 
-   An **Advanced** disclosure holds the other methods (blocked ones disabled, with the reason), the
-   requested scopes, the OAuth client and the account's name.
-5. **Done**: "<Agent> can now read <App>." (or "…read and change <App>, asking you first."), with **Open
-   chat** and **Give another app**. If the account was made but the access could not be saved (C-957
-   `grant_failed`), the step says so and **Give access** retries that part only.
+   An **Advanced** disclosure holds the other methods (blocked ones turned off, with the reason), the
+   requested scopes, the OAuth client, the account's name and, for a family with no self-hosted server
+   registered, **Use a self-hosted <App>** (the app's setup page).
+5. **Done**: one sentence per access, with **Open chat** and **Give <Agent> another app**:
+   - Read only: "<Agent> can now read <App>."
+   - Ask before changes: "<Agent> can now read <App>, and asks you before each change."
+   - Change without asking: "<Agent> can now read and change <App> without asking."
+   - A website or an app with no choice: "<Agent> can now use <name>."
+   - No agent chosen: "<App> is connected. No agent can use it yet." with **Give access**.
+
+   If the account was made but the access could not be saved (C-957 `grant_failed`), the step says so
+   and **Give access** retries that part only.
 
 **Failures say what happened** (C-958): "<App> did not accept this token. Check that it is complete and
 has not expired." / "Aurora could not reach <App> (<host>)." / "<App> answered with an unexpected error
@@ -2014,7 +2054,9 @@ has not expired." / "Aurora could not reach <App> (<host>)." / "<App> answered w
   - `/o/<org>/w/<ws>/apps/<app>`, for workspace owners;
   - `/o/<org>/apps/<app>`, for org owners and admins.
 
-  Every app name in the dashboard links to it. Both views render the setup status of C-931.
+  Every app name in a workspace or an organization links to it. Both views render the setup status of
+  C-931. Administration has no setup page: an app name there opens its catalogue entry, which links to
+  the OAuth clients tab filtered to the app (§Information architecture).
 - **Status at the top**, one sentence per way to connect, each with a state chip (Ready / Needs setup /
   Admin only):
   - "People can connect GitHub with a personal access token."
@@ -2059,7 +2101,8 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
     account. The answer says so ("Daneel will no longer ask before creating issues in Linear. Change
     this on Daneel's Access tab.") and other waiting requests of the same kind go ahead too. It is
     offered only when the question came from the agent's access (§2) and only to people who may change
-    that access. It never goes above a shared account's limit.
+    that access. It never goes above the limit of an organization's account. The agent's access stays
+    Ask before changes, with the change listed under "Always allowed" on the account's row (§2).
   - **Block**: the request is refused and the agent is told.
 
   A question asked by a rule (§Information architecture, Internet access) offers Allow once and Block,
@@ -2071,8 +2114,8 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
     (`?focus=<id>`) opens the page with that question first.
   - As the count beside Approvals in the sidebar, on the agent's status, and as a browser notification.
   - On chat platforms, with Allow once and Block. Always allow is offered only in the dashboard.
-- **A nudge, not a nag.** After a person has allowed the same kind of change for the same agent three
-  times in a week, the card adds "You have allowed this 3 times this week" beside Always allow.
+- **Empty states.** Waiting: "Nothing is waiting for you. Agents ask here when their access is Ask before
+  changes, or when a rule says so." History: "No questions have been answered yet."
 - Approve and Deny are called **Allow once** and **Block** everywhere.
 
 ### 6. When an agent needs something (P5-UX-17, D-348, C-984)
@@ -2081,9 +2124,10 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   a card in the conversation: "**Daneel needs Linear for this**", with the agent's reason marked as the
   agent's words, and **Give Daneel Linear**, which opens the journey (§3) for that agent and app. A person
   who cannot give access sees who can (§Who can fix this). **Not now** folds the card away.
-  A request for a website the agent wants to reach with a token reads "Daneel asks for access to
-  api.weather.example.com" with **Add the token**.
-- **The agent carries on.** When access is given, the conversation shows "Daneel can now read Linear". If
+  A request for a website the agent wants to reach with a token reads "**Daneel needs a token for
+  api.weather.example.com**" with **Add the token**.
+- **The agent carries on.** When access is given, the conversation shows the Done sentence of §3 ("Daneel
+  can now read Linear."). If
   the agent's turn had already ended, Aurora starts a new turn for it with a fixed message saying that
   access was given, so the person does not have to repeat the request.
 - **On chat platforms**, a direct conversation gets one line with a link to the same journey.
@@ -2093,47 +2137,74 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 
 - **Health comes from real use.** The gateway notes when an app refuses an account's credentials or a
   sign-in can no longer be renewed, and when the account works again. No background checks run.
-- **Health is one line on the account's row** (§1), beside "used 2 hours ago":
-  - "Works";
-  - "GitHub no longer accepts this token" with **Replace token**;
-  - "The sign-in to Linear expired" with **Reconnect**;
-  - "Could not be reached (db.platform.example.org)";
-  - "Not checked yet" for an account that has never been used or tested.
+- **Health is one line on the account's row** (§1), beside "used 2 hours ago". These are the only
+  wordings, used wherever health is shown:
+
+  | State | The line | The fix beside it |
+  |---|---|---|
+  | works | "Works" | — |
+  | the app refuses what Aurora holds | "<App> no longer accepts this token" (or "this password", "this key": the word of the account's field) | **Replace token** (or **Replace password**, **Replace key**) |
+  | a sign-in can no longer be renewed | "The sign-in to <App> expired" | **Reconnect** |
+  | the host cannot be reached | "Could not be reached (<host>)" | **Test** |
+  | turned off by a person | "Turned off" | **Turn on** |
+  | never used or tested | "Not checked yet" | — |
+
 - **Test** in the row's menu checks the account now: the app's own check, a database login, or a
-  credential mint. An account that has no check of its own is tested once right after connecting, and a
-  failure is shown as a warning on the journey's Done step.
+  credential mint. The result replaces the health line. An account with nothing to check says "This
+  account cannot be tested. Its state will show after an agent uses it." An account that has no check of
+  its own is tested once right after connecting, and a failure is shown as a warning on the journey's
+  Done step.
 - **Where a broken account shows up.**
-  - On the agent's header: "1 account needs attention".
+  - On the agent's header: "1 account needs attention" or "<n> accounts need attention".
   - In the agent's conversations, above the message box: "Daneel can't use GitHub: the sign-in expired.
-    **Reconnect**".
+    **Reconnect**" (the agent, the account's name, the health line in lower case, the fix). People who
+    cannot fix it see who can.
   - On the workspace Overview.
+- **Reconnect and Replace** open the existing C-842 dialog. Its behaviour does not change; its texts
+  follow the vocabulary (account, access).
 - A test never returns anything the app sent back, and is audited (SEC-129).
 
 ### 8. What an agent can do, in one place (P5-IA-2, P5-UX-7, P5-UX-10, FIX-159, D-346, D-350, C-986, C-934, C-930)
 
 - **One summary, said the same way everywhere.** A few sentences, computed from the agent's accounts,
   its access and the limits above:
-  - "Daneel can read GitHub and Linear."
-  - "It asks you before changing anything in Linear."
-  - "It can reach any website. Nothing else asks you first."
-  - For a new agent: "Daneel can't use any app yet. It can reach public websites."
+
+  | When | Sentence |
+  |---|---|
+  | accounts it can use | "Daneel can read GitHub and Linear." (more than three: "GitHub, Linear and 3 more") |
+  | Ask before changes | "It asks you before changing anything in Linear." |
+  | with always-allowed changes | "It asks you before changing anything in Linear, except creating issues." (more than two: "except 3 kinds of change you always allow") |
+  | Change without asking | "It can change AWS without asking." |
+  | Custom | "In Notion it has custom access." |
+  | websites with a token, AI key | counted among the accounts it can use; the AI key is not listed |
+  | an account needs attention | "It can't use AWS right now: the sign-in expired." (the health line of §7) |
+  | websites it can reach | "It can reach any website." / "It can reach only the websites on the allow-list." |
+  | a rule asks | "A rule asks you first on 2 websites." |
+  | a new agent | "Daneel can't use any app yet. It can reach any website." |
 
   The agent's summary appears on Welcome ("Daneel is your agent") and at the top of the agent's Access
-  tab. The sentences about websites also open the Internet access page ("Agents here can reach any
-  website. Nothing asks you first."). Welcome makes no promise the summary does not show.
-- **Details on demand.** An account row on the Access tab expands to **What exactly?**: each thing the app
-  can do, with Allowed, Asks you or Blocked. A reason is shown only when something other than the agent's
-  access decided it: "Blocked by the organization's rule *No production writes*", "Limited by the shared
-  account". The table is computed by the same code as the gateway (C-934).
+  tab. The Internet access page opens with the same website sentences for the level ("Agents here can
+  reach any website. Nothing asks you first."). Welcome makes no promise the summary does not show.
+- **Every action, on demand.** An account row on the Access tab expands to **What exactly?**: each thing
+  the app can do, with Allowed, Asks you or Blocked. It is the table of §2, so people who may change the
+  access change it there. A reason is shown only when something other than the agent's access decided a
+  line: "Blocked by the organization's rule *No production writes*", "Limited by <org>". The table is
+  computed by the same code as the gateway (C-934).
 - **Check what would happen.** On Internet access, a person can try a request for an agent and see the
   outcome: the app and action it was recognized as, the account that would be used, and whether it would
   be allowed, asked or blocked. It always agrees with the gateway (FIX-159, C-930).
 - Access is not shown as rules. The Internet access page lists only the rules people wrote, with one
   line: "What agents may do in apps is set for each agent, on its Access tab."
+- **Rules are for websites that are not accounts.** The page's two Common changes are **Ask before
+  changes on a website** and **Block a website** (C-989). The first uses the words of the access choice
+  on purpose: it is the same behaviour, for a site where the agent has no account to set access on.
 
 ### 9. First run (P5-UX-1, P5-UX-6, P5-UX-7, D-323, D-326, C-916, C-922..C-924, C-927)
 
-- **Welcome** (personal workspaces read "Welcome, Bob"):
+- **Welcome** is its own page (`…/w/<ws>/welcome`). It is where a person lands in a workspace until they
+  finish or skip the guide; after that the workspace opens on Overview, which keeps the guide as one
+  line and shows the agent's summary. The title is "Welcome to <workspace>", or "Welcome, <name>" in the
+  person's own personal workspace. The page has:
   - three cards built from the five sentences of §Information architecture, with real names, the third
     being the agent's summary (§8);
   - **Get <Agent> talking**, a guide that ticks itself from real state:
@@ -2142,8 +2213,8 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
     2. *Say hello*: opens Chat with a suggested first message.
 
     A separate "give access" step appears only when a key exists that the agent cannot use.
-  - **Next, when you are ready**: Connect an app (the journey for this agent), Write instructions, Set up
-    a schedule, and Add people (for people who may).
+  - **Next, when you are ready**: **Give <Agent> an app** (the journey for this agent), Write
+    instructions, Set up a schedule, and Add people (for people who may).
 - **First-run fixes:**
   - Refused pages say who can open them (§Who can fix this), never "Could not reach the server".
   - Empty states ask someone else only when the viewer cannot act.
@@ -2158,12 +2229,17 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   - runners, the gateway and AI endpoints;
   - **Apps people can't sign in to yet**, each with **Register an OAuth client** (one component, also
     used by the organization's Apps tab);
+  - e-mail: "E-mail is not set up. Aurora cannot send approval or invitation e-mails." with a link to
+    Platform › Email, until it is;
   - storage.
+
+  The checklist's steps link to the topic pages that hold their settings. Its AI step adds an AI key for
+  the default organization in place (the form of the organization's Accounts › **Add an AI key**).
 - **Defaults that carry the user:**
   - An organization AI key added during setup is given to every new person's agent by default, with one
     click to give it to the agents of people who signed in before (C-922).
-  - Personal workspaces get a readable name ("Bob") from a display-name template; the URL keeps its
-    stable form (C-923).
+  - Personal workspaces are named after the person ("Bob": the given name, else the full name, else the
+    part of the e-mail before the @). There is no setting for it; the URL keeps its stable form (C-923).
   - The kind dev image ships the builtin apps.
 
 ### 10. People (P5-UX-5, D-325, D-328, C-919, C-920)
@@ -2171,9 +2247,13 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - A workspace's **People** page has **Add people** for workspace owners: an e-mail and a role. The roles
   offered are **Member** and **Owner** (Owner only for someone already in the organization). **Approver**
   is offered only in a workspace that already has one.
-- Someone already in the organization gets access at once. Anyone else is listed under "Waiting for first
-  sign-in": access starts at their first sign-in into this organization with a verified matching
-  e-mail, and the entry expires after 30 days.
+- Someone already in the organization gets access at once: "<name> can now use this workspace." Anyone
+  else is listed under "Waiting for first sign-in": access starts at their first sign-in into this
+  organization with a verified matching e-mail, and the entry expires after 30 days.
+- **Aurora sends no e-mail for this.** Both results end with "Aurora does not e-mail them. Send them this
+  link:" and the workspace's address with **Copy**.
+- The waiting list's rows read "<e-mail> · <role> · expires in <n> days" with **Remove**. Empty, the
+  list is not shown.
 - A workspace owner can never let someone into the organization (D-328). When the person cannot sign up
   by themselves, the dialog says who can invite them (§Who can fix this).
 - One address at a time, rate-limited and audited: the dialog cannot list or search the organization's
@@ -2183,11 +2263,13 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 
 - Org owners and admins can **connect an app for the whole organization** from the organization's Apps &
   accounts (Accounts › Add, an app's **Connect**, or its setup page). The journey runs without the agent
-  step; its access step sets the account's **limit** ("Agents may at most: Read only / Change things").
-  It ends with **Give agents access now** (agents of the workspaces the person owns, listed as
-  "<workspace> · <agent>") or **Done**.
-- An organization's account is a shared account (§2): its row carries the limit, and only org owners and
-  admins can change the limit, reconnect, disable or remove it.
+  step; its access step sets the account's **limit** with the three choices of §2 under the question
+  "Agents may at most:" (Read only preselected). It ends with **Give access** (the picker of §1 over
+  agents of the workspaces the person owns, listed as "<workspace> · <agent>") or **Done**.
+- The organization's Accounts tab also has **Add › Add an AI key**: a key for the whole organization.
+- An organization's account carries the limit on its row (§2). Only org owners and admins can change the
+  limit, reconnect it, turn it off or remove it. Lowering the limit lowers the access of the agents above
+  it, and the confirmation names how many ("3 agents go from Change without asking to Read only").
 - Workspace owners see the organization's accounts in their own Accounts list and in the journey, marked
   "Shared by <org>". They can give them to their agents, within the limit, and cannot change them.
 - When **Connect** asks where to connect, it lists **For the whole organization** first, then the

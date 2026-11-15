@@ -23,7 +23,8 @@ states, repairs the broken Welcome links and fixes the small first-run defects.
 - **Wave 1.** Starts after P5-IA-1 (routes, navigation, `useViewerRoles`) and P5-UX-2 (`who_can` in
   refusals, `contacts`).
 - Navigation and role visibility are P5-IA-1's. This task does not edit `app-shell.tsx`.
-- Not beside P5-UX-4 on `components/states.tsx`.
+- It is the first web task of wave 1: P5-IA-2 and P5-UX-4 start after it (they render `WhoCan`, and
+  P5-UX-4 edits `components/states.tsx` callers).
 - P5-UX-7 rewrites Welcome's content later; this task only repairs its links.
 
 ## Context (facts found 2026-11-15)
@@ -48,8 +49,9 @@ states, repairs the broken Welcome links and fixes the small first-run defects.
 
 1. **`WhoCan` component (C-981)** in the shared primitives. Input: a `WhoCan` value from the server, or a
    role plus `contacts` from the workspace or organization. Output: the sentence ("Ask Ada Lovelace or
-   Alan Turing (organization admins).", "An Aurora administrator can set this up."), or the action or
-   link when the viewer can do it themselves. The role phrases:
+   Alan Turing (organization owners and admins).", "An Aurora administrator can set this up."), or the
+   action or link when the viewer can do it themselves. The role phrases are fixed (`14 §Who can fix
+   this`):
    - `workspace_owner` → "workspace owners"
    - `workspace_approver` → "workspace owners and approvers"
    - `org_admin` → "organization owners and admins"
@@ -68,15 +70,22 @@ states, repairs the broken Welcome links and fixes the small first-run defects.
 3. **Empty states (C-916).** `EmptyState`'s `ask` becomes `ask?: { whoCan; canAct: boolean }`, enforced by
    the type, and renders (through `WhoCan`) only when `!canAct`. Fix every caller; where the viewer can
    act, pass the action. Remove `useOwnerNames`.
-4. **Welcome links.** "Connect an app" goes to the workspace's Apps & accounts › Apps (`routes.ts`).
-   "Invite a teammate" is removed; P5-UX-5 adds **Add people**. A test checks that every Welcome link
-   resolves to an existing route.
+   - **A missing main action (C-961).** Add one small component for page headers and list headers: it
+     renders the page's main action for people who can use it and the `WhoCan` sentence in the same
+     place for people who cannot ("Only workspace owners can add an account. Ask Bob Builder."). Use it
+     on the pages that exist now (Accounts, Apps, Internet access, People, Agents, Skills, Schedules).
+     Later briefs use it for the actions they add.
+4. **Welcome links.** "Connect an app" becomes **Give <Agent> an app** and goes to the default agent's
+   Access tab (`routes.ts`); P5-UX-7 points it at the journey. "Invite a teammate" is removed; P5-UX-5
+   adds **Add people**. A test checks that every Welcome link resolves to an existing route.
 5. **First-run fixes** (`14 §Agents, accounts and access` §9):
    1. The chat's empty state shows "Say hello to <Agent>" and the handle, not the agent's instructions.
    2. The message editor toolbar wraps at any width; no clipped buttons at about 1250 px or at 390 px.
    3. Tab bars show no stray scrollbar widget (fix it in the tab primitive).
    4. Form labels never print "(optional) (optional)" (the label builder).
-   5. Help links render "Where do I find this?" without the URL in the text (the field renderer).
+   5. Help links render **Where do I find this?** without the URL in the text (the field renderer). The
+      one exception is the journey's link to an app's token page, **Create a token on <App>**
+      (P5-UX-3).
    6. The agent header names the computer's state in words: Off, Starting, On, Stopping, Failed, with the
       reason on hover or tap.
    7. The admin landing never flashes "You are not in an organization yet" before Administration ›
@@ -89,7 +98,8 @@ states, repairs the broken Welcome links and fixes the small first-run defects.
      - a member opening `/o/<org>/people` by direct URL reads "Only organization owners and admins can
        open this page. Ask …" with the admins' names;
      - a workspace owner's empty Accounts list shows its Add action and no "Ask" line;
-     - a workspace member's shows the "Ask <owner names>" line and no button.
+     - a workspace member's shows "Only workspace owners can add an account. Ask <owner names>." and no
+       button.
 
 ## Constraints / file ownership
 

@@ -78,12 +78,21 @@ adds a test that keeps spec references, raw values and retired words out of the 
    - `[]` shown as a value;
    - a key-derived label function;
    - a retired word of the vocabulary table used as a page name or label ("Governance", "Policy",
-     "Credentials", "Simulate", and "grant", "secret" or "connection" for an account).
+     "Credentials", "Simulate", and "grant", "secret" or "connection" for an account), and the button
+     labels "Disable" and "Enable".
 
-   Fix what it finds. The test reads rendered strings, not comments or identifiers. For the vocabulary
-   check only, the test keeps a list of files that a later brief rewrites (the approvals views for
-   P5-UX-16, the chat notices for P5-UX-17, the organization's account actions for P5-UX-11). Each of
-   those briefs removes its files from the list, and the list is empty at the end of wave 3.
+   The test reads rendered strings, not comments or identifiers. "Secret stores", the role "Member" and
+   the organization's "Members" tab are allowed (`14` vocabulary notes).
+
+   **Who fixes what.** Briefs of waves 2 and 3 are rewriting some of the files this test flags, and
+   some run beside this task. So:
+   - This task fixes every flagged string in a file that no brief of wave 2 or 3 owns.
+   - For the vocabulary check only, the test keeps a list of the other flagged files, each with the
+     brief that owns it (read the "Constraints / file ownership" of P5-UX-3, -5, -6, -7, -9, -10, -11,
+     -14, -16, -17 and P5-IA-3, -4). Do not edit those files.
+   - The list can only shrink: the test also fails when a listed file no longer contains a retired
+     word, so the brief that cleans a file removes its entry.
+   - The list must be empty when wave 3 is done; PROGRESS records that check.
 5. **Tests.**
    - Rust: registry completeness; `fields` per section; `current` for a section that is not editable; a
      secret key never echoed.

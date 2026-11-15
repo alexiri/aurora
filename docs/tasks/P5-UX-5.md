@@ -63,11 +63,16 @@ and without exposing the organization's member list.
      - Roles offered: **Member** and **Owner**. **Approver** is offered only when the workspace already
        has an approver.
      - The server refuses Owner for someone outside the organization; say it in words.
-     - The result is one sentence: "<email> now has access as <role>." or "<email> will have access as
+     - The result is one sentence: "<name> can now use this workspace." or "<email> will have access as
        <role> after they first sign in."
+     - Aurora sends no e-mail for this. Both results end with "Aurora does not e-mail them. Send them
+       this link:" and the workspace's address in a `CopyValue`.
      - When the person cannot sign up by themselves (`org_entry = invitation_needed`), add `WhoCan`:
-       "They also need to be invited to <org>. Ask <org admins>."
-   - A list "Waiting for first sign-in" with **Remove**.
+       "They also need to be invited to <org>. Ask Ada Lovelace or Alan Turing (organization owners and
+       admins)."
+     - At the maximum (`pending_access_limit`): "50 people are already waiting. Remove one first."
+   - A list "Waiting for first sign-in": rows "<e-mail> · <role> · expires in <n> days" with **Remove**.
+     The list is not shown when it is empty.
    - Welcome's links gain **Add people**, for people who may (`…/people?add=1`).
 7. **Tests.**
    - API (SEC-128's list): added and pending; the rate limits; no prefix or wildcard match; owner for a

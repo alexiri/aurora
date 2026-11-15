@@ -23,7 +23,9 @@ tabs (D-338, D-339, D-351).
 - **Wave 2.** Starts after P5-IA-1 (the pages, `SettingsSectionFields`), P5-IA-2 (`ScopeLadder`),
   P5-UX-4 (AI keys are accounts) and P5-UX-9 (which takes the app availability switch out of the old
   Governance view).
-- Disjoint from P5-IA-4 (other pages) and P5-IA-5 (the settings form's rendering).
+- Disjoint from P5-IA-4 (other pages; it also moves the workspace's BYO setting out of Settings, so this
+  task does not touch `components/settings/settings-view.tsx`) and P5-IA-5 (the settings form's
+  rendering).
 
 ## Context
 
@@ -34,7 +36,6 @@ tabs (D-338, D-339, D-351).
 - **Organization:** `components/governance/governance-view.tsx` (Model access, Compliance with its count
   from `non_compliant_secrets` ~145, ~405–413), `byo-panel.tsx`; the Skills and libraries pages; Port
   previews.
-- **Workspace:** `components/settings/settings-view.tsx` (General: the BYO setting).
 - `GET /v1/orgs/{org}/governance/effective` marks each value `source: instance|org`.
 
 ## Scope
@@ -57,9 +58,8 @@ tabs (D-338, D-339, D-351).
      - **Skills**: the `skills` section.
    - **Organization** `/o/<org>/agents`: tabs **BYO** (was Governance › BYO agents, with
      Administration's limits as ladder rows above), **Skills** (with libraries) and **Previews**.
-   - **Workspace:** the agents list shows the workspace's BYO setting as a ladder row in its header (the
-     organization's value above, the workspace's choice behind **Tighten…**). Remove it from Settings ›
-     General.
+   - **Workspace:** nothing in this task. The workspace's BYO setting moves to the agents list with
+     P5-IA-4.
 3. **Remove what is left of Governance.** With this task, `governance-view.tsx` has no tabs left: delete
    the view (its route already redirects).
 4. **Words.** Page and tab names follow the vocabulary. Field labels inside settings sections are
@@ -68,22 +68,21 @@ tabs (D-338, D-339, D-351).
    - Vitest: each tab renders its content; ladder rows per level; the keys notice with zero and with
      some keys.
    - Playwright: an org admin narrows the allowed models and the page keeps Administration's limit
-     visible above; a workspace's agents list shows the organization's BYO value; old URLs land on the
-     right tabs.
+     visible above; old URLs land on the right tabs.
    - Axe and narrow-route suites, both themes.
 
 ## Constraints / file ownership
 
-- Owns: the AI models and Agents pages at each level; the moved components (composition);
-  `byo-panel.tsx`; the workspace BYO field's move; the deletion of `governance-view.tsx`.
+- Owns: the AI models pages and the Agents pages of Administration and the organization; the moved
+  components (composition); `byo-panel.tsx`; the deletion of `governance-view.tsx`.
 - No API change.
 
 ## Acceptance criteria
 
 1. AI models and Agents are one page per level, with at most four tabs.
 2. Limits from above are shown as locked rows with their source and who can change them.
-3. Nothing about model rules, BYO, previews or skills remains under Governance or Settings, and the
-   Governance page no longer exists.
+3. Nothing about model rules, BYO, previews or skills remains under Governance, and the Governance page
+   no longer exists.
 4. Web gates; axe and narrow-route suites, both themes.
 
 ## Suggested agent/model and reason

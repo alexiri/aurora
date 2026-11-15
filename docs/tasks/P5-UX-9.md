@@ -60,15 +60,19 @@ In the app-setup walkthrough:
    - **Actions,** per `can`:
      - **Connect** (the journey);
      - in the organization view: register an organization client, register a self-hosted app (a link to
-       that tab with the app preselected), change availability;
+       the Self-hosted apps tab with `?package=<package>`, which opens its form with the app chosen),
+       change availability;
      - for anything above the viewer's level, the `WhoCan` sentence.
    - **What it can do:** the former Details content (tools with their descriptions, hosts, instructions
      shown to agents).
    - **Setup guide:** the guide with the viewer's values (`?workspace_id=|org_id=`), expanded, last.
 2. **Links (C-933).**
    - The Apps tab's **Details** goes to the setup page; the dialog is removed.
-   - Every app name in the Apps, OAuth clients, Self-hosted apps and Accounts tabs links to the setup
-     page at the viewer's level.
+   - Every app name in the Apps, OAuth clients, Self-hosted apps and Accounts tabs of a workspace or an
+     organization links to the setup page at the viewer's level.
+   - Administration has no setup page. An app name there opens its catalogue entry
+     (`/admin/apps/packages/<id>`); add to that entry the link **OAuth clients for this app** (the OAuth
+     clients tab with `?package=<package>`).
    - The workspace Apps tab no longer links to a separate OAuth clients list.
 3. **OAuth clients named by method (C-946).** The OAuth client form's app picker and the client lists
    show "<app> — for <method label>" from `used_by_methods`; the `client_key` is a tooltip.
@@ -90,9 +94,9 @@ In the app-setup walkthrough:
 ## Constraints / file ownership
 
 - Owns: `components/apps/app-setup/*` (new); the two `page.tsx` files; `apps-tab.tsx` (Details link);
-  `oauth-clients-panel.tsx` (dialog use, preselection, labels); `org-apps-list.tsx` and
-  `availability-view.tsx` (the switch); `governance-view.tsx` (removing the Apps tab); the link edits in
-  the listed tabs.
+  `oauth-clients-panel.tsx` (dialog use, preselection, labels); the Self-hosted apps tab's `package=`
+  preselection; `org-apps-list.tsx` and `availability-view.tsx` (the switch); `governance-view.tsx`
+  (removing the Apps tab); the link edits in the listed tabs and on the Administration catalogue entry.
 - Uses, and does not change, `AccountsList`, `WhoCan`, `CopyValue` and the journey.
 
 ## Acceptance criteria

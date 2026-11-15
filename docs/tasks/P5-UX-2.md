@@ -65,8 +65,10 @@ this" sentence need:
    `scope_presets.write: [read, write]`. Bump each package's patch version and run `check-builtin.sh`.
 2. **`WhoCan` on the server (C-981).**
    - One type and one builder: action, role, up to three display names (owners first, then by name;
-     never e-mails; never instance admins), a path from the server's table of C-960 paths when the caller
-     can do it themselves.
+     never e-mails; never instance admins), a path from the table of C-960 paths when the caller can do
+     it themselves. Put that table in `crates/aurora-core`, one function per page, so that the gateway
+     uses the same one later (C-959, P5-UX-17). The role phrases are the dashboard's (`14 §Who can fix
+     this`); the server sends the role, not the phrase.
    - The shared role helpers put it in every `403 forbidden` (`details.who_can`). Do this in the helpers,
      not route by route.
    - `GET /v1/workspaces/{ws}` and `GET /v1/orgs/{org}` gain `contacts` (up to three names each), readable
@@ -139,8 +141,8 @@ this" sentence need:
 
 - Owns: `crates/aurora-registry` (manifest keys, linter); `domains/{connect,apps}`; the level expansion
   in `domains/grants`; `domains/secrets` (the `grant` field); the `WhoCan` type and the role helpers;
-  the server's table of dashboard paths; `plugins/builtin/{github,linear}/plugin.yaml` (the two keys
-  only); OpenAPI and the generated web types.
+  the shared table of dashboard paths in `crates/aurora-core`; `plugins/builtin/{github,linear}/plugin.yaml`
+  (the two keys only); OpenAPI and the generated web types.
 - No dashboard work.
 - Rust conventions: `cargo fmt --check`, clippy `-D warnings`, targeted tests per step; full suites at the
   batch end.

@@ -24,7 +24,8 @@ agent's Access tab (D-350).
 ## Wave and order
 
 - **Wave 3.** Starts after P5-UX-3 (the journey), P5-UX-4 (accounts and access), P5-IA-2
-  (`summary/internet.ts`) and P5-UX-2 (C-988: a key added with access).
+  (`summary/internet.ts`), P5-UX-14 (the health line; the Overview block it adds) and P5-UX-2 (C-988: a
+  key added with access).
 - P5-UX-5 follows it and adds **Add people** to Welcome's links.
 
 ## Context
@@ -42,20 +43,30 @@ agent's Access tab (D-350).
 ## Scope
 
 1. **`summary/agent.ts` (C-986).** A pure function from one agent's accounts and the workspace's
-   `internet.ts` sentences to ordered sentences:
-   - which apps and websites the agent can read ("Daneel can read GitHub and Linear.");
-   - where it asks before changes ("It asks you before changing anything in Linear.") and where it may
-     change things without asking;
-   - an account that needs attention ("It can't use AWS right now: the sign-in expired.");
-   - the website sentences ("It can reach any website. Nothing else asks you first.");
-   - for an agent with no accounts: "Daneel can't use any app yet."
+   `internet.ts` sentences to ordered sentences. The sentences are exactly the table of `14` §8, in its
+   order; do not reword them:
+   - the accounts it can use ("Daneel can read GitHub and Linear."; more than three: "GitHub, Linear and
+     3 more");
+   - Ask before changes ("It asks you before changing anything in Linear."), with always-allowed changes
+     ("…, except creating issues."; more than two: "except 3 kinds of change you always allow");
+   - Change without asking ("It can change AWS without asking.");
+   - Custom ("In Notion it has custom access.");
+   - an account that needs attention ("It can't use AWS right now: the sign-in expired.", from P5-UX-14's
+     health line in lower case);
+   - the reach sentence from `internet.ts` with the subject "It" ("It can reach any website."), and its
+     ask sentence only when a rule asks ("A rule asks you first on 2 websites.");
+   - for an agent with no accounts: "Daneel can't use any app yet. It can reach any website."
 
-   Each condition is a row of a table the unit tests walk. Long lists are shortened ("GitHub, Linear and
-   3 more"). Every sentence must be true under `07 §Evaluation`.
+   Each condition is a row of a table the unit tests walk. Every sentence must be true under
+   `07 §Evaluation`.
 2. **Place the summary.**
    - Welcome's third card, titled "<Agent> is your agent".
    - The top of the agent's Access tab, above the accounts list.
-3. **Welcome's cards (C-927).** Three cards, with real names, from the five sentences:
+   - The workspace Overview, once Welcome is no longer the landing page.
+3. **Welcome's page and cards (C-927).** Welcome stays at `…/welcome` and is where a person lands in a
+   workspace until they finish or skip the guide; after that the workspace opens on Overview. The title
+   is "Welcome to <workspace>", or "Welcome, <name>" in the person's own personal workspace. Three
+   cards, with real names, from the five sentences:
    1. where you are: "This is **<workspace>**, in **<org>**. <Agent> works here, on its own computer."
    2. how it stays safe: "Everything <Agent> sends goes through Aurora's gateway. It holds the keys,
       applies the access you choose, and puts anything that needs your say in Approvals."
@@ -70,13 +81,15 @@ agent's Access tab (D-350).
 
    A step "Give <Agent> access to <key>" appears only when a key exists that the agent cannot use.
    `lib/onboarding/guide.ts` and its "n of m" line follow.
-5. **Next, when you are ready.** Connect an app (the journey for this agent), Write instructions, Set up a
-   schedule. Each link comes from `routes.ts`, and a test checks that each resolves.
+5. **Next, when you are ready.** **Give <Agent> an app** (the journey for this agent), Write instructions,
+   Set up a schedule. Each link comes from `routes.ts`, and a test checks that each resolves.
 6. **Words.** Welcome, the guide and the tour sentences use the vocabulary: AI key, account, access,
    Approvals.
 7. **Tests.**
-   - Vitest: the summary table (a new agent; read-only apps; one app asking; one changing without
-     asking; a broken account; a long list; a workspace where websites are restricted); the guide's
+   - Vitest: the summary table (a new agent; read-only apps; one app asking; one asking with one and
+     with three always-allowed changes; one changing without asking; custom; a broken account; a long
+     list; a workspace where websites are restricted; a rule that asks); the Welcome title in a personal
+     and in a shared workspace; the guide's
      states (organization key; no key; a key the agent cannot use; no default model); the cards for an
      owner and a member.
    - Playwright:
@@ -89,8 +102,8 @@ agent's Access tab (D-350).
 
 ## Constraints / file ownership
 
-- Owns: `lib/summary/agent.ts`; `welcome-view.tsx`; `getting-started.tsx`; `lib/onboarding/guide.ts`; the
-  summary block of the Access tab.
+- Owns: `lib/summary/agent.ts`; `welcome-view.tsx` (title included); `getting-started.tsx`;
+  `lib/onboarding/guide.ts`; the summary block of the Access tab and of the workspace Overview.
 - Uses, and does not change, the accounts list, the journey and `internet.ts`.
 - No API change.
 

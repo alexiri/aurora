@@ -15,13 +15,17 @@ This task builds:
 
 ## Linked requirements
 
-- D-339, D-347, D-351; contracts **C-963, C-964, C-965, C-986 (`internet.ts`), C-989**.
+- D-339, D-347, D-351, D-353; contracts **C-926 (the Internet access labels), C-963, C-964, C-965, C-986
+  (`internet.ts`), C-989**.
 - Normative: `14 §Information architecture` (scope ladder, Internet access row), `14 §Agents, accounts and
   access` §8, `07 §Evaluation` and `§Authoring` (semantics unchanged), `08 §11.6` (postures).
 
 ## Wave and order
 
-- **Wave 1.** Starts after P5-IA-1 (the pages exist, hosting the old editors, with the new labels).
+- **Wave 1.** Starts after P5-IA-1 (the pages exist, hosting the old editors with their old labels),
+  P5-UX-1 (the `WhoCan` component, which ladder rows render) and FIX-159 (which edits
+  `simulate-panel.tsx` first).
+- Disjoint from P5-UX-4 and P5-UX-13, which run beside it.
 - **Release gate (D-352):** wave 1 ships together with P5-IA-1.
 - P5-IA-3 and P5-IA-4 use the ladder. P5-UX-7 builds the agent's summary on `internet.ts`.
 
@@ -58,34 +62,46 @@ This task builds:
 
    Tokens and shared primitives only. At 390 px, rows stack and the table uses the stacked-row pattern.
 2. **Summary sentences (C-986).** `web/src/lib/summary/internet.ts`: a pure function from a level's
-   effective Internet access to ordered sentences. Each condition is a row of a table the unit tests
-   walk. Every sentence must be true under `07 §Evaluation`; the reviewer checks the table against `07`,
-   not against this brief.
+   effective Internet access and a subject ("Agents here" on these pages, "It" in an agent's summary) to
+   two sentences, worded as in `14` §8:
+   - a **reach** sentence: "<Subject> can reach any website." / "<Subject> can reach only the websites
+     on the allow-list." / "<Subject> can't reach the internet.";
+   - an **ask** sentence: "Nothing asks you first." / "A rule asks you first on <n> websites."
+
+   Each condition is a row of a table the unit tests walk. Every sentence must be true under
+   `07 §Evaluation`; the reviewer checks the table against `07`, not against this brief.
 3. **Workspace overrides (C-964).** `GET /v1/orgs/{org}/workspace-overrides` (org owner/admin): only
    workspaces that differ from the organization unless `?all=true`; paginated. OpenAPI, generated types,
    a `permission_matrix` row.
 4. **Workspace page** `…/internet-access`, in this order:
    1. the summary, then the line "What agents may do in apps is set for each agent, on its Access tab."
       linking to Agents;
-   2. **Common changes** (C-989): **Ask me before changes on a website** and **Block a website**. Each
-      adds an ordinary rule to the draft and shows it for confirmation;
-   3. the rules people wrote, with **Add rule**;
+   2. **Common changes** (C-989): **Ask before changes on a website** and **Block a website**. Each
+      asks for the website, adds an ordinary rule to the draft and shows it for confirmation. The first
+      uses the words of the access choice on purpose: it is the same behaviour for a site where the
+      agent has no account;
+   3. the rules people wrote, with **Add rule**; empty: "No rules yet. Until you add one, requests
+      follow the limits and defaults below.";
    4. the limits from above as ladder rows, and **Tighten…** holding the workspace's four controls;
-   5. **Check what would happen**.
+   5. **Check what would happen**, with Speaker and Lane under **More**.
 
-   Members see it read-only.
-5. **Organization page** `/o/<org>/internet-access`: the same order, with the organization's limits open
+   Members see it read-only: no Common changes, Add rule or Tighten…, and one `WhoCan` sentence in place
+   of Add rule.
+5. **Labels (C-926).** Apply the Internet access renames of C-926 to these pages and to
+   `simulate-panel.tsx`: **Let the organization decide** / **None: only rules decide**, **Requests
+   without an account**, **Browser connections (not inspected)**, **Check what would happen**.
+6. **Organization page** `/o/<org>/internet-access`: the same order, with the organization's limits open
    (posture, allow-list, browser connections), Administration's limits above them, and the workspaces
    table below.
-6. **Administration page** `/admin/internet-access`: the `governance` egress and browser-connection keys
+7. **Administration page** `/admin/internet-access`: the `governance` egress and browser-connection keys
    (`SettingsSectionFields` with `keys`) and the organizations table.
-7. **One way to save (C-989).**
+8. **One way to save (C-989).**
    - One pending-changes bar with **Apply changes** and **Discard**. "Save draft" is removed; edits to
      rules and workspace defaults are written to the policy draft as they are made.
    - Organization: Apply sends the governance document when it changed, then publishes the draft. If the
      second step fails, the bar says which part was applied and keeps the rest pending.
-8. **Remove the hosted editors** that P5-IA-1 placed on these pages; their components are reused here.
-9. **Tests.**
+9. **Remove the hosted editors** that P5-IA-1 placed on these pages; their components are reused here.
+10. **Tests.**
    - Vitest: `ScopeLadder` (above, here, collapsed, below, read-only); the summary table, including the
      fresh workspace ("Agents here can reach any website. Nothing asks you first."); each Common change
      produces the expected draft rule; the save bar (workspace; organization with the second step
@@ -101,8 +117,8 @@ This task builds:
 ## Constraints / file ownership
 
 - Owns: the `ScopeLadder` primitive; `lib/summary/internet.ts`; the three Internet access pages; the
-  egress panel and policy components (composition, the save bar); the Common changes component; the C-964
-  route.
+  egress panel and policy components (composition, labels, the save bar); `simulate-panel.tsx` (labels
+  and the More disclosure; FIX-159's result text stays); the Common changes component; the C-964 route.
 - No policy-semantics change and no API change other than C-964.
 - Access is not shown as rules on these pages (D-346).
 

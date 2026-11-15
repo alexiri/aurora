@@ -19,10 +19,10 @@ the defaults so that a new person's agent works from the first minute.
 
 ## Linked requirements
 
-- D-326, D-351; contracts **C-922, C-923, C-924**.
+- D-326, D-351, D-353; contracts **C-922, C-923, C-924**.
 - Normative: `14 §Agents, accounts and access` §9 (Administration › Overview, defaults),
-  `14 §Onboarding` §1 (the setup steps), `04 §New-user placement` (display-name template, starter
-  grants), `05` placement rows, `09 §10` (the builtin source).
+  `14 §Onboarding` §1 (the setup steps), `04 §New-user placement` (the name of a personal workspace,
+  starter grants), `05` placement rows, `09 §10` (the builtin source).
 - Unchanged: D-162 (the slug comes from `{sub}`), C-521, C-525 (starter grant rules), SEC-77.
 
 ## Wave and order
@@ -48,10 +48,14 @@ the defaults so that a new person's agent works from the first minute.
 
 1. **Administration › Overview** (`/admin`).
    - Until setup is complete: the checklist (the wizard's steps), each step linking to the topic page
-     that holds its settings (People › New users, AI models, Apps & accounts, Chat platforms).
+     that holds its settings (People › New users, AI models, Apps & accounts, Chat platforms, and
+     Platform › Email as an optional step). The AI step adds an AI key for the default organization in
+     place, with the form of the organization's Accounts › **Add an AI key**.
    - After: a health page from the same setup status:
      - runners, the gateway and AI endpoints;
      - **Apps people can't sign in to yet** (below);
+     - e-mail, until it is set up: "E-mail is not set up. Aurora cannot send approval or invitation
+       e-mails." linking to Platform › Email (setup status gains `email_not_configured`, C-924);
      - storage;
      - **Run setup again**.
 2. **Apps people can't sign in to yet (C-924).**
@@ -70,11 +74,12 @@ the defaults so that a new person's agent works from the first minute.
    through the normal grant path with `actor_label = placement` and `backfill = true`; answer
    `{ granted, skipped }`. Setup status gains `personal_workspaces_without_starter`, and the step offers
    **Also give it to the <n> people who signed in before** when n > 0.
-5. **Display-name template (C-923).** `personal_workspace.display_name_template` (default
-   `{given_name}|{name}|{email_local}`) in the placement document: validated like the existing template,
-   shown beside it on People › New users with its own preview, and used for a new workspace's **name**.
-   The existing template keeps setting the slug. Nothing existing is renamed. Welcome reads "Welcome,
-   <display name>" for a personal workspace, and the workspace selector shows "<name> (personal)".
+5. **A personal workspace's name (C-923).** A new personal workspace is named after the person: the
+   given name, else the full name, else the local part of the e-mail. This is a fixed rule with no
+   setting. The existing template keeps setting the slug; on People › New users its field is labelled
+   "Workspace address", with the help text "The name people see is the person's own name." Nothing
+   existing is renamed. The workspace selector shows "<name> (personal)". (Welcome's title is
+   P5-UX-7's.)
 6. **Docs and dev image.**
    - Fix the two "Phase 0 ships none" sentences.
    - `deploy/dev/kind-dev.sh` builds the builtin packages (`aurora plugin build`, unsigned) into the API
@@ -83,15 +88,16 @@ the defaults so that a new person's agent works from the first minute.
      arrive pending approval, the script approves them through the API after install. Say in the report
      which happened. Mention it in `docs/operator/install-kind-dev.md`.
 7. **Tests.**
-   - API: backfill idempotence and audit; the template's default and fallback chain; the slug unchanged;
-     the setup reasons for an app with no client and with an organization client.
+   - API: backfill idempotence and audit; the name's fallback chain (given name, name, e-mail); the slug
+     unchanged; the setup reasons for an app with no client and with an organization client, and for
+     e-mail not set up.
    - Vitest: the Overview in both states; the starter switch on by default; the backfill offer; the "can't
-     sign in yet" component.
+     sign in yet" component; the e-mail line.
    - Manual, reported: after `just kind-up`, the workspace's Apps tab lists the builtin apps.
 
 ## Constraints / file ownership
 
-- Owns: `setup-view.tsx` and the Overview page; `placement-view.tsx` (the template field); the placement
+- Owns: `setup-view.tsx` and the Overview page; `placement-view.tsx` (the field's label); the placement
   and setup-status API code; the function that names a workspace at creation; the "can't sign in yet"
   component and its place on the organization's Apps tab; `deploy/dev/kind-dev.sh`,
   `deploy/kind/values-dev.yaml`; `docs/operator/{plugins-and-connectors,install-kind-dev}.md`; the
@@ -104,7 +110,8 @@ the defaults so that a new person's agent works from the first minute.
    nothing else. A new person's agent answers with no key step.
 2. People who signed in before get the key with **Also give it to …**, and running it again changes
    nothing.
-3. A new personal workspace is titled from the display template ("Bob") with its slug unchanged.
+3. A new personal workspace is named after the person ("Bob") with its slug unchanged, and no new
+   setting exists for it.
 4. With Linear and Notion active and no OAuth clients, the Overview lists both with a prefilled
    **Register an OAuth client**; with an organization client for Linear, Linear leaves the list.
 5. After setup, `/admin` is a health page, and the checklist is one click away.

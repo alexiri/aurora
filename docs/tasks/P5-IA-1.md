@@ -79,7 +79,9 @@ content inside those pages.
 4. **Redirects (C-960).** Every old route, with query and anchor preserved. `connect=` and `reconnect=`
    deep links survive.
 5. **Navigation and visibility (C-961).** Each level's sidebar lists its topics in `14`'s order, from
-   `visibleTopics`. Read-only pages hide write controls. This task owns all navigation gating.
+   `visibleTopics`. This task owns all navigation gating. On a page a role sees read-only, controls the
+   viewer cannot use are not rendered and values read as text (`14` "What a person sees of something
+   they cannot do"). P5-UX-1 then puts the `WhoCan` sentence where a page's main action is missing.
 6. **Administration entry, level badge, your account (C-962).**
    - **Administration** in the sidebar footer and the account menu, for instance admins.
    - The org switcher lists organizations only.
@@ -87,17 +89,37 @@ content inside those pages.
    - The account menu item and `/account` title read **Your account**.
 7. **Labels (C-926) and names.** Apply the vocabulary to navigation labels, page titles, tab names and
    every sentence that names a page ("see Governance" becomes "see Internet access"). Apply the C-926
-   label renames on the pages this task moves, including Allow once and Block on the Approvals page and
-   card.
+   renames on the pages this task moves: **Allow once** and **Block** on the Approvals page and card,
+   **Turn off** and **Turn on** for Disable and Enable. The labels inside the Internet access editor
+   and `components/policy/simulate-panel.tsx` are **not** this task's: FIX-159 edits that panel beside
+   this task, and P5-IA-2 renames those labels when it rebuilds the pages (inside the release gate).
 8. **"Pages have new names" (C-987).**
    - API: `user_onboarding.notices_seen text[]`, returned by `GET /v1/me/onboarding` and appended by
      `PATCH { notice_seen }`. The migration marks `renames-2026-11` as seen for accounts created after
      it. Take the next free migration number from PROGRESS when you start, and edit that line. Move the
      planned row of `03` into its table and regenerate `spec_schema.json`. Add `ONBOARDING_NOTICES_MAX`
      to `crates/aurora-core/src/limits.rs`.
-   - Web: a dismissible notice listing old name → new name for the pages the viewer can see, from one
-     table next to `routes.ts`; **What moved** in the account menu replays it.
-9. **Tour (C-975).** One stop per visible workspace topic, with the new names.
+   - Web: a dismissible notice, from one table next to `routes.ts`; **What moved** in the account menu
+     replays it.
+     - Title: "Pages have new names". First line: "Every level now has the same pages, with the same
+       names. Nothing was removed."
+     - Rows, only those the viewer can open, each "<old name> → <new name>" with a link:
+       Credentials → Apps & accounts; Policy → Internet access; Governance › Model access → AI models;
+       Governance › Egress → Internet access; Governance › Apps → Apps & accounts › Apps; Governance ›
+       BYO agents → Agents › BYO; Members → People; Settings › Access → People; Channels → Chat
+       platforms; Storage and Audit → Data; All organizations → Administration; Plugins → Administration ›
+       Apps & accounts; Connectors → Chat platforms; Identity → People › Sign-in; Placement → People ›
+       New users.
+9. **Tour (C-975).** One stop per visible workspace topic, with the new names and one sentence each:
+   - Overview: "What your agents are doing, and what needs you."
+   - Agents: "Chat with an agent here. Open an agent, then **Access** › **Give <Agent> an app** to let
+     it use GitHub, Linear and more."
+   - Apps & accounts: "The accounts your agents can use, and the apps you can connect."
+   - Internet access: "Which websites agents can reach, and the rules that ask or block."
+   - Approvals: "When an agent asks before a change, you answer here."
+   - Activity: "Everything agents did, with what was allowed, asked and blocked."
+   - People: "Who can use this workspace."
+   - Settings: "The workspace's name, API keys and audit log."
 10. **Operator docs.** Update page names in `docs/operator/` ("Admin ›", "Governance", "Policy",
     "Credentials"). Builtin package guides are P5-UX-13's.
 11. **Tests.**

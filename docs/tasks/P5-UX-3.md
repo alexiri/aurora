@@ -12,10 +12,11 @@ agent's access are made in one request. The existing controls stay under **Advan
 
 ## Linked requirements
 
-- D-337, D-321, D-322, D-344, D-345; contract **C-914**; reads C-955, C-957, C-958, C-988, C-942.
-- Normative: `14 §Agents, accounts and access` §3 (entry points, steps, failure sentences), §2 (the access
-  choice), `14 §Visual design`, `14 §Key flows` (the C-842 dialog, now under Advanced; Reconnect
-  unchanged).
+- D-337, D-321, D-322, D-344, D-345, D-353; contracts **C-914, C-942 (the Copy blocks)**; reads C-917,
+  C-955, C-957, C-958, C-988.
+- Normative: `14 §Agents, accounts and access` §3 (the button labels, steps, Done and failure sentences),
+  §2 (the access choice), `14 §Visual design`, `14 §Key flows` (the C-842 dialog, now under Advanced;
+  Reconnect's behaviour unchanged).
 
 ## Wave and order
 
@@ -43,16 +44,22 @@ agent's access are made in one request. The existing controls stay under **Advan
      by an admin, with **Another website or API** as the last tile.
      - A tile's plan is fetched on focus or click, never all at once.
      - A blocked tile shows the plan's `WhoCan` sentence and cannot be opened.
-     - Families stay one tile (reuse the FIX-135 deployment step after the tile).
+     - Families stay one tile. The hosted service is assumed; the FIX-135 deployment step ("Where does
+       your <App> run?") is shown only when a self-hosted server is registered. Otherwise **Use a
+       self-hosted <App>** under Advanced links to the app's setup page.
      - Apps with nothing to sign in to go straight to FIX-154's one-step path.
-   - **Account step.** From the plan's existing accounts: "Use <name> (connected by Bob)" saves only the
-     agent's access (C-980); "Connect another account" continues.
-   - **Access step.** P5-UX-4's `AccessControl`, with Read only preselected and Change without asking
-     under **More choices**. Skipped for websites and apps that can only read.
+   - **Account step.** From the accounts API (`GET …/accounts?app_id=`, C-917), the accounts of this app
+     the person may give: "Use <name> (connected by Bob)" (recommended) or "Connect another account".
+     Using an existing account skips only the Sign-in step: the Access step follows, and the save is the
+     agent's access alone (C-980).
+   - **Access step.** P5-UX-4's `AccessControl` with the three choices, Read only preselected. Skipped
+     for websites and apps that can only read.
    - **Sign-in step.** Only the suggested method's form:
      - sign-in methods: **Sign in to <App>**, reusing the FIX-149 window and `BroadcastChannel` code;
-     - token methods: the fields, with help links as button-like links ("Create a token on <App>"), and
-       `CopyValue` blocks for the method's `show_context` values;
+     - token methods: the fields and **Connect**; the link to the app's token page as a button, **Create
+       a token on <App>**, followed by the permissions to tick for the chosen access (from the method's
+       `scope_presets`); other help links read **Where do I find this?**; `CopyValue` blocks for the
+       method's `show_context` values;
      - **Another website or API**: Name, Website, Token, with **Advanced** for the path and the other
        ways to send the token (`08 §5`), saved through C-988;
      - no suggested method: the `WhoCan` sentence instead of a form.
@@ -62,23 +69,29 @@ agent's access are made in one request. The existing controls stay under **Advan
      pieces; do not duplicate them.
    - **Submit.** `POST /v1/apps/{app}/connect` with the method, the fields, the scopes of the chosen
      level (`scope_presets`) and `grant { agent_ids, level }`.
-   - **Done step.** The sentences of `14` §3. A `grant_failed` result (from the response or the
-     `BroadcastChannel` message) shows the account as made but not given; **Give access** retries that
-     part only.
+   - **Done step.** The five Done sentences of `14` §3, one per access, with **Open chat** and **Give
+     <Agent> another app**. A `grant_failed` result (from the response or the `BroadcastChannel`
+     message) shows the account as made but not given; **Give access** retries that part only.
    - **Failures.** The C-958 sentences through `ERROR_MESSAGES`. Typed values that are not secret survive
      a failure.
-2. **Entry points.**
-   - Agent page › Access: **Add an app**; the deep link `?tab=access&connect=<app>` (empty for the app
-     step).
+2. **Entry points**, with exactly the labels of the table in `14` §3:
+   - Agent page › Access: **Give <Agent> an app**; the deep link `?tab=access&connect=<app>` (empty for
+     the app step).
    - Apps & accounts › Accounts: **Add › Connect an app or website**.
    - Apps & accounts › Apps: **Connect** on an app (`?tab=apps&connect=<app>`).
 3. **Retire `ConnectForm` as an entry.** Its pieces live under Advanced. `ReconnectForm` and the reconnect
-   deep link stay unchanged.
-4. **Words.** The journey says account, access and website. It never says connection, grant, credential,
+   deep link keep their behaviour.
+4. **The Bedrock form's Copy block (C-942).** `components/credentials/llm-form.tsx` shows the
+   organization's external id ("Your organization's external id") with `CopyValue` above the
+   assume-role fields, with the trust-policy snippet C-811 describes, as the journey's sign-in step
+   does for `show_context`.
+5. **Words.** The journey says account, access and website. It never says connection, grant, credential,
    scope (outside Advanced) or secret.
-5. **Tests.**
+6. **Tests.**
    - Vitest:
-     - the step machine and its skips (a read-only app, no existing account, a given app, a website);
+     - the step machine and its skips (a read-only app, no existing account, an existing account, a
+       given app, a website, a family with and without a self-hosted server);
+     - each Done sentence; the permissions line for Read only and for Ask before changes;
      - the payload for each access choice;
      - a blocked tile and a blocked suggested method from plan fixtures;
      - `grant_failed` → retry saves only the access;
@@ -96,20 +109,23 @@ agent's access are made in one request. The existing controls stay under **Advan
 
 - Owns: `components/apps/connect-journey/*` (new); `connect-dialog.tsx` (extraction only);
   `components/apps/apps-tab.tsx` (Connect opens the journey); the Add entry of the Accounts list; the
-  Access tab's **Add an app** button; `web/src/lib/api/apps.ts` (plan query, connect payload).
+  Access tab's **Give <Agent> an app** button; `web/src/lib/api/apps.ts` (plan query, connect payload);
+  the Copy block of `llm-form.tsx`.
 - Uses, and does not change, `AccessControl`, the picker and `CopyValue`.
 - Tokens and shared primitives only (`14 §Visual design`). A missing primitive (for example a tile grid)
   is added to the shared set.
 
 ## Acceptance criteria
 
-1. From an agent's Access tab, giving that agent a token app with Read only takes: **Add an app** → the
-   app → the token → **Connect**. The Done step names the agent and the app, and the agent can use it.
+1. From an agent's Access tab, giving that agent a token app with Read only takes: **Give <Agent> an
+   app** → the app → the token → **Connect**. The Done step names the agent and the app, and the agent
+   can use it.
 2. An app whose sign-in is not set up never shows a form unless the person opens Advanced; it shows who
    can fix it.
 3. **Ask before changes** results in access where every change asks (verified through the accounts list).
 4. A wrong token reads "<App> did not accept this token…", and the typed name survives.
-5. Every C-842 control is reachable under Advanced; Reconnect is unchanged (its tests pass untouched).
+5. Every C-842 control is reachable under Advanced; Reconnect behaves as before (its tests pass; its
+   texts are P5-UX-14's).
 6. Typecheck, lint, vitest and `npm run build` green; axe and narrow-route suites, both themes.
 
 ## Suggested agent/model and reason

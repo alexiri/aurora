@@ -293,7 +293,7 @@ instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§A
 `§Adapter codex`; `16`; `03`; `05`; `15`; `14`; `02 §Limits`; `17` (SEC-122, SEC-123); `18`;
 `API_CONTRACTS` C-875..C-884.
 
-### Agents, accounts and access; one structure for every level (phase 5, P5-UX and P5-IA, owner 2026-11-15, D-321..D-352) — specified
+### Agents, accounts and access; one structure for every level (phase 5, P5-UX and P5-IA, owner 2026-11-15, D-321..D-353) — specified
 
 Owner, after three walkthroughs on the kind cluster (a new user, a team lead setting up apps, the
 instance owner): "the experience of figuring out how to connect their agent to things and how they have
@@ -309,7 +309,7 @@ the keys and puts anything that needs your say in Approvals; administrators set 
 each level below can only tighten them.
 
 - **One list of accounts** for a workspace, an agent and an organization, and **one access choice** per
-  agent and account. A shared account has a limit.
+  agent and account. Only an organization's account has a limit, with the same three choices.
 - **One journey** to give an agent an app, ending with the account and the access in one request; **one
   setup page** per app; guides with real values.
 - **Approvals as the everyday experience**: a sentence, and Allow once, Always allow or Block, in the
@@ -321,7 +321,7 @@ each level below can only tighten them.
   when pages move.
 - **Simulate decides like the gateway** (FIX-159; it could show a false allow).
 
-Twenty briefs in four fixed waves (D-352): FIX-159, P5-IA-1..5, P5-UX-1..7, -9, -10, -11, -13, -14, -16,
+Twenty briefs in four fixed waves (D-352, D-353): FIX-159, P5-IA-1..5, P5-UX-1..7, -9, -10, -11, -13, -14, -16,
 -17. Owning sections: `14 §Information architecture` › "One structure for every level" and
 `14 §Agents, accounts and access`; `04 §Workspace access by e-mail`, `§New-user placement`; `05`;
 `07 §Authoring`; `09 §3.4`, `§6`; `03 §Planned changes`; `02 §Limits`; `15 §Instance settings`;
