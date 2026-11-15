@@ -211,6 +211,70 @@ async fn aud_token_is_useless_on_v1_and_session_ignored_on_scim() {
     assert_eq!(s, http::StatusCode::UNAUTHORIZED, "{v}");
 }
 
+/// FIX-157 (D-317): SCIM setup needs no re-authentication (the fixture's owner session never
+/// re-authenticated and enabled SCIM + minted a token), but stays owner-and-session only: an
+/// admin and an API key are refused on both management routes.
+#[tokio::test]
+async fn scim_management_needs_no_reauth_but_stays_owner_and_session_only() {
+    let fx = ScimFx::new().await;
+    let stamped: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sessions WHERE reauth_at IS NOT NULL")
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(stamped, 0, "no session re-authenticated");
+    // The owner enables again / mints a second token on the first try.
+    let owner_hdr = [("cookie", fx.owner.cookie.as_str()), ("origin", ORIGIN)];
+    let (s, _, v) =
+        fx.h.send(
+            Method::PUT,
+            &format!("/v1/orgs/{}/scim", fx.org),
+            &owner_hdr,
+            Some(json!({"enabled": true, "exclusive": true})),
+        )
+        .await;
+    assert_eq!(s, http::StatusCode::OK, "{v}");
+    let (s, _, v) =
+        fx.h.send(
+            Method::POST,
+            &format!("/v1/orgs/{}/scim/tokens", fx.org),
+            &owner_hdr,
+            Some(json!({"name": "second"})),
+        )
+        .await;
+    assert_eq!(s, http::StatusCode::CREATED, "{v}");
+    // An org admin and the owner's own API key are refused.
+    let admin = fx.h.user("admin2@x.io", false).await;
+    fx.h.member(fx.org, admin, "admin", "active").await;
+    let (_, admin_tok) = fx.h.good_session(admin).await;
+    let (_, key) = fx.h.api_key(fx.owner.user_id, fx.org, None, false).await;
+    let admin_cookie = cookie(&admin_tok);
+    let key_auth = bearer(&key);
+    for hdr in [
+        [("cookie", admin_cookie.as_str()), ("origin", ORIGIN)],
+        [("authorization", key_auth.as_str()), ("origin", ORIGIN)],
+    ] {
+        for (m, uri, body) in [
+            (
+                Method::PUT,
+                format!("/v1/orgs/{}/scim", fx.org),
+                json!({"enabled": true}),
+            ),
+            (
+                Method::POST,
+                format!("/v1/orgs/{}/scim/tokens", fx.org),
+                json!({"name": "x"}),
+            ),
+        ] {
+            let (s, _, v) = fx.h.send(m, &uri, &hdr, Some(body)).await;
+            assert!(
+                s == http::StatusCode::FORBIDDEN || s == http::StatusCode::UNAUTHORIZED,
+                "{uri} {hdr:?}: {s} {v}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn token_lifecycle_rules() {
     let fx = ScimFx::new().await;

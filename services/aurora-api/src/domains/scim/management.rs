@@ -1,6 +1,6 @@
 //! The SCIM management routes of `/v1` (docs/05 §SCIM management): settings, tokens and the
-//! Directory sync status — org `owner` only, every write security-critical audited, PUT/POST
-//! need a recent re-authentication when they change something (412 `reauth_required`).
+//! Directory sync status — org `owner` only, session only, every write security-critical
+//! audited. No OIDC re-authentication is required (phase 5, FIX-157, D-317).
 //!
 //! These are ordinary owner `/v1` routes (session auth via `SessionCaller`) **and OpenAPI
 //! paths** (FIX-081, C-471/C-472): the dashboard calls them through the generated client. Only
@@ -10,13 +10,12 @@ use super::auth::OrgScim;
 use super::settings;
 use crate::app::AppState;
 use crate::audit::{AuditActor, AuditEvent, Outcome};
-use crate::domains::me::service::REAUTH_WINDOW_SECS;
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use aurora_core::limits;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_db::repo::{audit as audit_repo, scim as repo, sessions};
+use aurora_db::repo::{audit as audit_repo, scim as repo};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -41,14 +40,6 @@ fn owner_only(a: &crate::http::auth::OrgAuth) -> Result<(), aurora_core::ApiErro
     a.require_owner()
 }
 
-fn reauth_required() -> aurora_core::ApiError {
-    aurora_core::ApiError::new(
-        StatusCode::PRECONDITION_FAILED,
-        "reauth_required",
-        "Re-authenticate with your sign-in provider to change SCIM settings.",
-    )
-}
-
 fn scim_unavailable() -> aurora_core::ApiError {
     aurora_core::ApiError::conflict(
         "scim_unavailable",
@@ -56,21 +47,13 @@ fn scim_unavailable() -> aurora_core::ApiError {
     )
 }
 
-fn session_id(c: &Caller) -> Result<Uuid, aurora_core::ApiError> {
+fn require_session(c: &Caller) -> Result<(), aurora_core::ApiError> {
     match c.principal {
-        crate::http::auth::Principal::Session { id } => Ok(id),
+        crate::http::auth::Principal::Session { .. } => Ok(()),
         _ => Err(aurora_core::ApiError::forbidden(
             "Sign in with your account to manage SCIM.",
         )),
     }
-}
-
-async fn recent_reauth(state: &AppState, session: Uuid) -> Result<(), aurora_core::ApiError> {
-    let age = sessions::reauth_age_secs(&state.pool, session).await?;
-    if !age.is_some_and(|a| (0.0..=REAUTH_WINDOW_SECS).contains(&a)) {
-        return Err(reauth_required());
-    }
-    Ok(())
 }
 
 /// The org's directory-sync settings (C-472).
@@ -170,7 +153,7 @@ pub struct PutSettings {
     pub exclusive: Option<bool>,
 }
 
-/// `PUT /v1/orgs/{org}/scim` — owner + recent re-auth; validates domains (422
+/// `PUT /v1/orgs/{org}/scim` — owner, session only; validates domains (422
 /// `scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when
 /// enabling); 409 `scim_unavailable` while the instance switch is off.
 #[utoipa::path(put, path = "/orgs/{org}/scim", operation_id = "putScimSettings", tag = "scim",
@@ -178,7 +161,7 @@ pub struct PutSettings {
     request_body = PutSettings,
     responses((status = 200, body = ScimSettings), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
-        (status = 412, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+        (status = 422, body = ErrorEnvelope)),
     security(("session" = [])))]
 pub async fn put_settings(
     State(state): State<AppState>,
@@ -191,12 +174,8 @@ pub async fn put_settings(
     if !state.config.scim.enabled {
         return Err(scim_unavailable());
     }
-    let session = session_id(&c)?;
+    require_session(&c)?;
     let p = body.0;
-    let enabling = p.enabled == Some(true);
-    if enabling || p.email_domains.is_some() || p.exclusive.is_some() {
-        recent_reauth(&state, session).await?;
-    }
     // Validate the domains against the shape rules and the instance allow-list.
     let domains = match &p.email_domains {
         None => None,
@@ -316,14 +295,13 @@ pub struct CreatedScimToken {
 }
 
 /// `POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`
-/// (instance off) / 422 `scim_token_limit_reached` (org off, limit); 412 `reauth_required`.
+/// (instance off) / 422 `scim_token_limit_reached` (org off, limit). No re-authentication.
 #[utoipa::path(post, path = "/orgs/{org}/scim/tokens", operation_id = "createScimToken", tag = "scim",
     params(("org" = Uuid, Path, description = "Organization id")),
     request_body = CreateToken,
     responses((status = 201, body = CreatedScimToken), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 412, body = ErrorEnvelope),
-        (status = 422, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
     security(("session" = [])))]
 pub async fn create_token(
     State(state): State<AppState>,
@@ -343,8 +321,7 @@ pub async fn create_token(
             "Enable SCIM for the organization before creating a token.",
         ));
     }
-    let session = session_id(&c)?;
-    recent_reauth(&state, session).await?;
+    require_session(&c)?;
     let p = body.0;
     let name = aurora_core::sanitize::one_line(&p.name, 80);
     if name.is_empty() {

@@ -954,9 +954,11 @@ async fn reauth_refusals() {
             None,
         )
         .await;
+    // FIX-157 (D-317): no operation asks for a re-authentication any more; account deletion is
+    // answered by its own rules (ann is the sole owner of her auto-created org).
     assert_eq!(
         (st, v["error"]["code"].as_str()),
-        (StatusCode::PRECONDITION_FAILED, Some("reauth_required"))
+        (StatusCode::CONFLICT, Some("last_owner"))
     );
 }
 

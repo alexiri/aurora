@@ -440,7 +440,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete any organization with everything in it (instance administrators; recent re-auth,
+         * Delete any organization with everything in it (instance administrators; session only,
          *     typed slug). Runs the owner delete's services; allowed while frozen; shows no content.
          */
         delete: operations["adminDeleteOrg"];
@@ -1022,8 +1022,8 @@ export interface paths {
         /** One section: every setting's effective value, source and lock (C-772). */
         get: operations["adminGetSettingsSection"];
         /**
-         * Replace a section's dashboard values (C-773): compare-and-set on `generation`, re-authentication
-         *     within 600 s, audited with a before/after diff.
+         * Replace a section's dashboard values (C-773): compare-and-set on `generation`, session only
+         *     (no re-authentication, FIX-157, D-317), audited with a before/after diff.
          */
         put: operations["adminPutSettingsSection"];
         post?: never;
@@ -1187,7 +1187,7 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the
+         * Delete any workspace (instance administrators; session only, typed slug). Runs the
          *     owner delete's services; shows no content.
          */
         delete: operations["adminDeleteWorkspace"];
@@ -2950,7 +2950,7 @@ export interface paths {
         get: operations["getMe"];
         put?: never;
         post?: never;
-        /** Delete the caller's own account (needs a recent OIDC re-authentication, else 412 `reauth_required`). */
+        /** Delete the caller's own account (session only; no re-authentication, FIX-157, D-317). */
         delete: operations["deleteMe"];
         options?: never;
         head?: never;
@@ -3592,7 +3592,7 @@ export interface paths {
         /** `GET /v1/orgs/{org}/scim` — `{ available, enabled, email_domains, exclusive, base_url }`. */
         get: operations["getScimSettings"];
         /**
-         * `PUT /v1/orgs/{org}/scim` — owner + recent re-auth; validates domains (422
+         * `PUT /v1/orgs/{org}/scim` — owner, session only; validates domains (422
          *     `scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when
          *     enabling); 409 `scim_unavailable` while the instance switch is off.
          */
@@ -3636,7 +3636,7 @@ export interface paths {
         put?: never;
         /**
          * `POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`
-         *     (instance off) / 422 `scim_token_limit_reached` (org off, limit); 412 `reauth_required`.
+         *     (instance off) / 422 `scim_token_limit_reached` (org off, limit). No re-authentication.
          */
         post: operations["createScimToken"];
         delete?: never;
@@ -13585,14 +13585,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
@@ -15026,14 +15018,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -15217,14 +15201,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -15346,14 +15322,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -15436,14 +15404,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
@@ -15513,14 +15473,6 @@ export interface operations {
                 };
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            412: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15779,14 +15731,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -16001,14 +15945,6 @@ export interface operations {
                 };
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            412: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16613,14 +16549,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            412: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -24013,14 +23941,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
@@ -27355,14 +27275,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            412: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -27552,14 +27464,6 @@ export interface operations {
                 };
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            412: {
                 headers: {
                     [name: string]: unknown;
                 };

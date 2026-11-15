@@ -3,7 +3,6 @@
 use crate::common::*;
 use http::Method;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 async fn call(h: &Harness, tok: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
     let c = cookie(tok);
@@ -174,43 +173,16 @@ async fn patch_me_validation() {
     assert_eq!(v["default_org_id"], json!(o1));
 }
 
-async fn stamp_reauth(h: &Harness, sid: Uuid, ago_secs: i64) {
-    sqlx::query("UPDATE sessions SET reauth_at = now() - make_interval(secs => $2) WHERE id = $1")
-        .bind(sid)
-        .bind(ago_secs as f64)
-        .execute(h.pool())
-        .await
-        .unwrap();
-}
-
-/// RFE-004: account deletion needs an OIDC re-authentication of the session within 10 minutes
-/// (412 `reauth_required`); there is no password to supply any more.
+/// FIX-157 (D-317): account deletion needs no OIDC re-authentication: a session that never
+/// re-authenticated is not asked for one (no 412); the last-owner rule still applies.
 #[tokio::test]
-async fn delete_me_needs_recent_reauth() {
+async fn delete_me_needs_no_reauth() {
     let h = Harness::new().await;
     let u = h.user("d@x.io", false).await;
     let (sid, tok) = h.good_session(u).await;
     let org = h.org().await;
     h.member(org, u, "owner", "active").await;
-    // never re-authenticated
-    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", None).await;
-    assert_eq!((s, code(&v)), (412, "reauth_required"));
-    // a body (the phase-0 password) does not help
-    let (s, v) = call(
-        &h,
-        &tok,
-        Method::DELETE,
-        "/v1/me",
-        Some(json!({"password": "correct horse battery"})),
-    )
-    .await;
-    assert_eq!((s, code(&v)), (412, "reauth_required"));
-    // stale re-authentication (11 min)
-    stamp_reauth(&h, sid, 660).await;
-    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", None).await;
-    assert_eq!((s, code(&v)), (412, "reauth_required"));
-    // fresh, but last owner
-    stamp_reauth(&h, sid, 5).await;
+    // never re-authenticated: the last-owner rule answers, not a re-authentication demand
     let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", None).await;
     assert_eq!((s, code(&v)), (409, "last_owner"));
     // second owner: ok
@@ -236,18 +208,29 @@ async fn delete_me_needs_recent_reauth() {
     assert_eq!(s, 401);
 }
 
-/// Another session of the same user does not inherit a re-authentication.
+/// FIX-157: account deletion stays session-only: an API key is refused and deletes nothing.
 #[tokio::test]
-async fn reauth_is_per_session() {
+async fn delete_me_refuses_an_api_key() {
     let h = Harness::new().await;
-    let u = h.user("p@x.io", false).await;
-    let (s1, t1) = h.good_session(u).await;
-    let (_, t2) = h.good_session(u).await;
-    stamp_reauth(&h, s1, 1).await;
-    let (s, v) = call(&h, &t2, Method::DELETE, "/v1/me", None).await;
-    assert_eq!((s, code(&v)), (412, "reauth_required"));
-    let (s, _) = call(&h, &t1, Method::DELETE, "/v1/me", None).await;
-    assert_eq!(s, 204);
+    let u = h.user("k@x.io", false).await;
+    let org = h.org().await;
+    h.member(org, u, "member", "active").await;
+    let (_, key) = h.api_key(u, org, None, false).await;
+    let (s, _, _) = h
+        .send(
+            Method::DELETE,
+            "/v1/me",
+            &[("authorization", &bearer(&key)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert!(s == 401 || s == 403, "api key got {s}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE id = $1")
+        .bind(u)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
 }
 
 /// FIX-063 (C-465): a suspended membership has no effective role, even for an owner.
