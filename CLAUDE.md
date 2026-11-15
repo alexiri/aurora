@@ -8,7 +8,8 @@ Deliver the application described by `docs/MASTER_SPEC.md` accurately while usin
 - `docs/90-decisions.md` records approved technical decisions and interfaces.
 - `docs/FEATURES.md` is the feature inventory.
 - `docs/tasks/` contains bounded implementation briefs.
-- `docs/PROGRESS.md` tracks status, dependencies, and verification.
+- `docs/PROGRESS.md` tracks status, dependencies, and verification for the current and next phase only.
+- `docs/history/` holds the frozen record of closed phases (task tables, answered questions, done feature rows); PROGRESS.md §How this file is kept says when material moves there.
 
 Do not invent requirements. If the master specification is absent, ask the user to add it before planning implementation.
 
