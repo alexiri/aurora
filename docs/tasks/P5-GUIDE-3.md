@@ -5,6 +5,12 @@ Third task of "app guides on demand". Normative spec: `docs/24-app-guides.md` §
 **P5-GUIDE-2** (the `agent_guides` field and the file route, with `schema.d.ts` regenerated).
 It may start as soon as C-648 is merged, against the generated types.
 
+**Amendment of 2026-11-15 (D-295, D-296):** C-648 carries `files[].kind` and `operations`.
+Show recipes in their own group above the reference files, with a "Recipe" badge (the shared
+badge primitive); show the operations file (name, size, operation count, change mark) when
+`operations` is not `null`, opening in the same plain-text viewer. When P5-GUIDE-6 has not
+merged yet, `operations` is always `null` and the row is simply absent.
+
 ## What it delivers
 
 Instance admins see what a package tells agents: on the package page and, for a pending
