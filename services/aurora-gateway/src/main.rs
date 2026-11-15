@@ -266,23 +266,6 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("gateway.insecure_loopback_injection is for tests only and is refused inside a Kubernetes cluster".into());
     }
-    let handler = Arc::new(
-        PolicyHandler::new(PolicyHandlerParts {
-            resolver: policy_resolver,
-            plaintext: plaintext.clone(),
-            log: reqlog.clone(),
-            external_url: cfg.external_url.clone(),
-            holds: Some(holds.clone()),
-            touch_pool: Some(pool.clone()),
-        })
-        .with_rule_counters(rate)
-        .with_governance(governance)
-        .with_health(health.clone())
-        .with_tokens(tokens.clone())
-        .with_summarizer(summarizer)
-        .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize)
-        .with_insecure_loopback_injection(cfg.gateway.insecure_loopback_injection),
-    );
     if cfg.gateway.insecure_loopback_injection {
         tracing::warn!(
             "gateway.insecure_loopback_injection is on: credentials are injected over plain \
@@ -348,6 +331,40 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         Some(p) => Some(std::fs::read(p)?),
         None => None,
     };
+    // (P4-LLM-2, D-261(e), SEC-97) The LLM credential mint: its own guarded upstream (same destination guard, egress
+    // proxy and extra CAs as agent requests), registered with the invalidation hub.
+    let llm_mint = Arc::new(aurora_gateway::llm_mint::LlmMint::new(
+        Arc::new(aurora_gateway::upstream::Upstream::new(
+            guard.clone(),
+            cfg.gateway
+                .egress_proxy
+                .as_deref()
+                .map(aurora_gateway::upstream::EgressProxy::parse)
+                .transpose()?,
+            extra_ca_pem.as_deref(),
+            aurora_core::limits::LLM_TOKEN_MINT_TIMEOUT,
+        )?),
+        llm.overrides().clone(),
+    ));
+    hub.register(llm_mint.clone());
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver: policy_resolver,
+            plaintext: plaintext.clone(),
+            log: reqlog.clone(),
+            external_url: cfg.external_url.clone(),
+            holds: Some(holds.clone()),
+            touch_pool: Some(pool.clone()),
+        })
+        .with_rule_counters(rate)
+        .with_governance(governance)
+        .with_health(health.clone())
+        .with_tokens(tokens.clone())
+        .with_summarizer(summarizer)
+        .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize)
+        .with_insecure_loopback_injection(cfg.gateway.insecure_loopback_injection)
+        .with_llm_mint(llm_mint),
+    );
     // (phase 4, P4-GSL, D-149) The skill-library fetch route on the internal port: its own guarded
     // client (same destination guard and egress proxy as agent requests), the internal secret.
     let library = Arc::new(aurora_gateway::library_fetch::LibraryFetch {

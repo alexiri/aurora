@@ -20,6 +20,7 @@ pub mod instance;
 pub mod invalidation;
 pub mod ldap;
 pub mod library_fetch;
+pub mod llm_mint;
 pub mod mechanisms;
 pub mod mint;
 pub mod pipeline;

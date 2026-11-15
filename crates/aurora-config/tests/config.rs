@@ -709,6 +709,22 @@ fn dev_upstream_overrides_need_the_insecure_switch_and_loopback_targets() {
         .is_ok()
     );
     assert!(ok(&cfg(true, "https://api.openai.com", "http://[::1]:9000")).is_ok());
+    // (P4-LLM-2) Google's token endpoint and the Vertex hosts
+    for k in [
+        "https://oauth2.googleapis.com",
+        "https://aiplatform.googleapis.com",
+        "https://us-east5-aiplatform.googleapis.com",
+    ] {
+        assert!(ok(&cfg(true, k, "http://127.0.0.1:9000")).is_ok(), "{k}");
+    }
+    for k in [
+        "https://-aiplatform.googleapis.com",
+        "https://evil.example/-aiplatform.googleapis.com",
+        "https://us-east5-aiplatform.googleapis.com.evil.example",
+        "http://oauth2.googleapis.com",
+    ] {
+        assert!(ok(&cfg(true, k, "http://127.0.0.1:9000")).is_err(), "{k}");
+    }
     // without the switch
     let e = ok(&cfg(
         false,

@@ -57,6 +57,15 @@ pub const CONNECTION_CHOICE_MAX: u32 = 20;
 pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 pub const LLM_ORIGIN_RECHECK: Duration = Duration::from_secs(3600);
 pub const LLM_ORIGIN_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+/// (P4-LLM-2, D-261(e)) One mint call (Google token, Entra token, STS session).
+pub const LLM_TOKEN_MINT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A minted credential is reused until this long before it expires ...
+pub const LLM_TOKEN_SKEW: Duration = Duration::from_secs(300);
+/// (the 55-minute cap of the same row is `LLM_TOKEN_MAX_AGE` in the gateway's `llm_mint.rs`)
+/// After a failed mint the same `(secret, version, mode, region)` answers 502 without a new upstream call for this long.
+pub const LLM_TOKEN_MINT_FAILURE_HOLD: Duration = Duration::from_secs(5);
+/// Minted entries per gateway replica (least recently used evicted).
+pub const LLM_MINT_CACHE_MAX: usize = 10_000;
 /// entries per org / workspace.
 pub const EGRESS_ALLOWLIST_MAX: u32 = 500;
 /// (RFE-025) CIDRs per BYO source list (agent / org / instance).

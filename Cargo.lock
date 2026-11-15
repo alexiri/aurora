@@ -770,6 +770,9 @@ dependencies = [
  "aurora-config",
  "aurora-core",
  "aurora-policy",
+ "aurora-testkit",
+ "aws-lc-rs",
+ "base64 0.22.1",
  "http",
  "reqwest 0.12.28",
  "serde",
@@ -1002,6 +1005,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "tokio",
+ "url",
  "uuid",
  "wiremock",
 ]

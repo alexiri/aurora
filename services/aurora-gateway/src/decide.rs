@@ -64,6 +64,9 @@ pub struct PolicyHandler {
     /// (FIX-104, D-180) `gateway.insecure_loopback_injection`, tests only: package host claims
     /// are injected over any scheme and port when the destination is a loopback address.
     insecure_loopback_injection: bool,
+    /// (P4-LLM-2, C-807) Mints the credential of the minted LLM modes; `None` refuses them (502
+    /// `credential_unavailable`, `kind: llm_mint`).
+    llm_mint: Option<Arc<crate::llm_mint::LlmMint>>,
 }
 
 pub struct PolicyHandlerParts {
@@ -367,7 +370,51 @@ impl PolicyHandler {
             condition_body_limit: CONDITION_BODY_BUFFER,
             health: None,
             insecure_loopback_injection: false,
+            llm_mint: None,
         }
+    }
+
+    /// (P4-LLM-2) The LLM credential mint service.
+    #[must_use]
+    pub fn with_llm_mint(mut self, m: Arc<crate::llm_mint::LlmMint>) -> Self {
+        self.llm_mint = Some(m);
+        self
+    }
+
+    /// (P4-LLM-2, C-806, C-807) The minted credential a secret's recipe needs (`None` for plain keys): produced by the
+    /// mint service from the secret's own value, never taken from the request.
+    async fn llm_token(
+        &self,
+        c: &SecretCand,
+        value: &[u8],
+    ) -> Result<Option<Arc<aurora_core::Secret<String>>>, aurora_llm::mint::MintError> {
+        use aurora_llm::{AuthMode, InjectionHeader};
+        let Injection::Llm(l) = &c.injection else {
+            return Ok(None);
+        };
+        let mode = match l.header {
+            InjectionHeader::GcpToken => AuthMode::GcpServiceAccount,
+            InjectionHeader::EntraToken => AuthMode::AzureEntra,
+            _ => return Ok(None),
+        };
+        let unavailable = aurora_llm::mint::MintError::unavailable;
+        let mint = self.llm_mint.as_ref().ok_or_else(unavailable)?;
+        let ep = c
+            .llm_endpoint
+            .as_deref()
+            .and_then(|id| self.resolver.llm().endpoint(id))
+            .ok_or_else(unavailable)?;
+        mint.token(&crate::llm_mint::MintRequest {
+            secret_id: c.id,
+            version: c.version,
+            org_id: c.org_id,
+            workspace_id: c.workspace_id,
+            endpoint: ep,
+            mode,
+            value,
+        })
+        .await
+        .map(Some)
     }
 
     /// (FIX-104, D-180) `gateway.insecure_loopback_injection`: tests and development only.
@@ -1402,15 +1449,32 @@ impl PolicyHandler {
                 backstop = Some((gov.clone(), info));
             }
             let mut new_path = path.clone();
-            let r = inject::apply(
-                c,
-                value.expose(),
-                Target {
-                    headers: &mut headers,
-                    path: &mut new_path,
-                    query: &mut query,
-                },
-            );
+            // (P4-LLM-2, C-807) A minted mode injects the token the mint service produced from the value.
+            let minted = match self.llm_token(c, value.expose()).await {
+                Ok(t) => t,
+                Err(e) => {
+                    let err = credential_unavailable("llm_mint").with_details(
+                        json!({ "kind": "llm_mint", "reason": e.reason() }),
+                    );
+                    let code = if e.class == aurora_llm::mint::MintClass::Rejected {
+                        "llm_auth"
+                    } else {
+                        "credential_unavailable"
+                    };
+                    ctx.decision = "error";
+                    self.log.record(ctx.row(502, None, Some(code)));
+                    return Outcome::Respond(guidance::response(&err));
+                }
+            };
+            let target = Target {
+                headers: &mut headers,
+                path: &mut new_path,
+                query: &mut query,
+            };
+            let r = match &minted {
+                Some(t) => inject::apply_minted(c, t.expose().as_bytes(), target),
+                None => inject::apply(c, value.expose(), target),
+            };
             if r.is_err() {
                 return Outcome::Respond(self.refuse(
                     ctx,
