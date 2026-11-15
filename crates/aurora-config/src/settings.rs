@@ -283,6 +283,11 @@ impl Registry {
         defs.extend(llm_defs());
         defs.extend(sign_in_defs());
         defs.extend(email_defs());
+        defs.extend(agents_defs());
+        defs.extend(approvals_defs());
+        defs.extend(retention_defs());
+        defs.extend(skills_defs());
+        defs.extend(previews_defs());
         #[cfg(any(test, feature = "test-registry"))]
         defs.extend(test_defs());
         Self { defs }
@@ -577,6 +582,167 @@ fn email_defs() -> Vec<SettingDef> {
         )
         .helm("api.extraEnv: AURORA_SMTP_PASSWORD")
         .secret(),
+    ]
+}
+
+/// A number of seconds or a count that loosens when it goes up (deadlines, caps, quotas). The
+/// bounds are wide: the section's own validation (`validate.rs`) names the precise rule.
+fn up(s: &'static str, key: &'static str, max: i64, default: impl Into<Value>) -> SettingDef {
+    SettingDef::new(s, key, SettingType::Int { min: 0, max }, default.into())
+        .loosening(Loosening::Number { up_loosens: true })
+}
+
+/// The `agents` section (SET-5, D-237): agent defaults and the hosted-agent deadlines. Defaults are
+/// those of `raw.rs`; `hosted.allow_fake_harness` is a development switch and stays configuration.
+fn agents_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "agents";
+    vec![
+        SettingDef::new(
+            S,
+            "agents.default_name",
+            SettingType::Str { max_len: 100 },
+            json!("Daneel"),
+        ),
+        SettingDef::new(
+            S,
+            "agents.default_brief",
+            SettingType::Str { max_len: 20_000 },
+            json!(crate::raw::DEFAULT_AGENT_BRIEF),
+        ),
+        SettingDef::new(S, "hosted.enabled", SettingType::Bool, json!(true))
+            .loosening(Loosening::Bool { loosens_when: true }),
+        SettingDef::new(
+            S,
+            "hosted.default_harness",
+            SettingType::Str { max_len: 64 },
+            json!("claude-code"),
+        ),
+        SettingDef::new(
+            S,
+            "hosted.enabled_harnesses",
+            SettingType::List {
+                item: Box::new(SettingType::Str { max_len: 64 }),
+                max_items: 16,
+            },
+            json!(["claude-code"]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: true,
+        }),
+        SettingDef::new(
+            S,
+            "hosted.default_timezone",
+            SettingType::Str { max_len: 64 },
+            json!("UTC"),
+        ),
+        up(S, "hosted.idle_stop_secs", 604_800, 30 * 60),
+        up(S, "hosted.background_cap_secs", 2_592_000, 12 * 3600),
+        up(S, "hosted.turn_ceiling_secs", 2_592_000, 6 * 3600),
+        up(S, "hosted.turn_stall_secs", 604_800, 10 * 60),
+        up(S, "hosted.sandbox_ready_timeout_secs", 86_400, 300),
+    ]
+}
+
+/// The `approvals` section (SET-5, D-237). `approvals.park.*` joins when P4-011B lands.
+fn approvals_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "approvals";
+    vec![
+        up(
+            S,
+            "approvals.timeout_secs",
+            2_592_000,
+            aurora_core::limits::APPROVAL_TIMEOUT.as_secs(),
+        ),
+        up(S, "approvals.max_timeout_secs", 2_592_000, 3600),
+        SettingDef::new(
+            S,
+            "approvals.email_notifications",
+            SettingType::Bool,
+            json!(true),
+        ),
+    ]
+}
+
+/// The `retention` section (SET-5): retention windows and attachment ceilings (`0` = no ceiling,
+/// the loosest value; an unset window maximum is unbounded).
+fn retention_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "retention";
+    let days = |key: &'static str| {
+        SettingDef::new(
+            S,
+            key,
+            SettingType::Int {
+                min: 1,
+                max: 100_000,
+            },
+            Value::Null,
+        )
+        .loosening(Loosening::Number { up_loosens: true })
+    };
+    let mib = |key: &'static str, default: u64| {
+        SettingDef::new(
+            S,
+            key,
+            SettingType::Int {
+                min: 0,
+                max: 100_000_000,
+            },
+            json!(default),
+        )
+        .loosening(Loosening::NumberZeroIsMax)
+    };
+    vec![
+        up(S, "retention.request_log_days", 100_000, 30),
+        days("retention.conversation_days_max"),
+        mib("attachments.default_org_quota_mib", 10 * 1024),
+        mib("attachments.org_quota_mib_max", 50 * 1024),
+        days("attachments.days_max"),
+    ]
+}
+
+/// The `skills` section (SET-5): the git skill library.
+fn skills_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "skills";
+    vec![
+        SettingDef::new(S, "skills.library.enabled", SettingType::Bool, json!(true)),
+        SettingDef::new(
+            S,
+            "skills.library.refresh_interval_secs",
+            SettingType::Int {
+                min: 0,
+                max: 604_800,
+            },
+            json!(900),
+        ),
+        up(
+            S,
+            "skills.library.bytes_per_agent",
+            1_073_741_824,
+            1024 * 1024,
+        ),
+    ]
+}
+
+/// The `previews` section (SET-5); `previews.enabled` and `previews.domain` stay in Helm.
+fn previews_defs() -> Vec<SettingDef> {
+    const S: &str = "previews";
+    vec![
+        up(S, "previews.session_ttl_secs", 2_592_000, 8 * 3600),
+        up(S, "previews.session_idle_secs", 2_592_000, 3600),
+        up(
+            S,
+            "previews.bytes_per_share_day",
+            1_099_511_627_776,
+            5 * 1024 * 1024 * 1024u64,
+        ),
+        up(S, "previews.shares_per_agent", 100_000, 10),
+        up(S, "previews.shares_per_org", 1_000_000, 200),
+        up(S, "previews.awake_cap_secs", 2_592_000, 4 * 3600),
     ]
 }
 

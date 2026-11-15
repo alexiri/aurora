@@ -200,7 +200,7 @@ pub async fn create(
     if req.kind != "byo" && req.kind != "hosted" {
         return Err(bad("/kind", "must be byo or hosted"));
     }
-    if req.kind == "hosted" && !state.config.hosted.enabled {
+    if req.kind == "hosted" && !state.ops().hosted.enabled {
         return Err(ApiError::unprocessable(
             "hosted_disabled",
             "Hosted agents are disabled on this instance.",
@@ -233,7 +233,7 @@ pub async fn create(
         let h = req
             .harness
             .clone()
-            .unwrap_or_else(|| state.config.hosted.default_harness.clone());
+            .unwrap_or_else(|| state.ops().hosted.default_harness.clone());
         harness_ok(state, &h)?;
         Some(h)
     } else {
@@ -438,7 +438,7 @@ pub async fn patch(
             let old = current
                 .1
                 .clone()
-                .unwrap_or_else(|| state.config.hosted.default_harness.clone());
+                .unwrap_or_else(|| state.ops().hosted.default_harness.clone());
             (*new != old).then_some(old)
         }
         _ => None,

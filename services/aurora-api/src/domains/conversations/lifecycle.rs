@@ -291,15 +291,15 @@ async fn retention_view(
     org: Uuid,
 ) -> Result<Retention, ApiError> {
     let (quota, days) = aurora_db::repo::attachments::org_limits(&mut *conn, org).await?;
-    let a = &state.config.attachments;
+    let a = &state.ops().attachments;
     Ok(Retention {
         conversations_days: lifecycle::org_conversations_days(&mut *conn, org).await?,
-        conversations_days_max: state.config.retention.conversation_days_max.map(i64::from),
+        conversations_days_max: state.ops().retention.conversation_days_max.map(i64::from),
         attachments_days: days,
         attachments_days_max: a.days_max.map(i64::from),
         attachment_quota_mib: quota,
         attachment_quota_mib_effective: quota::effective_quota_bytes(
-            &state.config.attachments,
+            &state.ops().attachments,
             quota,
         )
         .map(|b| b / quota::MIB),
@@ -355,9 +355,9 @@ pub async fn put_retention(
     req: PutRetention,
 ) -> Result<Retention, ApiError> {
     c.org(state, org).await?.require_admin()?;
-    let ceiling = state.config.retention.conversation_days_max.map(i64::from);
-    let att_ceiling = state.config.attachments.days_max.map(i64::from);
-    let quota_ceiling = i64::try_from(state.config.attachments.org_quota_mib_max).unwrap_or(0);
+    let ceiling = state.ops().retention.conversation_days_max.map(i64::from);
+    let att_ceiling = state.ops().attachments.days_max.map(i64::from);
+    let quota_ceiling = i64::try_from(state.ops().attachments.org_quota_mib_max).unwrap_or(0);
     let mut tx = state.pool.begin().await.map_err(db)?;
     let old = lifecycle::org_conversations_days(&mut tx, org).await?;
     let (old_quota, old_att_days) = aurora_db::repo::attachments::org_limits(&mut *tx, org).await?;

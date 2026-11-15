@@ -290,7 +290,7 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
         tx.commit().await.map_err(DbError::from)?;
     }
 
-    let ready_secs = s.config.hosted.sandbox_ready_timeout_secs;
+    let ready_secs = s.ops().hosted.sandbox_ready_timeout_secs;
 
     // 2. (FIX-093, C-580) A start attempt with no waiting turn is bounded too: a `starting`
     // sandbox past the deadline, or whose lease lapsed with its runner gone.
@@ -354,7 +354,7 @@ pub async fn sweep_once(s: &AppState) -> Result<Swept, ApiError> {
 /// (FIX-093) The sweep's lock-free snapshot of overdue turns (tests interleave between this and
 /// [`sweep_turns`]).
 pub async fn overdue_snapshot(s: &AppState) -> Result<Vec<OverdueTurn>, ApiError> {
-    let ready_secs = s.config.hosted.sandbox_ready_timeout_secs;
+    let ready_secs = s.ops().hosted.sandbox_ready_timeout_secs;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     Ok(hosted::overdue_turns(
         &mut conn,
@@ -374,7 +374,7 @@ pub async fn sweep_turns(
     out: &mut Swept,
     woke: &mut bool,
 ) -> Result<(), ApiError> {
-    let ready_secs = s.config.hosted.sandbox_ready_timeout_secs;
+    let ready_secs = s.ops().hosted.sandbox_ready_timeout_secs;
     let now = Utc::now();
     // Sandboxes this pass already decided on: `true` = given up, `false` = found ready.
     let mut decided: std::collections::HashMap<Uuid, bool> = std::collections::HashMap::new();

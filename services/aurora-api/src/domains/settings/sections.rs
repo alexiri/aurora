@@ -22,8 +22,33 @@ pub async fn extra(
         "llm" => Some(json!({ "providers": aurora_llm::supported_providers() })),
         // (C-778) Where organizations stand against the instance ceiling.
         "governance" => Some(json!({ "orgs_url": "/v1/admin/settings/governance/orgs" })),
+        // (C-782) The runners' sandbox sizes, `max_sandboxes` and harnesses, read-only (D-235(a)).
+        "agents" => Some(json!({ "runners": runners(state).await? })),
         _ => None,
     })
+}
+
+async fn runners(state: &AppState) -> Result<Vec<Value>, ApiError> {
+    let rows = aurora_db::repo::runners::list(&state.pool)
+        .await
+        .map_err(|_| ApiError::internal("Internal error."))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let c = r.capabilities.unwrap_or(Value::Null);
+            let get = |k: &str| c.get(k).cloned().unwrap_or(Value::Null);
+            json!({
+                "name": r.name,
+                "backend": r.backend,
+                "max_sandboxes": get("max_sandboxes"),
+                "harnesses": get("harnesses"),
+                "defaults": get("defaults"),
+                "resources": get("resources"),
+                "held_awake_ceiling": get("held_awake_ceiling"),
+                "helm_keys": "runner.sandbox_cpus, runner.sandbox_memory_mib, runner.sandbox_pids, runner.max_sandboxes",
+            })
+        })
+        .collect())
 }
 
 /// The organizations whose effective values change, their total, and section warnings.

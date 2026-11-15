@@ -985,6 +985,61 @@ async fn guard_dashboard_addresses(
     }
 }
 
+/// The harness ids the registered runners report (union of their `capabilities.harnesses`).
+pub async fn runner_harnesses(state: &AppState) -> Result<Vec<String>, ApiError> {
+    let rows = aurora_db::repo::runners::list(&state.pool)
+        .await
+        .map_err(dberr)?;
+    let mut out: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.capabilities.as_ref()?.get("harnesses")?.as_array())
+        .flatten()
+        .filter_map(|h| h.as_str().map(str::to_owned))
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// SET-5 (C-782): `hosted.enabled_harnesses` may only name harnesses a registered runner reports
+/// (422 `harness_not_available`). With no runner registered yet nothing can be judged, so the
+/// list is accepted; `fake` is the development harness and is judged by startup validation.
+async fn check_harnesses(state: &AppState, reqs: &[SectionRequest]) -> Result<(), ApiError> {
+    let mut wanted: Vec<&str> = Vec::new();
+    for r in reqs.iter().filter(|r| r.section == "agents") {
+        if let Some(list) = r
+            .values
+            .get("hosted.enabled_harnesses")
+            .and_then(Value::as_array)
+        {
+            wanted.extend(list.iter().filter_map(Value::as_str));
+        }
+    }
+    if wanted.is_empty() || state.settings.source.sets("hosted.enabled_harnesses") {
+        return Ok(());
+    }
+    let known = runner_harnesses(state).await?;
+    if known.is_empty() {
+        return Ok(());
+    }
+    let fields: Vec<Value> = wanted
+        .into_iter()
+        .filter(|h| *h != "fake" && !known.iter().any(|k| k == h))
+        .map(|h| {
+            field(
+                "/hosted.enabled_harnesses".to_string(),
+                "harness_not_available",
+                format!("no registered runner reports the harness `{h}`"),
+            )
+        })
+        .collect();
+    if fields.is_empty() {
+        Ok(())
+    } else {
+        Err(invalid(fields))
+    }
+}
+
 pub struct SectionRequest {
     pub section: String,
     /// The generation the writer read; `None` for the CLI (the current one under the row lock).
@@ -1008,6 +1063,7 @@ pub async fn apply(
     // once: nothing references them.
     require_session(via)?;
     guard_dashboard_addresses(state, &reqs).await?;
+    check_harnesses(state, &reqs).await?;
     for r in reqs.iter().filter(|r| r.section == "sign_in") {
         super::sign_in::check_submitted(state, &r.values).await?;
     }

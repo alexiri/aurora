@@ -103,14 +103,9 @@ async fn create_org(
         ));
     }
     let mut tx = begin(&s.pool).await?;
-    let created = service::create_organization(
-        &mut tx,
-        &s.config,
-        c.user_id,
-        &req.name,
-        req.slug.as_deref(),
-    )
-    .await?;
+    let created =
+        service::create_organization(&mut tx, &s.ops(), c.user_id, &req.name, req.slug.as_deref())
+            .await?;
     tx.commit().await.map_err(DbError::from)?;
     audit::record(
         &s,
@@ -416,7 +411,7 @@ async fn create_workspace(
     let mut tx = begin(&s.pool).await?;
     let (ws, agent) = service::create_workspace_in_tx(
         &mut tx,
-        &s.config,
+        &s.ops(),
         org,
         c.user_id,
         &req.name,

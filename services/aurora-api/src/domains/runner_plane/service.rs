@@ -68,7 +68,7 @@ pub async fn register(
             poll_wait_secs: MAX_WAIT_SECS,
             reconcile_interval_secs: limits::RECONCILE_INTERVAL.as_secs() as u32,
             orphan_grace_secs: limits::ORPHAN_GRACE.as_secs() as u32,
-            idle_stop_secs: s.config.hosted.idle_stop_secs as u32,
+            idle_stop_secs: s.ops().hosted.idle_stop_secs as u32,
             previews: s.config.previews.enabled,
             // (P4-TERM, C-623) The runner opens :4108 for terminal grants and speaks the
             // W19 `pty.*` frames only when the operator enabled the terminal — and only if
@@ -168,7 +168,7 @@ async fn apply(
                 message: st.message.as_deref(),
                 events: &st.events,
                 lease_secs: super::work::start_lease_secs(
-                    s.config.hosted.sandbox_ready_timeout_secs,
+                    s.ops().hosted.sandbox_ready_timeout_secs,
                 ),
             };
             let (a, revoked) =

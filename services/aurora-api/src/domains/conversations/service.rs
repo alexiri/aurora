@@ -720,7 +720,7 @@ pub async fn post_message(
     let agent = agents::get(&state.pool, conv.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    if agent.kind == "hosted" && !state.config.hosted.enabled {
+    if agent.kind == "hosted" && !state.ops().hosted.enabled {
         return Err(ApiError::unprocessable(
             "hosted_disabled",
             "Hosted agents are disabled on this instance.",

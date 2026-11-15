@@ -65,7 +65,7 @@ pub async fn used_today(s: &AppState, share: Uuid) -> Result<u64, ApiError> {
 
 /// Whether `share` has reached its daily quota.
 pub async fn exceeded(s: &AppState, share: Uuid) -> Result<bool, ApiError> {
-    Ok(used_today(s, share).await? >= s.config.previews.bytes_per_share_day)
+    Ok(used_today(s, share).await? >= s.ops().previews.bytes_per_share_day)
 }
 
 /// Adds the relayed bytes (`(share, bytes)`, both directions summed) to the shares' daily
