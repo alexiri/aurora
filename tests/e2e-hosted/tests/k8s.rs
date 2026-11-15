@@ -1138,3 +1138,137 @@ async fn k5_managed_fake_connector_round_trip_and_disable() {
     })
     .await;
 }
+
+/// (P5-CERN-ADDONS) The real `aurora-addons-cern` repository end to end: register it as an addon
+/// source (the manifest and both signed packages are fetched from GitHub), approve both packages,
+/// connect them, grant them to the agent, then from inside the sandbox Pod one phonebook search
+/// through the gateway LDAP lane (against xldap.cern.ch, whose CERN root the chart trusts through
+/// `extraCaBundle`: `AURORA_E2E_EXTRA_CA_FILE`) and one CERN Maps route. Needs the internet; gated by
+/// AURORA_E2E_CERN_ADDONS=1.
+#[tokio::test]
+async fn k7_cern_addons_source_to_phonebook_search_and_route() {
+    if !enabled() {
+        return;
+    }
+    if !std::env::var("AURORA_E2E_CERN_ADDONS").is_ok_and(|v| v == "1") {
+        eprintln!("skipped: AURORA_E2E_CERN_ADDONS != 1");
+        return;
+    }
+    let owner = format!("c{}@e2e.test", uuid::Uuid::now_v7().simple());
+    let me = Api::connect(&env("AURORA_KIND_API"), &env("AURORA_KIND_ORIGIN"), &owner).await;
+    psql(&format!(
+        "UPDATE users SET is_instance_admin = true, email_verified_at = now() WHERE email = '{owner}'"
+    ));
+    let admin = me.relogin(&owner).await;
+
+    // Register the repository: TOFU review, then one audited add that ingests the newest versions.
+    let url = "https://github.com/alexiri/aurora-addons-cern";
+    let (s, pv) = admin
+        .post("/v1/admin/addon-sources/preview", json!({ "url": url }))
+        .await;
+    assert_eq!(s, 200, "preview: {pv}");
+    assert_eq!(pv["publisher"], "cern", "{pv}");
+    assert_eq!(pv["addons"].as_array().map(Vec::len), Some(2), "{pv}");
+    let (s, src) = admin
+        .post("/v1/admin/addon-sources", json!({ "url": url }))
+        .await;
+    assert_eq!(s, 201, "register: {src}");
+    assert_eq!(src["key_fingerprint"], pv["key_fingerprint"], "{src}");
+
+    // Both packages arrive `pending_approval` (an addon is never activated on first sight).
+    let mut ids = std::collections::HashMap::new();
+    for pkg in ["cern-phonebook", "cern-maps"] {
+        let p = eventually(&format!("{pkg} ingested"), 60, || async {
+            let (s, v) = admin.get("/v1/admin/plugins").await;
+            assert_eq!(s, 200, "{v}");
+            v["items"]
+                .as_array()?
+                .iter()
+                .find(|p| p["package_id"] == pkg)
+                .cloned()
+        })
+        .await;
+        assert_eq!(p["source"], "addon", "{p}");
+        assert_eq!(p["status"], "pending_approval", "{p}");
+        assert_eq!(p["signer"]["kind"], "trusted_key", "{p}");
+        let id = p["id"].as_str().unwrap().to_owned();
+        let (s, a) = admin
+            .post(&format!("/v1/admin/plugins/{id}/approve"), json!({}))
+            .await;
+        assert_eq!(s, 200, "approve {pkg}: {a}");
+        assert_eq!(a["status"], "active", "{a}");
+        ids.insert(pkg, id);
+    }
+
+    // Connect both (nothing to enter) and grant them to the agent.
+    let mut conns = vec![];
+    for app in ["cern-phonebook", "cern-maps"] {
+        let (s, c) = admin
+            .post(
+                &format!("/v1/apps/{app}/connect"),
+                json!({"scope": "workspace", "workspace_id": admin.ws, "method_id": "anonymous",
+                       "fields": {}}),
+            )
+            .await;
+        assert_eq!(s, 200, "connect {app}: {c}");
+        assert_eq!(c["kind"], "connected", "{c}");
+        conns.push(c["connection"]["id"].as_str().unwrap().to_owned());
+    }
+    for c in &conns {
+        let (s, g) = admin
+            .post(
+                &format!("/v1/connections/{c}/grants"),
+                json!({"agent_ids": [admin.daneel], "mode": "full"}),
+            )
+            .await;
+        assert_eq!(s, 200, "grant: {g}");
+    }
+
+    // From the agent's sandbox, through the gateway (the Pod's proxy settings are the agent's own).
+    let conv = admin.direct().await;
+    let v = admin.say(&conv, "[[sleep: 120s]]").await;
+    let _turn = turn_id(&v);
+    let (_boot, pod) = wait_boot_pod(&admin, 180).await;
+    let (rc, out) = exec_in(
+        &pod,
+        "curl -sS -m 40 -X POST -H 'content-type: application/json' \
+         -d '{\"filter\":\"(|(displayName=Fabiola Gianotti*)(cn=fabiola gianotti*))\",\"attributes\":[\"displayName\",\"mail\",\"physicalDeliveryOfficeName\",\"manager\"],\"limit\":3}' \
+         https://cern-phonebook.ldap.aurora.internal/search",
+    );
+    assert_eq!(rc, 0, "phonebook search: {out}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap_or_else(|_| panic!("not JSON: {out}"));
+    let entries = v["entries"].as_array().unwrap_or_else(|| panic!("no entries: {out}"));
+    assert_eq!(entries.len(), 1, "{out}");
+    let mail = entries[0]["attributes"]["mail"][0].as_str().unwrap_or_default();
+    assert!(mail.ends_with("@cern.ch"), "mail: {out}");
+    assert!(entries[0]["attributes"]["manager"][0].as_str().is_some(), "{out}");
+    // An attribute the package does not list is refused by the lane (and never read).
+    let (_, out) = exec_in(
+        &pod,
+        "curl -sS -m 40 -X POST -H 'content-type: application/json' -d '{\"filter\":\"(uid=*)\",\"attributes\":[\"userPassword\"]}' \
+         https://cern-phonebook.ldap.aurora.internal/search",
+    );
+    assert!(out.contains("ldap_request_invalid"), "{out}");
+
+    let (rc, out) = exec_in(
+        &pod,
+        "curl -sS -m 40 'https://maps.cern.ch/api/search?query=513&resultRecordCount=2'",
+    );
+    assert_eq!(rc, 0, "{out}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap_or_else(|_| panic!("not JSON: {out}"));
+    assert!(v["found"].as_i64().unwrap_or(0) > 0, "{out}");
+    let (rc, out) = exec_in(
+        &pod,
+        "curl -sS -m 60 -G 'https://maps.cern.ch/arcgis/rest/services/Routing/NetworkAnalysis/NAServer/Route/solve' \
+         --data-urlencode 'stops=6.0459,46.2325;6.0526,46.2330' --data-urlencode inSR=4326 \
+         --data-urlencode returnRoutes=true --data-urlencode f=json",
+    );
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains("Total_Meters"), "route: {out}");
+    // A path the package does not catalogue stays blocked.
+    let (_, out) = exec_in(
+        &pod,
+        "curl -sS -m 40 -o /dev/null -w '%{http_code}' 'https://maps.cern.ch/arcgis/rest/admin/services?f=json'",
+    );
+    assert!(out.trim() != "200", "uncatalogued ArcGIS path was served: {out}");
+}
