@@ -226,7 +226,7 @@ async fn a_failed_store_stays_listed_with_its_error_and_is_never_the_default() {
     let h = harness().await;
     let a = admin(&h, "root@example.com", true).await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
-    // A valid Vault definition (kubernetes auth builds without contacting Vault) whose CA is
+    // A valid Vault definition (approle auth builds without contacting Vault) whose CA is
     // not a certificate the client can load.
     let pem = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
     let (s, v) = call(
@@ -236,7 +236,7 @@ async fn a_failed_store_stays_listed_with_its_error_and_is_never_the_default() {
         "/v1/admin/secret-stores/vault",
         Some(json!({ "generation": g, "store": {
             "kind": "hashicorp-vault", "address": "https://vault.invalid:8200",
-            "auth": { "method": "kubernetes", "role": "aurora" }, "ca_pem": pem } })),
+            "auth": { "method": "approle", "role_id": "aurora", "secret_id": { "$secret": "s" } }, "ca_pem": pem } })),
     )
     .await;
     assert_eq!(s, 200, "{v}");
@@ -771,7 +771,7 @@ async fn reference_scopes_are_edited_per_organization_and_validated() {
         "/v1/admin/secret-stores/vault",
         Some(json!({ "generation": g, "store": {
             "kind": "hashicorp-vault", "address": "https://vault.invalid:8200",
-            "auth": { "method": "kubernetes", "role": "aurora" } } })),
+            "auth": { "method": "approle", "role_id": "aurora", "secret_id": { "$secret": "s" } } } })),
     )
     .await;
     assert_eq!(s, 200, "{v}");
@@ -973,11 +973,15 @@ async fn keeping_a_secret_while_the_destination_changes_needs_the_secret_again()
         )
         .await;
         assert_eq!(s, 422, "{address} {role}: {e}");
-        assert_eq!(e["error"]["code"], "secret_reentry_required", "{e}");
-        assert!(
-            e["error"]["details"]["fields"][0]["code"] == "secret_reentry_required",
-            "{e}"
-        );
+        // The loopback address is also refused by the destination guard, which runs first.
+        let loopback = address.starts_with("http://127.");
+        if !loopback {
+            assert_eq!(e["error"]["code"], "secret_reentry_required", "{e}");
+            assert!(
+                e["error"]["details"]["fields"][0]["code"] == "secret_reentry_required",
+                "{e}"
+            );
+        }
         let (s, r) = call(
             &h,
             &a,
@@ -988,10 +992,12 @@ async fn keeping_a_secret_while_the_destination_changes_needs_the_secret_again()
         .await;
         assert_eq!(s, 200, "{r}");
         assert_eq!(r["ok"], false);
-        assert_eq!(
-            r["steps"][0]["error_code"], "secret_reentry_required",
-            "{r}"
-        );
+        if !loopback {
+            assert_eq!(
+                r["steps"][0]["error_code"], "secret_reentry_required",
+                "{r}"
+            );
+        }
     }
     assert_eq!(t.hits(), 0, "the kept secret was never sent anywhere");
     // Entering it again is allowed.
@@ -1020,7 +1026,7 @@ async fn a_dashboard_vault_address_may_not_be_loopback_private_or_metadata() {
         "https://[fd00::1]:8200".to_owned(),
     ] {
         let store = json!({ "kind": "hashicorp-vault", "address": address,
-            "auth": { "method": "kubernetes", "role": "r" } });
+            "auth": { "method": "approle", "role_id": "r", "secret_id": { "$secret": "s" } } });
         let (s, e) = call(
             &h,
             &a,
@@ -1048,5 +1054,45 @@ async fn a_dashboard_vault_address_may_not_be_loopback_private_or_metadata() {
             "{address}: {r}"
         );
     }
+    assert_eq!(t.hits(), 0);
+}
+
+#[tokio::test]
+async fn a_dashboard_store_cannot_use_the_kubernetes_login() {
+    // D-307: the login would send the pod's service-account token to the admin-chosen address.
+    let h = harness().await;
+    let a = admin(&h, "root@example.com", true).await;
+    let g = status(&h, &a).await["generation"].as_i64().unwrap();
+    let t = tripwire().await;
+    let body = |addr: &str| {
+        json!({ "kind": "hashicorp-vault", "address": addr,
+        "auth": { "method": "kubernetes", "role": "r" } })
+    };
+    let (s, e) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-stores/k",
+        Some(json!({ "generation": g, "store": body("https://vault.invalid:8200") })),
+    )
+    .await;
+    assert_eq!(s, 422, "{e}");
+    assert!(
+        field_paths(&e).iter().any(|p| p.ends_with("auth/method")),
+        "{e}"
+    );
+    let (s, r) = call(
+        &h,
+        &a,
+        Method::POST,
+        "/v1/admin/secret-store-test",
+        Some(json!({ "id": "k", "store": body(&format!("http://127.0.0.1:{}", t.port)) })),
+    )
+    .await;
+    assert_eq!(s, 200, "{r}");
+    assert_eq!(
+        r["steps"][0]["error_code"], "dashboard_reference_refused:auth.method",
+        "{r}"
+    );
     assert_eq!(t.hits(), 0);
 }

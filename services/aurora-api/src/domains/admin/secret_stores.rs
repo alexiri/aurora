@@ -886,12 +886,12 @@ async fn test_store(
         return Ok(fail("configuration", "store_kind_not_allowed"));
     }
     // SEC-89/SEC-90: nothing is read from the server's environment or files for a dashboard store.
-    if let Some((k, _)) =
-        aurora_config::dashboard_store_violations(&Value::Object(entry.clone())).first()
-    {
+    let violations = aurora_config::dashboard_store_violations(&Value::Object(entry.clone()));
+    if !violations.is_empty() {
+        let keys: Vec<&str> = violations.iter().map(|(k, _)| k.as_str()).collect();
         return Ok(fail(
             "configuration",
-            &format!("dashboard_reference_refused:{k}"),
+            &format!("dashboard_reference_refused:{}", keys.join(",")),
         ));
     }
     let Ok(keyring) = crate::app::build_keyring(&s.config) else {

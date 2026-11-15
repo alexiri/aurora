@@ -172,6 +172,11 @@ impl VaultStore {
         guard: Option<&crate::DialGuard>,
     ) -> Result<Self> {
         let store = settings.id.clone();
+        if guard.is_some_and(|g| !g.literal_permitted(&settings.address)) {
+            return Err(SecretError::InvalidConfig(format!(
+                "secret store '{store}': address: destination refused (private, loopback or metadata address; see gateway.allowed_private)"
+            )));
+        }
         let http = build_client(
             &store,
             settings.ca_file.as_deref(),

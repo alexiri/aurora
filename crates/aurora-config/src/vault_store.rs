@@ -374,6 +374,14 @@ pub fn dashboard_store_violations(entry: &serde_json::Value) -> Vec<(String, Str
         refuse("ca_file", "give the CA as `ca_pem`");
     }
     if let Some(auth) = entry.get("auth") {
+        // D-307: the kubernetes login would send the pod's service-account token to the
+        // admin-chosen address; it is for Helm-declared stores only.
+        if auth.get("method").and_then(|m| m.as_str()) == Some("kubernetes") {
+            refuse(
+                "auth.method",
+                "the Kubernetes login is for Helm-declared stores; use approle",
+            );
+        }
         for (k, hint) in [
             ("role_id_env", "give the role id as `role_id`"),
             ("secret_id_env", "enter the secret id on the page"),

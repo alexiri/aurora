@@ -19,13 +19,16 @@ its own Vault role.
 ## 0. Where to configure it (phase 5)
 
 **Dashboard first.** Sign in as an instance admin and open **Admin › Secret stores**: add a
-Vault store (address, KV mount, managed prefix, Kubernetes or AppRole authentication, an optional
+Vault store (address, KV mount, managed prefix, AppRole authentication, an optional
 CA certificate as PEM text), press **Test connection** (it signs in and writes, reads and removes a
 probe value under the managed prefix), save, choose it as the **default store** and, when you want
 the existing values in Vault, **Move values** (preview, then migrate). An AppRole secret id is
-sealed in Aurora's own inline store and never shown again. Kubernetes authentication uses the
-pods' service-account token: bind your Vault role to the `<release>-api` and `<release>-gateway`
-service accounts.
+sealed in Aurora's own inline store and never shown again. A store added in the dashboard uses
+**AppRole only** (D-307): Kubernetes authentication presents the pod's service-account token, so
+it is available only for stores you declare in Helm (`vault.*`; bind your Vault role to the
+`<release>-api` and `<release>-gateway` service accounts). The dashboard also refuses
+environment-variable and file references (`*_env`, `jwt_path`, `ca_file`) and addresses that are
+private, loopback or cloud-metadata unless `gateway.allowed_private` opens them.
 
 **Migration and sealed settings (D-244).** Moving values (dashboard or `aurora-api secrets migrate
 --to <store>`) never moves the instance settings' sealed fields, an AppRole secret id among them:

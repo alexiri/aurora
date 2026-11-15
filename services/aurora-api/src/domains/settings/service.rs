@@ -894,46 +894,31 @@ fn overlay(stored: &mut Stored, plans: &[&Plan]) {
 // ------------------------------------------------------------------------------------ apply
 
 /// SEC-89/SEC-90 (S1): a Vault address chosen in the dashboard may not be a metadata, private,
-/// loopback or link-local destination unless `gateway.allowed_private` opens it. Only entries the
-/// write adds or re-addresses are resolved; Helm entries are the operator's choice.
-async fn guard_dashboard_addresses(state: &AppState, changed: &[&Plan]) -> Result<(), ApiError> {
-    let Some(p) = changed.iter().find(|p| p.section == "secrets") else {
-        return Ok(());
-    };
-    let helm_ids = registry()
-        .get("secrets.stores")
-        .map(|d| helm_entry_ids(&state.settings, d))
-        .unwrap_or_default();
-    let list = |m: &Map<String, Value>| -> Vec<Value> {
-        m.get("secrets.stores")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-    };
-    let (old, new) = (list(&p.old), list(&p.new));
+/// loopback or link-local destination unless `gateway.allowed_private` opens it. Every submitted
+/// dashboard entry is judged (Helm entries are never submitted). Runs before the write
+/// transaction: DNS must not be awaited while the settings lock is held.
+async fn guard_dashboard_addresses(
+    state: &AppState,
+    reqs: &[SectionRequest],
+) -> Result<(), ApiError> {
     let guard = aurora_secrets::DialGuard::new(&state.config.gateway_allowed_private);
     let mut fields = Vec::new();
-    for e in &new {
-        let id = e.get("id").and_then(Value::as_str).unwrap_or_default();
-        let Some(addr) = e.get("address").and_then(Value::as_str) else {
+    for r in reqs.iter().filter(|r| r.section == "secrets") {
+        let Some(list) = r.values.get("secrets.stores").and_then(Value::as_array) else {
             continue;
         };
-        if helm_ids.iter().any(|h| h == id) {
-            continue;
-        }
-        let before = old
-            .iter()
-            .find(|o| o.get("id").and_then(Value::as_str) == Some(id))
-            .and_then(|o| o.get("address").and_then(Value::as_str));
-        if before == Some(addr) {
-            continue;
-        }
-        if !guard.permits_address(addr).await {
-            fields.push(field(
-                format!("/secrets.stores/{id}/address"),
-                "destination_refused",
-                "this address is not reachable from here (private, loopback, link-local or metadata); an operator can open it with gateway.allowed_private",
-            ));
+        for e in list {
+            let id = e.get("id").and_then(Value::as_str).unwrap_or_default();
+            let Some(addr) = e.get("address").and_then(Value::as_str) else {
+                continue;
+            };
+            if !guard.permits_address(addr).await {
+                fields.push(field(
+                    format!("/secrets.stores/{id}/address"),
+                    "destination_refused",
+                    "this address is not reachable from here (private, loopback, link-local or metadata); an operator can open it with gateway.allowed_private",
+                ));
+            }
         }
     }
     if fields.is_empty() {
@@ -964,10 +949,22 @@ pub async fn apply(
 ) -> Result<Applied, ApiError> {
     // Secrets sealed for a write that then fails (stale, invalid, audit down) are discarded at
     // once: nothing references them.
+    require_reauth(state, via).await?;
+    guard_dashboard_addresses(state, &reqs).await?;
     let mut fresh = Vec::new();
     let r = apply_inner(state, via, kind, reqs, import, &mut fresh).await;
-    if r.is_err() {
-        discard_secrets(state, fresh, std::time::Duration::ZERO).await;
+    if r.is_err() && !fresh.is_empty() {
+        // The error may have come after COMMIT was sent (outcome unknown): discard only what the
+        // stored rows do not reference; when they cannot be read, keep everything (a leaked
+        // sealed value is harmless, a discarded live one is not).
+        if let Ok(rows) = repo::list_all(&state.pool).await {
+            let mut live = Vec::new();
+            for row in &rows {
+                collect_secrets(&row.value, &mut live);
+            }
+            fresh.retain(|f| !live.contains(f));
+            discard_secrets(state, fresh, std::time::Duration::ZERO).await;
+        }
     }
     r
 }
@@ -1046,7 +1043,6 @@ async fn apply_inner(
             changed: Vec::new(),
         });
     }
-    guard_dashboard_addresses(state, &changed).await?;
     // The merged view of every section, with the new values in place, must be valid.
     let rows = repo::list_all(&mut *tx).await.map_err(dberr)?;
     let (mut stored, _) = stored_from_rows(&rows);

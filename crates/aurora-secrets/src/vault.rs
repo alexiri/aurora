@@ -42,27 +42,14 @@ impl SecretVault {
         self.failures.store(Arc::new(Vec::new()));
     }
 
-    /// Rebuild the registry from the merged `secrets` settings (FIX-124): a store that fails to
-    /// initialise stays out of the registry and is reported by [`Self::failures`]; the default
-    /// falls back to `inline` when it is one of them.
-    pub fn rebuild_from(
-        &self,
-        cfg: &aurora_config::SecretsSection,
-        keyring: Arc<aurora_crypto::Keyring>,
-        extra_ca_bundle: Option<&str>,
-    ) {
-        let (reg, failed) =
-            StoreRegistry::from_config_tolerant(cfg, keyring, extra_ca_bundle, None);
-        self.registry.store(Arc::new(reg));
-        self.failures.store(Arc::new(failed));
-    }
-
     /// Set `gateway.allowed_private` once, before the first rebuild from settings.
     pub fn set_allowed_private(&self, entries: Vec<String>) {
         let _ = self.allowed_private.set(entries);
     }
 
-    /// [`Self::rebuild_from`] over the merged settings: stores defined in the dashboard are
+    /// Rebuild the registry from the merged `secrets` settings (FIX-124): a store that fails to
+    /// initialise stays out of the registry and is reported by [`Self::failures`]; the default
+    /// falls back to `inline` when it is one of them. Stores defined in the dashboard are
     /// dialled through the destination guard (SEC-89, SEC-90); Helm-defined ones are not.
     pub fn rebuild_from_effective(
         &self,

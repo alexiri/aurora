@@ -52,10 +52,29 @@ impl DialGuard {
         if let Ok(ip) = host.parse::<IpAddr>() {
             return self.allow.permits(ip, &host);
         }
-        let Ok(found) = tokio::net::lookup_host((host.as_str(), port)).await else {
+        let lookup = tokio::time::timeout(
+            aurora_core::limits::SECRET_STORE_PROBE_TIMEOUT,
+            tokio::net::lookup_host((host.as_str(), port)),
+        )
+        .await;
+        let Ok(Ok(found)) = lookup else {
             return true;
         };
         found.into_iter().all(|a| self.allow.permits(a.ip(), &host))
+    }
+
+    /// An IP-literal address is judged here, because the HTTP client does not resolve literals
+    /// and so never reaches the resolver: called whenever a client is built, so removing a range
+    /// from `gateway.allowed_private` revokes the store at the next rebuild. Names pass (the
+    /// resolver judges them at connect time).
+    #[must_use]
+    pub fn literal_permitted(&self, address: &str) -> bool {
+        match host_of(address) {
+            Some((host, _)) => host
+                .parse::<IpAddr>()
+                .map_or(true, |ip| self.allow.permits(ip, &host)),
+            None => false,
+        }
     }
 
     /// Resolver for the store's HTTP client: judges at connect time, so a name that changes its
@@ -135,5 +154,21 @@ mod tests {
         assert!(!g.permits_address("http://169.254.169.254").await);
         let g = DialGuard::new(&["169.254.169.254".to_owned()]);
         assert!(g.permits_address("http://169.254.169.254").await);
+    }
+
+    #[test]
+    fn a_literal_is_rejudged_when_a_client_is_built() {
+        let open = DialGuard::new(&["10.9.0.0/16".to_owned()]);
+        let closed = DialGuard::new(&[]);
+        assert!(open.literal_permitted("https://10.9.4.4:8200"));
+        assert!(
+            !closed.literal_permitted("https://10.9.4.4:8200"),
+            "range removed: revoked"
+        );
+        assert!(
+            closed.literal_permitted("https://vault.example.org"),
+            "names are judged at connect"
+        );
+        assert!(!closed.literal_permitted("http://169.254.169.254"));
     }
 }

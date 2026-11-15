@@ -97,9 +97,9 @@ interface StoreDraft {
   address: string;
   kvMount: string;
   managedPrefix: string;
-  method: "kubernetes" | "approle";
+  /** Dashboard stores use AppRole only (D-307): the Kubernetes login is for Helm-declared stores. */
+  method: "approle";
   authMount: string;
-  role: string;
   roleId: string;
   secretId: string;
   caPem: string;
@@ -117,9 +117,8 @@ function toDraft(s: StoreView | null): StoreDraft {
     address: str(set.address),
     kvMount: str(set.kv_mount),
     managedPrefix: str(set.managed_prefix),
-    method: auth.method === "approle" ? "approle" : "kubernetes",
+    method: "approle",
     authMount: str(auth.mount),
-    role: str(auth.role),
     roleId: str(auth.role_id),
     secretId: "",
     caPem: str(set.ca_pem),
@@ -134,12 +133,8 @@ function hasSealedSecretId(s: StoreView | null): boolean {
 function toInput(d: StoreDraft, existing: StoreView | null): StoreInput {
   const auth: Record<string, unknown> = { method: d.method };
   if (d.authMount.trim()) auth.mount = d.authMount.trim();
-  if (d.method === "kubernetes") {
-    auth.role = d.role.trim();
-  } else {
-    auth.role_id = d.roleId.trim();
-    auth.secret_id = { $secret: d.secretId.trim() || "keep" };
-  }
+  auth.role_id = d.roleId.trim();
+  auth.secret_id = { $secret: d.secretId.trim() || "keep" };
   const store: StoreInput = { kind: "hashicorp-vault", address: d.address.trim(), auth };
   if (d.kvMount.trim()) store.kv_mount = d.kvMount.trim();
   if (d.managedPrefix.trim()) store.managed_prefix = d.managedPrefix.trim();
@@ -220,38 +215,27 @@ function StoreDialog({
           <input id="ss-prefix" className={inputClass} value={d.managedPrefix} onChange={(e) => set("managedPrefix", e.target.value)} />
         </Field>
       </div>
-      <Field id="ss-method" label="Authentication">
-        <select id="ss-method" className={inputClass} value={d.method} onChange={(e) => set("method", e.target.value as StoreDraft["method"])}>
-          <option value="kubernetes">Kubernetes service account</option>
-          <option value="approle">AppRole</option>
-        </select>
+      <Field id="ss-method" label="Authentication" hint="AppRole. The Kubernetes login is available for stores declared in Helm.">
+        <input id="ss-method" disabled className={inputClass} value="AppRole" readOnly />
       </Field>
-      {d.method === "kubernetes" ? (
-        <Field id="ss-role" label="Vault role" hint="Bound to the Aurora API and gateway service accounts.">
-          <input id="ss-role" required className={inputClass} value={d.role} onChange={(e) => set("role", e.target.value)} />
-        </Field>
-      ) : (
-        <>
-          <Field id="ss-role-id" label="Role id">
-            <input id="ss-role-id" required className={inputClass} value={d.roleId} onChange={(e) => set("roleId", e.target.value)} />
-          </Field>
-          <Field
-            id="ss-secret-id"
-            label="Secret id"
-            hint={sealed ? "Set. Leave empty to keep it; type a new one to replace it." : "Sealed when saved; it is never shown again."}
-          >
-            <input
-              id="ss-secret-id"
-              type="password"
-              autoComplete="new-password"
-              className={inputClass}
-              value={d.secretId}
-              onChange={(e) => set("secretId", e.target.value)}
-              placeholder={sealed ? "••••••••" : ""}
-            />
-          </Field>
-        </>
-      )}
+      <Field id="ss-role-id" label="Role id">
+        <input id="ss-role-id" required className={inputClass} value={d.roleId} onChange={(e) => set("roleId", e.target.value)} />
+      </Field>
+      <Field
+        id="ss-secret-id"
+        label="Secret id"
+        hint={sealed ? "Set. Leave empty to keep it; type a new one to replace it." : "Sealed when saved; it is never shown again."}
+      >
+        <input
+          id="ss-secret-id"
+          type="password"
+          autoComplete="new-password"
+          className={inputClass}
+          value={d.secretId}
+          onChange={(e) => set("secretId", e.target.value)}
+          placeholder={sealed ? "••••••••" : ""}
+        />
+      </Field>
       <Field id="ss-auth-mount" label="Auth mount" hint="Default: the method name">
         <input id="ss-auth-mount" className={inputClass} value={d.authMount} onChange={(e) => set("authMount", e.target.value)} />
       </Field>
